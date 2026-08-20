@@ -143,7 +143,8 @@ type ConfigDeviceSync struct {
 // ConfigLibrenms is a runtime-only DTO, not part of ConfigRoot - same
 // pattern as ConfigIcinga/ConfigDNS/ConfigOxidized: every field has a
 // DB-backed equivalent (Settings.LibrenmsApiURL/LibrenmsApiToken/
-// LibrenmsPersistentDevices/LibrenmsRolesEnabled/LibrenmsInterfacesDisabled),
+// LibrenmsPersistentDevices/LibrenmsDelayedDeleteEnabled/
+// LibrenmsDelayedDeleteDays/LibrenmsRolesEnabled/LibrenmsInterfacesDisabled),
 // fetched over REST by internal/librenms.FetchRemoteConfig/RemoteClient from
 // web.ApiLibrenmsConfig - so factum-librenms-cli, which typically runs on a
 // different host than the primary, doesn't need any local librenms config of
@@ -156,9 +157,14 @@ type ConfigLibrenms struct {
 	URL string
 	Key string
 
-	// PersistentDevices is a newline-separated list - currently unread, see
+	// PersistentDevices is a newline-separated list of LibreNMS hostnames
+	// or display names sync never quarantines or deletes - see
 	// Settings.LibrenmsPersistentDevices's doc comment.
 	PersistentDevices string
+	// DelayedDeleteEnabled/DelayedDeleteDays control the LibreNMS delete
+	// path - see Settings.LibrenmsDelayedDeleteEnabled's doc comment.
+	DelayedDeleteEnabled bool
+	DelayedDeleteDays    int
 	// RolesEnabled/InterfacesDisabled are newline-separated lists of
 	// regexes - see Settings.LibrenmsRolesEnabled's doc comment.
 	RolesEnabled       string

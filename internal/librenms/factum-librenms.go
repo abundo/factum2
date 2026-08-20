@@ -2,7 +2,10 @@ package librenms
 
 // Sync devices in librenms, based on factum
 // If device is missing in librenms, create it
-// If device exist in librenms but not in factum delete it
+// If device exist in librenms but not in factum, quarantine it
+// (disabled + ignore, display stamped with the scheduled date) and
+// delete it after Settings.LibrenmsDelayedDeleteDays, or on the next
+// run if the pending row has ForceDelete set.
 // For each device, check and adjust librenms
 // - device
 //     enabled flag
@@ -25,6 +28,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
@@ -34,6 +38,18 @@ import (
 	"github.com/abundo/netboxtool"
 	"github.com/joho/godotenv"
 )
+
+type factumPendingStore struct {
+	client *factum.FactumClient
+}
+
+func (s factumPendingStore) Upsert(row *models.LibrenmsPendingDelete) (*models.LibrenmsPendingDelete, error) {
+	return s.client.UpsertLibrenmsPendingDelete(row)
+}
+
+func (s factumPendingStore) Remove(deviceID int) error {
+	return s.client.DeleteLibrenmsPendingDelete(deviceID)
+}
 
 // splitLines turns a newline-separated Settings field (e.g.
 // Settings.LibrenmsRolesEnabled) into its non-empty, trimmed lines.
@@ -253,20 +269,20 @@ func (fl *FactumLibrenmsClient) getDeviceFromLibrenmsDevice(factumDevices *model
 }
 
 // getFactumDeviceForLibrenmsDevice correlates a librenms device back to its
-// factum device. The primary match is the librenms_device_id netbox custom
-// field (factumDevice.LibrenmsID), stamped on creation - see createDevice.
-// It falls back to a hostname match for devices librenms already knows
-// about but that haven't been (re)linked that way yet (e.g. devices added
-// before librenms_device_id existed): librenms always stores an FQDN in
-// hostname, while factum device names are often short, so the factum name
-// is FQDN-ified with the default domain before comparing.
+// factum device. The primary match is the librenms_id netbox custom field
+// (factumDevice.LibrenmsID), stamped on creation. It falls back to a
+// hostname match for devices librenms already knows about but that haven't
+// been (re)linked that way yet (e.g. devices added before librenms_id
+// existed): librenms always stores an FQDN in hostname, while factum device
+// names are often short, so the factum name is FQDN-ified with the default
+// domain before comparing.
 // The final fallback matches on primary IPv4: createDevice creates new
 // librenms devices with hostname set to the IP, not the FQDN, so if the
-// netbox update that stamps librenms_device_id afterwards fails (logged
-// but not retried), neither match above would see the device on the next
-// run - Sync would then try to create it a second time. Matching on IP
-// closes that gap, and also catches librenms devices added manually with
-// an IP hostname.
+// netbox update that stamps librenms_id afterwards fails (logged but not
+// retried until the next run's backfill), neither match above would see
+// the device on the next run - Sync would then try to create it a second
+// time. Matching on IP closes that gap, and also catches librenms devices
+// added manually with an IP hostname.
 func (fl *FactumLibrenmsClient) getFactumDeviceForLibrenmsDevice(librenmsDevice *LibrenmsDevice) *models.Device {
 	for _, factumDevice := range fl.FactumDevices {
 		if factumDevice.LibrenmsID != 0 && factumDevice.LibrenmsID == uint(librenmsDevice.DeviceID) {
@@ -418,16 +434,57 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	fmt.Printf("add %d delete %d\n", len(librenms_create), len(librenms_delete))
 
 	//
-	// Add/delete devices
+	// Add/delete devices. Delete candidates are quarantined (polling and
+	// alerts off, display name stamped with the scheduled date) and only
+	// actually removed after Settings.LibrenmsDelayedDeleteDays, or sooner
+	// if the user sets ForceDelete on the pending-delete row. Persistent
+	// devices are never quarantined or deleted.
 	//
-	deleted := 0
+	var candidates []pendingCandidate
 	for _, librenmsDevice := range librenms_delete {
-		reporter.Emit(jobevent.Info, "deleting device %s from Librenms (disabled for now)", librenmsDevice.Hostname)
-		// if _, err := fl.Librenms.DeviceDelete(librenmsDevice.DeviceID); err != nil {
-		// 	reporter.EmitErr(err)
-		// 	return err
-		// }
-		deleted++
+		if isPersistentDevice(librenmsDevice, fl.Librenms.P.PersistentDevices) {
+			reporter.Emit(jobevent.Info, "skipping persistent device %s", librenmsDevice.Hostname)
+			continue
+		}
+		reason := pendingReasonNoMatch
+		if fd := fl.getFactumDeviceForLibrenmsDevice(librenmsDevice); fd != nil {
+			if !fd.Enabled {
+				reason = pendingReasonDisabled
+			} else if !fd.CfMonitorLibrenms {
+				reason = pendingReasonNotMonitored
+			}
+		}
+		candidates = append(candidates, pendingCandidate{Device: librenmsDevice, Reason: reason})
+	}
+
+	existingPending, err := fl.Factum.GetLibrenmsPendingDeletes()
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+	presentIDs := make(map[int]bool, len(librenmsDevices))
+	leaveAlone := make(map[int]bool)
+	for _, d := range librenmsDevices {
+		presentIDs[d.DeviceID] = true
+		if isPersistentDevice(d, fl.Librenms.P.PersistentDevices) {
+			leaveAlone[d.DeviceID] = true
+		}
+	}
+	stillPending, deleted, err := applyDeletePolicy(
+		fl.Librenms.P.DelayedDeleteEnabled,
+		fl.Librenms.P.DelayedDeleteDays,
+		candidates,
+		existingPending,
+		presentIDs,
+		leaveAlone,
+		time.Now(),
+		fl.Librenms,
+		factumPendingStore{client: fl.Factum},
+		reporter,
+	)
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
 	}
 
 	created := 0
@@ -442,20 +499,16 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		created++
 
 		// Store the librenms device_id in netbox, so future syncs can
-		// match this device via getFactumDeviceFromLibrenmsDeviceID.
+		// match this device via getFactumDeviceForLibrenmsDevice.
 		data := map[string]any{
 			"custom_fields": map[string]any{
-				"librenms_device_id": librenmsDeviceID,
+				"librenms_id": librenmsDeviceID,
 			},
 		}
-		var nbErr error
-		if factumDevice.VM {
-			nbErr = fl.Netbox.UpdateVM(factumDevice.NetboxID, data)
+		if err := fl.UpdateNetbox(factumDevice, data); err != nil {
+			reporter.Emit(jobevent.Error, "cannot update netbox custom field librenms_id for %s: %s", factumDevice.Name, err)
 		} else {
-			nbErr = fl.Netbox.UpdateDevice(factumDevice.NetboxID, data)
-		}
-		if nbErr != nil {
-			reporter.Emit(jobevent.Error, "cannot update netbox custom field librenms_device_id for %s: %s", factumDevice.Name, nbErr)
+			factumDevice.LibrenmsID = uint(librenmsDeviceID)
 		}
 	}
 	//
@@ -468,6 +521,9 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	}
 	updated := 0
 	for _, librenmsDevice := range librenmsDevices {
+		if _, quarantined := stillPending[librenmsDevice.DeviceID]; quarantined {
+			continue
+		}
 		factumDevice := fl.getFactumDeviceForLibrenmsDevice(librenmsDevice)
 		if factumDevice == nil {
 			continue

@@ -108,6 +108,7 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.Agreement{},
 
 		&models.Settings{},
+		&models.LibrenmsPendingDelete{},
 		&models.WorkerNode{},
 		&models.DeviceSyncAuth{},
 		&models.Link{},

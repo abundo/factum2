@@ -201,6 +201,10 @@ func GUI(p *GuiParams) error {
 	// accept both an admin browsing the API directly and the remote CLI's
 	// service token - see RequireAdminOrServiceToken.
 	api.GET("/librenms-config", ctrl.ApiLibrenmsConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.GET("/librenms/pending-deletes", ctrl.ApiLibrenmsPendingDeleteList, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.PUT("/librenms/pending-deletes/:device_id", ctrl.ApiLibrenmsPendingDeleteUpsert, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/librenms/pending-deletes/:device_id", ctrl.ApiLibrenmsPendingDeleteRemove, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.POST("/librenms/pending-deletes/:device_id/delete-next-sync", ctrl.ApiLibrenmsPendingDeleteNextSync, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/icinga-config", ctrl.ApiIcingaConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/dns-config", ctrl.ApiDNSConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/oxidized-config", ctrl.ApiOxidizedConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)

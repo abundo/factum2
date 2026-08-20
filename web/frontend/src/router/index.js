@@ -100,6 +100,12 @@ const router = createRouter({
           component: () => import('@/views/sync/JobSchedulerPage.vue'),
         },
         {
+          path: '/sync/librenms-deletions',
+          name: 'sync-librenms-deletions',
+          meta: { title: 'LibreNMS deletions', requiresRead: true },
+          component: () => import('@/views/sync/LibrenmsPendingDeletesPage.vue'),
+        },
+        {
           path: '/report',
           name: 'reports',
           meta: { title: 'Reports' },

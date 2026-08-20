@@ -365,9 +365,21 @@ type Settings struct {
 	LibrenmsApiToken string `gorm:"column:librenms_api_token" form:"librenms_api_token" json:"librenms_api_token"`
 	// LibrenmsPersistentDevices is a newline-separated list, edited as a
 	// multiline box in the admin UI, same convention as the Ignore* fields
-	// above - currently unread by internal/librenms: the device-delete path
-	// in FactumLibrenmsClient.Sync that would consult it is commented out.
+	// above. FactumLibrenmsClient.Sync never quarantines or deletes a
+	// LibreNMS device whose hostname or display name matches a line here.
 	LibrenmsPersistentDevices string `gorm:"column:librenms_persistent_devices;type:text" form:"librenms_persistent_devices" json:"librenms_persistent_devices"`
+	// LibrenmsDelayedDeleteEnabled gates the LibreNMS delete path. Off
+	// (nil/false, the default) means sync never removes a device. On means
+	// a delete candidate is quarantined (polling and alerts off, display
+	// name stamped with the scheduled date) and actually deleted on a later
+	// sync once ScheduledAt has passed, or sooner if the user sets
+	// LibrenmsPendingDelete.ForceDelete. Same *bool shape as the other flags.
+	LibrenmsDelayedDeleteEnabled *bool `gorm:"column:librenms_delayed_delete_enabled" form:"librenms_delayed_delete_enabled" json:"librenms_delayed_delete_enabled"`
+	// LibrenmsDelayedDeleteDays is how long a quarantined device stays in
+	// LibreNMS before the next sync deletes it. Values < 1 are treated as
+	// 30 by sync (the documented default), so an unset column cannot
+	// accidentally delete on the following run.
+	LibrenmsDelayedDeleteDays int `gorm:"column:librenms_delayed_delete_days" form:"librenms_delayed_delete_days" json:"librenms_delayed_delete_days"`
 	// LibrenmsRolesEnabled/InterfacesDisabled are newline-separated lists of
 	// regexes (one per line) - FactumLibrenmsClient.syncInterfaces compiles
 	// each line and matches it against an interface's factum role
@@ -490,6 +502,22 @@ type Settings struct {
 	// this Settings row or its admin API, since they're far more powerful
 	// than the read-only LdapBindDN/LdapBindPassword service account above.
 	LdapAllowPasswordChange *bool `gorm:"column:ldap_allow_password_change" form:"ldap_allow_password_change" json:"ldap_allow_password_change"`
+}
+
+// LibrenmsPendingDelete is one LibreNMS device that sync has quarantined
+// rather than deleted outright. DeviceID is LibreNMS's device_id (not a
+// factum device id) - the row can outlive the factum device, which is the
+// usual reason it was queued. Display is the original LibreNMS display
+// name without the "(scheduled for deletion …)" suffix sync stamps while
+// the device is quarantined.
+type LibrenmsPendingDelete struct {
+	FactumModel
+	DeviceID    int       `gorm:"uniqueIndex;not null;column:device_id" json:"device_id"`
+	Hostname    string    `json:"hostname"`
+	Display     string    `json:"display"`
+	Reason      string    `json:"reason"`
+	ScheduledAt time.Time `json:"scheduled_at"`
+	ForceDelete bool      `json:"force_delete"`
 }
 
 type Control struct {

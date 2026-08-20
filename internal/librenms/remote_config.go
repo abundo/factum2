@@ -18,13 +18,15 @@ import (
 // remoteConfigResponse mirrors web.LibrenmsConfigResponse.
 type remoteConfigResponse struct {
 	util.CommonConfig
-	URL                string `json:"url"`
-	Key                string `json:"key"`
-	PersistentDevices  string `json:"persistent_devices"`
-	RolesEnabled       string `json:"roles_enabled"`
-	InterfacesDisabled string `json:"interfaces_disabled"`
-	SNMPVersion        string `json:"snmp_version"`
-	SNMPCommunities    string `json:"snmp_communities"`
+	URL                  string `json:"url"`
+	Key                  string `json:"key"`
+	PersistentDevices    string `json:"persistent_devices"`
+	DelayedDeleteEnabled bool   `json:"delayed_delete_enabled"`
+	DelayedDeleteDays    int    `json:"delayed_delete_days"`
+	RolesEnabled         string `json:"roles_enabled"`
+	InterfacesDisabled   string `json:"interfaces_disabled"`
+	SNMPVersion          string `json:"snmp_version"`
+	SNMPCommunities      string `json:"snmp_communities"`
 }
 
 // FetchRemoteConfig pulls the full LibreNMS config - default domain, REST
@@ -37,14 +39,16 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigLibrenms, e
 		return nil, err
 	}
 	return &util.ConfigLibrenms{
-		CommonConfig:       remote.CommonConfig,
-		URL:                remote.URL,
-		Key:                remote.Key,
-		PersistentDevices:  remote.PersistentDevices,
-		RolesEnabled:       remote.RolesEnabled,
-		InterfacesDisabled: remote.InterfacesDisabled,
-		SNMPVersion:        remote.SNMPVersion,
-		SNMPCommunities:    remote.SNMPCommunities,
+		CommonConfig:         remote.CommonConfig,
+		URL:                  remote.URL,
+		Key:                  remote.Key,
+		PersistentDevices:    remote.PersistentDevices,
+		DelayedDeleteEnabled: remote.DelayedDeleteEnabled,
+		DelayedDeleteDays:    remote.DelayedDeleteDays,
+		RolesEnabled:         remote.RolesEnabled,
+		InterfacesDisabled:   remote.InterfacesDisabled,
+		SNMPVersion:          remote.SNMPVersion,
+		SNMPCommunities:      remote.SNMPCommunities,
 	}, nil
 }
 

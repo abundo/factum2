@@ -37,6 +37,11 @@ const items = computed(() => {
         { label: 'Job overview', icon: 'i-lucide-refresh-cw', to: '/sync/overview' },
         { label: 'Job status', icon: 'i-lucide-list-checks', to: '/sync/status' },
         { label: 'Scheduler', icon: 'i-lucide-clock', to: '/sync/schedules' },
+        {
+          label: 'LibreNMS deletions',
+          icon: 'i-lucide-trash-2',
+          to: '/sync/librenms-deletions',
+        },
       ],
     )
   }

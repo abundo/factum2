@@ -52,6 +52,16 @@ function testEmail() {
     })
 }
 
+function onDelayedDeleteToggle(val) {
+  settings.librenms_delayed_delete_enabled = val
+  if (
+    val &&
+    (!settings.librenms_delayed_delete_days || settings.librenms_delayed_delete_days < 1)
+  ) {
+    settings.librenms_delayed_delete_days = 30
+  }
+}
+
 const snmpVersionOptions = [
   { label: 'v1', value: 'v1' },
   { label: 'v2c', value: 'v2c' },
@@ -75,14 +85,24 @@ const destinationTabItems = [
 
 <template>
   <div v-if="forbidden" class="card">
-    <UAlert color="error" variant="subtle" title="You need administrator permissions to view settings." />
+    <UAlert
+      color="error"
+      variant="subtle"
+      title="You need administrator permissions to view settings."
+    />
   </div>
   <div v-else-if="loadError" class="card">
     <UAlert color="error" variant="subtle" title="Failed to load settings." />
   </div>
   <div v-else class="card">
     <div class="flex justify-end mb-6">
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" :disabled="loading" @click="save" />
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="saving"
+        :disabled="loading"
+        @click="save"
+      />
     </div>
 
     <div v-if="loading" class="flex justify-center p-4">
@@ -113,7 +133,9 @@ const destinationTabItems = [
               />
             </div>
             <div>
-              <label for="dns_ignore_platforms" class="block font-bold mb-3">Ignore platforms</label>
+              <label for="dns_ignore_platforms" class="block font-bold mb-3"
+                >Ignore platforms</label
+              >
               <UTextarea
                 id="dns_ignore_platforms"
                 v-model="settings.dns_ignore_platforms"
@@ -229,7 +251,36 @@ const destinationTabItems = [
                 id="librenms_persistent_devices"
                 v-model="settings.librenms_persistent_devices"
                 :rows="4"
-                placeholder="One device name per line (not yet enforced by sync)"
+                placeholder="One hostname or display name per line; never quarantined or deleted by sync"
+                class="w-full"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <USwitch
+                id="librenms_delayed_delete_enabled"
+                :model-value="!!settings.librenms_delayed_delete_enabled"
+                @update:model-value="onDelayedDeleteToggle"
+              />
+              <label for="librenms_delayed_delete_enabled" class="font-bold"
+                >Delayed deletion</label
+              >
+            </div>
+            <p class="text-muted-color -mt-3">
+              When enabled, devices that would be removed from LibreNMS are disabled (no polling or
+              alerts) and shown as
+              <span class="font-mono">(scheduled for deletion YYYY-MM-DD)</span>
+              on the display name. They are deleted after the delay below. Queue an earlier delete
+              from Jobs → LibreNMS deletions.
+            </p>
+            <div>
+              <label for="librenms_delayed_delete_days" class="block font-bold mb-3"
+                >Delete after (days)</label
+              >
+              <UInputNumber
+                id="librenms_delayed_delete_days"
+                v-model="settings.librenms_delayed_delete_days"
+                :min="1"
+                :format-options="{ useGrouping: false }"
                 class="w-full"
               />
             </div>
@@ -299,10 +350,16 @@ const destinationTabItems = [
             </div>
             <div>
               <label for="oxidized_dest_file" class="block font-bold mb-3">Destination file</label>
-              <UInput id="oxidized_dest_file" v-model="settings.oxidized_dest_file" class="w-full" />
+              <UInput
+                id="oxidized_dest_file"
+                v-model="settings.oxidized_dest_file"
+                class="w-full"
+              />
             </div>
             <div>
-              <label for="oxidized_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
+              <label for="oxidized_ignore_devices" class="block font-bold mb-3"
+                >Ignore devices</label
+              >
               <UTextarea
                 id="oxidized_ignore_devices"
                 v-model="settings.oxidized_ignore_devices"
@@ -334,7 +391,9 @@ const destinationTabItems = [
               />
             </div>
             <div>
-              <label for="oxidized_ignore_platforms" class="block font-bold mb-3">Ignore platforms</label>
+              <label for="oxidized_ignore_platforms" class="block font-bold mb-3"
+                >Ignore platforms</label
+              >
               <UTextarea
                 id="oxidized_ignore_platforms"
                 v-model="settings.oxidized_ignore_platforms"
