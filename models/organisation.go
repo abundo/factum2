@@ -46,7 +46,39 @@ type Customer struct {
 	SourceID string `json:"source_id"`
 }
 
+// BeforeCreate defaults a customer's Source to "factum" when nothing set it
+// already. The Lime sync job (internal/lime/lime.go) always sets Source to
+// "lime" itself before saving, so this only ever fires for customers created
+// through the web API - CustomerDTO has no Source field for a caller to set,
+// so without this default every manually-created customer would be
+// indistinguishable (Source == "") from one whose sync origin just hasn't
+// been recorded yet, instead of clearly marked as user-created.
+func (c *Customer) BeforeCreate(tx *gorm.DB) error {
+	if c.Source == "" {
+		c.Source = "factum"
+	}
+	return nil
+}
+
+// CustomerDTO is the create/update request shape for the customer API,
+// mirroring the fields the frontend's customer form actually edits
+// (web/frontend/src/views/customer/CustomerList.vue). Source/SourceID are
+// deliberately excluded: they're populated by the Lime sync job
+// (internal/lime/lime.go), not something a caller creating or editing a
+// customer through the web UI should be able to set - excluding them from
+// the DTO means Update leaves a synced customer's Source/SourceID untouched
+// (the JSON merge only overwrites fields present in the body), and Create
+// leaves them at their zero value so BeforeCreate can default Source to
+// "factum" for a manually-created customer.
 type CustomerDTO struct {
+	ID                 uint   `json:"id"`
+	Name               string `json:"name"`
+	Postaladdress1     string `json:"postal_address1"`
+	Postaladdress2     string `json:"postal_address2"`
+	Postalcity         string `json:"postalcity"`
+	Postalzipcode      string `json:"postalzipcode"`
+	Country            string `json:"country"`
+	OrganizationNumber string `json:"organization_number"`
 }
 
 type Contact struct {

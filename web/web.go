@@ -141,11 +141,12 @@ func GUI(p *GuiParams) error {
 	api.POST("/reset-password", ctrl.ApiResetPassword)
 
 	// ----- API customers -----
-	// customers_ := NewSecureCRUDHandler[models.Customer, models.Customer](DB)
+	customers_ := NewSecureCRUDHandler[models.Customer, models.CustomerDTO](DB)
 	api.GET("/customer/:id", ctrl.ApiCustomerByID, ctrl.RequireAPIAuth, ctrl.RequireRead)
-	api.GET("/customer", ctrl.ApiCustomer, ctrl.RequireAPIAuth, ctrl.RequireRead) // customers_.GetAll)
-	//api.PUT("/customer/:id", customers_.Update)
-	//api.POST("/customer", customers_.Create)
+	api.GET("/customer", ctrl.ApiCustomer, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.PUT("/customer/:id", ctrl.ApiCustomerUpdate(customers_), ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.POST("/customer", customers_.Create, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/customer/:id", ctrl.ApiCustomerDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	// ----- API contacts -----
 	contacts_ := NewSecureCRUDHandler[models.Contact, models.ContactDTO](DB)

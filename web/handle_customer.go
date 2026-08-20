@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/abundo/factum2/models"
@@ -41,4 +42,61 @@ func (ctrl *Controller) ApiCustomerByID(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, item)
+}
+
+// ApiCustomerUpdate rejects edits to customers synced from Lime (the existing
+// row's Source == "lime") before delegating to the generic CRUD handler for
+// everything else. Lime-sourced fields get overwritten wholesale on the
+// next sync run (SaveCustomer in internal/lime/lime.go), so letting an edit
+// through the API would just have it silently discarded on the next sync -
+// better to reject it upfront than have an edit mysteriously disappear.
+func (ctrl *Controller) ApiCustomerUpdate(customers *SecureCRUDHandler[models.Customer, models.CustomerDTO]) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		id := c.Param("id")
+		var existing models.Customer
+		if err := ctrl.DB.First(&existing, id).Error; err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+		}
+		if existing.Source == "lime" {
+			return c.JSON(http.StatusForbidden, map[string]any{"error": "customers synced from Lime cannot be edited"})
+		}
+		return customers.Update(c)
+	}
+}
+
+// ApiCustomerDelete removes a locally-created customer. Lime-synced rows are
+// rejected the same way as updates (they'd just reappear on the next Lime
+// sync). A customer that still has services is also rejected: those rows
+// would be left pointing at a missing company. CustomerContact join rows
+// are not independent records, so they're removed in the same transaction
+// rather than treated as a blocker.
+func (ctrl *Controller) ApiCustomerDelete(c *echo.Context) error {
+	id := c.Param("id")
+	var existing models.Customer
+	if err := ctrl.DB.First(&existing, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if existing.Source == "lime" {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "customers synced from Lime cannot be deleted"})
+	}
+
+	var serviceCount int64
+	if err := ctrl.DB.Model(&models.Service{}).Where("customer_id = ?", existing.ID).Count(&serviceCount).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if serviceCount > 0 {
+		return c.JSON(http.StatusConflict, map[string]any{
+			"error": fmt.Sprintf("customer has %d service(s) and cannot be deleted", serviceCount),
+		})
+	}
+
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("customer_id = ?", existing.ID).Delete(&models.CustomerContact{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&existing).Error
+	}); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
 }
