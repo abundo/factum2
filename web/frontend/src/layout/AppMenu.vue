@@ -1,0 +1,94 @@
+<script setup>
+import { computed } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+
+const items = computed(() => {
+  const groups = [
+    [
+      { type: 'label', label: 'Home' },
+      { label: 'Dashboard', icon: 'i-lucide-home', to: '/' },
+    ],
+  ]
+
+  // A user with no role (not admin/operator/viewer) only gets the dashboard
+  // and their own profile - see web/auth.go's RequireRead/RequireWrite,
+  // which reject every other API route for them.
+  if (authStore.canRead) {
+    groups.push(
+      [
+        { type: 'label', label: 'Organisation' },
+        { label: 'Customers', icon: 'i-lucide-building-2', to: '/tenant/customer' },
+        { label: 'Contacts', icon: 'i-lucide-book-user', to: '/tenant/contact' },
+      ],
+      [
+        { type: 'label', label: 'Network' },
+        { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
+        { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
+        { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
+        ...(authStore.ipamEnabled ? [{ label: 'IPAM', icon: 'i-lucide-binary', to: '/ipam' }] : []),
+        ...(authStore.opticalEnabled
+          ? [{ label: 'Maintenance', icon: 'i-lucide-wrench', to: '/maintenance' }]
+          : []),
+      ],
+      [
+        { type: 'label', label: 'Integrations' },
+        { label: 'Sync overview', icon: 'i-lucide-refresh-cw', to: '/sync/overview' },
+        { label: 'Job status', icon: 'i-lucide-list-checks', to: '/sync/status' },
+      ],
+    )
+  }
+
+  if (authStore.isAdmin) {
+    groups.push([
+      { type: 'label', label: 'Admin' },
+      {
+        label: 'AAA',
+        icon: 'i-lucide-shield-check',
+        children: [
+          { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
+          { label: 'Roles', icon: 'i-lucide-shield', to: '/admin/roles' },
+          { label: 'Authentication', icon: 'i-lucide-key', to: '/admin/authentication' },
+          { label: 'Authorization', icon: 'i-lucide-lock', to: '/admin/authorization' },
+        ],
+      },
+      {
+        label: 'Remote',
+        icon: 'i-lucide-network',
+        children: [
+          { label: 'Worker nodes', icon: 'i-lucide-server-cog', to: '/admin/worker-nodes' },
+        ],
+      },
+      {
+        label: 'Device',
+        icon: 'i-lucide-server',
+        children: [{ label: 'Device sync', icon: 'i-lucide-key-round', to: '/admin/device-sync' }],
+      },
+      {
+        label: 'Settings',
+        icon: 'i-lucide-settings',
+        children: [
+          { label: 'Factum', icon: 'i-lucide-sliders-horizontal', to: '/admin/settings/factum' },
+          ...(authStore.opticalEnabled
+            ? [{ label: 'Optical', icon: 'i-lucide-aperture', to: '/admin/settings/optical' }]
+            : []),
+          { label: 'Sources', icon: 'i-lucide-database', to: '/admin/settings/sources' },
+          { label: 'Destinations', icon: 'i-lucide-send', to: '/admin/settings/destinations' },
+          {
+            label: 'Dashboard',
+            icon: 'i-lucide-layout-dashboard',
+            to: '/admin/settings/dashboard',
+          },
+        ],
+      },
+    ])
+  }
+
+  return groups
+})
+</script>
+
+<template>
+  <UNavigationMenu orientation="vertical" :items="items" class="w-full" />
+</template>

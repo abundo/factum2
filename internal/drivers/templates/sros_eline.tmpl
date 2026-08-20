@@ -1,0 +1,56 @@
+{{/* SR OS MD-CLI commands for this device's local half of an ELINE, in
+MD-CLI's native block-paste form - the same shape "info"/"info inheritance"
+prints and accepts back as input, sent one line at a time over a scripted,
+non-interactive SSH session exactly the way a human pasting it would. See
+driver_nokia_sros_eline.go for the surrounding candidate/commit session.
+
+Cleanup first: one "delete" is enough since SR OS nests every SAP and
+spoke-sdp binding inside its owning epipe. Shared by ApplyELINE (root
+template includes this define) and RemoveELINE (renders "cleanup" alone).
+Assumed benign no-op when name doesn't exist yet - not confirmed against
+a real device. SDP tunnels are deliberately not deleted: every ELINE
+toward the same neighbor shares them.
+
+Both apply blocks lean on apply-groups ("eline-defaults" on the epipe,
+"sdp-default" on the sdp) for everything that doesn't vary per service -
+customer, service-mtu, control-word, vc-type, delivery-type, ldp, and every
+nested object's own admin-state are all inherited from those groups rather
+than set here (confirmed against a real device's "info inheritance" output -
+see driver_nokia_sros_eline_test.go). Setting any of them explicitly here
+would just needlessly duplicate what the group already guarantees.
+
+.Name's epipe is deliberately owned end-to-end by this template: nothing
+here is shared with another service, so a stale line left over from a
+previous apply is always fully handled by that upfront delete - unlike
+.SDPID's tunnel below, which every ELINE service toward the same neighbor
+shares. This template only ever creates/merges it, never deletes it. */}}
+{{define "cleanup"}}
+delete /configure service epipe "{{.Name}}"
+{{end}}
+{{template "cleanup" .}}
+/configure service epipe "{{.Name}}" {
+    apply-groups ["eline-defaults"]
+    description "{{.Description}}"
+    service-id {{.ServiceNumericID}}
+    sap {{.LocalIface}}:{{.LocalVLAN}}.* {
+        description "{{.Description}}"
+    }
+{{if .Remote}}
+    spoke-sdp {{.SDPID}}:{{.Remote.PseudowireID}} {
+        description "PEER={{.Remote.DeviceName}} interface={{.Remote.RemoteIface}}.{{.Remote.RemoteVLAN}}"
+    }
+{{else}}
+    sap {{.PeerLocalIface}}:{{.PeerLocalVLAN}}.* {
+        description "{{.Description}}"
+    }
+{{end}}
+}
+{{if .Remote}}
+/configure service sdp {{.SDPID}} {
+    apply-groups ["sdp-default"]
+    description "PEER={{.Remote.DeviceName}}"
+    far-end {
+        ip-address {{.Remote.NeighborIP}}
+    }
+}
+{{end}}

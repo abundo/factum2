@@ -1,6 +1,18 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
+
+# build output
+build/
+bin/
+web/static/vue/
+
+# javascript, css
+node_modules/
+
+# Local GOPATH / module-cache leftover (never vendor)
+pkg/
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -17,5 +29,9 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+
 # Go workspace file
 go.work
+
+# Skill runtime state (skills themselves under .grok/skills are committed)
+.grok/skills/**/.state/

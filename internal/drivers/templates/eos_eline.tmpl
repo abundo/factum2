@@ -1,0 +1,65 @@
+{{/* Cleanup first: drop this service's pseudowire/patch (keyed by .Name
+== ServiceID) plus any stale subinterfaces a previous apply left behind.
+Safe no-ops when nothing of the kind was ever configured - confirmed
+against a real device inside a configure session. Shared by ApplyELINE
+(root template includes this define) and RemoveELINE (renders "cleanup"
+alone). */}}
+{{define "cleanup"}}
+mpls ldp
+pseudowires
+no pseudowire {{.Name}}
+exit
+exit
+patch panel
+no patch {{.Name}}
+exit
+{{range .StaleSubinterfaces}}
+no interface {{.Iface}}.{{.VLAN}}
+{{end}}
+{{end}}
+
+{{template "cleanup" .}}
+interface {{.LocalIface}}
+no switchport
+interface {{.LocalIface}}.{{.LocalVLAN}}
+description {{.Description}}
+encapsulation vlan
+client dot1q {{.LocalVLAN}}
+exit
+exit
+
+{{if .Remote}}
+mpls ldp
+  pseudowires
+    pseudowire {{.Name}}
+    neighbor {{.Remote.NeighborIP}}
+    pseudowire-id {{.Remote.PseudowireID}}
+    mtu {{.Remote.MTU}}
+{{if .Remote.ControlWord}}
+    control-word
+{{end}}exit
+exit
+exit
+patch panel
+  patch {{.Name}}
+    connector 1 interface {{.LocalIface}}.{{.LocalVLAN}}
+    connector 2 pseudowire ldp {{.Name}}
+  exit
+exit
+
+{{else}}
+interface {{.PeerLocalIface}}
+  no switchport
+interface {{.PeerLocalIface}}.{{.PeerLocalVLAN}}
+  description {{.Description}}
+  encapsulation vlan
+    client dot1q {{.PeerLocalVLAN}}
+  exit
+exit
+patch panel
+  patch {{.Name}}
+    connector 1 interface {{.LocalIface}}.{{.LocalVLAN}}
+    connector 2 interface {{.PeerLocalIface}}.{{.PeerLocalVLAN}}
+  exit
+exit
+{{end}}

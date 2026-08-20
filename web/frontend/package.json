@@ -1,0 +1,50 @@
+{
+  "name": "frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node -e \"for (const f of ['maplibre-gl-worker.mjs','maplibre-gl-shared.mjs']) require('fs').copyFileSync('node_modules/maplibre-gl/dist/'+f,'public/'+f)\"",
+    "dev": "vite",
+    "prebuild": "node -e \"for (const f of ['maplibre-gl-worker.mjs','maplibre-gl-shared.mjs']) require('fs').copyFileSync('node_modules/maplibre-gl/dist/'+f,'public/'+f)\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "run-s \"lint:*\"",
+    "lint:oxlint": "oxlint . --fix",
+    "lint:eslint": "eslint . --fix --cache",
+    "format": "prettier --write --experimental-cli src/"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.3.9",
+    "@deck.gl/layers": "^9.3.9",
+    "@deck.gl/mapbox": "^9.3.9",
+    "@nuxt/ui": "^4.10.0",
+    "axios": "^1.18.1",
+    "maplibre-gl": "^6.2.0",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.38",
+    "vue-router": "^5.1.0",
+    "vuedraggable": "^4.1.0",
+    "wunderbaum": "^0.14.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@iconify-json/lucide": "^1.2.121",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-oxlint": "~1.69.0",
+    "eslint-plugin-vue": "~10.9.2",
+    "globals": "^17.6.0",
+    "npm-run-all2": "^9.0.2",
+    "oxlint": "~1.69.0",
+    "prettier": "3.8.4",
+    "tailwindcss": "^4.3.2",
+    "vite": "^8.0.16",
+    "vite-plugin-vue-devtools": "^8.1.2",
+    "vue-eslint-parser": "^10.4.1"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.12.0"
+  }
+}

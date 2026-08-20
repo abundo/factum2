@@ -1,0 +1,45 @@
+# containerlab topology for the Arista EOS driver's integration tests.
+#
+#   make lab-up          # containerlab deploy
+#   make test-integration
+#   make lab-down
+#
+# Requires the cEOS-lab image, which Arista distributes only to registered
+# accounts (free): download ceos-lab from arista.com's software downloads, then
+#
+#   docker import cEOS64-lab-4.33.9M.tar.xz ceos:4.33.9M
+#
+# and set CEOS_IMAGE to match if you use a different version.
+#
+# The node comes up on containerlab's management bridge with a name resolvable
+# from the host (clab-factum-eos-sw1), serving eAPI on 443 and NETCONF on 830 -
+# both enabled by eos-startup.cfg below, neither on by default.
+
+name: factum-eos
+
+topology:
+  nodes:
+    sw1:
+      kind: arista_ceos
+      image: ${CEOS_IMAGE:=ceos:4.33.9M}
+      startup-config: eos-startup.cfg
+
+    sw2:
+      kind: arista_ceos
+      image: ${CEOS_IMAGE:=ceos:4.33.9M}
+      startup-config: eos-startup.cfg
+
+  # Real links, so the interfaces the tests read have a link partner and can
+  # actually come up - an interface with nothing attached reports oper-status
+  # DOWN, which makes for a thin test of the status mapping.
+  #
+  # eth2 is wired for a second reason: cEOS only instantiates the Ethernet
+  # ports it was given veths for, and a port that doesn't exist is invisible
+  # to "show interfaces"/"show interfaces description" (so to the eAPI
+  # transport) while NETCONF still reports it from the config tree. Without
+  # this link, eos-startup.cfg's Ethernet2 is exactly that ghost, and the two
+  # transports can't agree on the interface list no matter how correct the
+  # driver is.
+  links:
+    - endpoints: ["sw1:eth1", "sw2:eth1"]
+    - endpoints: ["sw1:eth2", "sw2:eth2"]

@@ -1,0 +1,32 @@
+{{/* Cleanup first: drop this service's p2p xconnect (keyed by .Name ==
+ServiceID) plus any stale subinterfaces a previous apply left behind.
+Assumed benign no-op when name doesn't exist yet. Shared by ApplyELINE
+(root template includes this define) and RemoveELINE (renders "cleanup"
+alone). */}}
+{{define "cleanup"}}
+l2vpn
+xconnect group default
+no p2p {{.Name}}
+root
+{{range .StaleSubinterfaces}}
+no interface {{.Iface}}.{{.VLAN}}
+{{end}}
+{{end}}
+{{template "cleanup" .}}
+interface {{.LocalIface}}.{{.LocalVLAN}} l2transport
+  description {{.Description}}
+  mtu 9118
+  encapsulation dot1q {{.LocalVLAN}}
+  rewrite ingress tag pop 1 symmetric
+  root
+
+l2vpn
+  xconnect group default
+    p2p {{.Name}}
+      interface {{.LocalIface}}.{{.LocalVLAN}}
+{{if .Remote}}
+      description PEER={{.Remote.DeviceName}} interface={{.Remote.RemoteIface}}.{{.Remote.RemoteVLAN}}
+      neighbor ipv4 {{.Remote.NeighborIP}} pw-id {{.Remote.PseudowireID}} pw-class cw
+{{else}}
+      interface {{.PeerLocalIface}}.{{.PeerLocalVLAN}}
+{{end}}

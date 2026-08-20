@@ -1,0 +1,50 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.DS_Store
+dist
+dist-ssr
+coverage
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+*.tsbuildinfo
+
+.eslintcache
+
+# Cypress
+/cypress/videos/
+/cypress/screenshots/
+
+# Vitest
+__screenshots__/
+
+# Vite
+*.timestamp-*-*.mjs
+
+# Copied by predev/prebuild (see package.json) from the installed
+# maplibre-gl version - Vite/Rolldown doesn't emit maplibre's worker chunk
+# via its usual new URL(..., import.meta.url) asset detection, so it's
+# served as a plain static file instead (see NetworkMap.vue's setWorkerUrl
+# call). maplibre-gl-shared.mjs is worker.mjs's own sibling import (a
+# relative `from "./maplibre-gl-shared.mjs"` inside the raw dist file, so
+# it must be copied alongside it, unprocessed, at the same path) - both
+# regenerated on every dev/build, never hand-edited.
+/public/maplibre-gl-worker.mjs
+/public/maplibre-gl-shared.mjs

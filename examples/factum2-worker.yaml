@@ -1,0 +1,35 @@
+---                                                                                                                                                                                         
+# token can be generated with
+# openssl rand -base64 32
+# this token is for the worker accessing factum API
+factum:                                                                                                                                                                                     
+  url: https://factum.example.com
+  token: <change-me>
+
+# on each worker, adjust the commands to what the worker handles
+# this token is for the primary server accessing this worker
+worker:
+  listen: ":8443"
+  token: <change-me>
+  commands:
+    becs:
+      cmd: /opt/factum2/factum-becs
+      args: [ "sync", "--job" ]
+    device-sync:
+      cmd: /opt/factum2/factum-device-sync
+      args: [ "sync", "--job" ]
+    dns:
+      cmd: /opt/factum2/factum-dns
+      args: [ "sync", "--job" ]
+    icinga:
+      cmd: /opt/factum2/factum-icinga
+      args: [ "sync", "--job" ]
+    librenms:
+      cmd: /opt/factum2/factum-librenms
+      args: [ "sync", "--job" ]
+    lime:
+      cmd: /opt/factum2/factum-lime
+      args: [ "sync", "--job" ]
+    netbox:
+      cmd: /opt/factum2/factum-netbox
+      args: [ "sync", "--job" ]

@@ -1,0 +1,238 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "objects": [
+      {
+        "oid": 198398,
+        "parentoid": 1,
+        "class": "folder",
+        "name": "lab-folder",
+        "opaque": [
+          {
+            "name": "parents",
+            "values": [
+              {
+                "value": "core1"
+              }
+            ]
+          },
+          {
+            "name": "alarm_destination",
+            "values": [
+              {
+                "value": "noc"
+              }
+            ]
+          },
+          {
+            "name": "alarm_timeperiod",
+            "values": [
+              {
+                "value": "24x7"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "oid": 3641645,
+        "parentoid": 198398,
+        "creator": "anders/",
+        "ctime": 1772104872,
+        "modifier": "pethho/",
+        "mtime": 1776146317,
+        "latestjobid": 8364939,
+        "class": "element-attach",
+        "name": "test-lab2",
+        "role": "access.layer3",
+        "elementtype": "ibos",
+        "parameters": [
+          {
+            "name": "elementrole",
+            "values": [
+              {
+                "value": "access.layer3"
+              }
+            ]
+          },
+          {
+            "name": "model",
+            "values": [
+              {
+                "value": "ASR7348"
+              }
+            ]
+          },
+          {
+            "name": "platform",
+            "values": [
+              {
+                "value": "asr7k"
+              }
+            ]
+          },
+          {
+            "name": "snpa",
+            "values": [
+              {
+                "value": "0008.aec9.0040"
+              }
+            ]
+          }
+        ],
+        "opaque": [
+          {
+            "name": "becs.customize_endpointid",
+            "values": [
+              {
+                "value": "0"
+              }
+            ]
+          },
+          {
+            "name": "becs.editor",
+            "values": [
+              {
+                "value": "elwiz.tcl"
+              }
+            ]
+          },
+          {
+            "name": "becs.mgmtlayer",
+            "values": [
+              {
+                "value": "layer3"
+              }
+            ]
+          },
+          {
+            "name": "becs.position_x",
+            "values": [
+              {
+                "value": "314",
+                "index": "198398"
+              }
+            ]
+          },
+          {
+            "name": "becs.position_y",
+            "values": [
+              {
+                "value": "387",
+                "index": "198398"
+              }
+            ]
+          },
+          {
+            "name": "becs.routeproto",
+            "values": [
+              {
+                "value": "OSPF"
+              }
+            ]
+          }
+        ],
+        "nchilds": 53
+      },
+      {
+        "oid": 3641698,
+        "parentoid": 3641645,
+        "creator": "anders/",
+        "ctime": 1772104872,
+        "modifier": "pethho/",
+        "mtime": 1776163790,
+        "latestjobid": 8365796,
+        "class": "interface",
+        "name": "loopback0",
+        "flags": "interfaceautoprobe",
+        "role": "loopback",
+        "parameters": [
+          {
+            "name": "ospf_area",
+            "values": [
+              {
+                "value": "68"
+              }
+            ]
+          },
+          {
+            "name": "ospfv3_area",
+            "values": [
+              {
+                "value": "0.0.0.68"
+              }
+            ]
+          }
+        ],
+        "linkid": 0,
+        "opaque": [
+          {
+            "name": "becs.editor",
+            "values": [
+              {
+                "value": "ifrole.tcl"
+              }
+            ]
+          }
+        ],
+        "nchilds": 2
+      },
+      {
+        "oid": 3753026,
+        "parentoid": 3641698,
+        "creator": "pethho/",
+        "ctime": 1776163422,
+        "mtime": 1776163422,
+        "latestjobid": 8365758,
+        "class": "resource-inet",
+        "name": "loop",
+        "resource": {
+          "rcparentoid": 134818,
+          "address": "10.15.15.153",
+          "prefixlen": 32,
+          "parameterindex": "rc-inet{3753026}"
+        }
+      },
+      {
+        "oid": 999001,
+        "parentoid": 3641645,
+        "class": "interface",
+        "name": "ethernet0",
+        "role": "mgmt",
+        "flags": "disable"
+      },
+      {
+        "oid": 999004,
+        "parentoid": 3641645,
+        "class": "interface",
+        "name": "vlan1",
+        "role": "mgmt"
+      },
+      {
+        "oid": 999003,
+        "parentoid": 999004,
+        "class": "resource-inet",
+        "name": "host",
+        "flags": "useparentmask",
+        "resource": {
+          "rcparentoid": 999002,
+          "address": "10.0.0.9",
+          "prefixlen": 32
+        }
+      },
+      {
+        "oid": 999002,
+        "parentoid": 1,
+        "class": "resource-inet",
+        "name": "parent-prefix",
+        "resource": {
+          "rcparentoid": 0,
+          "address": "10.0.0.0",
+          "prefixlen": 24
+        }
+      }
+    ],
+    "total": 8
+  }
+}

@@ -1,0 +1,876 @@
+<script setup>
+import { useToast } from '@nuxt/ui/composables'
+import { computed, ref, watch } from 'vue'
+import { getCustomers } from '@/api/customers'
+import { getDevice } from '@/api/devices'
+import {
+  deleteService,
+  getService,
+  pushServiceEline,
+  updateService,
+  updateServiceEline,
+  updateServiceType,
+} from '@/api/services'
+import { getServicePath, putServicePath } from '@/api/optical'
+import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
+import PasswordInput from '@/components/PasswordInput.vue'
+import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const {
+  credentialsDialog,
+  promptUsername,
+  promptPassword,
+  withCredentials,
+  submitCredentials,
+  cancelCredentials,
+  rememberSuccess,
+  rememberFailure,
+} = useDeviceCredentials()
+
+const props = defineProps({
+  serviceId: { type: Number, default: null },
+})
+
+const open = defineModel('open', { type: Boolean, default: false })
+
+// Emitted after a save/delete actually succeeds, so a caller with its own
+// list of services (ServiceList.vue) or of interfaces (DeviceList.vue) knows
+// to reload - this dialog has no list of its own to keep in sync.
+const emit = defineEmits(['saved', 'deleted'])
+
+const toast = useToast()
+
+const customers = ref([])
+const service = ref({})
+const submitted = ref(false)
+const saving = ref(false)
+const loading = ref(false)
+
+const deleteDialog = ref(false)
+const deleteTarget = ref(null)
+const deleting = ref(false)
+const deleteRemoveNetbox = ref(false)
+const deleteRemoveDevice = ref(false)
+
+const endpointALabel = ref('')
+const endpointBLabel = ref('')
+const pickerOpen = ref(false)
+const pickerTarget = ref(null) // 'a' | 'b'
+const elineSubmitted = ref(false)
+const elineSaving = ref(false)
+const elinePushing = ref(false)
+const elinePushResults = ref([])
+
+// Mirrors ServiceCreateWizard.vue's capacity-product subset (ELINE/ELAN/
+// L3VPN/POLARIX) - Wavelength/Fiber have no ServiceType, so they aren't
+// offered here.
+const serviceTypeOptions = [
+  { label: 'Not set', value: '' },
+  { label: 'ELINE — L2VPN point to point', value: 'ELINE' },
+  { label: 'ELAN — L2VPN multipoint', value: 'ELAN' },
+  { label: 'L3VPN — L3 multipoint', value: 'L3VPN' },
+  { label: 'Internet — Polarix', value: 'POLARIX' },
+]
+
+const customerOptions = computed(() => customers.value.map((c) => ({ id: c.id, name: c.name })))
+
+// Lime-synced services are overwritten wholesale on every sync run, so an
+// edit to a Lime-owned field (company/delivery points/product/service/
+// comment) made here would just silently vanish on the next sync - the API
+// rejects PUTs to those fields too (see ApiServiceUpdate in
+// web/handler_service.go). Service type/bandwidth/max MAC addresses and
+// ELINE provisioning are unaffected by readOnly - see saveServiceType and
+// ApiServiceTypeUpdate, which are the one part of a Lime row this dialog
+// can still save.
+const readOnly = computed(() => service.value.source === 'lime')
+
+// A viewer (or a user with no role) can open this dialog to look, but every
+// control that would save/delete/provision anything is disabled - the API
+// rejects those calls outright (web/auth.go's RequireWrite), so disabling
+// them here just avoids a submit-then-403 round trip.
+const canWrite = computed(() => authStore.canWrite)
+
+const elineEndpointsValid = computed(() => {
+  const s = service.value
+  return Boolean(
+    s.endpoint_a_device_id &&
+    s.endpoint_a_interface_id &&
+    s.endpoint_a_vlan &&
+    s.endpoint_b_device_id &&
+    s.endpoint_b_interface_id &&
+    s.endpoint_b_vlan,
+  )
+})
+
+const elineEndpointsSame = computed(() => {
+  const s = service.value
+  return (
+    s.endpoint_a_device_id === s.endpoint_b_device_id &&
+    s.endpoint_a_interface_id === s.endpoint_b_interface_id
+  )
+})
+
+function loadCustomers() {
+  if (customers.value.length > 0) return
+  getCustomers()
+    .then((data) => {
+      customers.value = data ?? []
+    })
+    .catch(() => {
+      // Customer names are only needed for the company select, not critical.
+    })
+}
+
+// Resolves a stored endpoint (device_id/interface_id) to a display label -
+// the service row itself only carries the IDs, so this is only fetched
+// when the dialog is opened for an already-provisioned ELINE service.
+function loadEndpointLabel(deviceId, interfaceId) {
+  if (!deviceId || !interfaceId) return Promise.resolve('')
+  return getDevice(deviceId)
+    .then((data) => {
+      const iface = (data.interfaces ?? []).find((i) => i.id === interfaceId)
+      return `${data.name} / ${iface?.name ?? '?'}`
+    })
+    .catch(() => '')
+}
+
+const path = ref(null)
+const pathA = ref(null)
+const pathZ = ref(null)
+const pathPicker = ref(null)
+const opticalCat = computed(() => {
+  const id = service.value?.service_id ?? ''
+  return /^(VL|VI|LF|LI)\d{5}$/.test(id) ? id.slice(0, 2) : ''
+})
+const pathMode = computed(() =>
+  opticalCat.value === 'LF' || opticalCat.value === 'LI' ? 'fiber' : 'wavelength',
+)
+
+function loadPath(id) {
+  if (!authStore.opticalEnabled || !id) return
+  getServicePath(id)
+    .then((data) => {
+      path.value = data
+    })
+    .catch(() => {
+      path.value = null
+    })
+}
+
+function onPathPick(sel) {
+  if (pathPicker.value === 'a') pathA.value = sel.interfaceId
+  if (pathPicker.value === 'z') pathZ.value = sel.interfaceId
+  pathPicker.value = null
+}
+
+function attachPath() {
+  if (!service.value?.id || !pathA.value || !pathZ.value) return
+  putServicePath(service.value.id, {
+    interface_a_id: pathA.value,
+    interface_z_id: pathZ.value,
+    mode: pathMode.value === 'fiber' ? 'fiber' : 'wdm',
+  })
+    .then((data) => {
+      path.value = data
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Path attach failed',
+        description: err?.response?.data?.error,
+      })
+    })
+}
+
+function loadServiceById(id) {
+  submitted.value = false
+  elineSubmitted.value = false
+  elinePushResults.value = []
+  loading.value = true
+  getService(id)
+    .then((data) => {
+      service.value = { ...data }
+      loadPath(data.id)
+      endpointALabel.value = ''
+      endpointBLabel.value = ''
+      if (data.service_type === 'ELINE') {
+        loadEndpointLabel(data.endpoint_a_device_id, data.endpoint_a_interface_id).then((label) => {
+          endpointALabel.value = label
+        })
+        loadEndpointLabel(data.endpoint_b_device_id, data.endpoint_b_interface_id).then((label) => {
+          endpointBLabel.value = label
+        })
+      }
+    })
+    .catch(() => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: 'Failed to load service.',
+        duration: 3000,
+      })
+    })
+    .finally(() => {
+      loading.value = false
+    })
+}
+
+watch(open, (isOpen) => {
+  if (!isOpen || !props.serviceId) return
+  loadCustomers()
+  loadServiceById(props.serviceId)
+})
+
+function hideDialog() {
+  open.value = false
+  submitted.value = false
+  elineSubmitted.value = false
+  elinePushResults.value = []
+}
+
+function openPicker(target) {
+  pickerTarget.value = target
+  pickerOpen.value = true
+}
+
+function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
+  const label = `${deviceName} / ${interfaceName}`
+  if (pickerTarget.value === 'a') {
+    service.value.endpoint_a_device_id = deviceId
+    service.value.endpoint_a_interface_id = interfaceId
+    endpointALabel.value = label
+  } else if (pickerTarget.value === 'b') {
+    service.value.endpoint_b_device_id = deviceId
+    service.value.endpoint_b_interface_id = interfaceId
+    endpointBLabel.value = label
+  }
+}
+
+// Single-button ELINE flow: provision endpoints/pseudowire in Netbox, then
+// on success push the resulting config to both endpoint devices. The push
+// step needs device credentials (same as the old separate "Push to devices"
+// button); withCredentials may open a nested credentials dialog.
+function saveAndPushEline() {
+  elineSubmitted.value = true
+  if (!elineEndpointsValid.value || elineEndpointsSame.value) {
+    return
+  }
+
+  elineSaving.value = true
+  const payload = {
+    endpoint_a_device_id: service.value.endpoint_a_device_id,
+    endpoint_a_interface_id: service.value.endpoint_a_interface_id,
+    endpoint_a_vlan: Number(service.value.endpoint_a_vlan),
+    endpoint_b_device_id: service.value.endpoint_b_device_id,
+    endpoint_b_interface_id: service.value.endpoint_b_interface_id,
+    endpoint_b_vlan: Number(service.value.endpoint_b_vlan),
+  }
+
+  updateServiceEline(service.value.id, payload)
+    .then((data) => {
+      service.value = { ...service.value, ...data }
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'ELINE provisioned in Netbox',
+        duration: 3000,
+      })
+      emit('saved')
+      withCredentials(elineDeviceIds(), doPushEline)
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to provision ELINE in Netbox.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      elineSaving.value = false
+    })
+}
+
+function elineDeviceIds() {
+  const s = service.value
+  return [s?.endpoint_a_device_id, s?.endpoint_b_device_id].filter(Boolean)
+}
+
+function doPushEline(username, password) {
+  const deviceIds = elineDeviceIds()
+  elinePushing.value = true
+  pushServiceEline(service.value.id, { username, password })
+    .then((data) => {
+      elinePushResults.value = data.results ?? []
+      const failed = elinePushResults.value.filter((r) => r.error)
+      // HTTP 200 with per-device results: credentials were accepted enough to
+      // attempt the push. Cache them so a config error on one side does not
+      // force a re-prompt; only the .catch path treats the pair as bad.
+      rememberSuccess(deviceIds, username, password)
+      if (failed.length === 0) {
+        toast.add({
+          color: 'success',
+          title: 'Pushed to devices',
+          description: 'ELINE config was applied to both endpoint devices.',
+          duration: 3000,
+        })
+        hideDialog()
+      } else {
+        toast.add({
+          color: 'error',
+          title: 'Push completed with errors',
+          description: `${failed.length} of ${elinePushResults.value.length} device(s) failed - see details below.`,
+          duration: 5000,
+        })
+      }
+    })
+    .catch((err) => {
+      rememberFailure(deviceIds, username, password)
+      toast.add({
+        color: 'error',
+        title: 'Push failed',
+        description: err?.response?.data?.error ?? 'Failed to push ELINE config to devices.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      elinePushing.value = false
+    })
+}
+
+// A Lime-synced service can only ever have its type/bandwidth/max MAC
+// addresses saved here (the rest of the record is Lime-owned and stays
+// read-only) - see updateServiceType/ApiServiceTypeUpdate.
+function saveServiceType() {
+  saving.value = true
+  const payload = {
+    service_type: service.value.service_type ?? '',
+    bandwidth_mbps: Number(service.value.bandwidth_mbps) || 0,
+    max_mac_addresses:
+      service.value.service_type === 'ELAN' ? Number(service.value.max_mac_addresses) || 0 : 0,
+  }
+
+  updateServiceType(service.value.id, payload)
+    .then((data) => {
+      service.value = { ...service.value, ...data }
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'Service updated',
+        duration: 3000,
+      })
+      emit('saved')
+    })
+    .catch(() => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: 'Failed to save service.',
+        duration: 3000,
+      })
+    })
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function saveService() {
+  if (readOnly.value) {
+    saveServiceType()
+    return
+  }
+  submitted.value = true
+
+  if (!service.value.service_id?.trim() || !service.value.company) {
+    return
+  }
+
+  saving.value = true
+  const payload = { ...service.value }
+
+  updateService(payload.id, payload)
+    .then(() => {
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'Service updated',
+        duration: 3000,
+      })
+      open.value = false
+      emit('saved')
+    })
+    .catch(() => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: 'Failed to save service.',
+        duration: 3000,
+      })
+    })
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function confirmDelete(row) {
+  deleteTarget.value = row
+  // Default to a full teardown when applicable - deleting a service is
+  // assumed to mean it should stop existing everywhere, not just in
+  // factum's own DB. row is always the full getService(id) result (see
+  // loadServiceById), which includes l2vpn_netbox_id/applied_to_device.
+  deleteRemoveNetbox.value = Boolean(row?.l2vpn_netbox_id)
+  deleteRemoveDevice.value = Boolean(row?.applied_to_device)
+  deleteDialog.value = true
+}
+
+function hideDeleteDialog() {
+  deleteDialog.value = false
+  deleteTarget.value = null
+  deleteRemoveNetbox.value = false
+  deleteRemoveDevice.value = false
+}
+
+function doDeleteService(username, password) {
+  if (!deleteTarget.value) return
+
+  const deviceIds = elineDeviceIds()
+  deleting.value = true
+  deleteService(deleteTarget.value.id, {
+    remove_from_netbox: deleteRemoveNetbox.value,
+    remove_from_device: deleteRemoveDevice.value,
+    username,
+    password,
+  })
+    .then(() => {
+      if (username && password) {
+        rememberSuccess(deviceIds, username, password)
+      }
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'Service deleted',
+        duration: 3000,
+      })
+      deleteDialog.value = false
+      deleteTarget.value = null
+      open.value = false
+      emit('deleted')
+    })
+    .catch((err) => {
+      if (username && password) {
+        rememberFailure(deviceIds, username, password)
+      }
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to delete service.',
+        duration: 5000,
+      })
+    })
+    .finally(() => {
+      deleting.value = false
+    })
+}
+
+// Removing the device config is a real device operation, so it needs
+// credentials the same way saveAndPushEline does - the backend blocks the
+// whole delete (row kept, service still shows up) if that cleanup fails, so
+// there's no partial state to reconcile afterward. Closes the delete
+// dialog first when credentials are needed: withCredentials's own dialog
+// would otherwise stack three deep (service dialog -> delete dialog ->
+// credentials dialog), and a third nested UModal's backdrop overlay ends
+// up covering its own "Continue" button, blocking clicks - saveAndPushEline
+// never hits this since it only ever nests two (service dialog ->
+// credentials dialog). deleteTarget/deleteRemoveNetbox/deleteRemoveDevice
+// are left set (only deleteDialog itself closes), so doDeleteService below
+// still has everything it needs.
+function deleteServiceConfirmed() {
+  if (!deleteTarget.value) return
+  if (deleteRemoveDevice.value) {
+    deleteDialog.value = false
+    withCredentials(elineDeviceIds(), doDeleteService)
+  } else {
+    doDeleteService('', '')
+  }
+}
+</script>
+
+<template>
+  <UModal
+    v-model:open="open"
+    :title="readOnly ? 'Service Details (synced from Lime)' : 'Service Details'"
+    :ui="{ content: 'sm:max-w-lg' }"
+  >
+    <template #body>
+      <div v-if="loading" class="flex justify-center p-4">
+        <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
+      </div>
+
+      <template v-else>
+        <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
+          <label for="service_id" class="font-bold">Service ID</label>
+          <UInput id="service_id" v-model="service.service_id" disabled class="w-full" />
+
+          <label for="company" class="font-bold">Company</label>
+          <div>
+            <USelectMenu
+              id="company"
+              v-model="service.company"
+              :disabled="readOnly || !canWrite"
+              :items="customerOptions"
+              value-key="id"
+              label-key="name"
+              placeholder="Select a customer"
+              :color="submitted && !service.company ? 'error' : undefined"
+              :highlight="submitted && !service.company"
+              class="w-full"
+            />
+            <small v-if="submitted && !service.company" class="text-red-500"
+              >Company is required.</small
+            >
+          </div>
+
+          <label for="deliverypoint1" class="font-bold">Deliverypoint A</label>
+          <UInput
+            id="deliverypoint1"
+            v-model="service.deliverypoint1"
+            :disabled="readOnly || !canWrite"
+            class="w-full"
+          />
+
+          <label for="deliverypoint2" class="font-bold">Deliverypoint B</label>
+          <UInput
+            id="deliverypoint2"
+            v-model="service.deliverypoint2"
+            :disabled="readOnly || !canWrite"
+            class="w-full"
+          />
+
+          <label for="product" class="font-bold">Product</label>
+          <UInput
+            id="product"
+            v-model="service.product"
+            :disabled="readOnly || !canWrite"
+            class="w-full"
+          />
+
+          <label for="serviceField" class="font-bold">Service</label>
+          <UInput
+            id="serviceField"
+            v-model="service.service"
+            :disabled="readOnly || !canWrite"
+            class="w-full"
+          />
+
+          <label for="comment" class="font-bold self-start mt-2">Comment</label>
+          <UTextarea
+            id="comment"
+            v-model="service.comment"
+            :disabled="readOnly || !canWrite"
+            :rows="3"
+            class="w-full"
+          />
+
+          <template v-if="service.source">
+            <label for="source" class="font-bold">Source</label>
+            <UInput id="source" v-model="service.source" disabled class="w-full" />
+          </template>
+        </div>
+
+        <hr class="my-6" />
+        <div class="flex flex-col gap-4">
+          <h5 class="m-0">Service type</h5>
+
+          <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
+            <label for="service_type" class="font-bold">Type</label>
+            <USelectMenu
+              id="service_type"
+              v-model="service.service_type"
+              :disabled="!canWrite"
+              :items="serviceTypeOptions"
+              value-key="value"
+              label-key="label"
+              placeholder="Not set"
+              class="w-full"
+            />
+
+            <label for="bandwidth_mbps" class="font-bold">Bandwidth (Mbps)</label>
+            <UInputNumber
+              id="bandwidth_mbps"
+              v-model="service.bandwidth_mbps"
+              :disabled="!canWrite"
+              :min="0"
+              class="w-full"
+            />
+
+            <template v-if="service.service_type === 'ELAN'">
+              <label for="max_mac_addresses" class="font-bold">Max MAC addresses</label>
+              <UInputNumber
+                id="max_mac_addresses"
+                v-model="service.max_mac_addresses"
+                :disabled="!canWrite"
+                :min="0"
+                class="w-full"
+              />
+            </template>
+          </div>
+        </div>
+
+        <template v-if="service.service_type === 'ELINE'">
+          <hr class="my-6" />
+          <div class="flex flex-col gap-4">
+            <h5 class="m-0">ELINE endpoints</h5>
+
+            <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
+              <label class="font-bold">Endpoint A</label>
+              <div class="flex items-center gap-2">
+                <UInput
+                  :model-value="endpointALabel"
+                  disabled
+                  placeholder="Not selected"
+                  class="w-full"
+                />
+                <UButton
+                  icon="i-lucide-list-tree"
+                  variant="outline"
+                  color="neutral"
+                  :disabled="!canWrite"
+                  @click="openPicker('a')"
+                />
+              </div>
+
+              <label class="font-bold">VLAN A</label>
+              <UInputNumber
+                v-model="service.endpoint_a_vlan"
+                :disabled="!canWrite"
+                :min="1"
+                :max="4094"
+                class="w-full"
+              />
+
+              <label class="font-bold">Endpoint B</label>
+              <div class="flex items-center gap-2">
+                <UInput
+                  :model-value="endpointBLabel"
+                  disabled
+                  placeholder="Not selected"
+                  class="w-full"
+                />
+                <UButton
+                  icon="i-lucide-list-tree"
+                  variant="outline"
+                  color="neutral"
+                  :disabled="!canWrite"
+                  @click="openPicker('b')"
+                />
+              </div>
+
+              <label class="font-bold">VLAN B</label>
+              <UInputNumber
+                v-model="service.endpoint_b_vlan"
+                :disabled="!canWrite"
+                :min="1"
+                :max="4094"
+                class="w-full"
+              />
+
+              <template v-if="service.pseudowire_id">
+                <label class="font-bold">Pseudowire ID</label>
+                <UInput :model-value="service.pseudowire_id" disabled class="w-full" />
+              </template>
+            </div>
+
+            <small v-if="elineSubmitted && elineEndpointsSame" class="text-red-500">
+              Endpoint A and endpoint B must not be the same device/interface.
+            </small>
+            <small v-else-if="elineSubmitted && !elineEndpointsValid" class="text-red-500">
+              Select both endpoints and enter both VLANs before provisioning.
+            </small>
+
+            <div class="flex justify-end gap-2">
+              <UButton
+                label="Save, provision & push"
+                icon="i-lucide-cloud-upload"
+                :loading="elineSaving || elinePushing"
+                :disabled="!canWrite"
+                @click="saveAndPushEline"
+              />
+            </div>
+
+            <div v-if="elinePushResults.length" class="flex flex-col gap-1">
+              <div
+                v-for="result in elinePushResults"
+                :key="result.device"
+                class="flex items-center gap-2 text-sm"
+              >
+                <UBadge
+                  :label="result.error ? 'Failed' : 'OK'"
+                  :color="result.error ? 'error' : 'success'"
+                  variant="subtle"
+                />
+                <span class="font-medium">{{ result.device }}</span>
+                <span v-if="result.error" class="text-red-500">{{ result.error }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-if="authStore.opticalEnabled && opticalCat">
+          <hr class="my-6" />
+          <div class="flex flex-col gap-3">
+            <h5 class="m-0">Optical / fiber path</h5>
+            <div v-if="path" class="text-sm">
+              Status: {{ path.status }} · {{ path.hops?.length || 0 }} hops
+              <ul class="mt-2">
+                <li v-for="h in path.hops ?? []" :key="h.seq">
+                  {{ h.seq }}. {{ h.kind }} — {{ h.label }}
+                </li>
+              </ul>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                label="Pick A"
+                variant="outline"
+                :disabled="!canWrite"
+                @click="pathPicker = 'a'"
+              />
+              <span>{{ pathA || 'A not set' }}</span>
+              <UButton
+                label="Pick Z"
+                variant="outline"
+                :disabled="!canWrite"
+                @click="pathPicker = 'z'"
+              />
+              <span>{{ pathZ || 'Z not set' }}</span>
+              <UButton
+                label="Trace & attach"
+                :disabled="!canWrite || !pathA || !pathZ"
+                @click="attachPath"
+              />
+            </div>
+          </div>
+        </template>
+      </template>
+    </template>
+
+    <template #footer>
+      <div class="flex w-full justify-between">
+        <UButton
+          v-if="service.source === 'factum' && canWrite"
+          label="Delete"
+          icon="i-lucide-trash-2"
+          variant="outline"
+          color="error"
+          @click="confirmDelete(service)"
+        />
+        <div class="flex gap-2 ms-auto">
+          <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
+          <UButton
+            v-if="canWrite"
+            label="Save"
+            icon="i-lucide-check"
+            :loading="saving"
+            :disabled="loading"
+            @click="saveService"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
+
+  <DeviceInterfacePicker v-model:open="pickerOpen" @select="onPickerSelect" />
+  <DeviceInterfacePicker
+    :open="!!pathPicker"
+    :mode="pathMode"
+    @update:open="
+      (v) => {
+        if (!v) pathPicker = null
+      }
+    "
+    @select="onPathPick"
+  />
+
+  <UModal
+    v-model:open="credentialsDialog"
+    title="Device credentials"
+    :ui="{ content: 'sm:max-w-sm' }"
+    @update:open="(isOpen) => !isOpen && cancelCredentials()"
+  >
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <label for="eline-prompt-username" class="text-sm text-muted-color">Username</label>
+          <UInput
+            id="eline-prompt-username"
+            v-model="promptUsername"
+            autocomplete="off"
+            autofocus
+            class="w-full"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="eline-prompt-password" class="text-sm text-muted-color">Password</label>
+          <PasswordInput
+            id="eline-prompt-password"
+            v-model="promptPassword"
+            autocomplete="new-password"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+      </div>
+    </template>
+
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
+      <UButton
+        label="Continue"
+        icon="i-lucide-check"
+        :disabled="!promptUsername || !promptPassword"
+        @click="submitCredentials"
+      />
+    </template>
+  </UModal>
+
+  <UModal v-model:open="deleteDialog" title="Delete service" :ui="{ content: 'sm:max-w-md' }">
+    <template #body>
+      <p>
+        Are you sure you want to delete service
+        <strong>{{ deleteTarget?.service_id }}</strong
+        >? This cannot be undone.
+      </p>
+
+      <div
+        v-if="
+          deleteTarget?.service_type === 'ELINE' &&
+          (deleteTarget?.l2vpn_netbox_id || deleteTarget?.applied_to_device)
+        "
+        class="flex flex-col gap-2 mt-4"
+      >
+        <UCheckbox
+          v-if="deleteTarget?.l2vpn_netbox_id"
+          v-model="deleteRemoveNetbox"
+          label="Also remove the L2VPN, subinterfaces and terminations from NetBox"
+        />
+        <UCheckbox
+          v-if="deleteTarget?.applied_to_device"
+          v-model="deleteRemoveDevice"
+          label="Also remove the pseudowire/patch config from the endpoint device(s)"
+        />
+      </div>
+    </template>
+
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDeleteDialog" />
+      <UButton
+        label="Delete"
+        icon="i-lucide-trash-2"
+        color="error"
+        :loading="deleting"
+        @click="deleteServiceConfirmed"
+      />
+    </template>
+  </UModal>
+</template>

@@ -1,0 +1,35 @@
+# Seed data for the openldap container in testdata/itest/docker-compose.yml,
+# loaded once by osixia/openldap on first boot (a fresh volume - `make
+# itest-down` removes it, so edits here take effect on the next `itest-up`).
+#
+# One user + one group, enough to exercise internal/ldapauth's search+bind
+# flow (Authenticate, LookupByEmail) against a real server - see
+# web/ldap_integration_test.go.
+#
+# NOTE: with LDAP_REMOVE_CONFIG_AFTER_SETUP=false (set in docker-compose.yml)
+# the container leaves this file alone. Without it, first-boot cleanup
+# deletes it from this bind-mounted host directory - it doesn't come back on
+# a plain `docker compose down`, only by re-adding it here.
+
+dn: ou=people,dc=factum,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=factum,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=testuser,ou=people,dc=factum,dc=test
+objectClass: inetOrgPerson
+uid: testuser
+cn: Test User
+sn: User
+displayName: Test User
+mail: testuser@factum.test
+mobile: +46701234567
+userPassword: testpass123
+
+dn: cn=admins,ou=groups,dc=factum,dc=test
+objectClass: groupOfNames
+cn: admins
+member: uid=testuser,ou=people,dc=factum,dc=test

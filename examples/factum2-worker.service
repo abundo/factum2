@@ -1,0 +1,25 @@
+
+# factum-worker.service, start factum background worker
+#
+# Runs "factum-worker start", which listens on worker.listen for the
+# primary to dial in over the hub transport (WebSocket) and dispatch
+# predefined commands from worker.commands, streaming their stdout/stderr
+# back to the primary. See DEV.md's "Installing a worker node".
+
+[Unit]
+Description=Factum background worker
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/factum2
+ExecStart=/opt/factum2/factum-worker -f /etc/factum2/factum2-worker.yaml start
+TimeoutStopSec=10s
+
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=60
+
+[Install]
+WantedBy=multi-user.target

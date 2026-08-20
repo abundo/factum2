@@ -1,0 +1,24 @@
+---
+# jwtsecret and token can be generated with
+# openssl rand -base64 48
+factum:
+    url: https://factum.example.com
+    token: <change-me>
+
+# postgresql database
+db:
+    host: 127.0.0.1
+    port: 5432
+    user: factum2_user
+    pass: <change-me>
+    database: factum2
+
+web:
+    enabled: true
+    bind: 127.0.0.1:8091
+    jwtsecret: <change-me>
+
+# optional, used to change passwords in LDAP server
+ldap_writeback:
+    bind_dn: CN=password-ssp,OU=People,DC=example,DC=com
+    bind_password: <change-me>
