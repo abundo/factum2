@@ -207,3 +207,7 @@ Integration fields (`becs_oid`, `librenms_id`, `optical_role`) are
 only created when that source/destination is enabled. The webhook
 secret is write-only in NetBox, so the check only confirms factum has one
 configured. Exits non-zero if anything required cannot be fixed.
+
+## License
+
+[AGPL-3.0-or-later](LICENSE). Copyright (c) 2026 Anders Löwinger.
