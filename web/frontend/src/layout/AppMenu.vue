@@ -34,7 +34,7 @@ const items = computed(() => {
       ],
       [
         { type: 'label', label: 'Integrations' },
-        { label: 'Sync overview', icon: 'i-lucide-refresh-cw', to: '/sync/overview' },
+        { label: 'Job overview', icon: 'i-lucide-refresh-cw', to: '/sync/overview' },
         { label: 'Job status', icon: 'i-lucide-list-checks', to: '/sync/status' },
       ],
     )

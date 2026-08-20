@@ -177,7 +177,7 @@ database-backed settings from the primary over REST, authenticated with
   the primary itself, not a human or a scheduler on the worker/target host -
   `factum-dns`/`factum-icinga`/`factum-librenms-cli`/`factum-oxidized` are
   never invoked by their own local cron, only ever dispatched by the primary
-  over the hub. The Sync overview page
+  over the hub. The Job overview page
   (`web/frontend/src/views/sync/SyncOverviewPage.vue`) exposes the same path
   manually, with one button per `worker.SyncTargets` entry; clicking one
   calls `POST /api/sync/:target`
@@ -216,7 +216,7 @@ database-backed settings from the primary over REST, authenticated with
   handles the target - the `Job`/`JobTask` rows are still created and
   immediately marked failed either way, so they show up in job history
   rather than just vanishing.
-- **Which worker nodes are up**: the Sync overview page's "Troubleshooting"
+- **Which worker nodes are up**: the Job overview page's "Troubleshooting"
   section links to `/sync/status` (`JobStatusPage.vue`), which reads
   `GET /api/worker/status` (`web.ApiWorkerStatus`, `web/handle_worker.go`) -
   a plain merge of the DB's configured `models.WorkerNode` rows with

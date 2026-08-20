@@ -84,7 +84,7 @@ const router = createRouter({
         {
           path: '/sync/overview',
           name: 'sync-overview',
-          meta: { title: 'Sync overview', requiresRead: true },
+          meta: { title: 'Job overview', requiresRead: true },
           component: () => import('@/views/sync/SyncOverviewPage.vue'),
         },
         {

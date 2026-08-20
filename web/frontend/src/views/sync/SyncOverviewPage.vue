@@ -233,7 +233,7 @@ onUnmounted(() => {
 <template>
   <div class="card">
     <div class="flex items-center justify-between gap-4 mb-4">
-      <div class="font-semibold text-xl">Sync overview</div>
+      <div class="font-semibold text-xl">Job overview</div>
       <UButton
         v-if="authStore.canWrite"
         label="Sync all"
