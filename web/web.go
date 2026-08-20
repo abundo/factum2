@@ -9,6 +9,7 @@ import (
 	"os"
 
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/jobscheduler"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/internal/worker"
 	"github.com/abundo/factum2/models"
@@ -107,6 +108,15 @@ func GUI(p *GuiParams) error {
 	remoteManager := worker.NewRemoteManager(DB)
 	go remoteManager.Run(context.Background())
 
+	// scheduler fires user-defined JobSchedule rows through the same
+	// StartJob path as the Job overview page - one goroutine for the
+	// process lifetime, same as RemoteManager above.
+	scheduler := jobscheduler.New(DB, func(jobType, triggeredBy string, targets []string) error {
+		_, _, err := remoteManager.StartJob(jobType, triggeredBy, targets)
+		return err
+	})
+	go scheduler.Run(context.Background())
+
 	ctrl := Controller{DB: DB, LogHub: logHub, RemoteManager: remoteManager}
 
 	// -----------------------------------------------------------------
@@ -176,6 +186,11 @@ func GUI(p *GuiParams) error {
 	api.GET("/jobs", ctrl.ApiJobs, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/jobs/:id/tasks/:taskid/events", ctrl.ApiJobTaskEvents, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/worker/status", ctrl.ApiWorkerStatus, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/schedules", ctrl.ApiScheduleList, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/schedules/:id", ctrl.ApiScheduleGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/schedules", ctrl.ApiScheduleCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/schedules/:id", ctrl.ApiScheduleUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/schedules/:id", ctrl.ApiScheduleDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	// ----- API: per-service (and common) config for CLI tools that
 	// typically run on a different host than the primary

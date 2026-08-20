@@ -237,6 +237,40 @@ type JobTaskEvent struct {
 	At        time.Time `json:"at"`
 }
 
+// JobSchedule is one user-defined periodic trigger for a sync job, the
+// in-app replacement for a crontab entry on the primary. Target is either
+// one worker.SyncTargets name (a single-target StartJob, same as clicking
+// one tile on Job overview) or the sentinel "all" (SequencedSyncAllTargets
+// + StartJob, same as "Sync all"). Cron is a 5-field expression evaluated
+// in Europe/Stockholm; NextRunAt is computed at create/update and advanced
+// by the scheduler when a run is claimed so a restart only ever catch-up
+// fires once, not once per missed tick.
+type JobSchedule struct {
+	FactumModel
+	Name    string `gorm:"not null" json:"name"`
+	Enabled bool   `json:"enabled"`
+	Target  string `gorm:"not null;index" json:"target"`
+	Cron    string `gorm:"not null" json:"cron"`
+	// LastRunAt is when the scheduler last claimed a due run - it is
+	// stamped even if StartJob then fails (LastError), so a busy target
+	// doesn't get retried every tick.
+	LastRunAt *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt *time.Time `gorm:"index" json:"next_run_at,omitempty"`
+	LastError string     `json:"last_error,omitempty"`
+	CreatedBy string     `json:"created_by"`
+}
+
+// JobScheduleDTO is the writable subset of JobSchedule - LastRunAt/
+// NextRunAt/LastError/CreatedBy are server-owned, same reason LinkDTO
+// omits Position from ordinary edits.
+type JobScheduleDTO struct {
+	ID      uint   `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Target  string `json:"target"`
+	Cron    string `json:"cron"`
+}
+
 // Settings is stored in database as a single row (id=1)
 type Settings struct {
 	FactumModel

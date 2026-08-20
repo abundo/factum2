@@ -94,6 +94,12 @@ const router = createRouter({
           component: () => import('@/views/sync/JobStatusPage.vue'),
         },
         {
+          path: '/sync/schedules',
+          name: 'sync-schedules',
+          meta: { title: 'Scheduler', requiresRead: true },
+          component: () => import('@/views/sync/JobSchedulerPage.vue'),
+        },
+        {
           path: '/report',
           name: 'reports',
           meta: { title: 'Reports' },

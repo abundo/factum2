@@ -4,8 +4,6 @@ github.com/Azure/go-ntlmssp v0.1.1 h1:l+FM/EEMb0U9QZE7mKNEDw5Mu3mFiaa2GKOoTSsNDP
 github.com/Azure/go-ntlmssp v0.1.1/go.mod h1:NYqdhxd/8aAct/s4qSYZEerdPuH1liG2/X9DiVTbhpk=
 github.com/GiGurra/boa v1.0.28 h1:zKmT7I8n/SKRSKt/GTeT62iCqpEEq91erNHINR0oHT0=
 github.com/GiGurra/boa v1.0.28/go.mod h1:surNBGhsyV1UugARWs4zBJ+JFLS1ASQbCuL2LXCwQLE=
-github.com/abundo/limetool v1.0.0 h1:Z8khCInwiKeB2qt9iZw7EYu/+5G9H6NKTb3AucC8e4w=
-github.com/abundo/limetool v1.0.0/go.mod h1:ZsDXHR+7UjZahj7j/0ygf7z7+W+sNVdRcgssNmvwH8o=
 github.com/abundo/netboxtool v1.1.0 h1:Hfe47a1/+Ot7j8zhSqdDiX06+dpWN0m7vAsWggjyEEg=
 github.com/abundo/netboxtool v1.1.0/go.mod h1:tR9Q8oUHDJZFjeHBTIIHDjSk2p0KV0ZNhiLeX1WOZuY=
 github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e h1:4dAU9FXIyQktpoUAgOJK3OTFc/xug0PCXYCqU0FgDKI=
@@ -84,6 +82,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
+github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=

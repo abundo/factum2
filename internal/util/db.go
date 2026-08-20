@@ -114,6 +114,7 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.Job{},
 		&models.JobTask{},
 		&models.JobTaskEvent{},
+		&models.JobSchedule{},
 	)
 	if err != nil {
 		return err
