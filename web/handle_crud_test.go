@@ -139,11 +139,11 @@ func TestSecureCRUDHandler_CreateIgnoresClientSuppliedID(t *testing.T) {
 // must be the only thing that decides which row's key it is.
 // TestSecureCRUDHandler_ContactCreateIgnoresSyncManagedFields guards
 // ContactDTO's exclusion of Source/SourceID: those fields are populated by
-// the Lime sync job (internal/lime/lime.go), not something a caller
-// creating a contact through the API should be able to fake. The request
-// body is built from a raw map, not models.ContactDTO, since the whole
-// point is to simulate a client sending fields the DTO struct doesn't even
-// have a place for.
+// the Lime person-sync (internal/lime/lime.go), not something a caller
+// creating a contact through the API should be able to fake. BeforeCreate
+// then defaults Source to "factum". The request body is built from a raw
+// map, not models.ContactDTO, since the whole point is to simulate a
+// client sending fields the DTO struct doesn't even have a place for.
 func TestSecureCRUDHandler_ContactCreateIgnoresSyncManagedFields(t *testing.T) {
 	db := newTestDB(t)
 	handler := NewSecureCRUDHandler[models.Contact, models.ContactDTO](db)
@@ -164,8 +164,8 @@ func TestSecureCRUDHandler_ContactCreateIgnoresSyncManagedFields(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if created.Source != "" || created.SourceID != "" {
-		t.Errorf("Create honored client-supplied sync fields: source=%q source_id=%q, want both empty", created.Source, created.SourceID)
+	if created.Source != "factum" || created.SourceID != "" {
+		t.Errorf("Create honored client-supplied sync fields or failed to default source: source=%q source_id=%q, want source=%q source_id empty", created.Source, created.SourceID, "factum")
 	}
 }
 

@@ -32,6 +32,13 @@ func (ctrl *Controller) ApiContactCustomersPut(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
+	var existing models.Contact
+	if err := ctrl.DB.First(&existing, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if existing.Source == "lime" {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "contacts synced from Lime cannot be edited"})
+	}
 	var body struct {
 		CustomerIDs []uint `json:"customer_ids"`
 	}

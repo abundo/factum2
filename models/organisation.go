@@ -92,14 +92,32 @@ type Contact struct {
 	SourceID          string `json:"source_id"`
 }
 
-// ContactDTO is the create/update request shape for the contact API.
-// Source/SourceID are deliberately excluded: they're populated by the Lime
-// sync job (internal/lime/lime.go), not something a caller creating or
-// editing a contact through the web UI should be able to set - excluding
-// them from the DTO means Update leaves a synced contact's Source/SourceID
-// untouched (the JSON merge only overwrites fields present in the body),
-// and Create leaves them at their zero value for a manually-created
-// contact.
+// BeforeCreate defaults a contact's Source to "factum" when nothing set it
+// already. The Lime person-sync (internal/lime/lime.go) always sets Source
+// to "lime" itself before saving, so this only ever fires for contacts
+// created through the web API - ContactDTO has no Source field for a
+// caller to set, so without this default every manually-created contact
+// would be indistinguishable (Source == "") from one whose sync origin
+// just hasn't been recorded yet, instead of clearly marked as user-created.
+func (c *Contact) BeforeCreate(tx *gorm.DB) error {
+	if c.Source == "" {
+		c.Source = "factum"
+	}
+	return nil
+}
+
+// ContactDTO is the create/update request shape for the contact API,
+// mirroring the fields the frontend's contact form actually edits
+// (web/frontend/src/views/contact/ContactList.vue). Source/SourceID are
+// deliberately excluded: they're populated by the Lime person-sync
+// (internal/lime/lime.go), not something a caller creating or editing a
+// contact through the web UI should be able to set - excluding them from
+// the DTO means Update leaves a synced contact's Source/SourceID untouched
+// (the JSON merge only overwrites fields present in the body), and Create
+// leaves them at their zero value so BeforeCreate can default Source to
+// "factum" for a manually-created contact. Name/email/phone on a Lime
+// row are also ignored by ApiContactUpdate; only NotifyMaintenance is
+// applied, since the next sync would otherwise discard those edits.
 type ContactDTO struct {
 	ID                uint   `json:"id"`
 	Name              string `json:"name"`

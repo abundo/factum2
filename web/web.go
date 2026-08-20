@@ -150,10 +150,11 @@ func GUI(p *GuiParams) error {
 
 	// ----- API contacts -----
 	contacts_ := NewSecureCRUDHandler[models.Contact, models.ContactDTO](DB)
-	api.GET("/contact", contacts_.GetAll, ctrl.RequireAPIAuth, ctrl.RequireRead)
-	api.GET("/contact/:id", contacts_.GetOne, ctrl.RequireAPIAuth, ctrl.RequireRead)
-	api.PUT("/contact/:id", contacts_.Update, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.GET("/contact/:id", ctrl.ApiContactByID, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/contact", ctrl.ApiContact, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.PUT("/contact/:id", ctrl.ApiContactUpdate(contacts_), ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/contact", contacts_.Create, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/contact/:id", ctrl.ApiContactDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	// ----- API Services -----
 	services_ := NewSecureCRUDHandler[models.Service, models.ServiceDTO](DB)
