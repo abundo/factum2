@@ -21,7 +21,7 @@ function toWbNode(n) {
     lazy: !!n.lazy,
     expanded: !!n.expanded,
     type: n.type,
-    ...(n.data ?? {}),
+    ...n.data,
   }
   if (Array.isArray(n.children) && n.children.length) {
     node.children = n.children.map(toWbNode)
@@ -36,7 +36,7 @@ function selectedPayload(node) {
   return {
     key: node.key,
     title: node.title,
-    ...(node.data ?? {}),
+    ...node.data,
   }
 }
 
@@ -119,7 +119,7 @@ function buildTree(source) {
     // Built-in chevrons need Bootstrap Icons (not loaded). Use [+]/[−]
     // markup so expanders look like a classic tree control.
     iconMap: {
-      ...(Wunderbaum.iconMaps?.bootstrap ?? {}),
+      ...Wunderbaum.iconMaps?.bootstrap,
       expanderExpanded: '<i class="wb-expander">−</i>',
       expanderCollapsed: '<i class="wb-expander">+</i>',
       expanderLazy: '<i class="wb-expander">+</i>',

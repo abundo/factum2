@@ -161,7 +161,7 @@ function setState(ifaceId, vid, state) {
   // Replace row + matrix root so Vue always sees a new reference for the
   // cell that just changed (nested in-place mutation is easy to miss in
   // the matrix re-render path).
-  const row = { ...(matrix.value[ifaceId] ?? {}), [vid]: state }
+  const row = { ...matrix.value[ifaceId], [vid]: state }
   matrix.value = { ...matrix.value, [ifaceId]: row }
 }
 
