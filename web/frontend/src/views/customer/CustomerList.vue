@@ -188,8 +188,8 @@ onMounted(loadCustomers)
 </script>
 
 <template>
-  <div class="card">
-    <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-2">
         <h4 class="m-0">Customers</h4>
         <UButton
@@ -212,7 +212,8 @@ onMounted(loadCustomers)
       :loading="loading"
       :empty="error ?? 'No customers found.'"
       :virtualize="{ estimateSize: 46 }"
-      class="max-h-[calc(100vh-320px)]"
+      sticky
+      class="min-h-0 flex-1"
     >
       <template #name-header="{ column }">
         <SortableColumnHeader :column="column" label="Name" />
