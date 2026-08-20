@@ -3,6 +3,8 @@ package web
 import (
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
@@ -10,13 +12,78 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// Fetch all contacts
+// contactListItem is GET /contact's row shape: the contact plus the
+// comma-separated names of customers (companies) it is linked to via
+// CustomerContact. The list UI shows that as a Company column; the join
+// is many-to-many so a contact can name more than one.
+type contactListItem struct {
+	models.Contact
+	Company string `json:"company"`
+}
+
+// Fetch all contacts, with related company names attached for the list view.
 func (ctrl *Controller) ApiContact(c *echo.Context) error {
 	items, err := gorm.G[models.Contact](ctrl.DB).Order("name").Find(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"message": err.Error()})
 	}
-	return c.JSON(http.StatusOK, items)
+	names, err := ctrl.contactCompanyNames()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	out := make([]contactListItem, len(items))
+	for i, item := range items {
+		out[i] = contactListItem{Contact: item, Company: names[item.ID]}
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// contactCompanyNames maps contact ID -> sorted, comma-separated customer
+// names. Missing/deleted customers are skipped so a stale join row does
+// not produce a blank name in the list.
+func (ctrl *Controller) contactCompanyNames() (map[uint]string, error) {
+	var links []models.CustomerContact
+	if err := ctrl.DB.Find(&links).Error; err != nil {
+		return nil, err
+	}
+	if len(links) == 0 {
+		return map[uint]string{}, nil
+	}
+
+	seen := make(map[uint]struct{}, len(links))
+	ids := make([]uint, 0, len(links))
+	for _, l := range links {
+		if _, ok := seen[l.CustomerID]; ok {
+			continue
+		}
+		seen[l.CustomerID] = struct{}{}
+		ids = append(ids, l.CustomerID)
+	}
+
+	var customers []models.Customer
+	if err := ctrl.DB.Where("id IN ?", ids).Find(&customers).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[uint]string, len(customers))
+	for _, cust := range customers {
+		byID[cust.ID] = cust.Name
+	}
+
+	perContact := make(map[uint][]string, len(links))
+	for _, l := range links {
+		name := byID[l.CustomerID]
+		if name == "" {
+			continue
+		}
+		perContact[l.ContactID] = append(perContact[l.ContactID], name)
+	}
+
+	out := make(map[uint]string, len(perContact))
+	for id, names := range perContact {
+		sort.Strings(names)
+		out[id] = strings.Join(names, ", ")
+	}
+	return out, nil
 }
 
 func (ctrl *Controller) ApiContactByID(c *echo.Context) error {

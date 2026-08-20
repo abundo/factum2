@@ -29,6 +29,7 @@ const sorting = ref([{ id: 'name', desc: false }])
 const columns = [
   { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'company', header: 'Company' },
   { accessorKey: 'email', header: 'Email' },
   { accessorKey: 'phone', header: 'Phone' },
   { id: 'notify', header: 'Notify' },
@@ -222,6 +223,12 @@ onMounted(loadContacts)
     >
       <template #name-header="{ column }">
         <SortableColumnHeader :column="column" label="Name" />
+      </template>
+      <template #company-header="{ column }">
+        <SortableColumnHeader :column="column" label="Company" />
+      </template>
+      <template #company-cell="{ row }">
+        {{ row.original.company || '—' }}
       </template>
       <template #email-header="{ column }">
         <SortableColumnHeader :column="column" label="Email" />

@@ -12,6 +12,72 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestApiContact_IncludesRelatedCompanyNames(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	alpha := models.Customer{Name: "Alpha Corp"}
+	zeta := models.Customer{Name: "Zeta Ltd"}
+	if err := db.Create(&alpha).Error; err != nil {
+		t.Fatalf("seed alpha: %v", err)
+	}
+	if err := db.Create(&zeta).Error; err != nil {
+		t.Fatalf("seed zeta: %v", err)
+	}
+
+	linked := models.Contact{Name: "Has one company"}
+	multi := models.Contact{Name: "Has two companies"}
+	unlinked := models.Contact{Name: "Has no company"}
+	if err := db.Create(&linked).Error; err != nil {
+		t.Fatalf("seed linked: %v", err)
+	}
+	if err := db.Create(&multi).Error; err != nil {
+		t.Fatalf("seed multi: %v", err)
+	}
+	if err := db.Create(&unlinked).Error; err != nil {
+		t.Fatalf("seed unlinked: %v", err)
+	}
+	if err := db.Create(&models.CustomerContact{CustomerID: zeta.ID, ContactID: linked.ID}).Error; err != nil {
+		t.Fatalf("seed linked join: %v", err)
+	}
+	if err := db.Create(&models.CustomerContact{CustomerID: zeta.ID, ContactID: multi.ID}).Error; err != nil {
+		t.Fatalf("seed multi join zeta: %v", err)
+	}
+	if err := db.Create(&models.CustomerContact{CustomerID: alpha.ID, ContactID: multi.ID}).Error; err != nil {
+		t.Fatalf("seed multi join alpha: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/contact", nil, nil, nil)
+	if err := ctrl.ApiContact(c); err != nil {
+		t.Fatalf("ApiContact: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var items []struct {
+		ID      uint   `json:"id"`
+		Name    string `json:"name"`
+		Company string `json:"company"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := make(map[uint]string, len(items))
+	for _, item := range items {
+		got[item.ID] = item.Company
+	}
+	if got[linked.ID] != "Zeta Ltd" {
+		t.Errorf("linked company = %q, want %q", got[linked.ID], "Zeta Ltd")
+	}
+	if got[multi.ID] != "Alpha Corp, Zeta Ltd" {
+		t.Errorf("multi company = %q, want sorted comma-separated names", got[multi.ID])
+	}
+	if got[unlinked.ID] != "" {
+		t.Errorf("unlinked company = %q, want empty", got[unlinked.ID])
+	}
+}
+
 func TestContact_BeforeCreate_DefaultsSourceToFactum(t *testing.T) {
 	db := newTestDB(t)
 
