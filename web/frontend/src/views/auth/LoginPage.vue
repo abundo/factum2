@@ -48,7 +48,7 @@ function submit() {
       @click="toggleDarkMode"
     />
   </div>
-  <div class="flex min-h-screen min-w-[100vw] items-center justify-center overflow-hidden bg-muted">
+  <div class="flex min-h-screen min-w-screen items-center justify-center overflow-hidden bg-muted">
     <div class="flex flex-col items-center justify-center">
       <div class="w-full rounded-2xl border border-default bg-default px-8 py-20 sm:px-20">
         <div class="mb-8 text-center">
@@ -63,7 +63,7 @@ function submit() {
             v-model="username"
             type="text"
             placeholder="Username"
-            class="mb-8 w-full md:w-[30rem]"
+            class="mb-8 w-full md:w-120"
             autofocus
           />
 
