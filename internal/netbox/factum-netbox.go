@@ -362,6 +362,218 @@ func slugify(s string) string {
 	return s
 }
 
+// uniqueTenantSlug returns base if it is free, otherwise base-<disambiguator>
+// (and -2, -3, ... if that is taken too). Netbox slugs are unique and cap
+// at 100 characters; two customers whose names slugify the same way (e.g.
+// "Acme AB" and "Acme-AB") would otherwise collide on create.
+func uniqueTenantSlug(base, disambiguator string, taken map[string]*netboxtool.NBTenant) string {
+	if _, ok := taken[base]; !ok {
+		return base
+	}
+	for i := 0; ; i++ {
+		var suffix string
+		if i == 0 {
+			suffix = "-" + disambiguator
+		} else {
+			suffix = fmt.Sprintf("-%s-%d", disambiguator, i+1)
+		}
+		stem := base
+		if len(stem)+len(suffix) > 100 {
+			keep := 100 - len(suffix)
+			if keep < 1 {
+				keep = 1
+			}
+			stem = strings.Trim(stem[:keep], "-")
+		}
+		candidate := stem + suffix
+		if len(candidate) > 100 {
+			candidate = strings.Trim(candidate[:100], "-")
+		}
+		if _, ok := taken[candidate]; !ok {
+			return candidate
+		}
+	}
+}
+
+// tenantAPI is the Netbox surface customer→tenant sync needs, narrowed so
+// tests can substitute a fake without a live Netbox. *netboxtool.NetboxClient
+// implements it.
+type tenantAPI interface {
+	GetTenants() ([]*netboxtool.NBTenant, error)
+	GetTenant(source, sourceID string) (*netboxtool.NBTenant, error)
+	CreateTenant(name, slug string, changes map[string]any) (*netboxtool.NetboxTenantREST, error)
+	UpdateTenant(tenantID uint, changes map[string]any) error
+}
+
+// tenantNameTakenError is a same-name Netbox tenant that already belongs to
+// a different live factum customer - creating another with that name would
+// violate tenancy_tenant_unique_name, and adopting it would steal the
+// tenant out from under the owner.
+type tenantNameTakenError struct {
+	Name    string
+	OwnerID string
+}
+
+func (e *tenantNameTakenError) Error() string {
+	return fmt.Sprintf("netbox tenant %q already claimed by factum customer id %s", e.Name, e.OwnerID)
+}
+
+func isTenantConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	var taken *tenantNameTakenError
+	if errors.As(err, &taken) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "tenancy_tenant_unique_name") ||
+		strings.Contains(s, "tenancy_tenant_unique_slug") ||
+		strings.Contains(s, "already exists")
+}
+
+type tenantSyncAction int
+
+const (
+	tenantUnchanged tenantSyncAction = iota
+	tenantCreated
+	tenantUpdated
+)
+
+// tenantIndex is the in-memory view of Netbox tenants for one sync run,
+// keyed so a customer can be matched by custom-field source_id first and
+// fall back to name (Netbox's unique constraint) without a second API
+// round-trip. liveIDs is the set of factum customer IDs in this run;
+// a tenant tagged for a source_id that is not in it is treated as orphaned
+// and can be adopted by name. nil liveIDs (FindOrCreateTenant) never
+// treats another factum source_id as orphaned.
+type tenantIndex struct {
+	bySourceID map[string]*netboxtool.NBTenant
+	byName     map[string]*netboxtool.NBTenant
+	bySlug     map[string]*netboxtool.NBTenant
+	liveIDs    map[string]struct{}
+}
+
+func newTenantIndex(tenants []*netboxtool.NBTenant, liveIDs map[string]struct{}) *tenantIndex {
+	idx := &tenantIndex{
+		bySourceID: make(map[string]*netboxtool.NBTenant, len(tenants)),
+		byName:     make(map[string]*netboxtool.NBTenant, len(tenants)),
+		bySlug:     make(map[string]*netboxtool.NBTenant, len(tenants)),
+		liveIDs:    liveIDs,
+	}
+	for _, t := range tenants {
+		idx.add(t)
+	}
+	return idx
+}
+
+func (idx *tenantIndex) add(t *netboxtool.NBTenant) {
+	if t.CfSource == "factum" && t.CfSourceID != "" {
+		idx.bySourceID[t.CfSourceID] = t
+	}
+	idx.byName[strings.ToLower(t.Name)] = t
+	if t.Slug != "" {
+		idx.bySlug[t.Slug] = t
+	}
+}
+
+func (idx *tenantIndex) claim(t *netboxtool.NBTenant, sourceID string) {
+	if t.CfSourceID != "" && t.CfSourceID != sourceID {
+		delete(idx.bySourceID, t.CfSourceID)
+	}
+	t.CfSource = "factum"
+	t.CfSourceID = sourceID
+	idx.bySourceID[sourceID] = t
+}
+
+func (idx *tenantIndex) rename(t *netboxtool.NBTenant, name string) {
+	oldKey := strings.ToLower(t.Name)
+	newKey := strings.ToLower(name)
+	if oldKey != newKey {
+		delete(idx.byName, oldKey)
+		idx.byName[newKey] = t
+	}
+	t.Name = name
+}
+
+// tenantClaimable reports whether an existing Netbox tenant can be tagged
+// as this factum customer. Unclaimed tenants (no factum source_id) and
+// tenants already tagged for this customer are claimable. A tenant tagged
+// for another live factum customer is not. When liveIDs is set, a tenant
+// tagged for a source_id that is no longer a factum customer is treated
+// as orphaned and claimable (customers re-imported with new IDs).
+func tenantClaimable(t *netboxtool.NBTenant, sourceID string, liveIDs map[string]struct{}) bool {
+	if t.CfSource != "factum" || t.CfSourceID == "" || t.CfSourceID == sourceID {
+		return true
+	}
+	if liveIDs == nil {
+		return false
+	}
+	_, live := liveIDs[t.CfSourceID]
+	return !live
+}
+
+func tenantCustomFields(sourceID string) map[string]any {
+	return map[string]any{
+		"source":    "factum",
+		"source_id": sourceID,
+	}
+}
+
+// ensureTenant creates or updates the Netbox tenant for customer against
+// idx, which is mutated so later customers in the same run see the claim.
+// Matching order: custom-field source_id, then case-insensitive name
+// (adopt if claimable), then create with a unique slug.
+func ensureTenant(nb tenantAPI, customer models.Customer, idx *tenantIndex) (*netboxtool.NBTenant, tenantSyncAction, error) {
+	sourceID := strconv.FormatUint(uint64(customer.ID), 10)
+	customFields := tenantCustomFields(sourceID)
+
+	if tenant, ok := idx.bySourceID[sourceID]; ok {
+		if tenant.Name == customer.Name {
+			return tenant, tenantUnchanged, nil
+		}
+		if err := nb.UpdateTenant(tenant.NetboxID, map[string]any{
+			"name":          customer.Name,
+			"custom_fields": customFields,
+		}); err != nil {
+			return nil, tenantUnchanged, err
+		}
+		idx.rename(tenant, customer.Name)
+		return tenant, tenantUpdated, nil
+	}
+
+	if tenant, ok := idx.byName[strings.ToLower(customer.Name)]; ok {
+		if !tenantClaimable(tenant, sourceID, idx.liveIDs) {
+			return nil, tenantUnchanged, &tenantNameTakenError{Name: customer.Name, OwnerID: tenant.CfSourceID}
+		}
+		if err := nb.UpdateTenant(tenant.NetboxID, map[string]any{
+			"name":          customer.Name,
+			"custom_fields": customFields,
+		}); err != nil {
+			return nil, tenantUnchanged, err
+		}
+		idx.claim(tenant, sourceID)
+		return tenant, tenantUpdated, nil
+	}
+
+	slug := uniqueTenantSlug(slugify(customer.Name), sourceID, idx.bySlug)
+	created, err := nb.CreateTenant(customer.Name, slug, map[string]any{
+		"custom_fields": customFields,
+	})
+	if err != nil {
+		return nil, tenantUnchanged, err
+	}
+	t := &netboxtool.NBTenant{
+		NetboxID:   created.ID,
+		Name:       created.Name,
+		Slug:       created.Slug,
+		CfSource:   "factum",
+		CfSourceID: sourceID,
+	}
+	idx.add(t)
+	return t, tenantCreated, nil
+}
+
 // syncCustomersToNetbox creates/updates a Netbox tenant for every factum
 // customer, matched to its tenant via the custom fields "source"="factum"
 // and "source_id"=<customer.ID> (customer.ID is factum's own autogenerated
@@ -369,10 +581,18 @@ func slugify(s string) string {
 // customer.SourceID instead, see internal/lime.SyncCustomers). Keying on
 // the factum ID rather than a source-specific one means every customer -
 // regardless of which upstream source it came from, or whether it only
-// exists in factum - syncs to Netbox the same way. Tenants are never
+// exists in factum - syncs to Netbox the same way.
+//
+// Tenants that already exist in Netbox under the same name but without
+// those custom fields (created by hand, or before this sync was enabled)
+// are adopted rather than POSTed - Netbox unique-constraints name and
+// slug, so creating a second tenant with the same name 400s and used to
+// abort the rest of the job. A name already claimed by a different live
+// factum customer is skipped with a warning so one collision cannot
+// block L2VPN import / the rest of the tenant list. Tenants are never
 // deleted here: a customer removed from factum leaves its tenant untouched
 // in Netbox.
-func syncCustomersToNetbox(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Reporter) error {
+func syncCustomersToNetbox(db *gorm.DB, nb tenantAPI, reporter jobevent.Reporter) error {
 	var customers []models.Customer
 	if err := db.Find(&customers).Error; err != nil {
 		return err
@@ -382,44 +602,32 @@ func syncCustomersToNetbox(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jo
 	if err != nil {
 		return err
 	}
-	bySourceID := make(map[string]*netboxtool.NBTenant, len(nb_tenants))
-	for _, t := range nb_tenants {
-		if t.CfSource == "factum" && t.CfSourceID != "" {
-			bySourceID[t.CfSourceID] = t
-		}
+	liveIDs := make(map[string]struct{}, len(customers))
+	for _, c := range customers {
+		liveIDs[strconv.FormatUint(uint64(c.ID), 10)] = struct{}{}
 	}
+	idx := newTenantIndex(nb_tenants, liveIDs)
 
-	var count_new, count_updated int
+	var count_new, count_updated, count_skipped int
 	for _, customer := range customers {
-		sourceID := strconv.FormatUint(uint64(customer.ID), 10)
-		customFields := map[string]any{
-			"source":    "factum",
-			"source_id": sourceID,
-		}
-
-		if tenant, ok := bySourceID[sourceID]; ok {
-			if tenant.Name == customer.Name {
+		_, action, err := ensureTenant(nb, customer, idx)
+		if err != nil {
+			if isTenantConflict(err) {
+				reporter.Emit(jobevent.Warning, "Netbox tenant sync: skipping customer %q (id=%d): %v", customer.Name, customer.ID, err)
+				count_skipped++
 				continue
 			}
-			if err := nb.UpdateTenant(tenant.NetboxID, map[string]any{
-				"name":          customer.Name,
-				"custom_fields": customFields,
-			}); err != nil {
-				return err
-			}
-			count_updated++
-			continue
-		}
-
-		if _, err := nb.CreateTenant(customer.Name, slugify(customer.Name), map[string]any{
-			"custom_fields": customFields,
-		}); err != nil {
 			return err
 		}
-		count_new++
+		switch action {
+		case tenantCreated:
+			count_new++
+		case tenantUpdated:
+			count_updated++
+		}
 	}
 
-	reporter.Emit(jobevent.Info, "Netbox tenant sync: %d new, %d updated", count_new, count_updated)
+	reporter.Emit(jobevent.Info, "Netbox tenant sync: %d new, %d updated, %d skipped", count_new, count_updated, count_skipped)
 	return nil
 }
 
@@ -434,8 +642,14 @@ func syncCustomersToNetbox(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jo
 // This runs synchronously in a user-facing request, so it looks the tenant
 // up via nb.GetTenant's filtered REST call rather than nb.GetTenants' full
 // tenant-table fetch - the latter used to mean every service update paid
-// for pulling every Netbox tenant just to find one.
+// for pulling every Netbox tenant just to find one. GetTenants is only
+// consulted on a miss, to adopt an existing same-name tenant (or pick a
+// unique slug) instead of POSTing a name that already exists.
 func FindOrCreateTenant(nb *netboxtool.NetboxClient, customer models.Customer) (*netboxtool.NBTenant, error) {
+	return findOrCreateTenant(nb, customer)
+}
+
+func findOrCreateTenant(nb tenantAPI, customer models.Customer) (*netboxtool.NBTenant, error) {
 	sourceID := strconv.FormatUint(uint64(customer.ID), 10)
 
 	if tenant, err := nb.GetTenant("factum", sourceID); err != nil {
@@ -444,22 +658,12 @@ func FindOrCreateTenant(nb *netboxtool.NetboxClient, customer models.Customer) (
 		return tenant, nil
 	}
 
-	created, err := nb.CreateTenant(customer.Name, slugify(customer.Name), map[string]any{
-		"custom_fields": map[string]any{
-			"source":    "factum",
-			"source_id": sourceID,
-		},
-	})
+	tenants, err := nb.GetTenants()
 	if err != nil {
 		return nil, err
 	}
-	return &netboxtool.NBTenant{
-		NetboxID:   created.ID,
-		Name:       created.Name,
-		Slug:       created.Slug,
-		CfSource:   "factum",
-		CfSourceID: sourceID,
-	}, nil
+	tenant, _, err := ensureTenant(nb, customer, newTenantIndex(tenants, nil))
+	return tenant, err
 }
 
 // syncDevice creates or updates a single device and reconciles its
