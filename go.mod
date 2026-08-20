@@ -2,6 +2,8 @@ module github.com/abundo/factum2
 
 go 1.25.0
 
+replace github.com/abundo/limetool => ../limetool
+
 require (
 	github.com/GiGurra/boa v1.0.28
 	github.com/abundo/limetool v1.0.0

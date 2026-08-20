@@ -11,6 +11,7 @@ import (
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/limetool"
+	limetoolmodels "github.com/abundo/limetool/models"
 	"gorm.io/gorm"
 )
 
@@ -82,6 +83,73 @@ func (lime *Lime) SaveDelivery(row *models.Service) error {
 	return lime.DB.Save(row).Error
 }
 
+// SaveContact upserts a contact matched by (source, source_id) rather than
+// by factum ID - same reason as SaveCustomer. NotifyMaintenance is
+// factum-owned (the operator toggle on the contacts page, including for
+// Lime-synced rows) so a resync must not reset it; new Lime persons default
+// it to true to match a manually created contact.
+func (lime *Lime) SaveContact(row *models.Contact) error {
+	var contact models.Contact
+	res := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).Find(&contact)
+	if res.RowsAffected > 0 {
+		row.ID = contact.ID
+		row.NotifyMaintenance = contact.NotifyMaintenance
+	} else {
+		row.NotifyMaintenance = true
+	}
+	return lime.DB.Save(row).Error
+}
+
+// replaceContactCustomers makes the Lime company the sole customer link for
+// a Lime-synced contact. The GUI cannot edit those links (ApiContactCustomersPut
+// rejects Source == "lime"), so wiping extras on resync cannot discard
+// operator-added associations.
+func (lime *Lime) replaceContactCustomers(contactID, customerID uint) error {
+	return lime.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("contact_id = ?", contactID).Delete(&models.CustomerContact{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&models.CustomerContact{ContactID: contactID, CustomerID: customerID}).Error
+	})
+}
+
+func (lime *Lime) unlinkContactCustomer(contactID, customerID uint) error {
+	return lime.DB.Where("contact_id = ? AND customer_id = ?", contactID, customerID).
+		Delete(&models.CustomerContact{}).Error
+}
+
+func contactFromPerson(person limetoolmodels.LimePerson, lastSync uint) models.Contact {
+	return models.Contact{
+		Source:   "lime",
+		SourceID: fmt.Sprintf("%d", person.ID),
+		LastSync: lastSync,
+		Name:     person.DisplayName(),
+		Email:    person.Email,
+		Phone:    person.PhoneNumber(),
+	}
+}
+
+// syncPerson writes an active Lime person as a factum contact linked to
+// customer. Inactive persons are not created; if they were synced earlier,
+// the customer link is removed so they drop off maintenance notify without
+// deleting the contact row (and its send history).
+func (lime *Lime) syncPerson(customer *models.Customer, person limetoolmodels.LimePerson, lastSync uint) error {
+	if person.Inactive {
+		var existing models.Contact
+		res := lime.DB.Where("source = ? AND source_id = ?", "lime", fmt.Sprintf("%d", person.ID)).Find(&existing)
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		return lime.unlinkContactCustomer(existing.ID, customer.ID)
+	}
+
+	row := contactFromPerson(person, lastSync)
+	if err := lime.SaveContact(&row); err != nil {
+		return err
+	}
+	return lime.replaceContactCustomers(row.ID, customer.ID)
+}
+
 // Fetch data from LIME, store in factum database
 // If refresh is true, refresh data in cache
 func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jobevent.Reporter) error {
@@ -110,6 +178,7 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 	new_sync := last_sync + 1
 
 	customerCount := 0
+	contactCount := 0
 	for _, companyName := range companyNames {
 		companies, err := lime.Limetool.GetCompanies(companyName, refresh)
 		if err != nil {
@@ -164,9 +233,22 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 				}
 			}
 
+			if err := lime.Limetool.GetPersons(company, refresh); err != nil {
+				reporter.EmitErr(err)
+				return err
+			}
+			for _, person := range company.Persons {
+				if err := lime.syncPerson(&c, person, new_sync); err != nil {
+					reporter.EmitErr(err)
+					return err
+				}
+				if !person.Inactive {
+					contactCount++
+				}
+			}
 		}
 	}
 
-	reporter.Emit(jobevent.Info, "Lime sync: %d customer(s) processed", customerCount)
+	reporter.Emit(jobevent.Info, "Lime sync: %d customer(s), %d contact(s) processed", customerCount, contactCount)
 	return nil
 }
