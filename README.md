@@ -56,6 +56,9 @@ make            # all CLI binaries into build/ (excludes factum-web-release)
 make frontend   # builds web/frontend -> web/static/vue
 ```
 
+Tagged releases (`v*`) are built with [GoReleaser](https://goreleaser.com/)
+and published by GitHub Actions — see [DEV.md § Release](DEV.md#release).
+
 ### 4. Run the web GUI
 
 ```sh

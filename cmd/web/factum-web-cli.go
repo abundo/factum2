@@ -10,6 +10,7 @@ package main
 import (
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/web"
 	"github.com/spf13/cobra"
 )
@@ -18,8 +19,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum-web",
-		Short: "Manager factum WEB GUI",
+		Use:     "factum-web",
+		Short:   "Manager factum WEB GUI",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfig(),
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/spf13/cobra"
@@ -75,8 +76,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum",
-		Short: "Manage Factum",
+		Use:     "factum",
+		Short:   "Manage Factum",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(),
 

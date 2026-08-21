@@ -5,6 +5,7 @@
 # build output
 build/
 bin/
+dist/
 web/static/vue/
 
 # javascript, css

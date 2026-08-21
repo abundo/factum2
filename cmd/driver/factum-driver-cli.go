@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/netboxtool"
@@ -206,8 +207,9 @@ func deviceGetConfig() boa.CmdIfc {
 func main() {
 	cmdbase.SetupCLI()
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum2-driver",
-		Short: "driver",
+		Use:     "factum2-driver",
+		Short:   "driver",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			deviceExec(),
 			deviceVersion(),

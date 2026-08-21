@@ -19,6 +19,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -41,8 +42,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum-worker",
-		Short: "Run factum background tasks dispatched by the primary over the hub transport",
+		Use:     "factum-worker",
+		Short:   "Run factum background tasks dispatched by the primary over the hub transport",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(),
 

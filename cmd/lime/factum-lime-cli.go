@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/lime"
 	"github.com/spf13/cobra"
@@ -32,8 +33,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[ParamsRefresh]{
-		Use:   "lime",
-		Short: "lime",
+		Use:     "lime",
+		Short:   "lime",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfig(),
 

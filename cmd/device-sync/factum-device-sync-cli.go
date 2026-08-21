@@ -14,6 +14,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	devicesync "github.com/abundo/factum2/internal/device-sync"
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
@@ -37,8 +38,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[Params]{
-		Use:   "factum-device-sync",
-		Short: "Sync device interfaces/addresses/connections with Netbox",
+		Use:     "factum-device-sync",
+		Version: buildinfo.Version,
+		Short:   "Sync device interfaces/addresses/connections with Netbox",
 
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(),

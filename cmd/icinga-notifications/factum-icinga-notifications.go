@@ -28,6 +28,7 @@ import (
 	goyaml "github.com/goccy/go-yaml"
 	flags "github.com/jessevdk/go-flags"
 
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/icinga"
 	"github.com/abundo/factum2/internal/mail"
 	"github.com/abundo/factum2/internal/util"
@@ -171,6 +172,11 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(buildinfo.Version)
+		return nil
+	}
+
 	n, err := parseArgs(os.Args[1:])
 	if err != nil {
 		return err

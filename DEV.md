@@ -10,6 +10,8 @@ binary (release build).
 - Go 1.25+
 - Node.js `^22.18.0` or `>=24.12.0` (see `web/frontend/package.json`)
 - PostgreSQL (app data, via GORM)
+- A sibling checkout of [limetool](https://github.com/abundo/limetool) at
+  `../limetool` (`go.mod` replace-points there)
 
 ## Database setup
 
@@ -85,6 +87,7 @@ account, which any admin can already see via `GET /api/admin/settings`.
 | Binary                        | Source                     | Purpose                                                                                                    |
 | ----------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `factum`                      | `cmd/factum`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`)                                     |
+| `factum-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                    |
 | `factum-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                       |
 | `factum-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                     |
 | `factum-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification      |
@@ -116,6 +119,7 @@ make            # all Go binaries except the web-release variant, into build/
 make factum-web # just the web binary (frontend NOT embedded, served from disk)
 make frontend   # npm ci && npm run build in web/frontend -> web/static/vue
 make release    # all binaries + factum-web-release (frontend embedded via go:embed)
+make snapshot   # GoReleaser snapshot into dist/ (does not publish)
 make install    # release build + install to /opt/factum2 + restart factum-gui.service
 ```
 
@@ -126,6 +130,12 @@ make install    # release build + install to /opt/factum2 + restart factum-gui.s
 ```sh
 make test            # go test ./... - no device, no database, no network
 ```
+
+GitHub Actions runs `go vet`, `make test`, `make`, and a GoReleaser snapshot
+on every push to `main` and on pull requests
+(`.github/workflows/ci.yml`). The workflow checks out
+`github.com/abundo/limetool` as a sibling of the factum2 checkout because
+`go.mod` replace-points at `../limetool`.
 
 Device drivers (`internal/drivers`) are tested at two levels. The default
 tests run against `fakeEOS` (`driver_arista_eos_test.go`), an `httptest` TLS
@@ -215,6 +225,26 @@ is the intended next step (not yet built):
   following `lab-up`/`lab-down`'s pattern for containerlab, rather than
   vendoring the upstream projects' compose files - point at a checkout of
   them instead.
+
+## Release
+
+Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
+`CGO_ENABLED=0`; `factum-web` with `-tags release` so the Vue SPA is
+embedded) and published to GitHub when a `v*` tag is pushed
+(`.github/workflows/release.yml`). Tests must pass first.
+
+    git tag -a v0.1.0 -m "v0.1.0"
+    git push origin v0.1.0
+
+Each release is one `tar.gz` (and a `.deb`) per linux/amd64 and
+linux/arm64, containing every `cmd/*` binary plus `LICENSE`, `README.md`,
+and `examples/`. The `.deb` installs binaries to `/opt/factum2` and systemd
+units to `/lib/systemd/system`.
+
+Local dry-run (writes `dist/`, does not publish):
+
+    goreleaser check
+    make snapshot
 
 ## Running the web GUI in dev
 

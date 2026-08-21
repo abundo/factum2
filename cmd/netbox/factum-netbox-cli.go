@@ -15,6 +15,7 @@ import (
 	"github.com/abundo/netboxtool"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
@@ -76,8 +77,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[struct{}]{
-		Use:   "factum-netbox",
-		Short: "Manage Netbox",
+		Use:     "factum-netbox",
+		Short:   "Manage Netbox",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfig(),
 

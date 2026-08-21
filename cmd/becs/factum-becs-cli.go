@@ -12,6 +12,7 @@ import (
 
 	cmdbase "github.com/abundo/factum2/cmd"
 	"github.com/abundo/factum2/internal/becs"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 
@@ -38,8 +39,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum-becs",
-		Short: "Manage BECS",
+		Use:     "factum-becs",
+		Short:   "Manage BECS",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfig(),
 			boa.CmdT[ParamsGetElement]{

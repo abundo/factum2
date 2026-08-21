@@ -13,6 +13,7 @@ import (
 	cmdbase "github.com/abundo/factum2/cmd"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/icinga"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
@@ -32,8 +33,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum-icinga",
-		Short: "Manage Icinga",
+		Use:     "factum-icinga",
+		Short:   "Manage Icinga",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(func(fc *util.ConfigFactum) (any, error) { return icinga.FetchRemoteConfig(fc) }),
 

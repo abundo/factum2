@@ -1,16 +1,12 @@
-name: ci
+name: release
 
 on:
     push:
-        branches: [main]
-    pull_request:
-
-concurrency:
-    group: ci-${{ github.workflow }}-${{ github.ref }}
-    cancel-in-progress: true
+        tags:
+            - "v*"
 
 permissions:
-    contents: read
+    contents: write
 
 jobs:
     test:
@@ -42,10 +38,8 @@ jobs:
             - name: Test
               run: make test
 
-            - name: Build
-              run: make
-
     goreleaser:
+        needs: test
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
@@ -73,20 +67,12 @@ jobs:
                   cache: npm
                   cache-dependency-path: factum2/web/frontend/package-lock.json
 
-            - name: Check GoReleaser config
+            - name: Run GoReleaser
               uses: goreleaser/goreleaser-action@v7
               with:
                   distribution: goreleaser
                   version: "~> v2"
-                  args: check
-                  workdir: factum2
-
-            - name: Snapshot release
-              uses: goreleaser/goreleaser-action@v7
-              with:
-                  distribution: goreleaser
-                  version: "~> v2"
-                  args: release --snapshot --clean --skip=publish
+                  args: release --clean
                   workdir: factum2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

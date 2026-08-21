@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/oxidized"
 	"github.com/abundo/factum2/internal/util"
@@ -36,8 +37,9 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:   "factum-oxidized",
-		Short: "Manage oxidized",
+		Use:     "factum-oxidized",
+		Short:   "Manage oxidized",
+		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(func(fc *util.ConfigFactum) (any, error) { return oxidized.FetchRemoteConfig(fc) }),
 

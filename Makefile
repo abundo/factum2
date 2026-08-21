@@ -4,10 +4,12 @@ BUILD_DIR := build
 # Install directory
 INSTALL_DIR := /opt/factum2
 
-# Go build flags (for release)
-GO_BUILD_FLAGS := -ldflags="-s -w"
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION)"
 
-build: factum factum-becs factum-device-sync factum-dns factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web factum-worker
+.PHONY: build test frontend release install snapshot
+
+build: factum factum-becs factum-device-sync factum-dns factum-driver factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web factum-worker
 
 # JS deps can ship stray .go files (e.g. flatted); they are not this module.
 GO_PACKAGES := $(shell go list ./... | grep -v /node_modules/)
@@ -67,6 +69,9 @@ factum-device-sync:
 factum-dns:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-dns cmd/dns/factum-dns-cli.go
+factum-driver:
+	@mkdir -p $(BUILD_DIR)
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-driver cmd/driver/factum-driver-cli.go
 factum-icinga:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-icinga cmd/icinga/factum-icinga-cli.go
@@ -103,7 +108,10 @@ factum-web-release: frontend
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum-web cmd/web/factum-web-cli.go
 
-release: factum factum-becs factum-device-sync factum-dns factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web-release factum-worker
+release: factum factum-becs factum-device-sync factum-dns factum-driver factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web-release factum-worker
+
+snapshot:
+	goreleaser release --snapshot --clean --skip=publish
 
 install: release
 	install -m 755 $(BUILD_DIR)/* $(INSTALL_DIR)
