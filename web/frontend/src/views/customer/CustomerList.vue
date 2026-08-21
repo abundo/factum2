@@ -248,6 +248,7 @@ onMounted(loadCustomers)
             @click="showDetail(row.original)"
           />
           <UButton
+            v-if="row.original.service_count > 0"
             label="Services"
             size="sm"
             color="neutral"

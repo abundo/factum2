@@ -17,14 +17,51 @@ import (
 //
 // --------------------------------------------------------------------------
 
-// Fetch all companies
+// customerListItem is GET /customer's row shape: the customer plus how many
+// services point at it. The list UI uses this to hide the Services button
+// for customers that have none.
+type customerListItem struct {
+	models.Customer
+	ServiceCount int64 `json:"service_count"`
+}
+
+// Fetch all companies, with a per-customer service count attached for the
+// list view.
 func (ctrl *Controller) ApiCustomer(c *echo.Context) error {
-	// data := ctrl.GetUser(c)
 	items, err := gorm.G[models.Customer](ctrl.DB).Order("name").Find(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"message": err.Error()})
 	}
-	return c.JSON(http.StatusOK, items)
+	counts, err := ctrl.customerServiceCounts()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	out := make([]customerListItem, len(items))
+	for i, item := range items {
+		out[i] = customerListItem{Customer: item, ServiceCount: counts[item.ID]}
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// customerServiceCounts maps customer ID -> number of services that
+// reference it. Customers with no services are omitted (callers treat a
+// missing key as 0).
+func (ctrl *Controller) customerServiceCounts() (map[uint]int64, error) {
+	var rows []struct {
+		CustomerID uint  `gorm:"column:customer_id"`
+		Count      int64 `gorm:"column:count"`
+	}
+	if err := ctrl.DB.Model(&models.Service{}).
+		Select("customer_id, count(*) as count").
+		Group("customer_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[uint]int64, len(rows))
+	for _, row := range rows {
+		out[row.CustomerID] = row.Count
+	}
+	return out, nil
 }
 
 func (ctrl *Controller) ApiCustomerByID(c *echo.Context) error {

@@ -11,6 +11,53 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestApiCustomer_IncludesServiceCount(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	withSvc := models.Customer{Name: "Has services"}
+	withoutSvc := models.Customer{Name: "Has none"}
+	if err := db.Create(&withSvc).Error; err != nil {
+		t.Fatalf("seed with services: %v", err)
+	}
+	if err := db.Create(&withoutSvc).Error; err != nil {
+		t.Fatalf("seed without: %v", err)
+	}
+	if err := db.Create(&models.Service{Name: "one", CustomerID: withSvc.ID, ServiceID: "CI00001"}).Error; err != nil {
+		t.Fatalf("seed service 1: %v", err)
+	}
+	if err := db.Create(&models.Service{Name: "two", CustomerID: withSvc.ID, ServiceID: "CI00002"}).Error; err != nil {
+		t.Fatalf("seed service 2: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/customer", nil, nil, nil)
+	if err := ctrl.ApiCustomer(c); err != nil {
+		t.Fatalf("ApiCustomer: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var items []struct {
+		ID           uint   `json:"id"`
+		Name         string `json:"name"`
+		ServiceCount int64  `json:"service_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := make(map[uint]int64, len(items))
+	for _, item := range items {
+		got[item.ID] = item.ServiceCount
+	}
+	if got[withSvc.ID] != 2 {
+		t.Errorf("with services count = %d, want 2", got[withSvc.ID])
+	}
+	if got[withoutSvc.ID] != 0 {
+		t.Errorf("without services count = %d, want 0", got[withoutSvc.ID])
+	}
+}
+
 func TestCustomer_BeforeCreate_DefaultsSourceToFactum(t *testing.T) {
 	db := newTestDB(t)
 
