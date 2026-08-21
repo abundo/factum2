@@ -78,9 +78,9 @@ go run ./cmd/web createadmin -f /etc/factum2/factum2.yaml
 Then log in at `http://localhost:8090`.
 
 For frontend hot-reload during development (`cd web/frontend && npm install
-&& npm run dev`, proxies to the backend on `:8090`), production install via
-`make install` (installs to `/opt/factum2`, sets up the systemd service in
-`examples/`), and everything else, see [DEV.md](DEV.md).
+&& npm run dev`, proxies to the backend on `:8090`), installing via
+`./install.py` (GitHub release on production, or `--source` from this tree
+in the lab), and everything else, see [DEV.md](DEV.md).
 
 ## Installing a worker node
 
@@ -94,10 +94,9 @@ direction is reversed.
 
 1. **Build and copy the binary.** `make factum-worker` (or `make release`
    for every binary) builds `build/factum-worker`; copy it to the target
-   host, e.g. `/opt/factum2/factum-worker`. (`./install_prod.sh` automates
-   this step — plus the systemd install in step 4 — over ssh for every
-   node already registered and enabled in the `worker_nodes` table; see its
-   header comment.)
+   host, e.g. `/opt/factum2/factum-worker`. (`./install.py --source`
+   automates this step — plus the systemd install in step 4 — over ssh for
+   every node already registered and enabled in the `worker_nodes` table.)
 
 2. **Create the config file**, starting from `examples/factum2-worker.yaml`:
 

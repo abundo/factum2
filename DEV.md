@@ -120,10 +120,24 @@ make factum-web # just the web binary (frontend NOT embedded, served from disk)
 make frontend   # npm ci && npm run build in web/frontend -> web/static/vue
 make release    # all binaries + factum-web-release (frontend embedded via go:embed)
 make snapshot   # GoReleaser snapshot into dist/ (does not publish)
-make install    # release build + install to /opt/factum2 + restart factum-gui.service
+make install    # release build + install to /opt/factum2 (no restart)
 ```
 
 `INSTALL_DIR` in the `Makefile` is `/opt/factum2`.
+
+To push a build onto the primary and every enabled worker node (replaces
+`install_prod.sh`):
+
+```sh
+./install.py --source                 # this host: make release, install, restart
+./install.py --source lab-primary     # same, over ssh
+./install.py --source --skip-build    # reuse existing build/
+./install.py --source --dry-run
+```
+
+On a production primary with no source tree, install a published GitHub
+release instead (`./install.py`, `./install.py --list`, `./install.py
+--install v1.0.0`).
 
 ## Testing
 
@@ -245,6 +259,11 @@ Local dry-run (writes `dist/`, does not publish):
 
     goreleaser check
     make snapshot
+
+Install a published release on the primary (and its worker nodes):
+
+    ./install.py --list
+    ./install.py --install v1.0.0
 
 ## Running the web GUI in dev
 

@@ -36,3 +36,7 @@ go.work
 
 # Skill runtime state (skills themselves under .grok/skills are committed)
 .grok/skills/**/.state/
+
+# Python (install.py)
+__pycache__/
+*.py[cod]
