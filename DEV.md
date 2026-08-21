@@ -137,7 +137,9 @@ To push a build onto the primary and every enabled worker node (replaces
 
 On a production primary with no source tree, install a published GitHub
 release instead (`./install.py`, `./install.py --list`, `./install.py
---install v1.0.0`).
+--install v1.0.0`). A standalone copy of `install.py` (not a git checkout)
+checks GitHub at startup for a newer installer and offers to replace itself
+before listing or installing releases (`--self-update` / `--skip-self-update`).
 
 ## Testing
 

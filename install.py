@@ -6,7 +6,9 @@ restart services, then the same binaries out to every enabled worker_nodes
 row):
 
   ./install.py                 GitHub release (production). TUI on a TTY,
-                               or --list / --install TAG.
+                               or --list / --install TAG. A standalone copy
+                               (no git checkout) is offered a self-update if
+                               GitHub has a newer install.py.
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
@@ -15,6 +17,7 @@ row):
 from __future__ import annotations
 
 import argparse
+import base64
 import curses
 import hashlib
 import json
@@ -43,6 +46,11 @@ PRIMARY_UNITS = ("factum2-web.service", "factum2-worker.service")
 WORKER_UNIT = "factum2-worker.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
+# Bump when the installer itself changes so production copies can detect
+# a newer GitHub version. Missing/unparseable counts as 0.
+INSTALLER_VERSION = 1
+INSTALLER_FILENAME = "install.py"
+SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum*` file so a newly added cmd/ still installs.
@@ -297,6 +305,20 @@ class GithubClient:
                     break
             url = _next_link(headers.get("link", ""))
         return releases
+
+    def fetch_file(self, path: str, ref: str | None = None) -> bytes:
+        """Raw file from the repo (default branch if ref is omitted)."""
+        quoted = urllib.parse.quote(path)
+        url = f"https://api.github.com/repos/{self.repo}/contents/{quoted}"
+        if ref:
+            url += f"?ref={urllib.parse.quote(ref)}"
+        body, _ = self._get(url, accept="application/vnd.github.raw")
+        stripped = body.lstrip()
+        if stripped.startswith(b"{") and b'"content"' in stripped[:800]:
+            data = json.loads(body)
+            if data.get("encoding") == "base64" and data.get("content"):
+                return base64.b64decode(data["content"])
+        return body
 
     def download(self, asset: Asset, dest: Path, progress: bool = True) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1217,6 +1239,155 @@ def confirm_text(rel: Release, installed: str, workers: list[str], assume_yes: b
 
 
 # ---------------------------------------------------------------------------
+# self-update (install.py from GitHub)
+# ---------------------------------------------------------------------------
+
+
+_INSTALLER_VERSION_RE = re.compile(r"^INSTALLER_VERSION\s*=\s*(\d+)\s*$", re.M)
+
+
+def installer_version_of(text: str) -> int:
+    m = _INSTALLER_VERSION_RE.search(text)
+    return int(m.group(1)) if m else 0
+
+
+def looks_like_installer(text: str) -> bool:
+    if "def main(" not in text or "factum2" not in text:
+        return False
+    try:
+        compile(text, INSTALLER_FILENAME, "exec")
+    except SyntaxError:
+        return False
+    return True
+
+
+def in_git_checkout() -> bool:
+    return (REPO_DIR / ".git").exists()
+
+
+def confirm_self_update(local_ver: int, remote_ver: int, repo: str, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        log(
+            f"==> A newer {INSTALLER_FILENAME} is on GitHub "
+            f"({repo}: {remote_ver}, this copy: {local_ver}). "
+            "Re-run on a TTY, or pass --self-update / --yes."
+        )
+        return False
+    log("")
+    log(f"A newer {INSTALLER_FILENAME} is available on GitHub ({repo}).")
+    log(f"  this copy : {local_ver}")
+    log(f"  GitHub    : {remote_ver}")
+    try:
+        ans = input("Update this installer and re-run? [Y/n] ").strip().lower()
+    except EOFError:
+        return False
+    return ans in {"", "y", "yes"}
+
+
+def replace_installer(new_bytes: bytes) -> None:
+    path = Path(__file__).resolve()
+    mode = path.stat().st_mode
+    fd, tmp_name = tempfile.mkstemp(prefix=".install.py.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(new_bytes)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def reexec_self() -> None:
+    env = os.environ.copy()
+    env[SELF_UPDATED_ENV] = "1"
+    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+
+
+def maybe_self_update(args: argparse.Namespace) -> None:
+    """Replace this script from GitHub if a newer copy exists. May os.execve."""
+    if args.skip_self_update:
+        return
+    if os.environ.get(SELF_UPDATED_ENV):
+        return
+    if in_git_checkout() and not args.self_update:
+        return
+
+    token = github_token()
+    client = GithubClient(args.repo, token)
+    try:
+        remote = client.fetch_file(INSTALLER_FILENAME)
+    except (InstallError, OSError, json.JSONDecodeError, ValueError) as exc:
+        log(f"!!  Could not check for a newer {INSTALLER_FILENAME}: {exc}")
+        return
+
+    try:
+        remote_text = remote.decode("utf-8")
+    except UnicodeDecodeError:
+        log(f"!!  GitHub {INSTALLER_FILENAME} is not valid UTF-8; leaving this copy")
+        return
+    if not looks_like_installer(remote_text):
+        log(f"!!  GitHub {INSTALLER_FILENAME} does not look like this installer; leaving this copy")
+        return
+
+    local_path = Path(__file__).resolve()
+    try:
+        local = local_path.read_bytes()
+    except OSError as exc:
+        log(f"!!  Could not read {local_path}: {exc}")
+        return
+    local_text = local.decode("utf-8", errors="replace")
+    local_ver = installer_version_of(local_text)
+    remote_ver = installer_version_of(remote_text)
+    if remote_ver < local_ver:
+        if args.self_update:
+            log(
+                f"==> This {INSTALLER_FILENAME} (version {local_ver}) is newer than "
+                f"GitHub ({remote_ver}); not downgrading"
+            )
+        return
+    if remote == local:
+        if args.self_update:
+            log(f"==> {INSTALLER_FILENAME} is already the GitHub copy (version {local_ver})")
+        return
+
+    if remote_ver > local_ver:
+        log(
+            f"==> Newer {INSTALLER_FILENAME} on GitHub "
+            f"(this copy {local_ver}, GitHub {remote_ver})"
+        )
+    else:
+        log(
+            f"==> GitHub has an updated {INSTALLER_FILENAME} "
+            f"(version {remote_ver}, content differs from this copy)"
+        )
+    if args.dry_run:
+        log(f"==> Dry run: would replace {local_path} and re-run")
+        return
+    if not confirm_self_update(local_ver, remote_ver, args.repo, assume_yes=args.yes or args.self_update):
+        return
+    try:
+        replace_installer(remote)
+    except OSError as exc:
+        log(f"!!  Could not replace {local_path}: {exc}")
+        return
+    log(f"==> Updated {local_path} ({local_ver} -> {remote_ver})")
+    standalone = args.self_update and not args.list and args.install is None
+    if standalone:
+        return
+    log("==> Re-running with the new installer")
+    reexec_self()
+    raise InstallError("failed to re-exec updated installer")
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -1252,6 +1423,7 @@ Examples:
   ./install.py --list
   ./install.py --install latest --yes
   ./install.py --install v1.0.0 --dry-run
+  ./install.py --self-update
   ./install.py --source
   ./install.py --source lab-primary --dry-run
   ./install.py --source --skip-build --primary-only
@@ -1280,6 +1452,17 @@ Examples:
         "--skip-build",
         action="store_true",
         help="with --source, use existing build/ instead of running make release",
+    )
+    p.add_argument(
+        "--self-update",
+        action="store_true",
+        help="replace this script from GitHub if a newer copy exists, then exit "
+        "(or continue when combined with --list / --install)",
+    )
+    p.add_argument(
+        "--skip-self-update",
+        action="store_true",
+        help="do not check GitHub for a newer install.py",
     )
     return p.parse_args(argv)
 
@@ -1434,10 +1617,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     if args.skip_build and args.source is None:
         raise InstallError("--skip-build requires --source")
+    if args.self_update and args.skip_self_update:
+        raise InstallError("--self-update cannot be combined with --skip-self-update")
     if args.source is not None:
         if args.list or args.install:
             raise InstallError("--source cannot be combined with --list / --install")
+        if args.self_update:
+            raise InstallError("--source cannot be combined with --self-update")
         return main_source(args)
+    maybe_self_update(args)
+    if args.self_update and not args.list and args.install is None:
+        return 0
     return main_release(args)
 
 
