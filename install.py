@@ -26,10 +26,12 @@ import base64
 import curses
 import difflib
 import hashlib
+import hmac
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -61,7 +63,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 4
+INSTALLER_VERSION = 5
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
@@ -500,6 +502,202 @@ def yaml_section(path: Path, section: str) -> dict[str, str]:
     return values
 
 
+class _PgError(Exception):
+    """Direct PostgreSQL connection/query failed; caller may fall back to psql."""
+
+
+def _is_loopback_host(host: str) -> bool:
+    h = host.strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    return h in {"localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}
+
+
+def _recvn(sock: socket.socket, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise _PgError("connection closed")
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def _pg_recv(sock: socket.socket) -> tuple[bytes, bytes]:
+    header = _recvn(sock, 5)
+    length = int.from_bytes(header[1:5], "big")
+    if length < 4:
+        raise _PgError("invalid message length")
+    return header[0:1], _recvn(sock, length - 4)
+
+
+def _pg_send(sock: socket.socket, typ: bytes, payload: bytes) -> None:
+    sock.sendall(typ + (len(payload) + 4).to_bytes(4, "big") + payload)
+
+
+def _pg_error_message(payload: bytes) -> str:
+    msg = "server error"
+    i = 0
+    while i < len(payload) and payload[i] != 0:
+        key = payload[i]
+        i += 1
+        end = payload.find(b"\0", i)
+        if end < 0:
+            break
+        if key == ord("M"):
+            msg = payload[i:end].decode("utf-8", "replace")
+        i = end + 1
+    return msg
+
+
+def _pg_md5_password(user: str, password: str, salt: bytes) -> bytes:
+    inner = hashlib.md5((password + user).encode(), usedforsecurity=False).hexdigest()
+    return (
+        "md5"
+        + hashlib.md5(inner.encode() + salt, usedforsecurity=False).hexdigest()
+    ).encode()
+
+
+def _pg_scram_continue(state: dict[str, str], server_first: bytes) -> bytes:
+    msg = server_first.decode("ascii")
+    parts = dict(p.split("=", 1) for p in msg.split(",") if "=" in p)
+    try:
+        nonce, salt_b64, iters = parts["r"], parts["s"], int(parts["i"])
+    except (KeyError, ValueError) as exc:
+        raise _PgError("invalid SCRAM server-first message") from exc
+    if not nonce.startswith(state["nonce"]):
+        raise _PgError("SCRAM server nonce does not match")
+    client_final_wo_proof = f"c=biws,r={nonce}"
+    salted = hashlib.pbkdf2_hmac(
+        "sha256", state["password"].encode(), base64.b64decode(salt_b64), iters
+    )
+    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    stored_key = hashlib.sha256(client_key).digest()
+    auth_msg = f"{state['client_first_bare']},{msg},{client_final_wo_proof}".encode()
+    client_sig = hmac.new(stored_key, auth_msg, hashlib.sha256).digest()
+    proof = bytes(a ^ b for a, b in zip(client_key, client_sig))
+    return f"{client_final_wo_proof},p={base64.b64encode(proof).decode('ascii')}".encode()
+
+
+def _pg_handle_auth(
+    sock: socket.socket,
+    user: str,
+    password: str,
+    payload: bytes,
+    scram_state: dict[str, str] | None,
+) -> dict[str, str] | None:
+    if len(payload) < 4:
+        raise _PgError("truncated authentication request")
+    method = int.from_bytes(payload[:4], "big")
+    extra = payload[4:]
+    if method == 0:
+        return None
+    if method == 3:
+        _pg_send(sock, b"p", password.encode() + b"\0")
+        return None
+    if method == 5:
+        if len(extra) < 4:
+            raise _PgError("truncated MD5 salt")
+        _pg_send(sock, b"p", _pg_md5_password(user, password, extra[:4]) + b"\0")
+        return None
+    if method == 10:
+        names = [m.decode() for m in extra.split(b"\0") if m]
+        if "SCRAM-SHA-256" not in names:
+            raise _PgError(
+                "server requested SASL "
+                + ", ".join(names)
+                + ", not SCRAM-SHA-256"
+            )
+        nonce = base64.b64encode(os.urandom(18)).decode("ascii").rstrip("=")
+        client_first_bare = f"n=,r={nonce}"
+        initial = f"n,,{client_first_bare}".encode()
+        _pg_send(
+            sock,
+            b"p",
+            b"SCRAM-SHA-256\0" + len(initial).to_bytes(4, "big") + initial,
+        )
+        return {
+            "client_first_bare": client_first_bare,
+            "nonce": nonce,
+            "password": password,
+        }
+    if method == 11:
+        if scram_state is None:
+            raise _PgError("unexpected SASL continue")
+        _pg_send(sock, b"p", _pg_scram_continue(scram_state, extra))
+        return scram_state
+    if method == 12:
+        return None
+    raise _PgError(f"unsupported authentication method {method}")
+
+
+def _pg_first_field(payload: bytes) -> str:
+    if len(payload) < 6:
+        return ""
+    if int.from_bytes(payload[:2], "big") < 1:
+        return ""
+    length = int.from_bytes(payload[2:6], "big", signed=True)
+    if length < 0:
+        return ""
+    return payload[6 : 6 + length].decode("utf-8", "replace")
+
+
+def _pg_query(db: dict[str, str], sql: str) -> list[str]:
+    """Run one SQL query using db.* from factum2.yaml. No libpq/psql needed."""
+    host = db["host"]
+    try:
+        port = int(db["port"])
+    except ValueError as exc:
+        raise _PgError(f"invalid db.port {db['port']!r}") from exc
+    user, password, database = db["user"], db["pass"], db["database"]
+    try:
+        sock = socket.create_connection((host, port), timeout=15)
+    except OSError as exc:
+        raise _PgError(f"{host}:{port}: {exc}") from exc
+    try:
+        sock.settimeout(15)
+        params = (
+            b"user\0"
+            + user.encode()
+            + b"\0database\0"
+            + database.encode()
+            + b"\0\0"
+        )
+        body = (196608).to_bytes(4, "big") + params
+        sock.sendall((len(body) + 4).to_bytes(4, "big") + body)
+        scram_state: dict[str, str] | None = None
+        while True:
+            typ, payload = _pg_recv(sock)
+            if typ == b"E":
+                raise _PgError(_pg_error_message(payload))
+            if typ == b"R":
+                scram_state = _pg_handle_auth(
+                    sock, user, password, payload, scram_state
+                )
+                continue
+            if typ == b"Z":
+                break
+        _pg_send(sock, b"Q", sql.encode() + b"\0")
+        rows: list[str] = []
+        while True:
+            typ, payload = _pg_recv(sock)
+            if typ == b"E":
+                raise _PgError(_pg_error_message(payload))
+            if typ == b"D":
+                value = _pg_first_field(payload).strip()
+                if value:
+                    rows.append(value)
+            elif typ == b"Z":
+                break
+        return rows
+    except _PgError:
+        raise
+    except (OSError, TimeoutError) as exc:
+        raise _PgError(str(exc)) from exc
+    finally:
+        sock.close()
+
+
 def find_postgres_compose(root: Path = POSTGRES_COMPOSE_DIR) -> Path | None:
     for name in POSTGRES_COMPOSE_NAMES:
         path = root / name
@@ -564,6 +762,19 @@ def _psql_via_compose(
     )
 
 
+def _psql_local(db: dict[str, str], sql: str) -> subprocess.CompletedProcess[str]:
+    if which("psql"):
+        return _psql_direct(db, sql)
+    compose = find_postgres_compose()
+    if compose is None or not which("docker"):
+        raise InstallError(_no_psql_fallback_error(compose))
+    log(
+        f"==> psql not on PATH, using docker compose -f {compose} "
+        "(fails if Postgres is on another host)"
+    )
+    return _psql_via_compose(compose, db, sql)
+
+
 def _no_psql_fallback_error(compose: Path | None) -> str:
     names = ", ".join(POSTGRES_COMPOSE_NAMES)
     if compose is None:
@@ -585,18 +796,22 @@ def query_worker_addresses(
     if missing:
         raise InstallError(f"db.{{{', '.join(missing)}}} missing from {config_path}")
     sql = "select address from worker_nodes where enabled = true;"
-    if is_local_host(target_host):
-        if which("psql"):
-            proc = _psql_direct(db, sql)
-        else:
-            compose = find_postgres_compose()
-            if compose is None or not which("docker"):
-                raise InstallError(_no_psql_fallback_error(compose))
+    # Prefer a TCP connection with factum2.yaml credentials so we do not need
+    # host psql (and do not docker-exec into a local compose Postgres that may
+    # not be the server named in the yaml). Skip when the yaml host is loopback
+    # but we are installing onto a different machine.
+    try_direct = is_local_host(target_host) or not _is_loopback_host(db["host"])
+    if try_direct:
+        try:
+            return _pg_query(db, sql)
+        except _PgError as exc:
             log(
-                f"==> psql not on PATH, using docker compose -f {compose} "
-                "(fails if Postgres is on another host)"
+                f"==> {config_path} postgresql "
+                f"{db.get('user')}@{db.get('host')}:{db.get('port')}/{db.get('database')} "
+                f"failed ({exc}); falling back to psql"
             )
-            proc = _psql_via_compose(compose, db, sql)
+    if is_local_host(target_host):
+        proc = _psql_local(db, sql)
     else:
         # Credentials go as argv to bash -s, not interpolated into the remote script.
         names = " ".join(POSTGRES_COMPOSE_NAMES)
