@@ -31,11 +31,12 @@ type ServiceDTO struct {
 	ServiceType   string `json:"service_type"`
 	BandwidthMbps int    `json:"bandwidth_mbps"`
 
-	Deliverypoint1 string `json:"deliverypoint1"`
-	Deliverypoint2 string `json:"deliverypoint2"`
-	Product        string `json:"product"`
-	Service        string `json:"service"`
-	Source         string `json:"source"`
+	Deliverypoint1  string `json:"deliverypoint1"`
+	Deliverypoint2  string `json:"deliverypoint2"`
+	Product         string `json:"product"`
+	Service         string `json:"service"`
+	AgreementStatus string `json:"agreement_status"`
+	Source          string `json:"source"`
 }
 
 func (ctrl *Controller) APIServiceList(c *echo.Context) error {
@@ -71,17 +72,18 @@ func (ctrl *Controller) APIServiceList(c *echo.Context) error {
 	servicesDTO := make([]*ServiceDTO, 0, len(services))
 	for _, service := range services {
 		servicesDTO = append(servicesDTO, &ServiceDTO{
-			ID:             service.ID,
-			Customer:       nameByCustomerID[service.CustomerID],
-			ServiceID:      service.ServiceID,
-			Category:       categoryFromServiceID(service.ServiceID),
-			ServiceType:    service.ServiceType,
-			BandwidthMbps:  service.BandwidthMbps,
-			Deliverypoint1: service.DeliveryPoint1,
-			Deliverypoint2: service.DeliveryPoint2,
-			Product:        service.Product,
-			Service:        service.Service,
-			Source:         service.Source,
+			ID:              service.ID,
+			Customer:        nameByCustomerID[service.CustomerID],
+			ServiceID:       service.ServiceID,
+			Category:        categoryFromServiceID(service.ServiceID),
+			ServiceType:     service.ServiceType,
+			BandwidthMbps:   service.BandwidthMbps,
+			Deliverypoint1:  service.DeliveryPoint1,
+			Deliverypoint2:  service.DeliveryPoint2,
+			Product:         service.Product,
+			Service:         service.Service,
+			AgreementStatus: service.AgreementStatus,
+			Source:          service.Source,
 		})
 	}
 	return c.JSON(http.StatusOK, servicesDTO)
@@ -124,7 +126,7 @@ type ServiceTypeDTO struct {
 // whatever's set here across future syncs. Deliberately not routed through
 // the generic SecureCRUDHandler/ServiceDTO update: that DTO also carries
 // Lime-owned fields (company, delivery points, product, service, comment,
-// service_id), which must stay off-limits for a Lime-sourced row.
+// service_id, agreement_status), which must stay off-limits for a Lime-sourced row.
 func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {

@@ -78,12 +78,12 @@ const customerOptions = computed(() => customers.value.map((c) => ({ id: c.id, n
 
 // Lime-synced services are overwritten wholesale on every sync run, so an
 // edit to a Lime-owned field (company/delivery points/product/service/
-// comment) made here would just silently vanish on the next sync - the API
-// rejects PUTs to those fields too (see ApiServiceUpdate in
-// web/handler_service.go). Service type/bandwidth/max MAC addresses and
-// ELINE provisioning are unaffected by readOnly - see saveServiceType and
-// ApiServiceTypeUpdate, which are the one part of a Lime row this dialog
-// can still save.
+// comment/agreement status) made here would just silently vanish on the
+// next sync - the API rejects PUTs to those fields too (see
+// ApiServiceUpdate in web/handler_service.go). Service type/bandwidth/max
+// MAC addresses and ELINE provisioning are unaffected by readOnly - see
+// saveServiceType and ApiServiceTypeUpdate, which are the one part of a
+// Lime row this dialog can still save.
 const readOnly = computed(() => service.value.source === 'lime')
 
 // A viewer (or a user with no role) can open this dialog to look, but every
@@ -512,6 +512,14 @@ function deleteServiceConfirmed() {
         <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
           <label for="service_id" class="font-bold">Service ID</label>
           <UInput id="service_id" v-model="service.service_id" disabled class="w-full" />
+
+          <label for="agreement_status" class="font-bold">Agreement status</label>
+          <UInput
+            id="agreement_status"
+            v-model="service.agreement_status"
+            disabled
+            class="w-full"
+          />
 
           <label for="company" class="font-bold">Company</label>
           <div>

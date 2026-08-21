@@ -170,22 +170,23 @@ func TestSecureCRUDHandler_ContactCreateIgnoresSyncManagedFields(t *testing.T) {
 }
 
 // TestSecureCRUDHandler_ServiceUpdatePreservesSyncManagedFields guards the
-// other direction: a synced service's Source/SourceID must survive an
-// Update untouched even if the request body tries to overwrite them, since
-// ServiceDTO has no field for them to bind into.
+// other direction: a synced service's Source/SourceID/AgreementStatus must
+// survive an Update untouched even if the request body tries to overwrite
+// them, since ServiceDTO has no field for them to bind into.
 func TestSecureCRUDHandler_ServiceUpdatePreservesSyncManagedFields(t *testing.T) {
 	db := newTestDB(t)
 	handler := NewSecureCRUDHandler[models.Service, models.ServiceDTO](db)
 
-	synced := models.Service{Name: "synced-service", Source: "lime", SourceID: "42", Comment: "original"}
+	synced := models.Service{Name: "synced-service", Source: "lime", SourceID: "42", Comment: "original", AgreementStatus: "Active"}
 	if err := db.Create(&synced).Error; err != nil {
 		t.Fatalf("seed synced service: %v", err)
 	}
 
 	body := map[string]any{
-		"comment":   "updated by a user",
-		"source":    "attacker-controlled",
-		"source_id": "attacker-controlled-id",
+		"comment":          "updated by a user",
+		"source":           "attacker-controlled",
+		"source_id":        "attacker-controlled-id",
+		"agreement_status": "Ended",
 	}
 	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x", body, []string{"id"}, []string{strconv.FormatUint(uint64(synced.ID), 10)})
 	if err := handler.Update(c); err != nil {
@@ -203,6 +204,9 @@ func TestSecureCRUDHandler_ServiceUpdatePreservesSyncManagedFields(t *testing.T)
 	}
 	if updated.Source != "lime" || updated.SourceID != "42" {
 		t.Errorf("Update let the request body overwrite sync-managed fields: source=%q source_id=%q, want unchanged \"lime\"/\"42\"", updated.Source, updated.SourceID)
+	}
+	if updated.AgreementStatus != "Active" {
+		t.Errorf("Update let the request body overwrite AgreementStatus: %q, want unchanged \"Active\"", updated.AgreementStatus)
 	}
 }
 

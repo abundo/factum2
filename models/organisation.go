@@ -144,10 +144,11 @@ type Service struct {
 	BandwidthMbps   int    `json:"bandwidth_mbps"`
 	MaxMacAddresses int    `json:"max_mac_addresses"` // ELAN only, else 0
 
-	DeliveryPoint1 string `json:"deliverypoint1"`
-	DeliveryPoint2 string `json:"deliverypoint2"`
-	Product        string `json:"product"`
-	Service        string `json:"service"`
+	DeliveryPoint1  string `json:"deliverypoint1"`
+	DeliveryPoint2  string `json:"deliverypoint2"`
+	Product         string `json:"product"`
+	Service         string `json:"service"`
+	AgreementStatus string `json:"agreement_status"` // Lime agreement_status.text (e.g. "Active"); empty for factum-created rows
 
 	// ELINE endpoint/provisioning data (ServiceType == "ELINE" only, zero
 	// otherwise) - set via PUT /service/:id/eline
@@ -215,11 +216,11 @@ func (s *Service) BeforeCreate(tx *gorm.DB) error {
 // mirroring the fields the frontend's service form actually edits
 // (web/frontend/src/views/service/ServiceList.vue,
 // web/frontend/src/views/service/ServiceCreateWizard.vue) - it shows
-// "source" as a disabled/display-only field, so, like ContactDTO,
-// Source/SourceID are excluded here rather than merely disabled
-// client-side: the sync-managed value survives an Update untouched, and a
-// manually-created service gets the zero value instead of a caller being
-// able to fake a Lime origin.
+// "source" and "agreement_status" as disabled/display-only fields, so, like
+// ContactDTO, Source/SourceID/AgreementStatus are excluded here rather than
+// merely disabled client-side: the sync-managed values survive an Update
+// untouched, and a manually-created service gets the zero value instead of
+// a caller being able to fake a Lime origin or agreement status.
 //
 // On create (ApiServiceCreate), ServiceID is optional: a blank
 // value has the backend auto-assign the next <category><5-digit> number for

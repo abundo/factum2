@@ -25,6 +25,7 @@ const sorting = ref([{ id: 'service_id', desc: false }])
 const columns = [
   { id: 'actions', header: '' },
   { accessorKey: 'service_id', header: 'Service ID' },
+  { accessorKey: 'agreement_status', header: 'Agreement status' },
   { accessorKey: 'service_type', header: 'Category' },
   { accessorKey: 'bandwidth_mbps', header: 'Bandwidth (Mbps)' },
   { accessorKey: 'company', header: 'Company' },

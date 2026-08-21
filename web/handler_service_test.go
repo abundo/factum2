@@ -171,6 +171,72 @@ func TestApiServiceCreate_RejectsMissingServiceTypeForExternalCustomerPrefix(t *
 	}
 }
 
+func TestAPIServiceListIncludesAgreementStatus(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	svc := models.Service{
+		CustomerID:      cust.ID,
+		ServiceID:       "20-73",
+		AgreementStatus: "Active",
+		Source:          "lime",
+		SourceID:        "1609",
+	}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatalf("seed service: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/service", nil, nil, nil)
+	if err := ctrl.APIServiceList(c); err != nil {
+		t.Fatalf("APIServiceList: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got []ServiceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d services, want 1", len(got))
+	}
+	if got[0].AgreementStatus != "Active" {
+		t.Errorf("agreement_status = %q, want Active", got[0].AgreementStatus)
+	}
+	if got[0].Customer != "Acme" || got[0].ServiceID != "20-73" {
+		t.Errorf("list row = %+v", got[0])
+	}
+}
+
+func TestApiServiceByIDIncludesAgreementStatus(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	svc := models.Service{ServiceID: "20-73", AgreementStatus: "Active", Source: "lime", SourceID: "1609"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatalf("seed service: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/service/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceByID(c); err != nil {
+		t.Fatalf("ApiServiceByID: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["agreement_status"] != "Active" {
+		t.Errorf("agreement_status = %#v, want Active", got["agreement_status"])
+	}
+}
+
 func TestApiServiceUpdate_AllowsFactumSourcedService(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

@@ -54,10 +54,11 @@ func (lime *Lime) SaveCustomer(row *models.Customer) error {
 // provisioning fields (Endpoint*/PseudowireID/L2VPNNetboxID) - those are
 // only ever set from the factum side (the network GUI's service-type
 // editor and ELINE provisioning flow, web/handler_service.go,
-// web/handler_service_eline.go). row only carries Lime-owned fields, so
-// carrying the previously-stored values of these forward onto row before
-// the wholesale Save() below keeps a resync from silently wiping out that
-// factum-added enrichment.
+// web/handler_service_eline.go). row only carries Lime-owned fields
+// (including AgreementStatus from agreement_status.text), so carrying the
+// previously-stored values of these forward onto row before the wholesale
+// Save() below keeps a resync from silently wiping out that factum-added
+// enrichment.
 func (lime *Lime) SaveDelivery(row *models.Service) error {
 	var delivery models.Service
 	res := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).Find(&delivery)
@@ -127,6 +128,38 @@ func contactFromPerson(person limetoolmodels.LimePerson, lastSync uint) models.C
 		Email:    person.Email,
 		Phone:    person.PhoneNumber(),
 	}
+}
+
+// serviceFromDelivery maps a Lime delivery (and its embedded agreement)
+// onto a factum Service. AgreementStatus is Lime's agreement_status.text
+// (e.g. "Active"); it stays empty when the delivery has no agreement or
+// the agreement has no status, matching Product/Service which are also
+// optional embedded relations.
+func serviceFromDelivery(delivery limetoolmodels.LimeDelivery, customerID, lastSync uint) models.Service {
+	d := models.Service{
+		Source:     "lime",
+		SourceID:   fmt.Sprintf("%d", delivery.ID),
+		CustomerID: customerID,
+		LastSync:   lastSync,
+		ServiceID:  delivery.ConnectionNumber,
+		Comment:    delivery.Comment,
+	}
+	if delivery.DeliveryPoint != nil {
+		d.DeliveryPoint1 = delivery.DeliveryPoint.Address
+	}
+	if delivery.DeliveryPoint2 != nil {
+		d.DeliveryPoint2 = delivery.DeliveryPoint2.Address
+	}
+	if delivery.Product != nil {
+		d.Product = delivery.Product.Name
+	}
+	if delivery.Service != nil {
+		d.Service = delivery.Service.Name
+	}
+	if delivery.Agreeement != nil && delivery.Agreeement.Status != nil {
+		d.AgreementStatus = delivery.Agreeement.Status.Text
+	}
+	return d
 }
 
 // syncPerson writes an active Lime person as a factum contact linked to
@@ -208,25 +241,7 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 			}
 
 			for _, delivery := range company.Deliveries {
-				var d models.Service
-				d.Source = "lime"
-				d.SourceID = fmt.Sprintf("%d", delivery.ID)
-				d.CustomerID = c.ID
-				d.LastSync = new_sync
-				d.ServiceID = delivery.ConnectionNumber
-				d.Comment = delivery.Comment
-				if delivery.DeliveryPoint != nil {
-					d.DeliveryPoint1 = delivery.DeliveryPoint.Address
-				}
-				if delivery.DeliveryPoint2 != nil {
-					d.DeliveryPoint2 = delivery.DeliveryPoint2.Address
-				}
-				if delivery.Product != nil {
-					d.Product = delivery.Product.Name
-				}
-				if delivery.Service != nil {
-					d.Service = delivery.Service.Name
-				}
+				d := serviceFromDelivery(delivery, c.ID, new_sync)
 				err = lime.SaveDelivery(&d)
 				if err != nil {
 					return err

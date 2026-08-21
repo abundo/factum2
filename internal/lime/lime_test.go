@@ -31,6 +31,92 @@ func newTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestServiceFromDeliveryMapsLimeFields(t *testing.T) {
+	delivery := limetoolmodels.LimeDelivery{
+		ID:               77,
+		ConnectionNumber: "20-73",
+		Comment:          "Region Norrbotten PÄS-Sbyn",
+		DeliveryPoint:    &limetoolmodels.LimeDeliverypoint{Address: "Site A"},
+		DeliveryPoint2:   &limetoolmodels.LimeDeliverypoint2{Address: "Site B"},
+		Product:          &limetoolmodels.LimeProduct{Name: "Svartfiber"},
+		Service:          &limetoolmodels.LimeService{Name: "Hyra av fiber"},
+		Agreeement: &limetoolmodels.LimeAgreement{
+			Status: &limetoolmodels.LimeAgreementStatus{Key: "active", Text: "Active"},
+		},
+	}
+
+	svc := serviceFromDelivery(delivery, 9, 3)
+	if svc.Source != "lime" || svc.SourceID != "77" {
+		t.Errorf("source = %q/%q, want lime/77", svc.Source, svc.SourceID)
+	}
+	if svc.CustomerID != 9 || svc.LastSync != 3 {
+		t.Errorf("CustomerID/LastSync = %d/%d, want 9/3", svc.CustomerID, svc.LastSync)
+	}
+	if svc.ServiceID != "20-73" || svc.Comment != delivery.Comment {
+		t.Errorf("ServiceID/Comment = %q/%q", svc.ServiceID, svc.Comment)
+	}
+	if svc.DeliveryPoint1 != "Site A" || svc.DeliveryPoint2 != "Site B" {
+		t.Errorf("delivery points = %q/%q", svc.DeliveryPoint1, svc.DeliveryPoint2)
+	}
+	if svc.Product != "Svartfiber" || svc.Service != "Hyra av fiber" {
+		t.Errorf("Product/Service = %q/%q", svc.Product, svc.Service)
+	}
+	if svc.AgreementStatus != "Active" {
+		t.Errorf("AgreementStatus = %q, want Active", svc.AgreementStatus)
+	}
+}
+
+func TestServiceFromDeliveryEmptyAgreementStatus(t *testing.T) {
+	svc := serviceFromDelivery(limetoolmodels.LimeDelivery{ID: 1, ConnectionNumber: "x"}, 1, 1)
+	if svc.AgreementStatus != "" {
+		t.Errorf("AgreementStatus = %q, want empty when no agreement is embedded", svc.AgreementStatus)
+	}
+}
+
+func TestSaveDeliveryWritesAgreementStatus(t *testing.T) {
+	db := newTestDB(t)
+	l := &Lime{DB: db}
+
+	row := serviceFromDelivery(limetoolmodels.LimeDelivery{
+		ID:               5,
+		ConnectionNumber: "CN1",
+		Agreeement: &limetoolmodels.LimeAgreement{
+			Status: &limetoolmodels.LimeAgreementStatus{Text: "Active"},
+		},
+	}, 1, 1)
+	if err := l.SaveDelivery(&row); err != nil {
+		t.Fatalf("SaveDelivery: %v", err)
+	}
+
+	var stored models.Service
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if stored.AgreementStatus != "Active" {
+		t.Errorf("stored AgreementStatus = %q, want Active", stored.AgreementStatus)
+	}
+
+	again := serviceFromDelivery(limetoolmodels.LimeDelivery{
+		ID:               5,
+		ConnectionNumber: "CN1",
+		Agreeement: &limetoolmodels.LimeAgreement{
+			Status: &limetoolmodels.LimeAgreementStatus{Text: "Ended"},
+		},
+	}, 1, 2)
+	if err := l.SaveDelivery(&again); err != nil {
+		t.Fatalf("resync: %v", err)
+	}
+	if again.ID != row.ID {
+		t.Errorf("ID = %d, want existing %d", again.ID, row.ID)
+	}
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload after resync: %v", err)
+	}
+	if stored.AgreementStatus != "Ended" {
+		t.Errorf("resync AgreementStatus = %q, want Ended", stored.AgreementStatus)
+	}
+}
+
 func TestContactFromPersonMapsLimeFields(t *testing.T) {
 	p := limetoolmodels.LimePerson{
 		ID:          1011,
