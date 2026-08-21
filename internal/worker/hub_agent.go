@@ -104,7 +104,7 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	conn.SetReadLimit(hubMaxMessageSize)
+	conn.SetReadLimit(int64(hubMaxMessageSize))
 	slog.Info("worker hub: hub connected", "remote", r.RemoteAddr)
 
 	outbox := make(chan Envelope, outboxSize)

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/abundo/factum2/internal/util"
+	"github.com/gorilla/websocket"
 )
 
 func decodeResponse(t *testing.T, env Envelope) ResponseMsg {
@@ -475,4 +477,240 @@ func TestDoHubRequestConcurrentWaiters(t *testing.T) {
 		}
 	}
 	wg.Wait()
+}
+
+func TestMarshalHubFrameIncludesTrailingNewline(t *testing.T) {
+	env := Envelope{Type: EnvelopeHello, Payload: json.RawMessage(`{"hostname":"x"}`)}
+	frame, err := marshalHubFrame(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frame) != len(raw)+1 || frame[len(frame)-1] != '\n' || !bytes.Equal(frame[:len(raw)], raw) {
+		t.Fatalf("frame %q vs marshal %q", frame, raw)
+	}
+}
+
+func TestSendHubResponseTooLargeYields413(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 128
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	outbox := make(chan Envelope, 1)
+	body, err := json.Marshal(strings.Repeat("x", 200))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendHubResponse(&nodeConn{outbox: outbox}, ResponseMsg{ID: "1", Status: http.StatusOK, Body: body})
+	env := <-outbox
+	if len(env.frame) == 0 {
+		t.Fatal("missing pre-marshaled frame")
+	}
+	if len(env.frame) > hubMaxMessageSize {
+		t.Fatalf("413 frame %d exceeds cap %d", len(env.frame), hubMaxMessageSize)
+	}
+	resp := decodeResponse(t, env)
+	if resp.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", resp.Status)
+	}
+	if string(resp.Body) != `{"error":"hub response too large"}` {
+		t.Fatalf("body %s", resp.Body)
+	}
+}
+
+func TestHubFrameAtCapDoesNotTripReadLimit(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 256
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	var last Envelope
+	for n := 1; n < 300; n++ {
+		body, err := json.Marshal(strings.Repeat("x", n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := marshalResponseEnvelope(ResponseMsg{ID: "1", Status: http.StatusOK, Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp ResponseMsg
+		if err := json.Unmarshal(env.Payload, &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Status == http.StatusRequestEntityTooLarge {
+			break
+		}
+		last = env
+	}
+	if len(last.frame) == 0 {
+		t.Fatal("did not produce an under-cap frame")
+	}
+	if len(last.frame) > hubMaxMessageSize {
+		t.Fatalf("under-cap frame %d exceeds %d", len(last.frame), hubMaxMessageSize)
+	}
+
+	if err := readWSWithLimit(t, int64(hubMaxMessageSize), last.frame); err != nil {
+		t.Fatalf("max-size frame tripped ReadLimit: %v", err)
+	}
+	if err := readWSWithLimit(t, int64(len(last.frame)), last.frame); err != nil {
+		t.Fatalf("exact frame size tripped ReadLimit: %v", err)
+	}
+	err := readWSWithLimit(t, int64(len(last.frame)-1), last.frame)
+	if !errors.Is(err, websocket.ErrReadLimit) {
+		t.Fatalf("limit-1: got %v, want ErrReadLimit", err)
+	}
+
+	// The 413 substitute itself must fit and be readable at the cap.
+	big, err := json.Marshal(strings.Repeat("x", 400))
+	if err != nil {
+		t.Fatal(err)
+	}
+	over, err := marshalResponseEnvelope(ResponseMsg{ID: "1", Status: http.StatusOK, Body: big})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overResp ResponseMsg
+	if err := json.Unmarshal(over.Payload, &overResp); err != nil {
+		t.Fatal(err)
+	}
+	if overResp.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", overResp.Status)
+	}
+	if err := readWSWithLimit(t, int64(hubMaxMessageSize), over.frame); err != nil {
+		t.Fatalf("413 frame tripped ReadLimit: %v", err)
+	}
+}
+
+func readWSWithLimit(t *testing.T, limit int64, payload []byte) error {
+	t.Helper()
+	errc := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := hubUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			errc <- err
+			return
+		}
+		defer c.Close()
+		c.SetReadLimit(limit)
+		_, _, err = c.ReadMessage()
+		errc <- err
+	}))
+	defer srv.Close()
+
+	u := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c, _, err := websocket.DefaultDialer.Dial(u, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case err := <-errc:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for read")
+		return nil
+	}
+}
+
+func TestDoHubRequestFailsFastIfSessionReplaced(t *testing.T) {
+	w := New(&util.ConfigWorker{})
+	sess1 := &hubSession{outbox: make(chan Envelope, 8), waiters: make(map[string]chan ResponseMsg)}
+	w.setHubSession(sess1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		time.Sleep(time.Millisecond)
+		sess2 := &hubSession{outbox: make(chan Envelope, 8), waiters: make(map[string]chan ResponseMsg)}
+		w.setHubSession(sess2)
+		w.clearHubSession(sess2)
+	}()
+	_, _, err := w.DoHubRequest(ctx, http.MethodGet, "/api/librenms-config", nil)
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("timed out: waiter registered on a displaced session")
+	}
+	if err == nil {
+		t.Fatal("expected disconnect or replaced error")
+	}
+}
+
+func TestHandleLocalAPIRejectsOversizeBody(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 64
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	w := New(&util.ConfigWorker{})
+	sess := &hubSession{outbox: make(chan Envelope, 1), waiters: make(map[string]chan ResponseMsg)}
+	w.setHubSession(sess)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/librenms-config", bytes.NewReader(bytes.Repeat([]byte("x"), hubMaxMessageSize+1)))
+	w.handleLocalAPI(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", rec.Code)
+	}
+	select {
+	case <-sess.outbox:
+		t.Fatal("must not trySend a truncated body")
+	default:
+	}
+}
+
+func TestHandleLocalAPIEnvelopeOversizeIs413(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 64
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	w := New(&util.ConfigWorker{})
+	sess := &hubSession{outbox: make(chan Envelope, 1), waiters: make(map[string]chan ResponseMsg)}
+	w.setHubSession(sess)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/librenms-config", nil)
+	w.handleLocalAPI(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", rec.Code)
+	}
+	select {
+	case <-sess.outbox:
+		t.Fatal("must not trySend an oversized request envelope")
+	default:
+	}
+}
+
+func TestDoHubRequestRejectsOversizeEnvelope(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 64
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	w := New(&util.ConfigWorker{})
+	sess := &hubSession{outbox: make(chan Envelope, 1), waiters: make(map[string]chan ResponseMsg)}
+	w.setHubSession(sess)
+
+	reqBody, err := json.Marshal(strings.Repeat("x", 80))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body, err := w.DoHubRequest(context.Background(), http.MethodGet, "/api/librenms-config", reqBody)
+	if err != nil {
+		t.Fatalf("oversize is HTTP 413, not a transport error: %v", err)
+	}
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", status)
+	}
+	if !bytes.Contains(body, []byte("hub request too large")) {
+		t.Fatalf("body %s", body)
+	}
+	select {
+	case <-sess.outbox:
+		t.Fatal("must not trySend an oversized envelope")
+	default:
+	}
 }

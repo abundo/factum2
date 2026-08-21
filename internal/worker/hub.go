@@ -55,6 +55,10 @@ const (
 type Envelope struct {
 	Type    EnvelopeType    `json:"type"`
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// frame is the on-wire JSON (including Encode's trailing newline) when
+	// the sender already size-checked it. runWriter WriteMessages this
+	// instead of remarshaling so the cap applies to the bytes actually sent.
+	frame []byte
 }
 
 // HelloMsg is sent by the agent immediately after the connection is
@@ -122,14 +126,16 @@ type ResponseMsg struct {
 var errInvalidHubPath = errors.New("invalid hub request path")
 
 const (
-	// Cap on len(json.Marshal(Envelope{...})). A 32MiB HTTP body would
-	// exceed the frame once wrapped, so the primary must not trySend a
-	// larger envelope (413 instead; gorilla would close the conn).
-	hubMaxMessageSize = 32 << 20
 	hubRPCMaxInFlight = 8
 	hubRPCTimeout     = util.HubRPCTimeout
 	hubRPCWriteWait   = util.HubRPCTimeout
 )
+
+// hubMaxMessageSize caps on-wire hub frames (JSON plus marshalHubFrame's
+// trailing newline). A var so tests can exercise 413 without allocating
+// 32MiB. Gorilla closes the conn when readLength > this limit, so the
+// checked frame must be the bytes actually written.
+var hubMaxMessageSize = 32 << 20
 
 // LogToSlog converts an agent's LogMsg into the equivalent slog call -
 // called directly by connectOnce for every inbound log envelope, which is
@@ -221,7 +227,16 @@ func runWriter(conn *websocket.Conn, outbox <-chan Envelope, done <-chan struct{
 				wait = hubRPCWriteWait
 			}
 			_ = conn.SetWriteDeadline(time.Now().Add(wait))
-			if err := conn.WriteJSON(env); err != nil {
+			frame := env.frame
+			if len(frame) == 0 {
+				var err error
+				frame, err = marshalHubFrame(env)
+				if err != nil {
+					conn.Close()
+					return
+				}
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 				conn.Close()
 				return
 			}
@@ -916,7 +931,7 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 		return false, dialErr
 	}
 	defer conn.Close()
-	conn.SetReadLimit(hubMaxMessageSize)
+	conn.SetReadLimit(int64(hubMaxMessageSize))
 
 	outbox := make(chan Envelope, outboxSize)
 	done := make(chan struct{})
@@ -1132,20 +1147,39 @@ func (m *RemoteManager) handleHubRequest(nodeCtx context.Context, node string, n
 	send(ResponseMsg{ID: req.ID, Status: rec.Code, Body: body})
 }
 
+// marshalHubFrame is the on-wire encoding of env: json.Marshal plus the
+// trailing newline json.Encoder.Encode (gorilla WriteJSON) appends.
+func marshalHubFrame(env Envelope) ([]byte, error) {
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, err
+	}
+	return append(raw, '\n'), nil
+}
+
 func sendHubResponse(nc *nodeConn, resp ResponseMsg) {
-	payload, err := json.Marshal(resp)
+	env, err := marshalResponseEnvelope(resp)
 	if err != nil {
 		slog.Error("worker hub: marshal RPC response", "id", resp.ID, "err", err)
 		return
 	}
-	env := Envelope{Type: EnvelopeResponse, Payload: payload}
-	raw, err := json.Marshal(env)
-	if err != nil {
-		slog.Error("worker hub: marshal RPC envelope", "id", resp.ID, "err", err)
-		return
+	if !trySend(nc.outbox, env) {
+		slog.Warn("worker hub: outbox stuck, dropping RPC response", "id", resp.ID)
 	}
-	if len(raw) > hubMaxMessageSize {
-		slog.Error("worker hub: RPC response too large", "id", resp.ID, "bytes", len(raw))
+}
+
+func marshalResponseEnvelope(resp ResponseMsg) (Envelope, error) {
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return Envelope{}, err
+	}
+	env := Envelope{Type: EnvelopeResponse, Payload: payload}
+	frame, err := marshalHubFrame(env)
+	if err != nil {
+		return Envelope{}, err
+	}
+	if len(frame) > hubMaxMessageSize {
+		slog.Error("worker hub: RPC response too large", "id", resp.ID, "bytes", len(frame))
 		small := ResponseMsg{
 			ID:     resp.ID,
 			Status: http.StatusRequestEntityTooLarge,
@@ -1153,11 +1187,14 @@ func sendHubResponse(nc *nodeConn, resp ResponseMsg) {
 		}
 		payload, err = json.Marshal(small)
 		if err != nil {
-			return
+			return Envelope{}, err
 		}
 		env = Envelope{Type: EnvelopeResponse, Payload: payload}
+		frame, err = marshalHubFrame(env)
+		if err != nil {
+			return Envelope{}, err
+		}
 	}
-	if !trySend(nc.outbox, env) {
-		slog.Warn("worker hub: outbox stuck, dropping RPC response", "id", resp.ID)
-	}
+	env.frame = frame
+	return env, nil
 }

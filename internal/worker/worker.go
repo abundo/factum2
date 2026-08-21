@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -127,27 +128,10 @@ func failWaiters(sess *hubSession, errMsg string) {
 // waits for the matching response. ResponseMsg.Error is always returned as
 // err (unix 502), never as HTTP 200 with an error string.
 func (w *Worker) DoHubRequest(ctx context.Context, method, path string, body []byte) (status int, respBody []byte, err error) {
-	w.hubMu.Lock()
-	sess := w.hub
-	w.hubMu.Unlock()
-	if sess == nil {
-		return 0, nil, ErrHubDisconnected
-	}
-
 	id, err := newID()
 	if err != nil {
 		return 0, nil, err
 	}
-	ch := make(chan ResponseMsg, 1)
-	sess.mu.Lock()
-	sess.waiters[id] = ch
-	sess.mu.Unlock()
-	defer func() {
-		sess.mu.Lock()
-		delete(sess.waiters, id)
-		sess.mu.Unlock()
-	}()
-
 	req := RequestMsg{ID: id, Method: method, Path: path}
 	if len(body) > 0 {
 		req.Body = json.RawMessage(body)
@@ -156,7 +140,34 @@ func (w *Worker) DoHubRequest(ctx context.Context, method, path string, body []b
 	if err != nil {
 		return 0, nil, err
 	}
-	if !trySend(sess.outbox, Envelope{Type: EnvelopeRequest, Payload: payload}) {
+	env := Envelope{Type: EnvelopeRequest, Payload: payload}
+	frame, err := marshalHubFrame(env)
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(frame) > hubMaxMessageSize {
+		return http.StatusRequestEntityTooLarge, []byte(`{"error":"hub request too large"}`), nil
+	}
+	env.frame = frame
+
+	ch := make(chan ResponseMsg, 1)
+	w.hubMu.Lock()
+	sess := w.hub
+	if sess == nil {
+		w.hubMu.Unlock()
+		return 0, nil, ErrHubDisconnected
+	}
+	sess.mu.Lock()
+	sess.waiters[id] = ch
+	sess.mu.Unlock()
+	w.hubMu.Unlock()
+	defer func() {
+		sess.mu.Lock()
+		delete(sess.waiters, id)
+		sess.mu.Unlock()
+	}()
+
+	if !trySend(sess.outbox, env) {
 		return 0, nil, fmt.Errorf("hub outbox stuck")
 	}
 

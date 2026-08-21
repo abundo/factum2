@@ -109,9 +109,15 @@ func (w *Worker) handleLocalAPI(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, hubMaxMessageSize))
+	// Read one extra byte so a body that hits the cap with more remaining
+	// is rejected instead of silently truncated and forwarded.
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(hubMaxMessageSize)+1))
 	if err != nil {
 		writeJSONError(rw, http.StatusBadRequest, "read body")
+		return
+	}
+	if len(body) > hubMaxMessageSize {
+		writeJSONError(rw, http.StatusRequestEntityTooLarge, "hub request too large")
 		return
 	}
 
