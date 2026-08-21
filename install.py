@@ -39,7 +39,7 @@ REPO_DEFAULT = "abundo/factum2"
 INSTALL_DIR_DEFAULT = "/opt/factum2"
 CONFIG_PATH_DEFAULT = "/etc/factum2/factum2.yaml"
 POSTGRES_COMPOSE_DEFAULT = "/opt/postgresql/compose.yaml"
-PRIMARY_UNITS = ("factum2-gui.service", "factum2-worker.service")
+PRIMARY_UNITS = ("factum2-web.service", "factum2-worker.service")
 WORKER_UNIT = "factum2-worker.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
@@ -778,7 +778,7 @@ def install_primary(
         )
 
     log("==> Installing systemd units")
-    for unit in ("factum2-gui.service", "factum2-worker.service"):
+    for unit in PRIMARY_UNITS:
         src = examples_dir / unit
         if not src.is_file():
             raise InstallError(f"Missing systemd unit {src}")

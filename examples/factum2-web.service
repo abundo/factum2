@@ -1,8 +1,8 @@
 
-# factum-gui.service, start factum WEB GUI
+# factum-web.service, start factum web
 
 [Unit]
-Description=Factum web GUI
+Description=Factum web
 After=network.target network-online.target
 Requires=network-online.target
 

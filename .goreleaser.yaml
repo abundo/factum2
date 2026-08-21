@@ -168,8 +168,8 @@ nfpms:
         dst: /usr/share/doc/factum2/factum2-worker.yaml
       - src: examples/icinga-notification-email.tpl
         dst: /usr/share/doc/factum2/icinga-notification-email.tpl
-      - src: examples/factum2-gui.service
-        dst: /lib/systemd/system/factum2-gui.service
+      - src: examples/factum2-web.service
+        dst: /lib/systemd/system/factum2-web.service
       - src: examples/factum2-worker.service
         dst: /lib/systemd/system/factum2-worker.service
       - dst: /etc/factum2

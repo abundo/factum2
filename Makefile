@@ -116,8 +116,8 @@ snapshot:
 install: release
 	install -m 755 $(BUILD_DIR)/* $(INSTALL_DIR)
 	sudo -v
-	sudo cp examples/factum2-gui.service /etc/systemd/system
+	sudo cp examples/factum2-web.service /etc/systemd/system
 	sudo cp examples/factum2-worker.service /etc/systemd/system
 	#sudo systemctl daemon-reload
-	#sudo systemctl restart factum2-gui.service
+	#sudo systemctl restart factum2-web.service
 	#sudo systemctl restart factum2-worker.service
