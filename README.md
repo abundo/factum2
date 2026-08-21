@@ -14,14 +14,20 @@ for architecture notes.
 
 ## Prerequisites
 
-- Go 1.25+
-- Node.js `^22.18.0` or `>=24.12.0` (only needed to build/dev the web
-  frontend — see `web/frontend/package.json`)
 - PostgreSQL (app data, via GORM)
+- Python 3 (only for `install.py` on a production host)
+- Go 1.25+ and Node.js `^22.18.0` or `>=24.12.0` (only to build/dev from
+  source — see `web/frontend/package.json`)
 
 ## Quickstart
 
-### 1. Create the PostgreSQL database
+### Production (GitHub release)
+
+No Go or Node needed. Tagged releases ship linux/amd64 and linux/arm64
+binaries plus systemd units. The installer lives at `/etc/factum2/install.py`
+so you can re-run it later to pick another tag.
+
+#### 1. Create the PostgreSQL database
 
 ```sh
 sudo -u postgres psql
@@ -34,22 +40,65 @@ alter database factum2 owner to factum2_user;
 Schema migrations run automatically (`gorm.AutoMigrate`) the first time a
 binary connects to the DB.
 
-### 2. Create a config file
+#### 2. Config and installer
+
+```sh
+sudo mkdir -p /etc/factum2
+sudo curl -fsSL -o /etc/factum2/factum2.yaml \
+  https://raw.githubusercontent.com/abundo/factum2/main/examples/factum2.yaml
+sudo curl -fsSL -o /etc/factum2/factum2-worker.yaml \
+  https://raw.githubusercontent.com/abundo/factum2/main/examples/factum2-worker.yaml
+sudo curl -fsSL -o /etc/factum2/install.py \
+  https://raw.githubusercontent.com/abundo/factum2/main/install.py
+sudo chmod +x /etc/factum2/install.py
+```
+
+If the repo is private, add `-H "Authorization: Bearer $GITHUB_TOKEN"` to
+the `curl` commands (or `export GITHUB_TOKEN=...` before running
+`install.py`).
+
+Edit `/etc/factum2/factum2.yaml`: set `db:` credentials and `web.jwtsecret`
+(`openssl rand -base64 48`). Edit `/etc/factum2/factum2-worker.yaml` for
+the local worker (`factum.token`, `worker.listen`, `worker.token`). Almost
+all other runtime settings (NetBox/Lime/DNS/Icinga/LibreNMS, ...) live in
+the database and are edited from the admin UI. See
+[DEV.md § Configuration](DEV.md#configuration) for the full YAML key
+reference.
+
+#### 3. Select a release
+
+```sh
+sudo /etc/factum2/install.py
+```
+
+On a TTY the installer lists GitHub releases; highlight one and press Enter.
+Non-interactive: `sudo /etc/factum2/install.py --install latest --yes`.
+
+That copies binaries to `/opt/factum2`, then installs systemd units:
+
+- **this host (primary):** `factum2-web.service` and `factum2-worker.service`
+- **each enabled worker node:** `factum2-worker.service`
+
+A unit that is not on disk yet is installed and `systemctl enable --now`'d.
+If the file is already there and matches this release, it is left alone
+and the unit is restarted. If it has been modified, the installer prints a
+diff and asks before overwriting (`--yes` overwrites without asking).
+
+#### 4. Create the first admin user
+
+```sh
+sudo /opt/factum2/factum-web createadmin -f /etc/factum2/factum2.yaml
+```
+
+Then log in at the address in `web.bind` (the example config uses
+`http://127.0.0.1:8091`).
+
+### From source (development)
 
 ```sh
 sudo mkdir -p /etc/factum2
 sudo cp examples/factum2.yaml /etc/factum2/
 ```
-
-This is the default path every `cmd/*` binary looks for (`-f`, see
-`cmd/cmd_base.go`). Almost all runtime settings (NetBox/Lime/DNS/Icinga/
-LibreNMS connections, JWT secret, ...) live in the database and are edited
-from the admin UI instead — the YAML file only needs `db:` credentials plus,
-for a first run, `web.jwtsecret` (required outside `APP_ENV=development`).
-See [DEV.md § Configuration](DEV.md#configuration) for the full key
-reference.
-
-### 3. Build
 
 ```sh
 make            # all CLI binaries into build/ (excludes factum-web-release)
@@ -59,8 +108,6 @@ make frontend   # builds web/frontend -> web/static/vue
 Tagged releases (`v*`) are built with [GoReleaser](https://goreleaser.com/)
 and published by GitHub Actions — see [DEV.md § Release](DEV.md#release).
 
-### 4. Run the web GUI
-
 ```sh
 APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0.0:8090
 ```
@@ -69,18 +116,15 @@ APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0
 back to an insecure key) — don't use it against anything but a local/dev
 database.
 
-Create the first admin user:
-
 ```sh
 go run ./cmd/web createadmin -f /etc/factum2/factum2.yaml
 ```
 
 Then log in at `http://localhost:8090`.
 
-For frontend hot-reload during development (`cd web/frontend && npm install
-&& npm run dev`, proxies to the backend on `:8090`), installing via
-`./install.py` (GitHub release on production, or `--source` from this tree
-in the lab), and everything else, see [DEV.md](DEV.md).
+For frontend hot-reload (`cd web/frontend && npm install && npm run dev`,
+proxies to the backend on `:8090`), `./install.py --source` from this tree,
+and everything else, see [DEV.md](DEV.md).
 
 ## Installing a worker node
 
@@ -94,9 +138,10 @@ direction is reversed.
 
 1. **Build and copy the binary.** `make factum-worker` (or `make release`
    for every binary) builds `build/factum-worker`; copy it to the target
-   host, e.g. `/opt/factum2/factum-worker`. (`./install.py --source`
-   automates this step — plus the systemd install in step 4 — over ssh for
-   every node already registered and enabled in the `worker_nodes` table.)
+   host, e.g. `/opt/factum2/factum-worker`. (`/etc/factum2/install.py` from
+   a GitHub release, or `./install.py --source` from this tree, automates
+   this step — plus the systemd unit in step 4 — over ssh for every node
+   already registered and enabled in the `worker_nodes` table.)
 
 2. **Create the config file**, starting from `examples/factum2-worker.yaml`:
 
@@ -137,17 +182,20 @@ direction is reversed.
    Token matching its `worker.token`. Takes effect within one
    `RemoteManager` reconcile pass (~10s) — no primary restart needed.
 
-4. **Install and start the systemd unit:**
+4. **Install and start the systemd unit.** Prefer re-running
+   `/etc/factum2/install.py` on the primary: it copies
+   `factum2-worker.service` to each enabled worker, compares it with
+   whatever is already in `/etc/systemd/system`, and asks before
+   overwriting a modified file. Manual fallback:
 
     ```sh
-    sudo cp examples/factum-worker.service /etc/systemd/system/
+    sudo cp examples/factum2-worker.service /etc/systemd/system/
     sudo systemctl daemon-reload
-    sudo systemctl enable --now factum-worker.service
+    sudo systemctl enable --now factum2-worker.service
     ```
 
 5. **Verify**: `/sync/status` in the web UI (or `GET /api/worker/status`)
-   lists connected nodes and what they handle; `journalctl -u factum-worker
--f` on the worker host for logs.
+   lists connected nodes and what they handle; `journalctl -u factum2-worker -f` on the worker host for logs.
 
 ## NetBox webhook (partial sync)
 

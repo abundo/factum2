@@ -135,11 +135,26 @@ To push a build onto the primary and every enabled worker node (replaces
 ./install.py --source --dry-run
 ```
 
-On a production primary with no source tree, install a published GitHub
-release instead (`./install.py`, `./install.py --list`, `./install.py
---install v1.0.0`). A standalone copy of `install.py` (not a git checkout)
-checks GitHub at startup for a newer installer and offers to replace itself
-before listing or installing releases (`--self-update` / `--skip-self-update`).
+On a production primary with no source tree, put the installer in
+`/etc/factum2` and pick a published GitHub release (see [README.md §
+Quickstart](README.md#production-github-release)):
+
+```sh
+sudo mkdir -p /etc/factum2
+sudo curl -fsSL -o /etc/factum2/install.py \
+  https://raw.githubusercontent.com/abundo/factum2/main/install.py
+sudo chmod +x /etc/factum2/install.py
+sudo /etc/factum2/install.py              # TUI: select a release
+sudo /etc/factum2/install.py --list
+sudo /etc/factum2/install.py --install v1.0.0
+```
+
+That installs `factum2-web.service` and `factum2-worker.service` on the
+primary, and `factum2-worker.service` on each enabled worker. If a unit
+file on disk differs from the packaged one, the installer prints a diff
+and asks before overwriting. A standalone copy of `install.py` (not a git
+checkout) also checks GitHub at startup for a newer installer and offers to
+replace itself (`--self-update` / `--skip-self-update`).
 
 ## Testing
 
@@ -264,8 +279,8 @@ Local dry-run (writes `dist/`, does not publish):
 
 Install a published release on the primary (and its worker nodes):
 
-    ./install.py --list
-    ./install.py --install v1.0.0
+    /etc/factum2/install.py --list
+    /etc/factum2/install.py --install v1.0.0
 
 ## Running the web GUI in dev
 
