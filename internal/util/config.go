@@ -23,6 +23,10 @@ type ConfigFactum struct {
 	// primary's Settings.FactumApiToken, sent as "Authorization: Bearer
 	// <token>". See web.Controller.RequireAPIAuth.
 	Token string `boa:"configonly" yaml:"token" optional:"true"`
+	// Socket is the local unix API path when this CLI is co-located with
+	// factum-worker. Empty uses DefaultHubSocket unless FACTUM_WORKER_API_SOCKET
+	// overrides it; "none"/"0" disables the socket (CLI-only escape hatch).
+	Socket string `boa:"configonly" yaml:"socket" optional:"true"`
 }
 
 // ConfigIcinga is a runtime-only DTO, not part of ConfigRoot - unlike
@@ -222,6 +226,10 @@ type ConfigWorker struct {
 	// side of the same value lives on the matching models.WorkerNode row,
 	// not in any config file.
 	Token string `boa:"configonly" yaml:"token" optional:"true"`
+	// APISocket is the unix HTTP listener for hub RPC. Empty uses
+	// DefaultHubSocket / FACTUM_WORKER_API_SOCKET; "none"/"0" is invalid
+	// for factum-worker start (fail closed). Not a route on worker.listen.
+	APISocket string `boa:"configonly" yaml:"api_socket" optional:"true"`
 }
 
 type ConfigWeb struct {

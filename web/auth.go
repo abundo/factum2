@@ -11,6 +11,7 @@ import (
 
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/util"
+	"github.com/abundo/factum2/internal/worker"
 	"github.com/abundo/factum2/models"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v5"
@@ -74,6 +75,11 @@ func (ctrl *Controller) checkServiceToken(c *echo.Context) bool {
 // like the legacy form-POST handlers do.
 func (ctrl *Controller) RequireAPIAuth(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c *echo.Context) error {
+		if worker.IsHubAuth(c.Request().Context()) {
+			c.Set("auth_method", "token")
+			return next(c)
+		}
+
 		if ctrl.checkServiceToken(c) {
 			c.Set("auth_method", "token")
 			return next(c)

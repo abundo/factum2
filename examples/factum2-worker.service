@@ -14,6 +14,8 @@ Requires=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/factum2
+RuntimeDirectory=factum-worker
+RuntimeDirectoryMode=0750
 ExecStart=/opt/factum2/factum-worker -f /etc/factum2/factum2-worker.yaml start
 TimeoutStopSec=10s
 

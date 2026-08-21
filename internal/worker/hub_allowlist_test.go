@@ -1,0 +1,72 @@
+package worker
+
+import (
+	"net/http"
+	"testing"
+)
+
+func TestAllowHubAPI(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodGet, "/api/librenms-config", true},
+		{http.MethodPost, "/api/librenms-config", false},
+		{http.MethodGet, "/api/librenms-config/extra", false},
+		{http.MethodGet, "/api/common-config", false},
+		{http.MethodGet, "/api/admin/settings", false},
+		{http.MethodPost, "/api/worker/run", false},
+		{http.MethodGet, "/api/device/1", false},
+		{http.MethodGet, "/api/device/1/impact", false},
+		{http.MethodGet, "/api/jobs/1/tasks/2/events", false},
+		{http.MethodPost, "/api/device/1/interfaces/refresh", false},
+		{http.MethodPost, "/api/librenms/pending-deletes/7/delete-next-sync", false},
+	}
+	for _, tc := range cases {
+		got := AllowHubAPI(tc.method, tc.path)
+		if got != tc.want {
+			t.Errorf("AllowHubAPI(%s, %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeHubPath(t *testing.T) {
+	t.Parallel()
+	ok := []struct {
+		raw, cleaned, withQuery string
+	}{
+		{"/api/librenms-config", "/api/librenms-config", "/api/librenms-config"},
+		{"/api/librenms-config?x=1", "/api/librenms-config", "/api/librenms-config?x=1"},
+	}
+	for _, tc := range ok {
+		cleaned, withQuery, err := normalizeHubPath(tc.raw)
+		if err != nil {
+			t.Errorf("normalizeHubPath(%q) unexpected err %v", tc.raw, err)
+			continue
+		}
+		if cleaned != tc.cleaned || withQuery != tc.withQuery {
+			t.Errorf("normalizeHubPath(%q) = %q, %q; want %q, %q", tc.raw, cleaned, withQuery, tc.cleaned, tc.withQuery)
+		}
+	}
+
+	bad := []string{
+		"",
+		"api/librenms-config",
+		"/api/librenms-config#frag",
+		"http://evil/api/librenms-config",
+		"https://evil/api/librenms-config",
+		"//evil/api/librenms-config",
+		"/api/foo/../librenms-config",
+		"/api//librenms-config",
+		"/api/./librenms-config",
+		"/api/librenms-config/%2e%2e/admin/settings",
+		"/notapi/librenms-config",
+		"/api",
+	}
+	for _, raw := range bad {
+		if _, _, err := normalizeHubPath(raw); err == nil {
+			t.Errorf("normalizeHubPath(%q) = nil, want error", raw)
+		}
+	}
+}

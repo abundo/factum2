@@ -14,19 +14,23 @@ package worker
 // conn.WriteJSON/WriteMessage directly except that one goroutine.
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
@@ -39,10 +43,12 @@ const HubPath = "/hub"
 type EnvelopeType string
 
 const (
-	EnvelopeHello   EnvelopeType = "hello"
-	EnvelopeCommand EnvelopeType = "command"
-	EnvelopeLog     EnvelopeType = "log"
-	EnvelopeEvent   EnvelopeType = "event"
+	EnvelopeHello    EnvelopeType = "hello"
+	EnvelopeCommand  EnvelopeType = "command"
+	EnvelopeLog      EnvelopeType = "log"
+	EnvelopeEvent    EnvelopeType = "event"
+	EnvelopeRequest  EnvelopeType = "request"  // agent → primary
+	EnvelopeResponse EnvelopeType = "response" // primary → agent
 )
 
 // Envelope wraps every message exchanged over a hub connection.
@@ -94,6 +100,36 @@ type EventMsg struct {
 	Level   string `json:"level"`
 	Message string `json:"message"`
 }
+
+// RequestMsg is an HTTP-subset RPC. Path is RequestURI (path + query),
+// e.g. "/api/device?include=interfaces" or "/api/device/name/core-sw1".
+type RequestMsg struct {
+	ID     string          `json:"id"`
+	Method string          `json:"method"`
+	Path   string          `json:"path"`
+	Body   json.RawMessage `json:"body,omitempty"`
+}
+
+// ResponseMsg is the matching RPC reply. Error is transport-level (unix 502);
+// HTTP 4xx/5xx use Status+Body with Error empty.
+type ResponseMsg struct {
+	ID     string          `json:"id"`
+	Status int             `json:"status"`
+	Body   json.RawMessage `json:"body,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+var errInvalidHubPath = errors.New("invalid hub request path")
+
+const (
+	// Cap on len(json.Marshal(Envelope{...})). A 32MiB HTTP body would
+	// exceed the frame once wrapped, so the primary must not trySend a
+	// larger envelope (413 instead; gorilla would close the conn).
+	hubMaxMessageSize = 32 << 20
+	hubRPCMaxInFlight = 8
+	hubRPCTimeout     = util.HubRPCTimeout
+	hubRPCWriteWait   = util.HubRPCTimeout
+)
 
 // LogToSlog converts an agent's LogMsg into the equivalent slog call -
 // called directly by connectOnce for every inbound log envelope, which is
@@ -180,7 +216,11 @@ func runWriter(conn *websocket.Conn, outbox <-chan Envelope, done <-chan struct{
 			if !ok {
 				return
 			}
-			_ = conn.SetWriteDeadline(time.Now().Add(hubWriteWait))
+			wait := hubWriteWait
+			if env.Type == EnvelopeResponse {
+				wait = hubRPCWriteWait
+			}
+			_ = conn.SetWriteDeadline(time.Now().Add(wait))
 			if err := conn.WriteJSON(env); err != nil {
 				conn.Close()
 				return
@@ -237,24 +277,36 @@ type RemoteManager struct {
 	// status is keyed by WorkerNode.Name, not by connection, so a node's
 	// last-known state survives a disconnect/reconnect or a disable/
 	// re-enable instead of just disappearing.
-	status  map[string]NodeStatus
-	active  map[string]context.CancelFunc // running dialLoop goroutines, keyed by WorkerNode.Name
-	nodes   map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token edits
-	conns   map[string]*nodeConn          // present only once hello is received, keyed by WorkerNode.Name
-	waiters map[string]chan LogMsg        // temporary RunAndWait registrations, keyed by CommandMsg.ID
-	running map[string]runningJob         // in-flight sync jobs, keyed by target - see runningJob
+	status   map[string]NodeStatus
+	active   map[string]context.CancelFunc // running dialLoop goroutines, keyed by WorkerNode.Name
+	nodes    map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token edits
+	conns    map[string]*nodeConn          // present only once hello is received, keyed by WorkerNode.Name
+	waiters  map[string]chan LogMsg        // temporary RunAndWait registrations, keyed by CommandMsg.ID
+	running  map[string]runningJob         // in-flight sync jobs, keyed by target - see runningJob
+	api      http.Handler                  // set by SetAPIHandler; snapshot under mu before ServeHTTP
+	inFlight map[string]int                // keyed by WorkerNode.Name; RPC goroutines in handleHubRequest
 }
 
 func NewRemoteManager(db *gorm.DB) *RemoteManager {
 	return &RemoteManager{
-		db:      db,
-		status:  make(map[string]NodeStatus),
-		active:  make(map[string]context.CancelFunc),
-		nodes:   make(map[string]models.WorkerNode),
-		conns:   make(map[string]*nodeConn),
-		waiters: make(map[string]chan LogMsg),
-		running: make(map[string]runningJob),
+		db:       db,
+		status:   make(map[string]NodeStatus),
+		active:   make(map[string]context.CancelFunc),
+		nodes:    make(map[string]models.WorkerNode),
+		conns:    make(map[string]*nodeConn),
+		waiters:  make(map[string]chan LogMsg),
+		running:  make(map[string]runningJob),
+		inFlight: make(map[string]int),
 	}
+}
+
+// SetAPIHandler attaches the primary's Echo router for in-process hub RPC.
+// Must be called after routes are registered and before Run, so a connected
+// worker never observes a nil handler.
+func (m *RemoteManager) SetAPIHandler(h http.Handler) {
+	m.mu.Lock()
+	m.api = h
+	m.mu.Unlock()
 }
 
 // Run reconciles the configured WorkerNode set against running dial-loops
@@ -864,6 +916,7 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 		return false, dialErr
 	}
 	defer conn.Close()
+	conn.SetReadLimit(hubMaxMessageSize)
 
 	outbox := make(chan Envelope, outboxSize)
 	done := make(chan struct{})
@@ -976,8 +1029,135 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 					}
 				}
 			}
+		case EnvelopeRequest:
+			var req RequestMsg
+			if unmarshalErr := json.Unmarshal(env.Payload, &req); unmarshalErr != nil {
+				slog.Error("worker hub: invalid request envelope, discarding", "node", node.Name, "err", unmarshalErr)
+				continue
+			}
+			go m.HandleHubRequest(nodeCtx, node.Name, nc.outbox, req)
 		default:
 			slog.Debug("worker hub: unhandled envelope type", "node", node.Name, "type", env.Type)
 		}
+	}
+}
+
+// HandleHubRequest runs one hub RPC against the attached API handler and
+// writes the response envelope to outbox. outbox must be this connection's:
+// looking up m.conns again could send the reply on a newer conn.
+func (m *RemoteManager) HandleHubRequest(ctx context.Context, node string, outbox chan Envelope, req RequestMsg) {
+	m.handleHubRequest(ctx, node, &nodeConn{outbox: outbox}, req)
+}
+
+func (m *RemoteManager) handleHubRequest(nodeCtx context.Context, node string, nc *nodeConn, req RequestMsg) {
+	sent := false
+	send := func(resp ResponseMsg) {
+		sendHubResponse(nc, resp)
+		sent = true
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("worker hub: hub RPC panic", "node", node, "id", req.ID, "err", rec)
+			if !sent {
+				send(ResponseMsg{ID: req.ID, Status: http.StatusInternalServerError, Body: json.RawMessage(`{"error":"internal error"}`)})
+			}
+		}
+	}()
+
+	m.mu.Lock()
+	if m.inFlight[node] >= hubRPCMaxInFlight {
+		m.mu.Unlock()
+		send(ResponseMsg{ID: req.ID, Status: http.StatusTooManyRequests, Body: json.RawMessage(`{"error":"too many in-flight hub RPCs"}`)})
+		return
+	}
+	m.inFlight[node]++
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.inFlight[node]--
+		if m.inFlight[node] <= 0 {
+			delete(m.inFlight, node)
+		}
+		m.mu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(nodeCtx, hubRPCTimeout)
+	defer cancel()
+
+	cleanedPath, pathAndQuery, err := normalizeHubPath(req.Path)
+	if err != nil {
+		send(ResponseMsg{ID: req.ID, Status: http.StatusBadRequest, Body: json.RawMessage(`{"error":"invalid path"}`)})
+		return
+	}
+	switch req.Method {
+	case http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPost:
+	default:
+		send(ResponseMsg{ID: req.ID, Status: http.StatusBadRequest, Body: json.RawMessage(`{"error":"invalid method"}`)})
+		return
+	}
+
+	if !AllowHubAPI(req.Method, cleanedPath) {
+		slog.Error("worker hub: path not allowed", "node", node, "method", req.Method, "path", cleanedPath)
+		send(ResponseMsg{ID: req.ID, Status: http.StatusForbidden, Body: json.RawMessage(`{"error":"path not allowed over hub"}`)})
+		return
+	}
+
+	m.mu.Lock()
+	h := m.api
+	m.mu.Unlock()
+	if h == nil {
+		send(ResponseMsg{ID: req.ID, Status: http.StatusServiceUnavailable, Body: json.RawMessage(`{"error":"hub API handler not attached"}`)})
+		return
+	}
+
+	start := time.Now()
+	var bodyReader io.Reader
+	if len(req.Body) > 0 {
+		bodyReader = bytes.NewReader(req.Body)
+	}
+	httpReq := httptest.NewRequest(req.Method, pathAndQuery, bodyReader)
+	if len(req.Body) > 0 {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	httpReq = httpReq.WithContext(WithHubAuth(ctx))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httpReq)
+
+	slog.Debug("worker hub: hub RPC", "node", node, "id", req.ID, "method", req.Method, "path", cleanedPath, "status", rec.Code, "bytes", rec.Body.Len(), "duration", time.Since(start))
+
+	var body json.RawMessage
+	if rec.Body.Len() > 0 {
+		body = rec.Body.Bytes()
+	}
+	send(ResponseMsg{ID: req.ID, Status: rec.Code, Body: body})
+}
+
+func sendHubResponse(nc *nodeConn, resp ResponseMsg) {
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		slog.Error("worker hub: marshal RPC response", "id", resp.ID, "err", err)
+		return
+	}
+	env := Envelope{Type: EnvelopeResponse, Payload: payload}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		slog.Error("worker hub: marshal RPC envelope", "id", resp.ID, "err", err)
+		return
+	}
+	if len(raw) > hubMaxMessageSize {
+		slog.Error("worker hub: RPC response too large", "id", resp.ID, "bytes", len(raw))
+		small := ResponseMsg{
+			ID:     resp.ID,
+			Status: http.StatusRequestEntityTooLarge,
+			Body:   json.RawMessage(`{"error":"hub response too large"}`),
+		}
+		payload, err = json.Marshal(small)
+		if err != nil {
+			return
+		}
+		env = Envelope{Type: EnvelopeResponse, Payload: payload}
+	}
+	if !trySend(nc.outbox, env) {
+		slog.Warn("worker hub: outbox stuck, dropping RPC response", "id", resp.ID)
 	}
 }
