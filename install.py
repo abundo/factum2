@@ -47,7 +47,13 @@ REPO_DIR = Path(__file__).resolve().parent
 REPO_DEFAULT = "abundo/factum2"
 INSTALL_DIR_DEFAULT = "/opt/factum2"
 CONFIG_PATH_DEFAULT = "/etc/factum2/factum2.yaml"
-POSTGRES_COMPOSE_DEFAULT = "/opt/postgresql/compose.yaml"
+POSTGRES_COMPOSE_DIR = Path("/opt/postgresql")
+POSTGRES_COMPOSE_NAMES = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+)
 SYSTEMD_DIR = Path("/etc/systemd/system")
 PRIMARY_UNITS = ("factum2-web.service", "factum2-worker.service")
 WORKER_UNIT = "factum2-worker.service"
@@ -55,7 +61,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 2
+INSTALLER_VERSION = 4
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
@@ -494,9 +500,82 @@ def yaml_section(path: Path, section: str) -> dict[str, str]:
     return values
 
 
+def find_postgres_compose(root: Path = POSTGRES_COMPOSE_DIR) -> Path | None:
+    for name in POSTGRES_COMPOSE_NAMES:
+        path = root / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _psql_direct(db: dict[str, str], sql: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db["pass"]
+    return subprocess.run(
+        [
+            "psql",
+            "-h",
+            db["host"],
+            "-p",
+            db["port"],
+            "-U",
+            db["user"],
+            "-d",
+            db["database"],
+            "-tAc",
+            sql,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+
+
+def _psql_via_compose(
+    compose: Path, db: dict[str, str], sql: str
+) -> subprocess.CompletedProcess[str]:
+    # Connects to Postgres inside the compose `db` service, so this fails if
+    # the server in factum2.yaml is a different host.
+    return subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(compose),
+            "exec",
+            "-T",
+            "-e",
+            f"PGPASSWORD={db['pass']}",
+            "db",
+            "psql",
+            "-U",
+            db["user"],
+            "-d",
+            db["database"],
+            "-tAc",
+            sql,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _no_psql_fallback_error(compose: Path | None) -> str:
+    names = ", ".join(POSTGRES_COMPOSE_NAMES)
+    if compose is None:
+        return (
+            f"psql not found on PATH and no compose file in {POSTGRES_COMPOSE_DIR} "
+            f"({names})"
+        )
+    return f"psql not found on PATH and docker is not available (compose file: {compose})"
+
+
 def query_worker_addresses(
     config_path: Path,
-    compose_path: Path,
     *,
     target_host: str = "localhost",
     ssh_user: str = "root",
@@ -507,37 +586,39 @@ def query_worker_addresses(
         raise InstallError(f"db.{{{', '.join(missing)}}} missing from {config_path}")
     sql = "select address from worker_nodes where enabled = true;"
     if is_local_host(target_host):
-        if not compose_path.is_file():
-            raise InstallError(f"Postgres compose file not found: {compose_path}")
-        proc = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(compose_path),
-                "exec",
-                "-T",
-                "-e",
-                f"PGPASSWORD={db['pass']}",
-                "db",
-                "psql",
-                "-U",
-                db["user"],
-                "-d",
-                db["database"],
-                "-tAc",
-                sql,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        if which("psql"):
+            proc = _psql_direct(db, sql)
+        else:
+            compose = find_postgres_compose()
+            if compose is None or not which("docker"):
+                raise InstallError(_no_psql_fallback_error(compose))
+            log(
+                f"==> psql not on PATH, using docker compose -f {compose} "
+                "(fails if Postgres is on another host)"
+            )
+            proc = _psql_via_compose(compose, db, sql)
     else:
         # Credentials go as argv to bash -s, not interpolated into the remote script.
-        remote = """\
+        names = " ".join(POSTGRES_COMPOSE_NAMES)
+        remote = f"""\
 set -euo pipefail
-docker compose -f /opt/postgresql/compose.yaml exec -T -e PGPASSWORD="$3" db \\
-    psql -U "$1" -d "$2" -tAc "select address from worker_nodes where enabled = true;"
+SQL='select address from worker_nodes where enabled = true;'
+if command -v psql >/dev/null 2>&1; then
+  export PGPASSWORD="$5"
+  psql -h "$1" -p "$2" -U "$3" -d "$4" -tAc "$SQL"
+  exit 0
+fi
+dir={POSTGRES_COMPOSE_DIR}
+for name in {names}; do
+  f="$dir/$name"
+  if [ -f "$f" ]; then
+    docker compose -f "$f" exec -T -e PGPASSWORD="$5" db \\
+      psql -U "$3" -d "$4" -tAc "$SQL"
+    exit 0
+  fi
+done
+echo "psql not found and no compose file in $dir ({names})" >&2
+exit 1
 """
         proc = subprocess.run(
             [
@@ -550,6 +631,8 @@ docker compose -f /opt/postgresql/compose.yaml exec -T -e PGPASSWORD="$3" db \\
                 "bash",
                 "-s",
                 "--",
+                db["host"],
+                db["port"],
                 db["user"],
                 db["database"],
                 db["pass"],
@@ -1596,8 +1679,7 @@ Examples:
     )
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPO", REPO_DEFAULT), help=f"owner/name (default {REPO_DEFAULT})")
     p.add_argument("--install-dir", default=INSTALL_DIR_DEFAULT, type=Path)
-    p.add_argument("--config", default=CONFIG_PATH_DEFAULT, type=Path)
-    p.add_argument("--compose", default=POSTGRES_COMPOSE_DEFAULT, type=Path, help="docker compose file used to exec psql")
+    p.add_argument("--config", default=CONFIG_PATH_DEFAULT, type=Path, help="factum2.yaml (db credentials for worker_nodes lookup)")
     p.add_argument("--ssh-user", default=os.environ.get("SSH_USER", "root"))
     p.add_argument("--list", action="store_true", help="print GitHub releases and exit")
     p.add_argument("--install", metavar="TAG", help="GitHub tag to install, or 'latest'")
@@ -1707,7 +1789,6 @@ def main_source(args: argparse.Namespace) -> int:
             try:
                 addresses = query_worker_addresses(
                     config_file,
-                    args.compose,
                     target_host=target_host,
                     ssh_user=args.ssh_user,
                 )
@@ -1829,7 +1910,7 @@ def main_release(args: argparse.Namespace) -> int:
     worker_err: str | None = None
     if not args.primary_only:
         try:
-            addresses = query_worker_addresses(args.config, args.compose)
+            addresses = query_worker_addresses(args.config)
             workers = worker_hosts(addresses)
         except InstallError as exc:
             worker_err = str(exc)
