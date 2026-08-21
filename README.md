@@ -228,8 +228,8 @@ treat those secrets as TLS-protected on the hub.
 
 4. **Install and start the systemd unit.** Prefer re-running
    `/etc/factum2/install.py` on the primary: it runs `groupadd -r factum`
-   (idempotent) **before** copying `factum2-worker.service` (`Group=factum`,
-   `UMask=0007`) to each enabled worker, compares it with whatever is
+   (idempotent) **before** copying `factum2-worker.service` (`Group=factum`)
+   to each enabled worker, compares it with whatever is
    already in `/etc/systemd/system`, and asks before overwriting a modified
    file. systemd `Group=` without the group fails the unit (`Failed to
    determine group credentials`) and takes **hub command dispatch** down —
@@ -246,15 +246,20 @@ treat those secrets as TLS-protected on the hub.
 
     On Icinga hosts, add the notification UID to the group so
     `factum-icinga-notifications` can open the socket (until then, Stat
-    EACCES falls back to HTTPS):
+    EACCES falls back to HTTPS). Supplementary groups take effect at
+    process start, so restart the Icinga daemon (and any long-lived
+    notification helper) after `usermod`, then verify as that UID before
+    closing `:443`:
 
     ```sh
     sudo usermod -aG factum icinga    # or nagios, matching the NotificationCommand user
+    sudo systemctl restart icinga2    # or nagios
+    sudo -u icinga stat /run/factum-worker/api.sock
     ```
 
     The socket dir is `/run/factum-worker` (`root:factum` `0750`); the
-    socket is `0660`. Connecting to it is equivalent to possessing the
-    service token.
+    socket is `0660` (chmod'd by `factum-worker start`, independent of
+    umask). Connecting to it is equivalent to possessing the service token.
 
 5. **Verify**: `/sync/status` in the web UI (or `GET /api/worker/status`)
    lists connected nodes and what they handle; `journalctl -u factum2-worker -f` on the worker host for logs. Confirm a co-located CLI

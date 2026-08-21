@@ -394,10 +394,9 @@ web/frontend/src/
     worker:
         listen: ":8443"
         token: "<shared secret, matches this node's WorkerNode.Token>"
-        roles: ["librenms"]
         commands:
             librenms:
-                cmd: /path/to/factum-librenms-cli
+                cmd: /path/to/factum-librenms
                 args: ["sync", "--job"]
     ```
     See `AGENTS.md`'s "Sync jobs" bullet for how the agent decides a stdout
