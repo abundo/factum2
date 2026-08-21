@@ -59,9 +59,10 @@ the `curl` commands (or `export GITHUB_TOKEN=...` before running
 
 Edit `/etc/factum2/factum2.yaml`: set `db:` credentials and `web.jwtsecret`
 (`openssl rand -base64 48`). Edit `/etc/factum2/factum2-worker.yaml` for
-the local worker (`factum.token`, `worker.listen`, `worker.token`). Almost
-all other runtime settings (NetBox/Lime/DNS/Icinga/LibreNMS, ...) live in
-the database and are edited from the admin UI. See
+the local worker (`worker.listen`, `worker.token`; `factum.url`/`token` are
+Stat/Dial fallback, omit on start-only hosts). Almost all other runtime
+settings (NetBox/Lime/DNS/Icinga/LibreNMS, ...) live in the database and
+are edited from the admin UI. See
 [DEV.md § Configuration](DEV.md#configuration) for the full YAML key
 reference.
 
@@ -132,16 +133,52 @@ A worker node is a `factum-worker` instance running the `start` subcommand
 on a remote host (typically the DNS/Icinga/LibreNMS/Oxidized server, or any
 other host that needs to run one of the sync tools). The primary dials
 **out** to it, so the worker host only needs one inbound firewall rule
-scoped to the primary's IP — see [AGENTS.md § Worker / hub
-transport](AGENTS.md#worker--hub-transport-internalworker) for why the dial
-direction is reversed.
+scoped to the primary's IP (`/hub` on `worker.listen`) — see [AGENTS.md §
+Worker / hub transport](AGENTS.md#worker--hub-transport-internalworker)
+for why the dial direction is reversed.
+
+Co-located CLIs (`factum-dns`, `factum-icinga`, `factum-librenms`,
+`factum-oxidized`, `factum-device-sync`, `factum-driver`,
+`factum-icinga-notifications`) reach the primary's REST handlers through
+that hub connection, via a localhost-only unix socket
+(`/run/factum-worker/api.sock`). Worker networks then do **not** need a
+route to the primary's HTTPS port. The primary still serves HTTPS to
+operators and to NetBox's `POST /api/netbox-webhook`.
+
+```
+  worker host                              management network
+  ───────────                              ──────────────────
+  factum-worker :8443 /hub  <── ws:// ───  factum-web (dials out)
+  unix /run/factum-worker/api.sock         HTTPS :443  <── operators
+  CLIs ── HTTP ────────────^               HTTPS :443  <── NetBox webhook
+```
+
+| Path | Direction | Required? |
+| --- | --- | --- |
+| Primary → `worker.listen` `/hub` (`ws://`) | outbound from primary / inbound on worker, scoped to primary IP | Yes |
+| Worker network → primary HTTPS `:443` | worker → primary | **No**, once this stack is live *and* mixed-UID CLIs can open the socket (group `factum` + icinga/nagios user) |
+| Operator browser → primary HTTPS | inbound on primary, management net | Yes |
+| NetBox → `POST /api/netbox-webhook` | inbound on primary, from NetBox | Yes |
+
+Closing worker-net → primary `:443` is an **operator firewall step** after
+this stack is in production; the software does not unbind the port. Do not
+close it until Icinga notification commands can open the unix socket (see
+group `factum` below). `factum-worker run` is not tunneled (`POST
+/api/worker/run` NDJSON) and still needs HTTPS from whatever host you run
+it on — typically a management-net host, not the worker.
+
+**Follow-up: hub WSS** — encrypt the hub WebSocket (`ws://` → `wss://`) now
+that config secrets ride it. Until that follow-up, `/hub` is plaintext;
+keep it off the public internet and scoped to the primary's IP. Do not
+treat those secrets as TLS-protected on the hub.
 
 1. **Build and copy the binary.** `make factum-worker` (or `make release`
    for every binary) builds `build/factum-worker`; copy it to the target
    host, e.g. `/opt/factum2/factum-worker`. (`/etc/factum2/install.py` from
    a GitHub release, or `./install.py --source` from this tree, automates
-   this step — plus the systemd unit in step 4 — over ssh for every node
-   already registered and enabled in the `worker_nodes` table.)
+   this step — plus `groupadd -r factum` and the systemd unit in step 4 —
+   over ssh for every node already registered and enabled in the
+   `worker_nodes` table.)
 
 2. **Create the config file**, starting from `examples/factum2-worker.yaml`:
 
@@ -152,13 +189,17 @@ direction is reversed.
 
     Then edit it for this host:
 
-    - `factum.token` — shared secret matched against the primary's
-      `Settings.FactumApiToken` (admin UI, Factum tab). Needed by any of the
-      REST-config-fetching tools this worker runs (`factum-dns`,
-      `factum-icinga`, `factum-librenms`, `factum-oxidized`) and by
-      `factum-worker run` if you use it from this host.
+    - `factum.url` / `factum.token` — Stat/Dial fallback only (socket
+      missing, unreadable, or undialable). They are **not** a retry path
+      for unix 502 / timeout after Dial succeeded. Start-only hosts may
+      omit both. Keep them for `factum-worker run` if you use it from this
+      host, for `factum-icinga-notifications` until the icinga/nagios user
+      is in group `factum`, and for any CLI not co-located with a worker.
+      Force HTTPS even if the socket exists with
+      `FACTUM_WORKER_API_SOCKET=none` (or `0`) in that CLI's environment
+      (same as `factum.socket: none`).
     - `worker.listen` — bind address for the hub listener the primary dials
-      into, e.g. `:8443`.
+      into, e.g. `:8443`. Only `/hub` is served here.
     - `worker.token` — shared secret this worker expects from the primary on
       connect; set the same value on the matching `WorkerNode.Token` in step 3.
     - `worker.commands` — trim the map down to only the commands this host
@@ -166,11 +207,14 @@ direction is reversed.
       (e.g. `/opt/factum2/factum-dns`). Add `--job` to a command's `args` to
       get structured sync-job events instead of plain console output (see
       [DEV.md § Sync job events](DEV.md#worker-hub-transport)).
+    - Relocate the unix socket with `FACTUM_WORKER_API_SOCKET` on the worker
+      unit **and** in CLI environments. Do not set only `worker.api_socket`
+      or only `factum.socket` — they will drift.
 
     Generate both secrets with `openssl rand -base64 32`.
 
     `netbox`/`lime`/`becs` are the exception: unlike the others, they talk to
-    Postgres directly instead of fetching config over REST (see AGENTS.md's
+    Postgres directly instead of fetching config over the hub (see AGENTS.md's
     "Sync model" section), and default to reading `/etc/factum2/factum2.yaml`
     (the _full_ config, with a `db:` section) rather than
     `factum2-worker.yaml`. Only put them in a worker's `commands` map on the
@@ -183,19 +227,42 @@ direction is reversed.
    `RemoteManager` reconcile pass (~10s) — no primary restart needed.
 
 4. **Install and start the systemd unit.** Prefer re-running
-   `/etc/factum2/install.py` on the primary: it copies
-   `factum2-worker.service` to each enabled worker, compares it with
-   whatever is already in `/etc/systemd/system`, and asks before
-   overwriting a modified file. Manual fallback:
+   `/etc/factum2/install.py` on the primary: it runs `groupadd -r factum`
+   (idempotent) **before** copying `factum2-worker.service` (`Group=factum`,
+   `UMask=0007`) to each enabled worker, compares it with whatever is
+   already in `/etc/systemd/system`, and asks before overwriting a modified
+   file. systemd `Group=` without the group fails the unit (`Failed to
+   determine group credentials`) and takes **hub command dispatch** down —
+   do not copy the unit until `groupadd` has run.
+
+    Manual fallback:
 
     ```sh
+    getent group factum >/dev/null || sudo groupadd -r factum
     sudo cp examples/factum2-worker.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable --now factum2-worker.service
     ```
 
+    On Icinga hosts, add the notification UID to the group so
+    `factum-icinga-notifications` can open the socket (until then, Stat
+    EACCES falls back to HTTPS):
+
+    ```sh
+    sudo usermod -aG factum icinga    # or nagios, matching the NotificationCommand user
+    ```
+
+    The socket dir is `/run/factum-worker` (`root:factum` `0750`); the
+    socket is `0660`. Connecting to it is equivalent to possessing the
+    service token.
+
 5. **Verify**: `/sync/status` in the web UI (or `GET /api/worker/status`)
-   lists connected nodes and what they handle; `journalctl -u factum2-worker -f` on the worker host for logs.
+   lists connected nodes and what they handle; `journalctl -u factum2-worker -f` on the worker host for logs. Confirm a co-located CLI
+   (e.g. `factum-librenms show-config`) hits the socket. Then, if mixed-UID
+   CLIs are in group `factum` and you are not using `factum-worker run` from
+   this host, you may close worker-net → primary `:443`. Leave
+   `FACTUM_WORKER_API_SOCKET=none` unset when you do — a unix 502 after Dial
+   will not fail over to HTTPS.
 
 ## NetBox webhook (partial sync)
 

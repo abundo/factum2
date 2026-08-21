@@ -1,8 +1,13 @@
----                                                                                                                                                                                         
+---
 # token can be generated with
 # openssl rand -base64 32
-# this token is for the worker accessing factum API
-factum:                                                                                                                                                                                     
+#
+# factum.url/token are Stat/Dial fallback for co-located CLIs (socket
+# missing, unreadable, or undialable). They are NOT a retry path for unix
+# 502/timeout after Dial succeeded. Omit both on start-only hosts once
+# CLIs use the socket. factum-worker run still needs them (HTTPS).
+# socket: none                    # force HTTPS (same as FACTUM_WORKER_API_SOCKET=none)
+factum:
   url: https://factum.example.com
   token: <change-me>
 
@@ -11,6 +16,9 @@ factum:
 worker:
   listen: ":8443"
   token: <change-me>
+  # api_socket:  (default /run/factum-worker/api.sock; relocate via
+  # FACTUM_WORKER_API_SOCKET on the worker unit AND in CLI environments —
+  # do not set only worker.api_socket or only factum.socket)
   commands:
     becs:
       cmd: /opt/factum2/factum-becs
