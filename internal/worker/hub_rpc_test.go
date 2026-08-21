@@ -129,16 +129,108 @@ func TestHandleHubRequestAllowlistBeforeHandler(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
-	outbox := make(chan Envelope, 1)
-	m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
-		ID: "1", Method: http.MethodGet, Path: "/api/admin/settings",
-	})
-	resp := decodeResponse(t, <-outbox)
-	if resp.Status != http.StatusForbidden {
-		t.Fatalf("status %d, want 403", resp.Status)
+	denied := []struct{ method, path string }{
+		{http.MethodGet, "/api/admin/settings"},
+		{http.MethodGet, "/api/device/1"},
+		{http.MethodGet, "/api/device/1/impact"},
+		{http.MethodGet, "/api/jobs/1/tasks/2/events"},
+		{http.MethodPost, "/api/device/1/interfaces/refresh"},
+		{http.MethodPost, "/api/worker/run"},
+		{http.MethodPost, "/api/librenms/pending-deletes/7/delete-next-sync"},
+	}
+	for i, tc := range denied {
+		outbox := make(chan Envelope, 1)
+		m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
+			ID: fmt.Sprintf("%d", i), Method: tc.method, Path: tc.path,
+		})
+		resp := decodeResponse(t, <-outbox)
+		if resp.Status != http.StatusForbidden {
+			t.Errorf("%s %s status %d, want 403", tc.method, tc.path, resp.Status)
+		}
 	}
 	if hits != 0 {
 		t.Fatalf("handler hits = %d, allowlist must reject before ServeHTTP", hits)
+	}
+}
+
+func TestHandleHubRequestPreservesIncludeQuery(t *testing.T) {
+	m := NewRemoteManager(nil)
+	var gotPath, gotRawQuery, gotInclude string
+	m.SetAPIHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotRawQuery = r.URL.RawQuery
+		gotInclude = r.URL.Query().Get("include")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	outbox := make(chan Envelope, 1)
+	m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
+		ID: "1", Method: http.MethodGet, Path: "/api/device?include=interfaces",
+	})
+	resp := decodeResponse(t, <-outbox)
+	if resp.Status != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.Status)
+	}
+	if gotPath != "/api/device" {
+		t.Fatalf("path %q, want /api/device", gotPath)
+	}
+	if gotRawQuery != "include=interfaces" || gotInclude != "interfaces" {
+		t.Fatalf("query raw=%q include=%q, want include=interfaces", gotRawQuery, gotInclude)
+	}
+}
+
+func TestHandleHubRequestOversizeYields413WithoutTearingConn(t *testing.T) {
+	orig := hubMaxMessageSize
+	hubMaxMessageSize = 256
+	t.Cleanup(func() { hubMaxMessageSize = orig })
+
+	m := NewRemoteManager(nil)
+	big, err := json.Marshal(strings.Repeat("x", 2000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetAPIHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(big)
+	}))
+	outbox := make(chan Envelope, 2)
+	m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
+		ID: "big", Method: http.MethodGet, Path: "/api/device",
+	})
+	env := <-outbox
+	if len(env.frame) == 0 {
+		t.Fatal("missing pre-marshaled frame")
+	}
+	if len(env.frame) > hubMaxMessageSize {
+		t.Fatalf("413 frame %d exceeds cap %d", len(env.frame), hubMaxMessageSize)
+	}
+	resp := decodeResponse(t, env)
+	if resp.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", resp.Status)
+	}
+	if string(resp.Body) != `{"error":"hub response too large"}` {
+		t.Fatalf("body %s", resp.Body)
+	}
+	if bytes.Contains(resp.Body, bytes.Repeat([]byte("x"), 100)) {
+		t.Fatal("must not send the oversized handler body")
+	}
+	if err := readWSWithLimit(t, int64(hubMaxMessageSize), env.frame); err != nil {
+		t.Fatalf("413 frame tripped ReadLimit (would tear the conn): %v", err)
+	}
+
+	// Same connection/outbox still accepts a later RPC.
+	m.SetAPIHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
+		ID: "small", Method: http.MethodGet, Path: "/api/device",
+	})
+	small := decodeResponse(t, <-outbox)
+	if small.Status != http.StatusOK {
+		t.Fatalf("follow-up status %d, want 200 (conn still usable)", small.Status)
 	}
 }
 
