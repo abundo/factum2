@@ -114,19 +114,40 @@ func NewFactumLibrenmsClient(config *util.ConfigFactum) (*FactumLibrenmsClient, 
 			return nil, err
 		}
 		loaded = true
-		// MYSQL_DATABASE=librenms
-		// MYSQL_USER=librenms
-		// MYSQL_PASSWORD=<secret password>
-		port := env["MYSQL_PORT"]
-		if port == "" {
-			port = "3306"
-		}
-		client.DB = &util.ConfigDB{
-			Host:     "127.0.0.1", // assumes this app runs on the librenms server
-			Port:     port,
-			User:     env["MYSQL_USER"],
-			Pass:     env["MYSQL_PASSWORD"],
-			Database: env["MYSQL_DATABASE"],
+
+		database := env["MYSQL_DATABASE"]
+		if database != "" {
+			// running in docker
+			// MYSQL_DATABASE=librenms
+			// MYSQL_USER=librenms
+			// MYSQL_PASSWORD=<secret password>
+			port := env["MYSQL_PORT"]
+			if port == "" {
+				port = "3306"
+			}
+			client.DB = &util.ConfigDB{
+				Host:     "127.0.0.1", // assumes this app runs on the librenms server
+				Database: env["MYSQL_DATABASE"],
+				Port:     port,
+				User:     env["MYSQL_USER"],
+				Pass:     env["MYSQL_PASSWORD"],
+			}
+		} else {
+			// no docker
+			// DB_DATABASE=librenms
+			// DB_USERNAME=librenms
+			// DB_PASSWORD=<secret password>
+			port := env["DB_PORT"]
+			if port == "" {
+				port = "3306"
+			}
+			client.DB = &util.ConfigDB{
+				Host:     env["DB_HOST"],
+				Database: env["DB_DATABASE"],
+				Port:     port,
+				User:     env["DB_USERNAME"],
+				Pass:     env["DB_PASSWORD"],
+			}
 		}
 		break
 	}
