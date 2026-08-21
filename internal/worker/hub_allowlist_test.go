@@ -11,10 +11,17 @@ func TestAllowHubAPI(t *testing.T) {
 		method, path string
 		want         bool
 	}{
+		{http.MethodGet, "/api/common-config", true},
 		{http.MethodGet, "/api/librenms-config", true},
+		{http.MethodGet, "/api/icinga-config", true},
+		{http.MethodGet, "/api/dns-config", true},
+		{http.MethodGet, "/api/oxidized-config", true},
+		{http.MethodGet, "/api/netbox-config", true},
+		{http.MethodGet, "/api/device-sync-config", true},
 		{http.MethodPost, "/api/librenms-config", false},
 		{http.MethodGet, "/api/librenms-config/extra", false},
-		{http.MethodGet, "/api/common-config", false},
+		{http.MethodGet, "/api/dns-config/extra", false},
+		{http.MethodGet, "/api/device", false},
 		{http.MethodGet, "/api/admin/settings", false},
 		{http.MethodPost, "/api/worker/run", false},
 		{http.MethodGet, "/api/device/1", false},

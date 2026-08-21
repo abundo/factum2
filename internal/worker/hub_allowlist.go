@@ -15,7 +15,13 @@ var hubAPIPatterns = []struct {
 	method  string
 	pattern string
 }{
+	{http.MethodGet, `/api/common-config`},
 	{http.MethodGet, `/api/librenms-config`},
+	{http.MethodGet, `/api/icinga-config`},
+	{http.MethodGet, `/api/dns-config`},
+	{http.MethodGet, `/api/oxidized-config`},
+	{http.MethodGet, `/api/netbox-config`},
+	{http.MethodGet, `/api/device-sync-config`},
 }
 
 var hubAPIRoutes []hubAPIRoute
