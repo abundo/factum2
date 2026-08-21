@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Install factum2 on the primary and its remote workers.
 
-Two sources, one install path (binaries + systemd units to /opt/factum2,
-restart services, then the same binaries out to every enabled worker_nodes
-row):
+Two sources, one install path (binaries to /opt/factum2, systemd units to
+/etc/systemd/system, restart services, then the same binaries out to every
+enabled worker_nodes row).
+
+On the primary this installs factum2-web.service and factum2-worker.service;
+on each worker, factum2-worker.service. If a unit already exists and differs
+from this release, the installer shows a diff and asks before overwriting
+(--yes overwrites without asking). Newly installed units are enabled.
 
   ./install.py                 GitHub release (production). TUI on a TTY,
                                or --list / --install TAG. A standalone copy
@@ -19,6 +24,7 @@ from __future__ import annotations
 import argparse
 import base64
 import curses
+import difflib
 import hashlib
 import json
 import os
@@ -35,20 +41,21 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 REPO_DIR = Path(__file__).resolve().parent
 REPO_DEFAULT = "abundo/factum2"
 INSTALL_DIR_DEFAULT = "/opt/factum2"
 CONFIG_PATH_DEFAULT = "/etc/factum2/factum2.yaml"
 POSTGRES_COMPOSE_DEFAULT = "/opt/postgresql/compose.yaml"
+SYSTEMD_DIR = Path("/etc/systemd/system")
 PRIMARY_UNITS = ("factum2-web.service", "factum2-worker.service")
 WORKER_UNIT = "factum2-worker.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 1
+INSTALLER_VERSION = 2
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
@@ -745,6 +752,184 @@ def _stage_binaries(binaries_dir: Path) -> Path:
     return staging
 
 
+def normalize_unit_text(text: str) -> str:
+    """Compare unit files ignoring trailing whitespace and a missing final newline."""
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").split("\n")]
+    return "\n".join(lines).strip() + "\n"
+
+
+def read_installed_unit(
+    unit: str,
+    *,
+    target_host: str,
+    ssh_user: str,
+) -> str | None:
+    dest = SYSTEMD_DIR / unit
+    if is_local_host(target_host):
+        if dest.is_file():
+            try:
+                return dest.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        proc = subprocess.run(
+            sudo_prefix() + ["cat", str(dest)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+    proc = subprocess.run(
+        ssh_cmd(ssh_user, target_host, f"cat {_shell_quote(str(dest))}"),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def format_unit_diff(installed: str, packaged: str, unit: str) -> str:
+    return "\n".join(
+        difflib.unified_diff(
+            installed.splitlines(),
+            packaged.splitlines(),
+            fromfile=f"installed {unit}",
+            tofile=f"packaged {unit}",
+            lineterm="",
+        )
+    )
+
+
+def confirm_overwrite_unit(
+    unit: str,
+    where: str,
+    diff: str,
+    assume_yes: bool,
+) -> bool:
+    log(f"==> {unit} on {where} differs from this release:")
+    if diff:
+        for line in diff.splitlines():
+            log(f"    {line}")
+    else:
+        log("    (no textual diff; whitespace-only difference)")
+    if assume_yes:
+        log(f"    --yes: overwriting {unit} on {where}")
+        return True
+    if not sys.stdin.isatty():
+        log(f"!!  leaving {unit} on {where} unchanged (no TTY; pass --yes to overwrite)")
+        return False
+    try:
+        ans = input(f"Overwrite {unit} on {where}? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return ans in {"y", "yes"}
+
+
+def copy_unit_file(
+    src: Path,
+    unit: str,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    dest = SYSTEMD_DIR / unit
+    if is_local_host(target_host):
+        run(sudo_prefix() + ["cp", str(src), str(dest)], dry_run=dry_run)
+        return
+    run(
+        [
+            "scp",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            str(src),
+            f"{ssh_user}@{target_host}:{dest}",
+        ],
+        dry_run=dry_run,
+    )
+
+
+def install_unit(
+    src: Path,
+    unit: str,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+    assume_yes: bool,
+) -> str:
+    """Install or update a systemd unit.
+
+    Returns one of: "installed", "updated", "unchanged", "kept".
+    """
+    if not src.is_file():
+        raise InstallError(f"Missing systemd unit {src}")
+    where = "this host" if is_local_host(target_host) else target_host
+    packaged = src.read_text(encoding="utf-8", errors="replace")
+    installed = read_installed_unit(unit, target_host=target_host, ssh_user=ssh_user)
+    if installed is None:
+        log(f"==> Installing {unit} on {where}")
+        copy_unit_file(
+            src, unit, target_host=target_host, ssh_user=ssh_user, dry_run=dry_run
+        )
+        return "installed"
+    if normalize_unit_text(installed) == normalize_unit_text(packaged):
+        log(f"    {unit} on {where} already matches this release")
+        return "unchanged"
+    diff = format_unit_diff(installed, packaged, unit)
+    if dry_run:
+        log(f"==> [dry-run] {unit} on {where} differs from this release")
+        for line in diff.splitlines():
+            log(f"    {line}")
+        log(f"    [dry-run] would prompt to overwrite {unit} on {where}")
+        return "updated"
+    if not confirm_overwrite_unit(unit, where, diff, assume_yes):
+        log(f"    keeping existing {unit} on {where}")
+        return "kept"
+    log(f"==> Overwriting {unit} on {where}")
+    copy_unit_file(
+        src, unit, target_host=target_host, ssh_user=ssh_user, dry_run=False
+    )
+    return "updated"
+
+
+def systemd_reload_enable_restart(
+    units: Sequence[str],
+    *,
+    enable_units: Sequence[str] = (),
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    where = "this host" if is_local_host(target_host) else target_host
+    if is_local_host(target_host):
+        run(sudo_prefix() + ["systemctl", "daemon-reload"], dry_run=dry_run)
+        for unit in enable_units:
+            log(f"==> Enabling {unit}")
+            run(sudo_prefix() + ["systemctl", "enable", "--now", unit], dry_run=dry_run)
+        for unit in units:
+            if unit in enable_units:
+                continue
+            log(f"==> Restarting {unit}")
+            run(sudo_prefix() + ["systemctl", "restart", unit], dry_run=dry_run)
+        return
+    parts = ["systemctl daemon-reload"]
+    for unit in enable_units:
+        parts.append(f"systemctl enable --now {unit}")
+    for unit in units:
+        if unit in enable_units:
+            continue
+        parts.append(f"systemctl restart {unit}")
+    log(f"==> Reloading systemd on {where} ({', '.join(units)})")
+    run(ssh_cmd(ssh_user, target_host, " && ".join(parts)), dry_run=dry_run)
+
+
 def install_primary(
     binaries_dir: Path,
     examples_dir: Path,
@@ -754,6 +939,7 @@ def install_primary(
     *,
     target_host: str = "localhost",
     ssh_user: str = "root",
+    assume_yes: bool = False,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     where = "this host" if is_local_host(target_host) else target_host
@@ -800,39 +986,25 @@ def install_primary(
         )
 
     log("==> Installing systemd units")
+    newly: list[str] = []
     for unit in PRIMARY_UNITS:
-        src = examples_dir / unit
-        if not src.is_file():
-            raise InstallError(f"Missing systemd unit {src}")
-        if is_local_host(target_host):
-            run(
-                sudo_prefix() + ["cp", str(src), f"/etc/systemd/system/{unit}"],
-                dry_run=dry_run,
-            )
-        else:
-            run(
-                [
-                    "scp",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=10",
-                    str(src),
-                    f"{ssh_user}@{target_host}:/etc/systemd/system/{unit}",
-                ],
-                dry_run=dry_run,
-            )
-    reload = "systemctl daemon-reload && " + " && ".join(
-        f"systemctl restart {u}" for u in PRIMARY_UNITS
+        action = install_unit(
+            examples_dir / unit,
+            unit,
+            target_host=target_host,
+            ssh_user=ssh_user,
+            dry_run=dry_run,
+            assume_yes=assume_yes,
+        )
+        if action == "installed":
+            newly.append(unit)
+    systemd_reload_enable_restart(
+        PRIMARY_UNITS,
+        enable_units=newly,
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
     )
-    if is_local_host(target_host):
-        run(sudo_prefix() + ["systemctl", "daemon-reload"], dry_run=dry_run)
-        for unit in PRIMARY_UNITS:
-            log(f"==> Restarting {unit}")
-            run(sudo_prefix() + ["systemctl", "restart", unit], dry_run=dry_run)
-    else:
-        log(f"==> Reloading systemd and restarting {', '.join(PRIMARY_UNITS)}")
-        run(ssh_cmd(ssh_user, target_host, reload), dry_run=dry_run)
 
 
 def install_worker(
@@ -842,6 +1014,8 @@ def install_worker(
     examples_dir: Path,
     install_dir: Path,
     dry_run: bool,
+    *,
+    assume_yes: bool = False,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     log(f"==> Updating remote worker {host} ({len(binaries)} binaries)")
@@ -867,20 +1041,13 @@ def install_worker(
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
 
-    unit_src = examples_dir / "factum2-worker.service"
-    if not unit_src.is_file():
-        raise InstallError(f"Missing systemd unit {unit_src}")
-    run(
-        [
-            "scp",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=10",
-            str(unit_src),
-            f"{ssh_user}@{host}:/etc/systemd/system/{WORKER_UNIT}",
-        ],
+    action = install_unit(
+        examples_dir / WORKER_UNIT,
+        WORKER_UNIT,
+        target_host=host,
+        ssh_user=ssh_user,
         dry_run=dry_run,
+        assume_yes=assume_yes,
     )
 
     if "icinga" in host:
@@ -898,13 +1065,11 @@ def install_worker(
                 dry_run=dry_run,
             )
 
-    log(f"    restarting {WORKER_UNIT} on {host}")
-    run(
-        ssh_cmd(
-            ssh_user,
-            host,
-            f"systemctl daemon-reload && systemctl restart {WORKER_UNIT}",
-        ),
+    systemd_reload_enable_restart(
+        (WORKER_UNIT,),
+        enable_units=(WORKER_UNIT,) if action == "installed" else (),
+        target_host=host,
+        ssh_user=ssh_user,
         dry_run=dry_run,
     )
 
@@ -1419,9 +1584,9 @@ Environment:
   SSH_USER                  ssh user for a remote primary and workers (default: root)
 
 Examples:
-  ./install.py
-  ./install.py --list
-  ./install.py --install latest --yes
+  /etc/factum2/install.py
+  /etc/factum2/install.py --list
+  /etc/factum2/install.py --install latest --yes
   ./install.py --install v1.0.0 --dry-run
   ./install.py --self-update
   ./install.py --source
@@ -1437,7 +1602,12 @@ Examples:
     p.add_argument("--list", action="store_true", help="print GitHub releases and exit")
     p.add_argument("--install", metavar="TAG", help="GitHub tag to install, or 'latest'")
     p.add_argument("--pre", action="store_true", help="include prereleases when resolving 'latest'")
-    p.add_argument("--yes", "-y", action="store_true", help="do not prompt for confirmation")
+    p.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="do not prompt for confirmation (including overwriting modified systemd units)",
+    )
     p.add_argument("--dry-run", action="store_true", help="print what would happen, change nothing")
     p.add_argument("--primary-only", action="store_true", help="do not update remote workers")
     p.add_argument("--limit", type=int, default=50, help="max GitHub releases to fetch")
@@ -1588,6 +1758,7 @@ def main_source(args: argparse.Namespace) -> int:
         dry_run=False,
         target_host=target_host,
         ssh_user=args.ssh_user,
+        assume_yes=args.yes,
     )
     failures: list[str] = []
     for host in workers:
@@ -1599,6 +1770,7 @@ def main_source(args: argparse.Namespace) -> int:
                 examples_dir,
                 install_dir,
                 dry_run=False,
+                assume_yes=args.yes,
             )
         except InstallError as exc:
             log(f"!!  {host}: {exc}")
@@ -1749,6 +1921,7 @@ def main_release(args: argparse.Namespace) -> int:
             install_dir,
             selected.tag,
             dry_run=False,
+            assume_yes=args.yes,
         )
         failures: list[str] = []
         for host in workers:
@@ -1761,6 +1934,7 @@ def main_release(args: argparse.Namespace) -> int:
                     roots[arch] / "examples",
                     install_dir,
                     dry_run=False,
+                    assume_yes=args.yes,
                 )
             except InstallError as exc:
                 log(f"!!  {host}: {exc}")
