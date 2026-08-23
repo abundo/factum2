@@ -22,6 +22,15 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/oxidized-config`},
 	{http.MethodGet, `/api/netbox-config`},
 	{http.MethodGet, `/api/device-sync-config`},
+	{http.MethodGet, `/api/device`},
+	{http.MethodGet, `/api/device/name/[^/]+`},
+	{http.MethodGet, `/api/librenms/pending-deletes`},
+	{http.MethodPut, `/api/librenms/pending-deletes/[0-9]+`},
+	{http.MethodDelete, `/api/librenms/pending-deletes/[0-9]+`},
+	{http.MethodGet, `/api/sync/targets`},
+	{http.MethodPost, `/api/sync/all`},
+	{http.MethodPost, `/api/sync/[^/]+`},
+	{http.MethodGet, `/api/jobs`},
 }
 
 var hubAPIRoutes []hubAPIRoute
