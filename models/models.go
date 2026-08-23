@@ -462,6 +462,13 @@ type Settings struct {
 	LdapServerType string `gorm:"column:ldap_server_type" form:"ldap_server_type" json:"ldap_server_type"`
 	LdapHost       string `gorm:"column:ldap_host" form:"ldap_host" json:"ldap_host"`
 	LdapPort       uint16 `gorm:"column:ldap_port" form:"ldap_port" json:"ldap_port"`
+	// LdapHost2/LdapPort2 are an optional second LDAP/AD server for
+	// redundancy. Directory operations try LdapHost first and fall back to
+	// LdapHost2 if it is unreachable. LdapPort2 of 0 means "same as
+	// LdapPort". TLS, bind DN, base DN and filters are shared - both
+	// servers are assumed to be replicas of the same directory.
+	LdapHost2 string `gorm:"column:ldap_host2" form:"ldap_host2" json:"ldap_host2"`
+	LdapPort2 uint16 `gorm:"column:ldap_port2" form:"ldap_port2" json:"ldap_port2"`
 	// LdapTLSMode is "none" | "starttls" | "ldaps".
 	LdapTLSMode       string `gorm:"column:ldap_tls_mode" form:"ldap_tls_mode" json:"ldap_tls_mode"`
 	LdapSkipTLSVerify *bool  `gorm:"column:ldap_skip_tls_verify" form:"ldap_skip_tls_verify" json:"ldap_skip_tls_verify"`

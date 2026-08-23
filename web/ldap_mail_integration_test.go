@@ -113,6 +113,27 @@ func TestIntegrationLDAPAuthenticate(t *testing.T) {
 	}
 }
 
+func TestIntegrationLDAPAuthenticateFailover(t *testing.T) {
+	cfg := testLDAPConfig()
+	skipUnlessReachable(t, cfg.Host, cfg.Port)
+
+	cfg.Host2 = cfg.Host
+	cfg.Port2 = cfg.Port
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1 // nothing listens here - forces the Host2 path
+
+	ok, info, err := ldapauth.Authenticate(cfg, "testuser", "testpass123")
+	if err != nil {
+		t.Fatalf("Authenticate via secondary: %v", err)
+	}
+	if !ok {
+		t.Fatal("Authenticate via secondary: expected success, got bad credentials")
+	}
+	if info.Email != "testuser@factum.test" {
+		t.Errorf("Email = %q, want testuser@factum.test", info.Email)
+	}
+}
+
 func TestIntegrationLDAPLookupByEmail(t *testing.T) {
 	cfg := testLDAPConfig()
 	skipUnlessReachable(t, cfg.Host, cfg.Port)

@@ -17,6 +17,8 @@ import (
 type LdapTestRequest struct {
 	Host          string `json:"ldap_host"`
 	Port          uint16 `json:"ldap_port"`
+	Host2         string `json:"ldap_host2"`
+	Port2         uint16 `json:"ldap_port2"`
 	TLSMode       string `json:"ldap_tls_mode"`
 	SkipTLSVerify bool   `json:"ldap_skip_tls_verify"`
 	BindDN        string `json:"ldap_bind_dn"`
@@ -24,10 +26,21 @@ type LdapTestRequest struct {
 	BaseDN        string `json:"ldap_base_dn"`
 }
 
+// LdapTestServerDTO is one host's result in ApiLdapTestConnection's
+// response, so a dual-server setup can show which replica answered.
+type LdapTestServerDTO struct {
+	Host  string `json:"host"`
+	Port  uint16 `json:"port"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 // ApiLdapTestConnection dials+binds with the submitted (or saved) settings
 // and reports ok/error as a 200 JSON body rather than a 4xx/5xx status - a
 // failed directory bind isn't an application error, it's the answer to the
-// question the admin is asking.
+// question the admin is asking. Each configured server is tested on its
+// own (no failover) so a broken secondary isn't hidden by a working
+// primary. `ok` is true only if every configured server succeeded.
 func (ctrl *Controller) ApiLdapTestConnection(c *echo.Context) error {
 	var req LdapTestRequest
 	if err := c.Bind(&req); err != nil {
@@ -42,6 +55,8 @@ func (ctrl *Controller) ApiLdapTestConnection(c *echo.Context) error {
 	cfg := ldapauth.Config{
 		Host:          req.Host,
 		Port:          req.Port,
+		Host2:         req.Host2,
+		Port2:         req.Port2,
 		TLSMode:       req.TLSMode,
 		SkipTLSVerify: req.SkipTLSVerify,
 		BindDN:        req.BindDN,
@@ -52,10 +67,34 @@ func (ctrl *Controller) ApiLdapTestConnection(c *echo.Context) error {
 		cfg.BindPassword = settings.LdapBindPassword
 	}
 
-	if err := ldapauth.TestConnection(cfg); err != nil {
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+	results := ldapauth.TestServers(cfg)
+	if len(results) == 0 {
+		return c.JSON(http.StatusOK, map[string]any{
+			"ok":      false,
+			"error":   "ldap: no host configured",
+			"servers": []LdapTestServerDTO{},
+		})
 	}
-	return c.JSON(http.StatusOK, map[string]any{"ok": true})
+
+	dtos := make([]LdapTestServerDTO, 0, len(results))
+	ok := true
+	var firstErr string
+	for _, r := range results {
+		dto := LdapTestServerDTO{Host: r.Host, Port: r.Port, OK: r.Error == nil}
+		if r.Error != nil {
+			ok = false
+			dto.Error = r.Error.Error()
+			if firstErr == "" {
+				firstErr = dto.Error
+			}
+		}
+		dtos = append(dtos, dto)
+	}
+	body := map[string]any{"ok": ok, "servers": dtos}
+	if !ok {
+		body["error"] = firstErr
+	}
+	return c.JSON(http.StatusOK, body)
 }
 
 // LdapBrowseEntryDTO is one node in the tree-browser response.

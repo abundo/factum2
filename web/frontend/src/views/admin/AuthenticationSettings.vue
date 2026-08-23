@@ -70,11 +70,30 @@ function save() {
     })
 }
 
+function serverAddr(server) {
+  return server.port ? `${server.host}:${server.port}` : server.host
+}
+
+function testDescription(data) {
+  const servers = data.servers ?? []
+  if (servers.length > 1) {
+    return servers
+      .map((s) => (s.ok ? `${serverAddr(s)}: ok` : `${serverAddr(s)}: ${s.error}`))
+      .join('; ')
+  }
+  if (data.ok) {
+    return 'Bound to the LDAP/AD server successfully.'
+  }
+  return data.error
+}
+
 function testConnection() {
   testing.value = true
   testLdapConnection({
     ldap_host: settings.ldap_host,
     ldap_port: settings.ldap_port,
+    ldap_host2: settings.ldap_host2,
+    ldap_port2: settings.ldap_port2,
     ldap_tls_mode: settings.ldap_tls_mode,
     ldap_skip_tls_verify: settings.ldap_skip_tls_verify,
     ldap_bind_dn: settings.ldap_bind_dn,
@@ -83,17 +102,21 @@ function testConnection() {
   })
     .then((data) => {
       if (data.ok) {
+        const n = data.servers?.length ?? 1
         toast.add({
           color: 'success',
           title: 'Connection successful',
-          description: 'Bound to the LDAP/AD server successfully.',
+          description:
+            n > 1
+              ? 'Bound to both LDAP/AD servers successfully.'
+              : 'Bound to the LDAP/AD server successfully.',
           duration: 4000,
         })
       } else {
         toast.add({
           color: 'error',
           title: 'Connection failed',
-          description: data.error,
+          description: testDescription(data),
           duration: 6000,
         })
       }
@@ -135,7 +158,13 @@ onMounted(loadSettings)
         :disabled="loading"
         @click="testConnection"
       />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" :disabled="loading" @click="save" />
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="saving"
+        :disabled="loading"
+        @click="save"
+      />
     </div>
 
     <div v-if="loading" class="flex justify-center p-4">
@@ -160,11 +189,11 @@ onMounted(loadSettings)
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div class="md:col-span-2">
-            <label for="ldap_host" class="block font-bold mb-3">Host</label>
+            <label for="ldap_host" class="block font-bold mb-3">Primary host</label>
             <UInput
               id="ldap_host"
               v-model="settings.ldap_host"
-              placeholder="dc.example.com"
+              placeholder="dc1.example.com"
               class="w-full"
             />
           </div>
@@ -179,10 +208,40 @@ onMounted(loadSettings)
           </div>
         </div>
 
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="md:col-span-2">
+            <label for="ldap_host2" class="block font-bold mb-3">Secondary host</label>
+            <UInput
+              id="ldap_host2"
+              v-model="settings.ldap_host2"
+              placeholder="dc2.example.com"
+              class="w-full"
+            />
+            <small class="text-muted-color"
+              >Optional second server for redundancy. Used if the primary is unreachable.</small
+            >
+          </div>
+          <div>
+            <label for="ldap_port2" class="block font-bold mb-3">Secondary port</label>
+            <UInputNumber
+              id="ldap_port2"
+              v-model="settings.ldap_port2"
+              :format-options="{ useGrouping: false }"
+              class="w-full"
+            />
+            <small class="text-muted-color">Leave 0 to use the primary port.</small>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label for="ldap_tls_mode" class="block font-bold mb-3">TLS mode</label>
-            <USelect id="ldap_tls_mode" v-model="settings.ldap_tls_mode" :items="tlsModeOptions" class="w-full" />
+            <USelect
+              id="ldap_tls_mode"
+              v-model="settings.ldap_tls_mode"
+              :items="tlsModeOptions"
+              class="w-full"
+            />
           </div>
           <div class="flex items-center gap-2 mt-8">
             <USwitch v-model="settings.ldap_skip_tls_verify" id="ldap_skip_tls_verify" />
@@ -308,7 +367,10 @@ onMounted(loadSettings)
 
         <div class="border-t border-default pt-6">
           <div class="flex items-center gap-2">
-            <USwitch v-model="settings.ldap_allow_password_change" id="ldap_allow_password_change" />
+            <USwitch
+              v-model="settings.ldap_allow_password_change"
+              id="ldap_allow_password_change"
+            />
             <label for="ldap_allow_password_change" class="font-bold"
               >Allow password changes to be written back to LDAP/AD</label
             >

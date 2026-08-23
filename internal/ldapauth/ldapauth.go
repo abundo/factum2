@@ -8,7 +8,9 @@ package ldapauth
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"unicode/utf16"
@@ -20,8 +22,13 @@ import (
 // Config is a projection of models.Settings' LDAP fields, kept separate so
 // this package doesn't need to import gorm or know about the DB row shape.
 type Config struct {
-	Host          string
-	Port          uint16
+	Host string
+	Port uint16
+	// Host2/Port2 are an optional second server for redundancy. connect()
+	// tries Host first and falls back to Host2 if dialing Host fails.
+	// Port2 of 0 means "same as Port".
+	Host2         string
+	Port2         uint16
 	TLSMode       string // "none" | "starttls" | "ldaps"
 	SkipTLSVerify bool
 	// ServerType is "ad" | "generic" (OpenLDAP-compatible). Server-specific
@@ -62,6 +69,8 @@ func ConfigFromSettings(s *models.Settings) Config {
 	return Config{
 		Host:            s.LdapHost,
 		Port:            s.LdapPort,
+		Host2:           s.LdapHost2,
+		Port2:           s.LdapPort2,
 		TLSMode:         s.LdapTLSMode,
 		SkipTLSVerify:   s.LdapSkipTLSVerify != nil && *s.LdapSkipTLSVerify,
 		ServerType:      serverType,
@@ -123,15 +132,72 @@ func normalizeHost(host string) string {
 	return strings.TrimSuffix(host, "/")
 }
 
-// connect dials the configured server and, for TLSMode == "starttls",
-// upgrades the connection before returning. Callers own conn.Close().
+// server is one (host, port) pair connect() will try.
+type server struct {
+	host string
+	port uint16
+}
+
+// servers returns the configured LDAP servers in failover order: Host, then
+// Host2 if set to a different host/port. Empty hosts are skipped. Port2 of
+// 0 inherits Port so an admin only filling in a second hostname still
+// reaches it on the same port as the primary.
+func servers(cfg Config) []server {
+	var out []server
+	add := func(host string, port uint16) {
+		host = normalizeHost(host)
+		if host == "" {
+			return
+		}
+		if port == 0 {
+			port = cfg.Port
+		}
+		for _, existing := range out {
+			if existing.host == host && existing.port == port {
+				return
+			}
+		}
+		out = append(out, server{host: host, port: port})
+	}
+	add(cfg.Host, cfg.Port)
+	add(cfg.Host2, cfg.Port2)
+	return out
+}
+
+// connect dials the configured server (Host, then Host2 if Host is
+// unreachable) and, for TLSMode == "starttls", upgrades the connection
+// before returning. Callers own conn.Close(). Bind / search failures after
+// a successful dial are not retried on the other server - those are
+// credential or filter problems, not redundancy.
 func connect(cfg Config) (*ldap.Conn, error) {
-	host := normalizeHost(cfg.Host)
+	list := servers(cfg)
+	if len(list) == 0 {
+		return nil, fmt.Errorf("ldap: no host configured")
+	}
+	var errs []error
+	for i, s := range list {
+		conn, err := dial(cfg, s.host, s.port)
+		if err == nil {
+			if i > 0 {
+				slog.Debug("ldap: falling back to secondary server", "host", s.host, "port", s.port)
+			}
+			return conn, nil
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) == 1 {
+		return nil, errs[0]
+	}
+	return nil, fmt.Errorf("ldap: all servers unreachable: %w", errors.Join(errs...))
+}
+
+// dial opens one LDAP connection to host:port using cfg's TLS settings.
+func dial(cfg Config, host string, port uint16) (*ldap.Conn, error) {
 	scheme := "ldap"
 	if cfg.TLSMode == "ldaps" {
 		scheme = "ldaps"
 	}
-	addr := fmt.Sprintf("%s://%s:%d", scheme, host, cfg.Port)
+	addr := fmt.Sprintf("%s://%s:%d", scheme, host, port)
 
 	var opts []ldap.DialOpt
 	if cfg.TLSMode == "ldaps" {
@@ -150,15 +216,41 @@ func connect(cfg Config) (*ldap.Conn, error) {
 			InsecureSkipVerify: cfg.SkipTLSVerify,
 		}); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("ldap: starttls: %w", err)
+			return nil, fmt.Errorf("ldap: starttls %s: %w", addr, err)
 		}
 	}
 	return conn, nil
 }
 
+// ServerResult is one host's outcome from TestServers.
+type ServerResult struct {
+	Host  string
+	Port  uint16
+	Error error // nil = success
+}
+
+// TestServers dials+binds each configured server independently (no
+// failover between them) so the admin "Test Connection" button can report
+// whether redundancy actually works, not just that one of the two
+// happened to answer. An empty Host yields an empty slice.
+func TestServers(cfg Config) []ServerResult {
+	list := servers(cfg)
+	out := make([]ServerResult, 0, len(list))
+	for _, s := range list {
+		one := cfg
+		one.Host = s.host
+		one.Port = s.port
+		one.Host2 = ""
+		one.Port2 = 0
+		out = append(out, ServerResult{Host: s.host, Port: s.port, Error: TestConnection(one)})
+	}
+	return out
+}
+
 // TestConnection dials, binds as the service account and issues a
 // zero-result-tolerant search under BaseDN - used by the admin "Test
-// Connection" button. Returns nil on success.
+// Connection" button (via TestServers, one host at a time). Returns nil
+// on success.
 func TestConnection(cfg Config) error {
 	conn, err := connect(cfg)
 	if err != nil {
