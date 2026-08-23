@@ -63,7 +63,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 5
+INSTALLER_VERSION = 6
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
@@ -1127,6 +1127,37 @@ def confirm_overwrite_unit(
     return ans in {"y", "yes"}
 
 
+def ensure_factum_group(
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    """Create group factum before installing factum2-worker.service.
+
+    The unit sets Group=factum; systemd fails the unit (and hub dispatch)
+    if the group is missing. Idempotent if the group already exists.
+    """
+    where = "this host" if is_local_host(target_host) else target_host
+    log(f"==> Ensuring group factum exists on {where}")
+    if is_local_host(target_host):
+        if dry_run:
+            log("    [dry-run] getent group factum || groupadd -r factum")
+            return
+        proc = run(sudo_prefix() + ["getent", "group", "factum"], check=False)
+        if proc.returncode != 0:
+            run(sudo_prefix() + ["groupadd", "-r", "factum"])
+        return
+    run(
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            "getent group factum >/dev/null 2>&1 || groupadd -r factum",
+        ),
+        dry_run=dry_run,
+    )
+
+
 def copy_unit_file(
     src: Path,
     unit: str,
@@ -1284,6 +1315,9 @@ def install_primary(
         )
 
     log("==> Installing systemd units")
+    ensure_factum_group(
+        target_host=target_host, ssh_user=ssh_user, dry_run=dry_run
+    )
     newly: list[str] = []
     for unit in PRIMARY_UNITS:
         action = install_unit(
@@ -1339,6 +1373,7 @@ def install_worker(
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
 
+    ensure_factum_group(target_host=host, ssh_user=ssh_user, dry_run=dry_run)
     action = install_unit(
         examples_dir / WORKER_UNIT,
         WORKER_UNIT,

@@ -40,17 +40,14 @@ func NewFactumClient(config *util.ConfigFactum) *FactumClient {
 
 // Fetch devices from Factum API devices
 func (factum *FactumClient) GetDeviceHelper(name string) ([]*models.Device, error) {
-	if factum.p.URL == "" {
-		return nil, errors.New("factum.url is not configured")
-	}
-	url := factum.p.URL + "/api/device"
+	path := "/api/device"
 	if name != "" {
 		// web.ApiGetDeviceByName reads the name as a single path segment, so
 		// anything in it that looks like one (or like a query string) has to
 		// be escaped.
-		url += "/name/" + neturl.PathEscape(name)
+		path += "/name/" + neturl.PathEscape(name)
 	}
-	return factum.getDevices(url)
+	return factum.getDevices(path)
 }
 
 func (factum *FactumClient) GetDevice(name string) ([]*models.Device, error) {
@@ -70,40 +67,15 @@ func (factum *FactumClient) GetDevices() ([]*models.Device, error) {
 // the device-list UI stays cheap; DNS sync needs the nested addresses to
 // emit per-interface A/AAAA records.
 func (factum *FactumClient) GetDevicesWithInterfaces() ([]*models.Device, error) {
-	if factum.p.URL == "" {
-		return nil, errors.New("factum.url is not configured")
-	}
-	return factum.getDevices(factum.p.URL + "/api/device?include=interfaces")
+	return factum.getDevices("/api/device?include=interfaces")
 }
 
-// getDevices GETs url with the service token and decodes a []*models.Device
-// body. Shared by GetDeviceHelper (list or by-name) and
-// GetDevicesWithInterfaces.
-func (factum *FactumClient) getDevices(url string) ([]*models.Device, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	// /api/device requires authentication (RequireAPIAuth); this client has
-	// no browser session, so it authenticates as a service via the shared
-	// token instead - see web.Controller.checkServiceToken.
-	req.Header.Set("Authorization", "Bearer "+factum.p.Token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+// getDevices GETs path and decodes a []*models.Device body. Shared by
+// GetDeviceHelper (list or by-name) and GetDevicesWithInterfaces. Transport
+// is util.FactumHTTP (unix hub socket when the probe succeeds, else HTTPS).
+func (factum *FactumClient) getDevices(path string) ([]*models.Device, error) {
 	var tmp []*models.Device
-	err = json.Unmarshal(data, &tmp)
-	if err != nil {
+	if err := factum.doJSON(http.MethodGet, path, nil, &tmp); err != nil {
 		return nil, err
 	}
 	return tmp, nil
@@ -143,15 +115,19 @@ type JobTask struct {
 	ExitCode   int        `json:"exit_code"`
 }
 
-// doJSON does an authenticated request against the Factum API and decodes a
-// JSON response into out (skipped if out is nil) - shared by the sync
-// methods below, which unlike GetDeviceHelper all need a request body and/or
-// a non-GET method.
+// doJSON does a request against the Factum API and decodes a JSON response
+// into out (skipped if out is nil) - shared by getDevices and the sync /
+// pending-delete methods, which need a request body and/or a non-GET method.
+// Transport is util.FactumHTTP: unix hub socket when the probe succeeds
+// (no bearer; the socket ACL is the auth), else HTTPS with
+// Authorization: Bearer {token}. Empty body []byte{} is a present body
+// (Content-Type application/json), used by TriggerSync.
 func (factum *FactumClient) doJSON(method, path string, body []byte, out any) error {
-	if factum.p.URL == "" {
-		return errors.New("factum.url is not configured")
+	client, baseURL, viaSocket, err := util.FactumHTTP(factum.p)
+	if err != nil {
+		return err
 	}
-	url := factum.p.URL + path
+	url := baseURL + path
 
 	var bodyReader io.Reader
 	if body != nil {
@@ -161,12 +137,14 @@ func (factum *FactumClient) doJSON(method, path string, body []byte, out any) er
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+factum.p.Token)
+	if !viaSocket {
+		req.Header.Set("Authorization", "Bearer "+factum.p.Token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

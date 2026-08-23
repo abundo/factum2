@@ -113,21 +113,34 @@ DNS, Icinga, LibreNMS and Oxidized are different: their CLI tools
 (`factum-dns`, `factum-icinga`, `factum-librenms-cli`, `factum-oxidized`)
 are meant to run on a _different host_ than the primary (the DNS/Icinga/
 LibreNMS/Oxidized server itself), so they can't just open a direct Postgres
-connection the way Netbox/Lime do. Instead each one fetches its
-database-backed settings from the primary over REST, authenticated with
-`ConfigFactum.Token` (see "Service-to-service auth" below):
+connection the way Netbox/Lime do. They still talk to the primary's existing
+REST handlers (same paths and JSON; see "Service-to-service auth" below),
+but the transport is the hub unix socket when a co-located `factum-worker
+start` is running. HTTPS (`factum.url` + bearer `ConfigFactum.Token`) is
+only a probe-time fallback — see `util.FactumHTTP` and "Worker / hub
+transport" below. Worker networks do not need a route to the primary's
+HTTPS port once this stack is live and socket ACLs cover mixed-UID CLIs
+(group `factum` + the icinga/nagios user). The primary still serves HTTPS
+to operators and NetBox's webhook; closing worker-net `:443` is an operator
+firewall step, not something the process unbinds.
 
 - **Generic client-side fetch**: `util.FetchRemoteConfig[T]`
-  (`internal/util/remoteconfig.go`) does the authenticated GET + JSON
-  unmarshal; each package wraps it in its own `FetchRemoteConfig` returning
-  its own config type - `internal/dns/remote_config.go`,
-  `internal/icinga/remote_config.go`, `internal/librenms/remote_config.go`,
-  `internal/oxidized/remote_config.go`. `internal/icinga`/`internal/librenms`
-  also expose a `RemoteClient` convenience (`FetchRemoteConfig` +
-  constructing the API client in one call).
-  `NewFactumIcingaClient`/`NewFactumLibrenmsClient`/`dns.NewDNSClient` all
-  fetch eagerly at construction time (not lazily inside `Sync()`/`Update()`),
-  and now return an error since the fetch can fail.
+  (`internal/util/remoteconfig.go`) GETs a path and unmarshals JSON.
+  Transport is `util.FactumHTTP`: Stat/Dial the unix socket
+  (`/run/factum-worker/api.sock`, overridable via `FACTUM_WORKER_API_SOCKET`
+  / `factum.socket`), and use it when that probe succeeds; otherwise HTTPS
+  to `factum.url` with `Authorization: Bearer {token}`. After a successful
+  unix Dial, 502 / timeout / hub-disconnected are **not** retried over
+  HTTPS (`:443` may already be closed). `FACTUM_WORKER_API_SOCKET=none` (or
+  `0`) forces HTTPS even if the socket exists. Each package wraps
+  `FetchRemoteConfig` in its own helper returning its own config type -
+  `internal/dns/remote_config.go`, `internal/icinga/remote_config.go`,
+  `internal/librenms/remote_config.go`, `internal/oxidized/remote_config.go`.
+  `internal/icinga`/`internal/librenms` also expose a `RemoteClient`
+  convenience (`FetchRemoteConfig` + constructing the API client in one
+  call). `NewFactumIcingaClient`/`NewFactumLibrenmsClient`/`dns.NewDNSClient`
+  all fetch eagerly at construction time (not lazily inside
+  `Sync()`/`Update()`), and now return an error since the fetch can fail.
 - **Server side**: one `GET /api/<service>-config` route per service
   (`web/handle_dns.go`, `web/handle_icinga.go`, `web/handle_librenms.go`,
   `web/handle_oxidized.go`), each reading the relevant `Settings` fields and
@@ -157,11 +170,13 @@ database-backed settings from the primary over REST, authenticated with
   every `web.ApiXxxConfig` handler embeds it in its response via that
   helper, and every `util.ConfigXxx` runtime type embeds it too. A tool
   that needs nothing service-specific can
-  fetch just this from `GET /api/common-config` (`web.ApiCommonConfig`) -
-  none currently do. A `factum-worker` agent host only needs
-  `factum.url`/`.token` (for `factum-worker run`'s HTTP client) plus
-  `worker.listen`/`.token`/`.roles`/`.commands` (all local - see "Worker /
-  hub transport" below).
+  fetch just this from `GET /api/common-config` (`web.ApiCommonConfig`) —
+  `drivers.NewDriverName` does. A `factum-worker start` host only needs
+  `worker.listen`/`.token`/`.commands` (all local - see "Worker / hub
+  transport" below). `factum.url`/`.token` are Stat/Dial fallback for
+  co-located CLIs and may be omitted from start-only YAML; they remain
+  required for `factum-worker run` (`POST /api/worker/run` stays on HTTPS,
+  not the hub RPC) and for any CLI that cannot open the socket.
 - DNS's `Settings.DnsDestFile` and `IgnoreModels`/`IgnorePlatforms`
   (newline-separated text) are carried over as-is from the old YAML config -
   `internal/dns.Sync` doesn't actually filter on the ignore fields, never
@@ -276,10 +291,12 @@ database-backed settings from the primary over REST, authenticated with
 - `Sync()` in `internal/librenms/factum-librenms.go` gets its Netbox client
   the same way as everything else on this page: `internal/netbox`'s
   `FetchRemoteConfig`/`RemoteClient` fetch `Settings.NetboxApiURL/
-NetboxApiToken` from the primary over REST (`GET /api/netbox-config`,
-  `web.ApiNetboxConfig`, `util.ConfigNetbox`) rather than opening a direct
-  Postgres connection — `factum-librenms-cli` runs on the LibreNMS host, not
-  the primary, and has no access to its Postgres DB.
+NetboxApiToken` from the primary (`GET /api/netbox-config`,
+  `web.ApiNetboxConfig`, `util.ConfigNetbox`) via `util.FactumHTTP` rather
+  than opening a direct Postgres connection — `factum-librenms-cli` runs on
+  the LibreNMS host, not the primary, and has no access to its Postgres DB.
+  LibreNMS's own REST/MySQL and the NetBox API after those credentials are
+  fetched stay local / on NetBox's URL; they are not tunneled.
 
 `internal/drivers` talks to network devices directly (Arista EOS, Cisco
 IOS-XR, Nokia SR OS, Huawei VRP): NETCONF against OpenConfig models for
@@ -295,13 +312,14 @@ the two hosts it runs on: `NewDriver(DriverParam)` takes everything
 pre-resolved and is what the primary's web handlers use
 (`web/handle_device_interfaces.go`, which already has the DB in hand), while
 `NewDriverName(*util.ConfigFactum, name, user, pass)` resolves a device _by
-name over REST_ - `GET /api/device/name/:name` for its platform (via
+name over the Factum API_ - `GET /api/device/name/:name` for its platform (via
 `internal/factum.FactumClient.GetDeviceByName`) plus `GET /api/common-config`
 for `DefaultDomain` (`drivers.DeviceFQDN` needs it to turn a short factum
-device name into something resolvable). That's what lets `factum-driver-cli`
-(`cmd/driver`, which embeds `cmdbase.ParamsAgent`) run on any host with
-network access to the devices, with no Postgres access at all - same shape as
-the DNS/Icinga/LibreNMS/Oxidized tools above.
+device name into something resolvable), both through `util.FactumHTTP`.
+That's what lets `factum-driver-cli` (`cmd/driver`, which embeds
+`cmdbase.ParamsAgent`) run on any host with network access to the devices,
+with no Postgres access at all - same shape as the
+DNS/Icinga/LibreNMS/Oxidized tools above.
 
 ### Web backend (`web/`)
 
@@ -355,16 +373,25 @@ Key things that live outside the obvious per-resource `handle_*.go` files:
   never matches) as an alternative to the `token` cookie, for callers with
   no browser session — `internal/factum.FactumClient` (used by
   `internal/dns` and `internal/librenms`, both of which may run on a
-  different host than the primary) sends this instead of a cookie. Token
-  auth sets `c.Get("auth_method") == "token"` but no `"user"`, so
-  admin-gated routes that a remote CLI legitimately needs (e.g.
+  different host than the primary) sends this on the HTTPS fallback.
+  Co-located CLIs that hit the worker unix socket send no bearer (the
+  filesystem ACL is the auth; connecting is equivalent to possessing the
+  service token, whether or not YAML still contains `factum.token`). Hub
+  RPC into Echo sets `auth_method=token` via `worker.IsHubAuth` with no
+  `"user"` — same ceiling as a bearer, not an admin session. Token auth
+  sets `c.Get("auth_method") == "token"` but no `"user"`, so admin-gated
+  routes that a remote CLI legitimately needs (e.g.
   `GET /api/librenms-config`, `GET /api/device-sync-config`) use
   `RequireAdminOrServiceToken` instead of `RequireAdmin` — plain
-  `RequireAdmin` 401s a token caller outright since there's no user to
-  check a role on. Role gates used by the same CLIs for ordinary data
-  (`RequireRead`/`RequireWrite`, via `requireAnyRole`) also accept a
-  service token for the same reason — e.g. `FactumClient.GetDeviceByName`
-  hits `GET /api/device/name/:name`.
+  `RequireAdmin` 401s a token (or hub) caller outright since there's no
+  user to check a role on. Role gates used by the same CLIs for ordinary
+  data (`RequireRead`/`RequireWrite`, via `requireAnyRole`) also accept a
+  service token / hub auth for the same reason — e.g.
+  `FactumClient.GetDeviceByName` hits `GET /api/device/name/:name`. An
+  anchored allowlist (`internal/worker/hub_allowlist.go`, compiled
+  `^(?:pattern)$`) runs **before** `ServeHTTP`; `/api/admin/*`,
+  `/api/worker/run`, and `/api/netbox-webhook` are not reachable over the
+  hub.
 - **DTOs vs models**: models (`models/models.go`, `models/device.go`,
   `models/organisation.go`) embed `FactumModel` (ID/timestamps) and mark
   sensitive/relational fields `json:"-"`; DTOs are the JSON-facing shape.
@@ -385,7 +412,9 @@ than workers dialing in - the reverse of a traditional agent-connects-to-
 broker model, deliberately: the primary is typically locked down hard, and
 this way it needs zero new inbound firewall rules, while each worker host
 only needs one narrow inbound rule scoped to the primary's IP
-(`worker.listen`/`worker.token`). The admin-editable `models.WorkerNode`
+(`/hub` on `worker.listen`). Once this stack is live and mixed-UID CLIs can
+open the unix socket, worker nets need no route to the primary's HTTPS
+port. The admin-editable `models.WorkerNode`
 list (Name/Address/Token/Enabled, the "Worker nodes" admin page) is "who to
 dial", not a security boundary - editing it takes effect within one
 `RemoteManager` reconcile pass (~10s), not a code change.
@@ -393,23 +422,53 @@ dial", not a security boundary - editing it takes effect within one
 **Wire protocol** (`internal/worker/hub.go`): every message is an
 `Envelope{Type, Payload}` - `hello` (agent -> primary, once per connection,
 reports `Hostname`/`Roles`), `command` (primary -> agent, a predefined
-command to run), `log` (agent -> primary, streamed stdout/stderr/exit).
-`RemoteManager` (primary side, `web.Controller.RemoteManager`, instantiated
-once in `web.GUI()`) holds one supervised, auto-reconnecting connection per
-enabled `WorkerNode`; `Worker.runHubListener` (`hub_agent.go`, started
-unconditionally by `factum-worker start`) is the agent side.
+command to run), `log` (agent -> primary, streamed stdout/stderr/exit),
+`event` (structured job lines), `request` (agent -> primary HTTP-subset
+RPC: method/path/body), `response` (primary -> agent: status/body, or
+`Error` for transport failure → unix 502). `RemoteManager` (primary side,
+`web.Controller.RemoteManager`, instantiated once in `web.GUI()`) holds one
+supervised, auto-reconnecting connection per enabled `WorkerNode`.
+`web.GUI()` registers routes, calls `remoteManager.SetAPIHandler(e)`,
+**then** `go remoteManager.Run` so a connected worker never observes a nil
+API handler. `factum-worker start` runs `runHubListener` (`hub_agent.go`)
+and the unix HTTP shim (`runLocalAPI`) together under an errgroup — either
+dying fails `Start`.
+
+**Local unix API**: CLIs on the worker host speak HTTP to
+`/run/factum-worker/api.sock` (dir `0750`, socket `0660`, group `factum`;
+relocate both sides with `FACTUM_WORKER_API_SOCKET`). That is **not** a
+route on `worker.listen` — `/hub` stays the only thing on the address the
+primary can reach. Filesystem ACL is the auth (no extra token on the
+socket). The same anchored allowlist (`^(?:pattern)$`, first-match-wins)
+runs on the agent and again on the primary **before** in-process Echo
+`ServeHTTP`. Hub auth is service-token equivalent for those routes only.
+`util.FactumHTTP` probes Stat/Dial: missing / EACCES / EPERM / undialable
+→ HTTPS if `factum.url` is set. After a successful Dial, unix 502 is **not**
+retried over HTTPS. `FACTUM_WORKER_API_SOCKET=none` forces HTTPS.
 
 **Concurrency**: `*websocket.Conn` allows one concurrent reader and one
 concurrent writer. Every connection, both sides, has exactly one writer
 goroutine (`runWriter`) draining a buffered `chan Envelope` ("outbox") -
 nothing else ever calls `WriteJSON`/`WriteMessage` on the raw connection.
 Dispatching a command (`RemoteManager.SendCommand`, called from an
-arbitrary HTTP-handler goroutine) or streaming a log line
+arbitrary HTTP-handler goroutine), streaming a log line
 (`runCommand`/`streamOutput`, one goroutine per running command on the
-agent) just enqueues onto that channel (`trySend`, bounded by
-`outboxSendTimeout` so a stuck/dead peer can't hang the caller forever).
-Keep this pattern intact when touching either side of the transport - it's
-the one thing standing between this design and a data race.
+agent), or sending a hub RPC `request`/`response` just enqueues onto that
+channel (`trySend`, bounded by `outboxSendTimeout` so a stuck/dead peer
+can't hang the caller forever). Keep this pattern intact when touching
+either side of the transport - it's the one thing standing between this
+design and a data race. RPC responses use a longer write deadline
+(`hubRPCWriteWait` 60s vs `hubWriteWait` 10s); a large `WriteJSON` delays
+command dispatch to *that* node for the duration of the write (up to 60s).
+Marshaled-envelope cap is 32 MiB — oversize is a small 413, not a truncated
+body and not a torn connection.
+
+**Follow-up: hub WSS** — encrypt the hub WebSocket (`ws://` → `wss://`) now
+that config secrets (NetBox tokens, LibreNMS keys, device-sync passwords,
+SMTP passwords) ride `EnvelopeResponse` in plaintext. Until that follow-up
+lands, keep `/hub` on a private path scoped to the primary's IP; do not
+treat those secrets as TLS-protected on the hub. Do not invent an
+application-level payload cipher; if we encrypt, we do WSS.
 
 **Dispatch**: `RemoteManager.SendCommand(role, args)` fans a `command`
 envelope out to every connected node whose hello-reported `Roles` include
@@ -452,7 +511,11 @@ standalone process.
 
 `worker.listen`/`worker.token` are effectively required for
 `factum-worker start` to be useful - `Start` errors if `worker.listen` is
-unset, since the instance would otherwise have no transport at all.
+unset, since the instance would otherwise have no hub transport at all.
+The unix API path cannot be disabled on the listener (`none`/`0` fails
+`Start`); CLIs force HTTPS with `FACTUM_WORKER_API_SOCKET=none` instead.
+`Start` also fails closed if the socket dir cannot be created at `0750`
+(not world-accessible). `factum.url`/`token` are not required to start.
 
 ### CLI framework
 

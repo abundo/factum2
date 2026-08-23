@@ -101,12 +101,12 @@ func GUI(p *GuiParams) error {
 	// hub transport" section for why the dial direction is reversed from a
 	// traditional agent-connects-to-broker model. It's also where agent
 	// command output lands (RunAndWait's LogToSlog call feeds the same
-	// hubHandler-backed log window as the process's own logs). Runs for the
-	// lifetime of the process; no separate shutdown path since GUI() has
-	// none for anything else either (e.Start below blocks until the
-	// process exits).
+	// hubHandler-backed log window as the process's own logs). Run starts
+	// after routes and SetAPIHandler so a connected worker never observes
+	// a nil API handler. No separate shutdown path since GUI() has none
+	// for anything else either (e.Start below blocks until the process
+	// exits).
 	remoteManager := worker.NewRemoteManager(DB)
-	go remoteManager.Run(context.Background())
 
 	// scheduler fires user-defined JobSchedule rows through the same
 	// StartJob path as the Job overview page - one goroutine for the
@@ -377,6 +377,9 @@ func GUI(p *GuiParams) error {
 	api.Any("/*", func(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "not found"})
 	})
+
+	remoteManager.SetAPIHandler(e)
+	go remoteManager.Run(context.Background())
 
 	// Start server
 	var bind string

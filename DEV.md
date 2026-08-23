@@ -51,18 +51,23 @@ get-*` commands).
 
 LibreNMS/Icinga/DNS/Oxidized/device-sync are DB-backed too, but their CLIs
 normally run on a different host than the primary, so they can't reach the
-DB directly — they fetch config over REST (`GET /api/<service>-config`),
-authenticated with `factum.token` (see below). Their YAML only needs
-`factum.url`/`factum.token` (plus `worker.*` if that host also runs
-`factum-worker start`). LibreNMS's own MySQL credentials are read from
+DB directly — they fetch config from the primary's REST handlers
+(`GET /api/<service>-config`) via `util.FactumHTTP`. Co-located with
+`factum-worker start`, that is the unix socket
+(`/run/factum-worker/api.sock`); otherwise HTTPS with `factum.token` (see
+below). Start-only YAML may omit `factum.url`/`factum.token`. Keep them
+for Stat/Dial fallback, for `factum-worker run`, and for any CLI that
+cannot open the socket. Plus `worker.*` if that host also runs
+`factum-worker start`. LibreNMS's own MySQL credentials are read from
 LibreNMS's `.env` on disk, not from factum config.
 
 `factum.token` is a shared secret (matched against the primary's
-`Settings.FactumApiToken`, set from the admin UI's Factum tab) that lets a
-process with no browser session — `internal/factum`'s HTTP client, used by
-`factum-dns` and `factum-librenms-cli` — authenticate to the API as a
-service instead of a logged-in user. Set it in both places (admin UI and
-the remote host's `factum.token` config key) or those commands get 401s.
+`Settings.FactumApiToken`, set from the admin UI's Factum tab) used on the
+HTTPS fallback — `internal/factum`'s HTTP client, used by `factum-dns` and
+`factum-librenms-cli`. Unix-socket calls send no bearer (the socket ACL is
+the auth). Set the token in both places (admin UI and the remote host's
+`factum.token` config key) if anything on that host still uses HTTPS, or
+those commands get 401s.
 
 `--debug` / `--loglevel` control logging (`cmdbase.SetupLog`); debug level
 also enables source locations in log output.
@@ -359,7 +364,26 @@ web/frontend/src/
   (`handle_worker.go`'s `ApiWorkerRun`) both dispatch predefined shell
   commands (`worker.Commands` in config) through the same path and stream
   logs back — see the comment on `util.ConfigWorkerCommand` for why the
-  command line is never taken from the wire directly.
+  command line is never taken from the wire directly. `web.GUI()` attaches
+  Echo with `SetAPIHandler` **before** `RemoteManager.Run`.
+- **Hub RPC**: co-located CLIs (`FetchRemoteConfig`, `FactumClient`) HTTP
+  to the worker's unix socket; the agent forwards a `request` envelope and
+  the primary runs the existing Echo handler in-process (hub auth = service
+  token, anchored allowlist first). Probe (Stat missing / EACCES / EPERM /
+  Dial fail) → HTTPS if `factum.url` is set. After a successful Dial, unix
+  502 is **not** retried over HTTPS. Escape hatch:
+  `FACTUM_WORKER_API_SOCKET=none`. `factum-worker run` (`POST /api/worker/run`
+  NDJSON) is not tunneled and still needs HTTPS.
+- **Size and write deadline**: cap is 32 MiB of *marshaled envelope*
+  (`hubMaxMessageSize`). Oversize returns 413 `{"error":"hub response too
+  large"}` without putting that body on the websocket (gorilla would close
+  the conn). `EnvelopeResponse` uses `hubRPCWriteWait` (60s);
+  hello/command/log/event/ping keep `hubWriteWait` (10s). `runWriter` is
+  the only `WriteJSON`/`WriteMessage`; a large response occupies one outbox
+  slot but blocks that node's writer, so command dispatch to *that* node
+  is delayed for the duration of the write (up to 60s). Prefer not to
+  overlap a DNS `GET /api/device?include=interfaces` with `RunAndWait` on
+  the same node.
 - **Sync job events**: add `--job` to a `worker.commands` entry's `args` to
   have that predefined command report structured info/warning/error events
   (persisted as `models.SyncJobEvent`, visible in `/sync/status`'s job
@@ -370,14 +394,14 @@ web/frontend/src/
     worker:
         listen: ":8443"
         token: "<shared secret, matches this node's WorkerNode.Token>"
-        roles: ["librenms"]
         commands:
             librenms:
-                cmd: /path/to/factum-librenms-cli
+                cmd: /path/to/factum-librenms
                 args: ["sync", "--job"]
     ```
     See `AGENTS.md`'s "Sync jobs" bullet for how the agent decides a stdout
     line is a structured event rather than plain text.
 
 See [README.md § Installing a worker node](README.md#installing-a-worker-node)
-for how to set up a `factum-worker` instance on a remote host.
+for how to set up a `factum-worker` instance on a remote host (inbound
+`/hub` only, group `factum`, when `:443` may close).

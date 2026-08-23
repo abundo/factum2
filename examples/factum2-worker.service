@@ -4,7 +4,10 @@
 # Runs "factum-worker start", which listens on worker.listen for the
 # primary to dial in over the hub transport (WebSocket) and dispatch
 # predefined commands from worker.commands, streaming their stdout/stderr
-# back to the primary. See DEV.md's "Installing a worker node".
+# back to the primary. Also serves the unix HTTP API at
+# /run/factum-worker/api.sock (group factum). install.py groupadd -r factum
+# before installing this unit — systemd Group= without the group fails the
+# unit and takes hub dispatch down. See README.md "Installing a worker node".
 
 [Unit]
 Description=Factum background worker
@@ -14,6 +17,9 @@ Requires=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/factum2
+RuntimeDirectory=factum-worker
+RuntimeDirectoryMode=0750
+Group=factum
 ExecStart=/opt/factum2/factum-worker -f /etc/factum2/factum2-worker.yaml start
 TimeoutStopSec=10s
 

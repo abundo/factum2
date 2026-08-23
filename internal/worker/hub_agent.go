@@ -104,12 +104,17 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(int64(hubMaxMessageSize))
 	slog.Info("worker hub: hub connected", "remote", r.RemoteAddr)
 
 	outbox := make(chan Envelope, outboxSize)
 	done := make(chan struct{})
 	defer close(done)
 	go runWriter(conn, outbox, done, hubPingPeriod)
+
+	sess := &hubSession{outbox: outbox, waiters: make(map[string]chan ResponseMsg)}
+	w.setHubSession(sess)
+	defer w.clearHubSession(sess)
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -144,6 +149,23 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 			}
 			slog.Debug("received command", "id", cmdMsg.ID, "command", cmdMsg.Command, "args", cmdMsg.Args)
 			go w.runCommand(w.runCtx, cmdMsg, outbox)
+		case EnvelopeResponse:
+			var resp ResponseMsg
+			if err := json.Unmarshal(env.Payload, &resp); err != nil {
+				slog.Error("worker hub: invalid response envelope, discarding", "err", err)
+				continue
+			}
+			sess.mu.Lock()
+			ch, ok := sess.waiters[resp.ID]
+			sess.mu.Unlock()
+			if !ok {
+				slog.Debug("worker hub: unknown response id", "id", resp.ID)
+				continue
+			}
+			select {
+			case ch <- resp:
+			default:
+			}
 		default:
 			slog.Debug("worker hub: unhandled envelope type", "type", env.Type)
 		}
