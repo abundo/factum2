@@ -134,6 +134,65 @@ func TestConfigAssignmentUpsertAndResolveRedactsSecret(t *testing.T) {
 	}
 }
 
+func TestApiServiceElineUpdateStandaloneWithoutNetbox(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00001", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a", Platform: "eos", NetboxID: 101}
+	devB := models.Device{Name: "pe-b", Platform: "eos", NetboxID: 102}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&devB).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"endpoint_a_device_id":    devA.ID,
+		"endpoint_a_interface_id": ifa.ID,
+		"endpoint_a_vlan":         100,
+		"endpoint_b_device_id":    devB.ID,
+		"endpoint_b_interface_id": ifb.ID,
+		"endpoint_b_vlan":         200,
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/eline", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceElineUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.Service
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.PseudowireID == 0 {
+		t.Fatal("expected locally derived pseudowire_id")
+	}
+	if updated.L2VPNNetboxID != 0 {
+		t.Errorf("standalone save wrote netbox id %d", updated.L2VPNNetboxID)
+	}
+	if updated.EndpointAVlan != 100 || updated.EndpointBVlan != 200 {
+		t.Errorf("vlans = %d/%d", updated.EndpointAVlan, updated.EndpointBVlan)
+	}
+}
+
 func TestCannotDeleteBuiltinServiceType(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

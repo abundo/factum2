@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
@@ -229,14 +230,11 @@ func reconcileELineSubinterface(db *gorm.DB, nb *netboxtool.NetboxClient, ep *eL
 }
 
 // ApiServiceElineUpdate provisions (or re-provisions, on later edits) the
-// device/interface/VLAN endpoints of an ELINE service: it creates a
-// per-VLAN subinterface on each side (with description
-// elineInterfaceDescription) and an ipam.L2VPN (type "evpl") in Netbox with
-// two L2VPNTerminations, assigned to the service's customer's Netbox tenant
-// (netbox.FindOrCreateTenant), mirrors each new subinterface into factum's
-// interfaces table, then persists the choice on the Service row. It does
-// NOT push any config to the live devices - that's a separate follow-up
-// (internal/drivers).
+// device/interface/VLAN endpoints of an ELINE service and persists them on
+// the Service row. When NetBox is configured it also creates a per-VLAN
+// subinterface on each side and an ipam.L2VPN (type "evpl") with two
+// terminations; otherwise endpoints and a locally derived PseudowireID are
+// stored without NetBox objects. It does not push config to live devices.
 func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -291,9 +289,47 @@ func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+
+	if !netboxConfigured(settings) {
+		updates := map[string]any{
+			"endpoint_a_device_id":    dto.EndpointADeviceID,
+			"endpoint_a_interface_id": dto.EndpointAInterfaceID,
+			"endpoint_a_vlan":         dto.EndpointAVlan,
+			"endpoint_b_device_id":    dto.EndpointBDeviceID,
+			"endpoint_b_interface_id": dto.EndpointBInterfaceID,
+			"endpoint_b_vlan":         dto.EndpointBVlan,
+			"pseudowire_id":           pseudowireID,
+		}
+		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		var updated models.Service
+		if err := ctrl.DB.First(&updated, id).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, updated)
+	}
+
 	nb, err := ctrl.newNetboxClient(settings)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		slog.Warn("eline: netbox client unavailable, persisting locally", "err", err)
+		updates := map[string]any{
+			"endpoint_a_device_id":    dto.EndpointADeviceID,
+			"endpoint_a_interface_id": dto.EndpointAInterfaceID,
+			"endpoint_a_vlan":         dto.EndpointAVlan,
+			"endpoint_b_device_id":    dto.EndpointBDeviceID,
+			"endpoint_b_interface_id": dto.EndpointBInterfaceID,
+			"endpoint_b_vlan":         dto.EndpointBVlan,
+			"pseudowire_id":           pseudowireID,
+		}
+		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		var updated models.Service
+		if err := ctrl.DB.First(&updated, id).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, updated)
 	}
 
 	tenant, err := netbox.FindOrCreateTenant(nb, customer)
@@ -419,6 +455,16 @@ type ApiServiceElinePushResult struct {
 // ELINE, and does so - returning the outcome rather than an error, so
 // ApiServiceElinePush can report both endpoints' results even when only one
 // fails.
+func netboxConfigured(settings *models.Settings) bool {
+	if settings == nil {
+		return false
+	}
+	if settings.NetboxEnabled != nil && !*settings.NetboxEnabled {
+		return false
+	}
+	return strings.TrimSpace(settings.NetboxApiURL) != "" && strings.TrimSpace(settings.NetboxApiToken) != ""
+}
+
 func (ctrl *Controller) applyELINEToDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, intent *drivers.ELINEIntent) ApiServiceElinePushResult {
 	result := ApiServiceElinePushResult{Device: device.Name}
 
@@ -431,15 +477,45 @@ func (ctrl *Controller) applyELINEToDevice(device *models.Device, creds deviceCr
 		result.Error = err.Error()
 		return result
 	}
-	applier, ok := drv.(drivers.ELINEApplier)
-	if !ok {
-		result.Error = "ELINE provisioning is not yet supported for platform " + device.Platform
-		return result
-	}
-	if err := applier.ApplyELINE(intent); err != nil {
+	if err := ctrl.applyELINECmds(drv, device, intent); err != nil {
 		result.Error = err.Error()
 	}
 	return result
+}
+
+func (ctrl *Controller) applyELINECmds(drv drivers.DriverClient, device *models.Device, intent *drivers.ELINEIntent) error {
+	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
+	if err != nil {
+		return err
+	}
+	if pack != nil && pack.ApplyTemplate != "" {
+		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
+			return err
+		}
+		if prep, ok := drv.(drivers.ELINEPrepareChecker); ok {
+			if err := prep.PrepareELINEApply(intent); err != nil {
+				return err
+			}
+		}
+		data, err := drivers.ELINETemplateData(intent, strings.ToLower(device.Platform))
+		if err != nil {
+			return err
+		}
+		cmds, err := cfgmgmt.Render(ctrl.DB, pack.ApplyTemplate, "", data)
+		if err != nil {
+			return err
+		}
+		applier, ok := drv.(drivers.CLISessionApplier)
+		if !ok {
+			return fmt.Errorf("platform pack exists but this platform cannot apply CLI sessions yet")
+		}
+		return applier.ApplyCLISession(intent.Name, cmds)
+	}
+	applier, ok := drv.(drivers.ELINEApplier)
+	if !ok {
+		return fmt.Errorf("ELINE provisioning is not yet supported for platform %s", device.Platform)
+	}
+	return applier.ApplyELINE(intent)
 }
 
 // removeELINEFromDevice mirrors applyELINEToDevice for the teardown-only
@@ -458,15 +534,36 @@ func (ctrl *Controller) removeELINEFromDevice(device *models.Device, creds devic
 		result.Error = err.Error()
 		return result
 	}
-	remover, ok := drv.(drivers.ELINERemover)
-	if !ok {
-		result.Error = "ELINE provisioning is not yet supported for platform " + device.Platform
-		return result
-	}
-	if err := remover.RemoveELINE(removal); err != nil {
+	if err := ctrl.removeELINECmds(drv, device, removal); err != nil {
 		result.Error = err.Error()
 	}
 	return result
+}
+
+func (ctrl *Controller) removeELINECmds(drv drivers.DriverClient, device *models.Device, removal *drivers.ELINERemoval) error {
+	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
+	if err != nil {
+		return err
+	}
+	if pack != nil && pack.ApplyTemplate != "" {
+		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
+			return err
+		}
+		cmds, err := cfgmgmt.RenderPackCleanup(ctrl.DB, pack, removal)
+		if err != nil {
+			return err
+		}
+		applier, ok := drv.(drivers.CLISessionApplier)
+		if !ok {
+			return fmt.Errorf("platform pack exists but this platform cannot apply CLI sessions yet")
+		}
+		return applier.ApplyCLISession(removal.Name, cmds)
+	}
+	remover, ok := drv.(drivers.ELINERemover)
+	if !ok {
+		return fmt.Errorf("ELINE provisioning is not yet supported for platform %s", device.Platform)
+	}
+	return remover.RemoveELINE(removal)
 }
 
 // removeELINEServiceFromDevices tears down service's ELINE config on every

@@ -1,11 +1,45 @@
 package web
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/models"
+	"github.com/abundo/netboxtool"
 )
+
+type elinePackStub struct {
+	prepared   bool
+	applied    bool
+	prepareErr error
+}
+
+func (s *elinePackStub) PrepareELINEApply(*drivers.ELINEIntent) error {
+	s.prepared = true
+	return s.prepareErr
+}
+func (s *elinePackStub) ApplyCLISession(string, []string) error {
+	s.applied = true
+	return nil
+}
+func (s *elinePackStub) Exec(string) (*drivers.ExecModel, error) { return nil, nil }
+func (s *elinePackStub) RunningConfigGet(bool) (*drivers.RunningConfigModel, error) {
+	return nil, nil
+}
+func (s *elinePackStub) RunningConfigSave() error { return nil }
+func (s *elinePackStub) GetInterfacesStatus() ([]*netboxtool.NBInterface, error) {
+	return nil, nil
+}
+func (s *elinePackStub) SetInterfaceDescription(*netboxtool.NBInterface) error { return nil }
+func (s *elinePackStub) SetInterfaceDescriptions([]string, []*netboxtool.NBInterface) error {
+	return nil
+}
+func (s *elinePackStub) SetInterfaceVLANs([]string, []*drivers.VLANConfig) error { return nil }
+func (s *elinePackStub) Version() (*drivers.VersionModel, error)                 { return nil, nil }
+func (s *elinePackStub) GetDeviceConfig() (*drivers.DeviceConfig, error)         { return nil, nil }
+func (s *elinePackStub) GetNeighbors() ([]*drivers.Neighbor, error)              { return nil, nil }
 
 func TestPseudowireIDFromServiceID(t *testing.T) {
 	cases := []struct {
@@ -328,4 +362,27 @@ func TestDeleteFactumInterfaceByNetboxID(t *testing.T) {
 	// already-cleaned Netbox objects is the normal path.
 	deleteFactumInterfaceByNetboxID(db, 9001, "A")
 	deleteFactumInterfaceByNetboxID(db, 0, "A")
+}
+
+func TestApplyELINECmdsPackPathRunsPrepare(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	stub := &elinePackStub{prepareErr: errors.New("sdp 127 already exists with far-end 1.2.3.4")}
+	intent := &drivers.ELINEIntent{
+		Name: "CN00001",
+		Remote: &drivers.ELINERemotePeer{
+			NeighborIP:   "10.0.0.127",
+			PseudowireID: 1000001,
+		},
+	}
+	err := ctrl.applyELINECmds(stub, &models.Device{Name: "sros1", Platform: "sros"}, intent)
+	if err == nil || !strings.Contains(err.Error(), "sdp 127 already exists") {
+		t.Fatalf("err = %v, want SDP conflict", err)
+	}
+	if !stub.prepared {
+		t.Fatal("PrepareELINEApply was not called on the pack path")
+	}
+	if stub.applied {
+		t.Fatal("ApplyCLISession ran after PrepareELINEApply failed")
+	}
 }
