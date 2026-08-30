@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -116,6 +117,15 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.JobTask{},
 		&models.JobTaskEvent{},
 		&models.JobSchedule{},
+
+		&models.ConfigScope{},
+		&models.ConfigVariableDef{},
+		&models.ConfigAssignment{},
+		&models.ServiceType{},
+		&models.PlatformPack{},
+		&models.ConfigTemplate{},
+		&models.ConfigMacro{},
+		&models.ServiceEndpoint{},
 	)
 	if err != nil {
 		return err
@@ -140,6 +150,10 @@ func MigrateDatabase(db *gorm.DB) error {
 	// copied over unconditionally for every "lime" row rather than gated
 	// on an empty source_id like customers above.
 	if err := db.Exec(`UPDATE services SET source_id = CAST(id AS TEXT) WHERE source = 'lime'`).Error; err != nil {
+		return err
+	}
+
+	if err := cfgmgmt.Seed(db); err != nil {
 		return err
 	}
 

@@ -1,0 +1,128 @@
+package cfgmgmt
+
+import (
+	"bytes"
+	"fmt"
+	"regexp"
+	"strings"
+	"text/template"
+
+	"github.com/abundo/factum2/models"
+	"gorm.io/gorm"
+)
+
+var cleanupInvokeRe = regexp.MustCompile(`\{\{-?\s*template\s+"cleanup"\s+[^}]*\}\}`)
+
+const maxIncludeDepth = 8
+
+// Render executes Go text/template body (or a named define) against data.
+// FuncMap is limited: include (named ConfigMacro), join. No file/HTTP/shell.
+func Render(db *gorm.DB, body, define string, data any) ([]string, error) {
+	text, err := executeTemplate(db, body, define, data, 0)
+	if err != nil {
+		return nil, err
+	}
+	return splitCLI(text), nil
+}
+
+func executeTemplate(db *gorm.DB, body, define string, data any, depth int) (string, error) {
+	if depth > maxIncludeDepth {
+		return "", fmt.Errorf("macro include nested too deeply")
+	}
+	funcs := template.FuncMap{
+		"join": strings.Join,
+		"include": func(name string) (string, error) {
+			var m models.ConfigMacro
+			if err := db.Where("name = ?", name).First(&m).Error; err != nil {
+				return "", fmt.Errorf("unknown macro %q", name)
+			}
+			return executeTemplate(db, m.Body, "", data, depth+1)
+		},
+		"eq": eqAny,
+		"ne": func(a, b any) bool { return !eqAny(a, b) },
+	}
+	tmpl, err := template.New("cfg").Funcs(funcs).Option("missingkey=error").Parse(body)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if define == "" {
+		err = tmpl.Execute(&buf, data)
+	} else {
+		err = tmpl.ExecuteTemplate(&buf, define, data)
+	}
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func eqAny(a, b any) bool {
+	return fmt.Sprint(a) == fmt.Sprint(b)
+}
+
+func splitCLI(text string) []string {
+	var cmds []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cmds = append(cmds, line)
+		}
+	}
+	return cmds
+}
+
+// RenderPackApply renders a platform pack's apply template.
+func RenderPackApply(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
+	if pack == nil || pack.ApplyTemplate == "" {
+		return nil, statusErr(400, "platform pack has no apply template")
+	}
+	return Render(db, pack.ApplyTemplate, "", data)
+}
+
+// RenderPackApplyBody renders the apply template with the "cleanup" define
+// emptied so a multi-endpoint push can run teardown once, then each body.
+func RenderPackApplyBody(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
+	if pack == nil || pack.ApplyTemplate == "" {
+		return nil, statusErr(400, "platform pack has no apply template")
+	}
+	stripped := cleanupInvokeRe.ReplaceAllString(pack.ApplyTemplate, "")
+	return Render(db, stripped, "", data)
+}
+
+// RenderPackCleanupIfPresent is RenderPackCleanup, or nil if the pack has
+// no cleanup template and no "cleanup" define.
+func RenderPackCleanupIfPresent(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
+	if pack == nil {
+		return nil, nil
+	}
+	if pack.CleanupTemplate != "" {
+		return Render(db, pack.CleanupTemplate, "", data)
+	}
+	if pack.ApplyTemplate == "" {
+		return nil, nil
+	}
+	cmds, err := Render(db, pack.ApplyTemplate, "cleanup", data)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such template") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return cmds, nil
+}
+
+// RenderPackCleanup renders teardown commands from CleanupTemplate, or the
+// apply template's "cleanup" define when CleanupTemplate is empty.
+func RenderPackCleanup(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
+	if pack == nil {
+		return nil, statusErr(400, "platform pack missing")
+	}
+	if pack.CleanupTemplate != "" {
+		return Render(db, pack.CleanupTemplate, "", data)
+	}
+	if pack.ApplyTemplate == "" {
+		return nil, statusErr(400, "platform pack has no cleanup template")
+	}
+	return Render(db, pack.ApplyTemplate, "cleanup", data)
+}

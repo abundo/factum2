@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     BuildInfo: typeof import('./src/components/BuildInfo.vue')['default']
+    ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
     IpamPrefixTree: typeof import('./src/components/IpamPrefixTree.vue')['default']
     LdapTreeBrowser: typeof import('./src/components/LdapTreeBrowser.vue')['default']

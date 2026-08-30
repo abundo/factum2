@@ -27,6 +27,7 @@ const items = computed(() => {
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
         { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
+        { label: 'Config', icon: 'i-lucide-settings-2', to: '/config' },
         ...(authStore.ipamEnabled ? [{ label: 'IPAM', icon: 'i-lucide-binary', to: '/ipam' }] : []),
         ...(authStore.opticalEnabled
           ? [{ label: 'Maintenance', icon: 'i-lucide-wrench', to: '/maintenance' }]

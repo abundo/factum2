@@ -60,6 +60,12 @@ const router = createRouter({
           component: () => import('@/views/service/ServiceCreateWizard.vue'),
         },
         {
+          path: '/config',
+          name: 'config',
+          meta: { title: 'Config', requiresRead: true },
+          component: () => import('@/views/config/ConfigPage.vue'),
+        },
+        {
           path: '/device',
           name: 'devices',
           meta: { requiresRead: true },
