@@ -401,8 +401,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="card">
-    <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
+  <div class="card flex min-h-0 flex-1 flex-col">
+    <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <h4 class="m-0">Network map</h4>
       <div class="flex items-center gap-3 text-sm text-muted-color">
         <span class="flex items-center gap-1">
@@ -420,9 +420,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-4" />
+    <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-4 shrink-0" />
 
-    <div v-if="availableRoles.length" class="flex flex-wrap gap-2 items-center mb-4">
+    <div v-if="availableRoles.length" class="flex flex-wrap gap-2 items-center mb-4 shrink-0">
       <UButton
         label="All"
         size="xs"
@@ -457,7 +457,7 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="relative h-[calc(100vh-260px)] rounded-lg overflow-hidden border border-default">
+    <div class="relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default">
       <!--
         w-full h-full, not absolute inset-0: maplibre-gl.css sets
         `.maplibregl-map { position: relative }` on this exact element

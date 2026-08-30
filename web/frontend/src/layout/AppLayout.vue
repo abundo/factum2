@@ -23,10 +23,7 @@ watch(
     <AppTopbar />
     <div class="flex min-h-0 flex-1">
       <AppSidebar />
-      <main
-        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4 md:p-6"
-        :style="logPanelState.open ? { paddingBottom: logPanelState.height + 'px' } : null"
-      >
+      <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4 md:p-6">
         <router-view v-slot="{ Component }">
           <div class="flex min-h-0 flex-1 flex-col">
             <keep-alive include="CustomerList">

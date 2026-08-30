@@ -51,7 +51,7 @@ onUnmounted(disconnect)
 
 <template>
   <div
-    class="fixed inset-x-0 bottom-0 z-40 flex flex-col border-t border-default bg-default shadow-lg"
+    class="flex w-full shrink-0 flex-col overflow-hidden border-t border-default bg-default"
     :style="{ height: state.height + 'px' }"
   >
     <div class="h-1 cursor-row-resize hover:bg-primary/30" @mousedown="startResize"></div>
@@ -107,7 +107,9 @@ onUnmounted(disconnect)
         <span class="font-semibold uppercase">{{ line.level }}</span>
         <span>{{ line.message }}</span>
         <span v-if="line.attrs && Object.keys(line.attrs).length" class="text-muted">
-          <span v-for="(value, key) in line.attrs" :key="key" class="mr-2">{{ key }}={{ value }}</span>
+          <span v-for="(value, key) in line.attrs" :key="key" class="mr-2"
+            >{{ key }}={{ value }}</span
+          >
         </span>
       </div>
     </div>
