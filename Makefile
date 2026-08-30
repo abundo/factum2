@@ -5,7 +5,9 @@ BUILD_DIR := build
 INSTALL_DIR := /opt/factum2
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION)"
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
+DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
+GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
 .PHONY: build test frontend release install snapshot
 

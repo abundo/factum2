@@ -12,7 +12,7 @@ http.interceptors.response.use(
   (res) => res,
   (err) => {
     const url = err.config?.url ?? ''
-    if (err.response?.status === 401 && url !== '/me' && url !== '/login') {
+    if (err.response?.status === 401 && url !== '/me' && url !== '/login' && url !== '/version') {
       window.location.href = '/login'
     }
     return Promise.reject(err)

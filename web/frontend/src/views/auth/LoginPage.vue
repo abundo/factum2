@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLayout } from '@/layout/composables/layout'
 import { useAuthStore } from '@/stores/auth'
+import BuildInfo from '@/components/BuildInfo.vue'
 
 const { layoutState, toggleDarkMode } = useLayout()
 const route = useRoute()
@@ -91,13 +92,7 @@ function submit() {
 
           <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-4" />
 
-          <UButton
-            type="submit"
-            label="Sign In"
-            block
-            class="mt-4"
-            :loading="loading"
-          />
+          <UButton type="submit" label="Sign In" block class="mt-4" :loading="loading" />
 
           <div class="mt-4 text-center">
             <RouterLink to="/forgot-password" class="text-sm text-primary hover:underline"
@@ -106,6 +101,7 @@ function submit() {
           </div>
         </form>
       </div>
+      <BuildInfo compact class="mt-4" />
     </div>
   </div>
 </template>

@@ -150,6 +150,10 @@ func GUI(p *GuiParams) error {
 	api.POST("/forgot-password", ctrl.ApiForgotPassword)
 	api.POST("/reset-password", ctrl.ApiResetPassword)
 
+	// Public: the login page and sidebar footer show this, and the values
+	// (git tag / commit / date / Go version) are not sensitive.
+	api.GET("/version", ctrl.ApiVersion)
+
 	// ----- API customers -----
 	customers_ := NewSecureCRUDHandler[models.Customer, models.CustomerDTO](DB)
 	api.GET("/customer/:id", ctrl.ApiCustomerByID, ctrl.RequireAPIAuth, ctrl.RequireRead)
