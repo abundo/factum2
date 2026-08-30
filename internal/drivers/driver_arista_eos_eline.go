@@ -56,6 +56,11 @@ func (driver *AristaDriver) eosELINESession(name string, cmds []string) error {
 	return err
 }
 
+// ApplyCLISession implements CLISessionApplier for Arista EOS.
+func (driver *AristaDriver) ApplyCLISession(sessionName string, cmds []string) error {
+	return driver.eosELINESession(sessionName, cmds)
+}
+
 // ApplyELINE implements ELINEApplier for Arista EOS.
 func (driver *AristaDriver) ApplyELINE(intent *ELINEIntent) error {
 	// Root template includes the "cleanup" define then the new body - see

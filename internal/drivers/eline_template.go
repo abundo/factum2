@@ -23,6 +23,11 @@ func renderELINETemplate(tmplText string, data any) ([]string, error) {
 	return renderELINETemplateDefine(tmplText, "", data)
 }
 
+// RenderCLITemplate is the CLI line renderer used by ELINE apply/remove.
+func RenderCLITemplate(tmplText string, data any) ([]string, error) {
+	return renderELINETemplate(tmplText, data)
+}
+
 // renderELINETemplateDefine is like renderELINETemplate but executes the
 // named define (e.g. "cleanup") instead of the root template. An empty
 // name executes the root, matching renderELINETemplate.

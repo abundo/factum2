@@ -98,3 +98,17 @@ type ELINERemoval struct {
 type ELINERemover interface {
 	RemoveELINE(removal *ELINERemoval) error
 }
+
+// CLISessionApplier applies already-rendered CLI lines in a config session.
+// EOS uses sessionName for "configure session"; other platforms ignore it.
+type CLISessionApplier interface {
+	ApplyCLISession(sessionName string, cmds []string) error
+}
+
+// ELINEPrepareChecker runs platform guards that ApplyELINE would have
+// executed before commit. The pack/CLISession path skips ApplyELINE, so
+// callers must still invoke this (NokiaDriver refuses to repoint a shared
+// SDP when last-octet IDs collide).
+type ELINEPrepareChecker interface {
+	PrepareELINEApply(intent *ELINEIntent) error
+}

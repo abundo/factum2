@@ -64,6 +64,11 @@ func (driver *IOSXRDriver) iosxrELINESession(cmds []string) error {
 	return nil
 }
 
+// ApplyCLISession implements CLISessionApplier for Cisco IOS-XR.
+func (driver *IOSXRDriver) ApplyCLISession(_ string, cmds []string) error {
+	return driver.iosxrELINESession(cmds)
+}
+
 // ApplyELINE implements ELINEApplier for Cisco IOS-XR.
 func (driver *IOSXRDriver) ApplyELINE(intent *ELINEIntent) error {
 	cmds, err := iosxrELINECommands(intent)

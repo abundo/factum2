@@ -156,6 +156,41 @@ func (driver *NokiaDriver) srosELINESession(cmds []string) error {
 	return nil
 }
 
+// ApplyCLISession implements CLISessionApplier for Nokia SR OS.
+func (driver *NokiaDriver) ApplyCLISession(_ string, cmds []string) error {
+	return driver.srosELINESession(cmds)
+}
+
+// PrepareELINEApply implements ELINEPrepareChecker: same SDP far-end guard
+// ApplyELINE runs, for the pack/CLISession path that does not call ApplyELINE.
+func (driver *NokiaDriver) PrepareELINEApply(intent *ELINEIntent) error {
+	if intent == nil || intent.Remote == nil {
+		return nil
+	}
+	sdpID, err := srosSDPID(intent.Remote.NeighborIP)
+	if err != nil {
+		return err
+	}
+	return driver.srosCheckSDPConflict(sdpID, intent.Remote.NeighborIP)
+}
+
+// ELINETemplateData returns the value ELINE templates execute against.
+// SR OS gets SDPID derived from the remote neighbor; other platforms get intent.
+func ELINETemplateData(intent *ELINEIntent, platform string) (any, error) {
+	if strings.EqualFold(platform, "sros") || strings.EqualFold(platform, "sros-md") {
+		data := srosELINETemplateData{ELINEIntent: intent}
+		if intent.Remote != nil {
+			sdpID, err := srosSDPID(intent.Remote.NeighborIP)
+			if err != nil {
+				return nil, err
+			}
+			data.SDPID = sdpID
+		}
+		return data, nil
+	}
+	return intent, nil
+}
+
 // ApplyELINE implements ELINEApplier for Nokia SR OS.
 func (driver *NokiaDriver) ApplyELINE(intent *ELINEIntent) error {
 	if intent.Remote != nil {
