@@ -56,6 +56,9 @@ echo "==> Wrote $CONFIG_FILE"
 echo "==> Building frontend (web/static/vue is gitignored - safe to rebuild)"
 ( cd "$REPO_ROOT/web/frontend" && npm run build >/dev/null )
 
+echo "==> Applying database schema migrations"
+( cd "$REPO_ROOT" && go run ./cmd/web migrate -f "$CONFIG_FILE" )
+
 echo "==> Creating/updating admin user ($ADMIN_USER) - needs a real TTY, so this runs under tmux"
 tmux kill-session -t factum2-skill-admin 2>/dev/null || true
 tmux new-session -d -s factum2-skill-admin -x 200 -y 50

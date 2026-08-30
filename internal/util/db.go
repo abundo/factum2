@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConnectDatabase opens Postgres and does not apply schema migrations.
+// Call this from the web server and CLIs. Schema changes belong in the
+// dedicated `migrate` command (cmdbase.Migrate → MigrateDatabase); running
+// AutoMigrate as a side effect of start/sync/createadmin rewrites tables
+// while factum-web may already be serving.
 func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	var dns string
 	dns = fmt.Sprintf("host=%s user=%s password=%s dbname=%s timezone=Europe/Stockholm",
@@ -23,13 +28,13 @@ func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	db.Debug()
 
 	// database/sql defaults to an unlimited connection pool - every caller
-	// of ConnectDatabase/ConnectMigrate (web server, CLI tools, and formerly
-	// one per Netbox webhook, see internal/netbox.SyncDB) is otherwise free
-	// to open as many Postgres backends as it has concurrent goroutines,
-	// which is what exhausted Postgres's max_connections (SQLSTATE 53300)
-	// under a burst of Netbox webhooks. Cap it well under a typical
-	// max_connections so callers block/queue instead of opening new
-	// backends once the pool is full.
+	// of ConnectDatabase (web server, CLI tools, and formerly one per
+	// Netbox webhook, see internal/netbox.SyncDB) is otherwise free to open
+	// as many Postgres backends as it has concurrent goroutines, which is
+	// what exhausted Postgres's max_connections (SQLSTATE 53300) under a
+	// burst of Netbox webhooks. Cap it well under a typical max_connections
+	// so callers block/queue instead of opening new backends once the pool
+	// is full.
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
@@ -41,6 +46,8 @@ func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	return db, nil
 }
 
+// MigrateDatabase applies gorm.AutoMigrate plus one-off data fixes. Only
+// cmdbase.Migrate (and tests) should call this — not ConnectDatabase.
 func MigrateDatabase(db *gorm.DB) error {
 	// Service.ConnectionNumber (a Lime term) was renamed to ServiceID, which
 	// AutoMigrate below would read as a request for a brand-new "service_id"
@@ -248,16 +255,4 @@ func dedupeInterfaces(db *gorm.DB) error {
 		}
 		return nil
 	})
-}
-
-func ConnectMigrate(config *ConfigDB) (*gorm.DB, error) {
-	db, err := ConnectDatabase(config)
-	if err != nil {
-		return nil, err
-	}
-	err = MigrateDatabase(db)
-	if err != nil {
-		return nil, err
-	}
-	return db, nil
 }

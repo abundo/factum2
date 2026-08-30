@@ -2,8 +2,8 @@
 """Install factum2 on the primary and its remote workers.
 
 Two sources, one install path (binaries to /opt/factum2, systemd units to
-/etc/systemd/system, restart services, then the same binaries out to every
-enabled worker_nodes row).
+/etc/systemd/system, stop factum-web, apply `factum-web migrate`, restart
+services, then the same binaries out to every enabled worker_nodes row).
 
 On the primary this installs factum2-web.service and factum2-worker.service;
 on each worker, factum2-worker.service. If a unit already exists and differs
@@ -63,7 +63,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 6
+INSTALLER_VERSION = 7
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
@@ -283,7 +283,9 @@ class GithubClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def _get(self, url: str, accept: str = "application/vnd.github+json") -> tuple[bytes, dict[str, str]]:
+    def _get(
+        self, url: str, accept: str = "application/vnd.github+json"
+    ) -> tuple[bytes, dict[str, str]]:
         req = urllib.request.Request(url, headers=self._headers(accept))
         try:
             with self.opener.open(req, timeout=60) as resp:
@@ -297,7 +299,9 @@ class GithubClient:
                     f"GitHub repo {self.repo} not found (404). "
                     "If it is private, set GITHUB_TOKEN or run `gh auth login`."
                 ) from exc
-            raise InstallError(f"GitHub request failed ({exc.code}): {url}\n{detail}") from exc
+            raise InstallError(
+                f"GitHub request failed ({exc.code}): {url}\n{detail}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise InstallError(f"GitHub request failed: {exc}") from exc
 
@@ -341,7 +345,9 @@ class GithubClient:
         # Private-repo downloads must go through the asset API with
         # Accept: application/octet-stream; public ones can use browser_download_url.
         url = asset.api_url if (self.token and asset.api_url) else asset.url
-        req = urllib.request.Request(url, headers=self._headers("application/octet-stream"))
+        req = urllib.request.Request(
+            url, headers=self._headers("application/octet-stream")
+        )
         try:
             with self.opener.open(req, timeout=60) as resp, open(tmp, "wb") as out:
                 total = resp.headers.get("Content-Length")
@@ -440,7 +446,10 @@ def read_installed_version(install_dir: Path) -> str:
         ver = _version_from_binary(binary)
         if ver:
             return ver
-    if not (install_dir / "factum-web").exists() and not (install_dir / "factum").exists():
+    if (
+        not (install_dir / "factum-web").exists()
+        and not (install_dir / "factum").exists()
+    ):
         return "not installed"
     return "unknown"
 
@@ -488,7 +497,12 @@ def yaml_section(path: Path, section: str) -> dict[str, str]:
         if line == header:
             in_block = True
             continue
-        if in_block and line and not line[:1].isspace() and not line.lstrip().startswith("#"):
+        if (
+            in_block
+            and line
+            and not line[:1].isspace()
+            and not line.lstrip().startswith("#")
+        ):
             in_block = False
         if not in_block:
             continue
@@ -553,8 +567,7 @@ def _pg_error_message(payload: bytes) -> str:
 def _pg_md5_password(user: str, password: str, salt: bytes) -> bytes:
     inner = hashlib.md5((password + user).encode(), usedforsecurity=False).hexdigest()
     return (
-        "md5"
-        + hashlib.md5(inner.encode() + salt, usedforsecurity=False).hexdigest()
+        "md5" + hashlib.md5(inner.encode() + salt, usedforsecurity=False).hexdigest()
     ).encode()
 
 
@@ -576,7 +589,9 @@ def _pg_scram_continue(state: dict[str, str], server_first: bytes) -> bytes:
     auth_msg = f"{state['client_first_bare']},{msg},{client_final_wo_proof}".encode()
     client_sig = hmac.new(stored_key, auth_msg, hashlib.sha256).digest()
     proof = bytes(a ^ b for a, b in zip(client_key, client_sig))
-    return f"{client_final_wo_proof},p={base64.b64encode(proof).decode('ascii')}".encode()
+    return (
+        f"{client_final_wo_proof},p={base64.b64encode(proof).decode('ascii')}".encode()
+    )
 
 
 def _pg_handle_auth(
@@ -604,9 +619,7 @@ def _pg_handle_auth(
         names = [m.decode() for m in extra.split(b"\0") if m]
         if "SCRAM-SHA-256" not in names:
             raise _PgError(
-                "server requested SASL "
-                + ", ".join(names)
-                + ", not SCRAM-SHA-256"
+                "server requested SASL " + ", ".join(names) + ", not SCRAM-SHA-256"
             )
         nonce = base64.b64encode(os.urandom(18)).decode("ascii").rstrip("=")
         client_first_bare = f"n=,r={nonce}"
@@ -657,11 +670,7 @@ def _pg_query(db: dict[str, str], sql: str) -> list[str]:
     try:
         sock.settimeout(15)
         params = (
-            b"user\0"
-            + user.encode()
-            + b"\0database\0"
-            + database.encode()
-            + b"\0\0"
+            b"user\0" + user.encode() + b"\0database\0" + database.encode() + b"\0\0"
         )
         body = (196608).to_bytes(4, "big") + params
         sock.sendall((len(body) + 4).to_bytes(4, "big") + body)
@@ -782,7 +791,9 @@ def _no_psql_fallback_error(compose: Path | None) -> str:
             f"psql not found on PATH and no compose file in {POSTGRES_COMPOSE_DIR} "
             f"({names})"
         )
-    return f"psql not found on PATH and docker is not available (compose file: {compose})"
+    return (
+        f"psql not found on PATH and docker is not available (compose file: {compose})"
+    )
 
 
 def query_worker_addresses(
@@ -922,7 +933,9 @@ def ensure_sudo(dry_run: bool) -> None:
     log("==> Requesting sudo access")
     proc = subprocess.run(["sudo", "-v"], check=False)
     if proc.returncode != 0:
-        raise InstallError("sudo is required to install into /opt/factum2 and restart systemd")
+        raise InstallError(
+            "sudo is required to install into /opt/factum2 and restart systemd"
+        )
 
 
 def run(
@@ -1118,7 +1131,9 @@ def confirm_overwrite_unit(
         log(f"    --yes: overwriting {unit} on {where}")
         return True
     if not sys.stdin.isatty():
-        log(f"!!  leaving {unit} on {where} unchanged (no TTY; pass --yes to overwrite)")
+        log(
+            f"!!  leaving {unit} on {where} unchanged (no TTY; pass --yes to overwrite)"
+        )
         return False
     try:
         ans = input(f"Overwrite {unit} on {where}? [y/N] ").strip().lower()
@@ -1222,10 +1237,48 @@ def install_unit(
         log(f"    keeping existing {unit} on {where}")
         return "kept"
     log(f"==> Overwriting {unit} on {where}")
-    copy_unit_file(
-        src, unit, target_host=target_host, ssh_user=ssh_user, dry_run=False
-    )
+    copy_unit_file(src, unit, target_host=target_host, ssh_user=ssh_user, dry_run=False)
     return "updated"
+
+
+def migrate_database(
+    install_dir: Path,
+    config_path: Path,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    """Stop factum-web, apply schema migrations, leave the unit stopped.
+
+    AutoMigrate must not run while the GUI is serving; the caller restarts
+    units after this returns. A missing unit (first install) is ignored.
+    """
+    web_unit = PRIMARY_UNITS[0]
+    web_bin = install_dir / "factum-web"
+    where = "this host" if is_local_host(target_host) else target_host
+    log(f"==> Applying database migrations on {where} (stop {web_unit} first)")
+    if is_local_host(target_host):
+        run(
+            sudo_prefix() + ["systemctl", "stop", web_unit],
+            dry_run=dry_run,
+            check=False,
+        )
+        run(
+            sudo_prefix() + [str(web_bin), "-f", str(config_path), "migrate"],
+            dry_run=dry_run,
+        )
+        return
+    quoted_bin = _shell_quote(str(web_bin))
+    quoted_cfg = _shell_quote(str(config_path))
+    run(
+        ssh_cmd(ssh_user, target_host, f"systemctl stop {web_unit} || true"),
+        dry_run=dry_run,
+    )
+    run(
+        ssh_cmd(ssh_user, target_host, f"{quoted_bin} -f {quoted_cfg} migrate"),
+        dry_run=dry_run,
+    )
 
 
 def systemd_reload_enable_restart(
@@ -1269,6 +1322,7 @@ def install_primary(
     target_host: str = "localhost",
     ssh_user: str = "root",
     assume_yes: bool = False,
+    config_path: Path = CONFIG_PATH_DEFAULT,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     where = "this host" if is_local_host(target_host) else target_host
@@ -1285,7 +1339,14 @@ def install_primary(
         try:
             run(
                 sudo_prefix()
-                + ["rsync", "-a", "-c", "--", str(staging) + "/", str(install_dir) + "/"],
+                + [
+                    "rsync",
+                    "-a",
+                    "-c",
+                    "--",
+                    str(staging) + "/",
+                    str(install_dir) + "/",
+                ],
                 dry_run=False,
             )
         finally:
@@ -1315,9 +1376,7 @@ def install_primary(
         )
 
     log("==> Installing systemd units")
-    ensure_factum_group(
-        target_host=target_host, ssh_user=ssh_user, dry_run=dry_run
-    )
+    ensure_factum_group(target_host=target_host, ssh_user=ssh_user, dry_run=dry_run)
     newly: list[str] = []
     for unit in PRIMARY_UNITS:
         action = install_unit(
@@ -1330,6 +1389,13 @@ def install_primary(
         )
         if action == "installed":
             newly.append(unit)
+    migrate_database(
+        install_dir,
+        config_path,
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+    )
     systemd_reload_enable_restart(
         PRIMARY_UNITS,
         enable_units=newly,
@@ -1423,7 +1489,9 @@ def prepare_roots(
         csum_path = cache / checksum_asset.name
         log(f"==> Downloading {checksum_asset.name}")
         client.download(checksum_asset, csum_path)
-        checksums = parse_checksums(csum_path.read_text(encoding="utf-8", errors="replace"))
+        checksums = parse_checksums(
+            csum_path.read_text(encoding="utf-8", errors="replace")
+        )
 
     roots: dict[str, Path] = {}
     for arch in sorted(archs):
@@ -1453,7 +1521,9 @@ def prepare_roots(
         extract_to = work / arch
         log(f"==> Extracting {asset.name}")
         roots[arch] = extract_archive(archive, extract_to)
-        missing = [name for name in KNOWN_BINARIES if not (roots[arch] / name).is_file()]
+        missing = [
+            name for name in KNOWN_BINARIES if not (roots[arch] / name).is_file()
+        ]
         if missing:
             log(f"    warning: {asset.name} is missing {', '.join(missing)}")
     return work, roots
@@ -1523,7 +1593,9 @@ def print_release_table(
         )
 
 
-def numbered_select(releases: list[Release], installed: str, goarch: str) -> Release | None:
+def numbered_select(
+    releases: list[Release], installed: str, goarch: str
+) -> Release | None:
     print_release_table(releases, installed, goarch)
     log("")
     log("Enter a number (1 is newest), tag, or q to quit.")
@@ -1565,7 +1637,9 @@ def curses_select(
             curses.init_pair(6, curses.COLOR_RED, -1)
         latest = latest_stable(releases)
         latest_tag = latest.tag if latest else None
-        newer_n = sum(1 for r in releases if version_newer(r.tag, installed) and not r.prerelease)
+        newer_n = sum(
+            1 for r in releases if version_newer(r.tag, installed) and not r.prerelease
+        )
         idx = default_index(releases, installed)
         offset = 0
 
@@ -1577,11 +1651,23 @@ def curses_select(
             installed_line = f"  Installed {installed}   Latest {latest_tag or '-'}   {ARCHIVE_OS}/{goarch}"
             _add(stdscr, 1, 0, installed_line[: w - 1])
             if newer_n:
-                note = f"  {newer_n} newer release(s) available — select one to install."
+                note = (
+                    f"  {newer_n} newer release(s) available — select one to install."
+                )
                 _add(stdscr, 2, 0, note[: w - 1], _pair(3))
             elif versions_equal(latest_tag or "", installed):
-                _add(stdscr, 2, 0, "  Up to date. Select a release to reinstall or roll back.", _pair(2))
-            elif latest_tag and same_base(latest_tag, installed) and is_dev_build(installed):
+                _add(
+                    stdscr,
+                    2,
+                    0,
+                    "  Up to date. Select a release to reinstall or roll back.",
+                    _pair(2),
+                )
+            elif (
+                latest_tag
+                and same_base(latest_tag, installed)
+                and is_dev_build(installed)
+            ):
                 _add(
                     stdscr,
                     2,
@@ -1719,7 +1805,9 @@ def _curses_confirm(
             return False
 
 
-def confirm_text(rel: Release, installed: str, workers: list[str], assume_yes: bool) -> bool:
+def confirm_text(
+    rel: Release, installed: str, workers: list[str], assume_yes: bool
+) -> bool:
     if assume_yes:
         return True
     if not sys.stdin.isatty():
@@ -1763,7 +1851,9 @@ def in_git_checkout() -> bool:
     return (REPO_DIR / ".git").exists()
 
 
-def confirm_self_update(local_ver: int, remote_ver: int, repo: str, assume_yes: bool) -> bool:
+def confirm_self_update(
+    local_ver: int, remote_ver: int, repo: str, assume_yes: bool
+) -> bool:
     if assume_yes:
         return True
     if not sys.stdin.isatty():
@@ -1787,7 +1877,9 @@ def confirm_self_update(local_ver: int, remote_ver: int, repo: str, assume_yes: 
 def replace_installer(new_bytes: bytes) -> None:
     path = Path(__file__).resolve()
     mode = path.stat().st_mode
-    fd, tmp_name = tempfile.mkstemp(prefix=".install.py.", suffix=".tmp", dir=path.parent)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".install.py.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(fd, "wb") as tmp:
             tmp.write(new_bytes)
@@ -1832,7 +1924,9 @@ def maybe_self_update(args: argparse.Namespace) -> None:
         log(f"!!  GitHub {INSTALLER_FILENAME} is not valid UTF-8; leaving this copy")
         return
     if not looks_like_installer(remote_text):
-        log(f"!!  GitHub {INSTALLER_FILENAME} does not look like this installer; leaving this copy")
+        log(
+            f"!!  GitHub {INSTALLER_FILENAME} does not look like this installer; leaving this copy"
+        )
         return
 
     local_path = Path(__file__).resolve()
@@ -1853,7 +1947,9 @@ def maybe_self_update(args: argparse.Namespace) -> None:
         return
     if remote == local:
         if args.self_update:
-            log(f"==> {INSTALLER_FILENAME} is already the GitHub copy (version {local_ver})")
+            log(
+                f"==> {INSTALLER_FILENAME} is already the GitHub copy (version {local_ver})"
+            )
         return
 
     if remote_ver > local_ver:
@@ -1869,7 +1965,9 @@ def maybe_self_update(args: argparse.Namespace) -> None:
     if args.dry_run:
         log(f"==> Dry run: would replace {local_path} and re-run")
         return
-    if not confirm_self_update(local_ver, remote_ver, args.repo, assume_yes=args.yes or args.self_update):
+    if not confirm_self_update(
+        local_ver, remote_ver, args.repo, assume_yes=args.yes or args.self_update
+    ):
         return
     try:
         replace_installer(remote)
@@ -1890,7 +1988,9 @@ def maybe_self_update(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def pick_release(releases: list[Release], spec: str, include_pre: bool = False) -> Release:
+def pick_release(
+    releases: list[Release], spec: str, include_pre: bool = False
+) -> Release:
     if spec in {"latest", "stable"}:
         rel = latest_stable(releases, include_pre=include_pre)
         if rel is None:
@@ -1927,21 +2027,38 @@ Examples:
   ./install.py --source --skip-build --primary-only
 """,
     )
-    p.add_argument("--repo", default=os.environ.get("GITHUB_REPO", REPO_DEFAULT), help=f"owner/name (default {REPO_DEFAULT})")
+    p.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPO", REPO_DEFAULT),
+        help=f"owner/name (default {REPO_DEFAULT})",
+    )
     p.add_argument("--install-dir", default=INSTALL_DIR_DEFAULT, type=Path)
-    p.add_argument("--config", default=CONFIG_PATH_DEFAULT, type=Path, help="factum2.yaml (db credentials for worker_nodes lookup)")
+    p.add_argument(
+        "--config",
+        default=CONFIG_PATH_DEFAULT,
+        type=Path,
+        help="factum2.yaml (db credentials for worker_nodes lookup)",
+    )
     p.add_argument("--ssh-user", default=os.environ.get("SSH_USER", "root"))
     p.add_argument("--list", action="store_true", help="print GitHub releases and exit")
-    p.add_argument("--install", metavar="TAG", help="GitHub tag to install, or 'latest'")
-    p.add_argument("--pre", action="store_true", help="include prereleases when resolving 'latest'")
+    p.add_argument(
+        "--install", metavar="TAG", help="GitHub tag to install, or 'latest'"
+    )
+    p.add_argument(
+        "--pre", action="store_true", help="include prereleases when resolving 'latest'"
+    )
     p.add_argument(
         "--yes",
         "-y",
         action="store_true",
         help="do not prompt for confirmation (including overwriting modified systemd units)",
     )
-    p.add_argument("--dry-run", action="store_true", help="print what would happen, change nothing")
-    p.add_argument("--primary-only", action="store_true", help="do not update remote workers")
+    p.add_argument(
+        "--dry-run", action="store_true", help="print what would happen, change nothing"
+    )
+    p.add_argument(
+        "--primary-only", action="store_true", help="do not update remote workers"
+    )
     p.add_argument("--limit", type=int, default=50, help="max GitHub releases to fetch")
     p.add_argument(
         "--source",
@@ -1981,7 +2098,9 @@ def git_describe(repo_dir: Path) -> str:
     return text if proc.returncode == 0 and text else "dev"
 
 
-def fetch_config(config_path: Path, target_host: str, ssh_user: str) -> tuple[Path, Path | None]:
+def fetch_config(
+    config_path: Path, target_host: str, ssh_user: str
+) -> tuple[Path, Path | None]:
     """Return (local yaml path, tempfile to delete)."""
     if is_local_host(target_host):
         if not config_path.is_file():
@@ -2035,7 +2154,9 @@ def main_source(args: argparse.Namespace) -> int:
         db = yaml_section(config_file, "db")
         log(f"    db          = {db.get('user')}@{db.get('host')}/{db.get('database')}")
         if not args.primary_only:
-            log(f"==> Looking up enabled remote worker nodes ({db.get('database')}@{db.get('host')})")
+            log(
+                f"==> Looking up enabled remote worker nodes ({db.get('database')}@{db.get('host')})"
+            )
             try:
                 addresses = query_worker_addresses(
                     config_file,
@@ -2076,7 +2197,10 @@ def main_source(args: argparse.Namespace) -> int:
         ensure_sudo(args.dry_run)
 
     if args.dry_run:
-        log(f"==> Would install {version} on {target_host} and restart {', '.join(PRIMARY_UNITS)}")
+        log(
+            f"==> Would install {version} on {target_host}, migrate the database, "
+            f"and restart {', '.join(PRIMARY_UNITS)}"
+        )
         for host in workers:
             log(f"==> Would update {host} and restart {WORKER_UNIT}")
         return 0
@@ -2090,6 +2214,7 @@ def main_source(args: argparse.Namespace) -> int:
         target_host=target_host,
         ssh_user=args.ssh_user,
         assume_yes=args.yes,
+        config_path=args.config,
     )
     failures: list[str] = []
     for host in workers:
@@ -2139,7 +2264,9 @@ def main_release(args: argparse.Namespace) -> int:
     install_dir: Path = args.install_dir
     installed = read_installed_version(install_dir)
 
-    log(f"==> factum2  installed={installed}  arch={ARCHIVE_OS}/{goarch}  repo={args.repo}")
+    log(
+        f"==> factum2  installed={installed}  arch={ARCHIVE_OS}/{goarch}  repo={args.repo}"
+    )
     token = github_token()
     if not token:
         log("==> No GitHub token (GITHUB_TOKEN / gh auth); public download only")
@@ -2183,10 +2310,18 @@ def main_release(args: argparse.Namespace) -> int:
     selected: Release | None
     if args.install:
         selected = pick_release(releases, args.install, include_pre=args.pre)
-        if selected.prerelease and args.install in {"latest", "stable"} and not args.pre:
+        if (
+            selected.prerelease
+            and args.install in {"latest", "stable"}
+            and not args.pre
+        ):
             raise InstallError("Refusing to auto-pick a prerelease; pass --pre")
-        print_release_table(releases, installed, goarch, selected=releases.index(selected))
-        if not confirm_text(selected, installed, workers, assume_yes=args.yes or args.dry_run):
+        print_release_table(
+            releases, installed, goarch, selected=releases.index(selected)
+        )
+        if not confirm_text(
+            selected, installed, workers, assume_yes=args.yes or args.dry_run
+        ):
             log("Aborted.")
             return 1
     elif sys.stdin.isatty() and sys.stdout.isatty():
@@ -2238,9 +2373,14 @@ def main_release(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         log("==> Dry run: would download " + ", ".join(sorted(archs)))
-        log(f"==> Would install {selected.tag} on this host and restart {', '.join(PRIMARY_UNITS)}")
+        log(
+            f"==> Would install {selected.tag} on this host, migrate the database, "
+            f"and restart {', '.join(PRIMARY_UNITS)}"
+        )
         for host in workers:
-            log(f"==> Would update {host} ({remote_archs.get(host, goarch)}) and restart {WORKER_UNIT}")
+            log(
+                f"==> Would update {host} ({remote_archs.get(host, goarch)}) and restart {WORKER_UNIT}"
+            )
         return 0
 
     work, roots = prepare_roots(client, selected, archs)
@@ -2253,6 +2393,7 @@ def main_release(args: argparse.Namespace) -> int:
             selected.tag,
             dry_run=False,
             assume_yes=args.yes,
+            config_path=args.config,
         )
         failures: list[str] = []
         for host in workers:

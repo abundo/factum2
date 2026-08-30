@@ -188,7 +188,7 @@ func (lime *Lime) syncPerson(customer *models.Customer, person limetoolmodels.Li
 func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jobevent.Reporter) error {
 	var err error
 	reporter.Emit(jobevent.Info, "Lime sync started")
-	lime.DB, err = util.ConnectMigrate(lime.ParamDB)
+	lime.DB, err = util.ConnectDatabase(lime.ParamDB)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err

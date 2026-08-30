@@ -29,7 +29,7 @@ import (
 // reconciled against Netbox: anything no longer present there is removed
 // from factum, whether the sync is for a single device or all of them.
 func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
-	db, err := util.ConnectMigrate(&c.DB)
+	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -37,11 +37,11 @@ func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	return SyncDB(db, name, reporter)
 }
 
-// SyncDB is Sync against an already-connected/migrated database, for callers
-// that already hold a shared *gorm.DB (currently just the Netbox webhook
+// SyncDB is Sync against an already-connected database, for callers that
+// already hold a shared *gorm.DB (currently just the Netbox webhook
 // handler, web.ApiNetboxWebhook) - opening a brand new, unbounded connection
-// pool and re-running AutoMigrate on every single webhook call is what
-// exhausted Postgres's max_connections under a burst of Netbox webhooks.
+// pool on every single webhook call is what exhausted Postgres's
+// max_connections under a burst of Netbox webhooks.
 func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	var err error
 	reporter.Emit(jobevent.Info, "Netbox sync started")

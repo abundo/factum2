@@ -59,7 +59,7 @@ type ParamsCheck struct {
 // the Settings table (admin-editable in the web UI) instead of the YAML
 // config file, which no longer has a netbox: section.
 func newNetbox(c *util.ConfigDB) (*netboxtool.NetboxClient, error) {
-	db, err := util.ConnectMigrate(c)
+	db, err := util.ConnectDatabase(c)
 	if err != nil {
 		return nil, err
 	}

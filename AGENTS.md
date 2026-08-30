@@ -35,9 +35,10 @@ section before adding tests there.
   attached and `psql` silently succeeds while doing nothing.
 - **CLI flags:** config file is `-f` (default `/etc/factum2/factum2.yaml`;
   worker default `/etc/factum2/factum2-worker.yaml`); web subcommand is
-  `start`. `web.GuiParams.Bind` defaults to `:8090` and overrides YAML
-  `web.bind` — always pass `-b` for an isolated instance or it collides
-  with the live process.
+  `start`. Schema changes are `factum-web migrate` (or `factum migrate`) —
+  start/createadmin/sync do not AutoMigrate. `web.GuiParams.Bind` defaults
+  to `:8090` and overrides YAML `web.bind` — always pass `-b` for an
+  isolated instance or it collides with the live process.
 - **Browser:** `chromium-cli` is not installed. The skill drives
   `playwright-core` against `/usr/bin/google-chrome-stable` with
   `--no-sandbox`.
@@ -459,7 +460,7 @@ can't hang the caller forever). Keep this pattern intact when touching
 either side of the transport - it's the one thing standing between this
 design and a data race. RPC responses use a longer write deadline
 (`hubRPCWriteWait` 60s vs `hubWriteWait` 10s); a large `WriteJSON` delays
-command dispatch to *that* node for the duration of the write (up to 60s).
+command dispatch to _that_ node for the duration of the write (up to 60s).
 Marshaled-envelope cap is 32 MiB — oversize is a small 413, not a truncated
 body and not a torn connection.
 

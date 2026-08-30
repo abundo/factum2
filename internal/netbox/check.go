@@ -61,7 +61,7 @@ type CheckOptions struct {
 // needs. Without Update it only reports. With Update it creates missing
 // fields and patches mutable attributes (type is never changed).
 func Check(c *util.ConfigRoot, opts CheckOptions, reporter jobevent.Reporter) error {
-	db, err := util.ConnectMigrate(&c.DB)
+	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err

@@ -49,7 +49,7 @@ func main() {
 				Short: "Get one element from BECS",
 				RunFuncE: func(p *ParamsGetElement, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					db, err := util.ConnectMigrate(&p.Config.DB)
+					db, err := util.ConnectDatabase(&p.Config.DB)
 					if err != nil {
 						return err
 					}

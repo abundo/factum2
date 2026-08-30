@@ -81,6 +81,7 @@ func main() {
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfigAgent(),
+			cmdbase.Migrate(),
 
 			boa.CmdT[GetDeviceParams]{
 				Use: "get-device",

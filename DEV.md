@@ -23,8 +23,17 @@ grant all privileges on database factum to factum_user;
 alter database factum owner to factum_user;
 ```
 
-Schema migrations run automatically (`gorm.AutoMigrate`) whenever a binary
-connects to the DB — see `internal/util/db.go`.
+Schema migrations are a dedicated command (`factum-web migrate` or
+`factum migrate`, both `cmdbase.Migrate` → `util.MigrateDatabase`).
+Runtime commands (`factum-web start`, `createadmin`, `factum-netbox
+sync`, …) only `ConnectDatabase` — they must not AutoMigrate while the
+GUI is serving. Stop `factum-web` first:
+
+```sh
+factum-web migrate -f /etc/factum2/factum2.yaml
+# or, against a local/dev config:
+go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
+```
 
 ## Configuration
 
@@ -89,20 +98,20 @@ account, which any admin can already see via `GET /api/admin/settings`.
 
 ## Binaries (`cmd/...`, built to `build/`)
 
-| Binary                        | Source                     | Purpose                                                                                                    |
-| ----------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `factum`                      | `cmd/factum`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`)                                     |
-| `factum-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                    |
-| `factum-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                       |
-| `factum-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                     |
-| `factum-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification      |
-| `factum-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                      |
-| `factum-librenms`             | `cmd/librenms`             | Sync/query LibreNMS with factum (`sync`, `get-devices`, `get-device`, `get-device-ports`, `get-locations`) |
-| `factum-becs`                 | `cmd/becs`                 | Sync BECS elements into Netbox (then factum) (`get-element`, `sync`)                                       |
-| `factum-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                        |
-| `factum-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync` — currently a no-op stub, see below)                                     |
-| `factum-web`                  | `cmd/web`                  | Web GUI + API server (`gui`, `createadmin`)                                                                |
-| `factum-worker`               | `cmd/worker`               | Hub-transport task runner/agent (`start`, `run`, `show-config`)                                            |
+| Binary                        | Source                     | Purpose                                                                                                      |
+| ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `factum`                      | `cmd/factum`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
+| `factum-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
+| `factum-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
+| `factum-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
+| `factum-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification        |
+| `factum-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                        |
+| `factum-librenms`             | `cmd/librenms`             | Sync/query LibreNMS with factum (`sync`, `get-devices`, `get-device`, `get-device-ports`, `get-locations`)   |
+| `factum-becs`                 | `cmd/becs`                 | Sync BECS elements into Netbox (then factum) (`get-element`, `sync`)                                         |
+| `factum-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                          |
+| `factum-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync` — currently a no-op stub, see below)                                       |
+| `factum-web`                  | `cmd/web`                  | Web GUI + API server (`start`, `createadmin`, `migrate`)                                                     |
+| `factum-worker`               | `cmd/worker`               | Hub-transport task runner/agent (`start`, `run`, `show-config`)                                              |
 
 CLIs are built with `github.com/GiGurra/boa` on top of `spf13/cobra`
 (`boa.CmdT[...]`), not raw cobra - `factum-icinga-notifications` is the one
@@ -374,13 +383,13 @@ web/frontend/src/
   502 is **not** retried over HTTPS. Escape hatch:
   `FACTUM_WORKER_API_SOCKET=none`. `factum-worker run` (`POST /api/worker/run`
   NDJSON) is not tunneled and still needs HTTPS.
-- **Size and write deadline**: cap is 32 MiB of *marshaled envelope*
+- **Size and write deadline**: cap is 32 MiB of _marshaled envelope_
   (`hubMaxMessageSize`). Oversize returns 413 `{"error":"hub response too
-  large"}` without putting that body on the websocket (gorilla would close
+large"}` without putting that body on the websocket (gorilla would close
   the conn). `EnvelopeResponse` uses `hubRPCWriteWait` (60s);
   hello/command/log/event/ping keep `hubWriteWait` (10s). `runWriter` is
   the only `WriteJSON`/`WriteMessage`; a large response occupies one outbox
-  slot but blocks that node's writer, so command dispatch to *that* node
+  slot but blocks that node's writer, so command dispatch to _that_ node
   is delayed for the duration of the write (up to 60s). Prefer not to
   overlap a DNS `GET /api/device?include=interfaces` with `RunAndWait` on
   the same node.

@@ -29,7 +29,7 @@ var standardRoles = map[string]string{
 // Function to seed initial data (admin user, roles)
 func CreateAdmin(p *GuiParams) error {
 	util.Config = &p.Config
-	db, err := util.ConnectMigrate(&util.Config.DB)
+	db, err := util.ConnectDatabase(&util.Config.DB)
 	if err != nil {
 		return err
 	}

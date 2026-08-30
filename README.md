@@ -37,8 +37,15 @@ grant all privileges on database factum2 to factum2_user;
 alter database factum2 owner to factum2_user;
 ```
 
-Schema migrations run automatically (`gorm.AutoMigrate`) the first time a
-binary connects to the DB.
+Schema migrations are a dedicated command (`factum-web migrate` / `factum
+migrate`) — they do **not** run when the GUI or a sync CLI starts, because
+rewriting tables while `factum-web` is serving is unsafe. `install.py`
+applies them during install (step 3); to run them by hand, stop the GUI
+first:
+
+```sh
+sudo /opt/factum2/factum-web migrate -f /etc/factum2/factum2.yaml
+```
 
 #### 2. Config and installer
 
@@ -75,7 +82,8 @@ sudo /etc/factum2/install.py
 On a TTY the installer lists GitHub releases; highlight one and press Enter.
 Non-interactive: `sudo /etc/factum2/install.py --install latest --yes`.
 
-That copies binaries to `/opt/factum2`, then installs systemd units:
+That copies binaries to `/opt/factum2`, stops `factum-web` if it is running,
+applies schema migrations (`factum-web migrate`), then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
 - **each enabled worker node:** `factum2-worker.service`
@@ -110,6 +118,7 @@ Tagged releases (`v*`) are built with [GoReleaser](https://goreleaser.com/)
 and published by GitHub Actions — see [DEV.md § Release](DEV.md#release).
 
 ```sh
+go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0.0:8090
 ```
 
@@ -153,12 +162,12 @@ operators and to NetBox's `POST /api/netbox-webhook`.
   CLIs ── HTTP ────────────^               HTTPS :443  <── NetBox webhook
 ```
 
-| Path | Direction | Required? |
-| --- | --- | --- |
-| Primary → `worker.listen` `/hub` (`ws://`) | outbound from primary / inbound on worker, scoped to primary IP | Yes |
-| Worker network → primary HTTPS `:443` | worker → primary | **No**, once this stack is live *and* mixed-UID CLIs can open the socket (group `factum` + icinga/nagios user) |
-| Operator browser → primary HTTPS | inbound on primary, management net | Yes |
-| NetBox → `POST /api/netbox-webhook` | inbound on primary, from NetBox | Yes |
+| Path                                       | Direction                                                       | Required?                                                                                                      |
+| ------------------------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Primary → `worker.listen` `/hub` (`ws://`) | outbound from primary / inbound on worker, scoped to primary IP | Yes                                                                                                            |
+| Worker network → primary HTTPS `:443`      | worker → primary                                                | **No**, once this stack is live _and_ mixed-UID CLIs can open the socket (group `factum` + icinga/nagios user) |
+| Operator browser → primary HTTPS           | inbound on primary, management net                              | Yes                                                                                                            |
+| NetBox → `POST /api/netbox-webhook`        | inbound on primary, from NetBox                                 | Yes                                                                                                            |
 
 Closing worker-net → primary `:443` is an **operator firewall step** after
 this stack is in production; the software does not unbind the port. Do not
@@ -232,7 +241,7 @@ treat those secrets as TLS-protected on the hub.
    to each enabled worker, compares it with whatever is
    already in `/etc/systemd/system`, and asks before overwriting a modified
    file. systemd `Group=` without the group fails the unit (`Failed to
-   determine group credentials`) and takes **hub command dispatch** down —
+determine group credentials`) and takes **hub command dispatch** down —
    do not copy the unit until `groupadd` has run.
 
     Manual fallback:

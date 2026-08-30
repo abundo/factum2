@@ -24,6 +24,7 @@ func main() {
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
 			cmdbase.ShowConfig(),
+			cmdbase.Migrate(),
 
 			boa.CmdT[web.GuiParams]{
 				Use:   "start",

@@ -184,7 +184,7 @@ func ifaceByName(d *netboxtool.NBDevice) map[string]*netboxtool.NBInterface {
 func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "BECS sync started")
 
-	db, err := util.ConnectMigrate(&c.DB)
+	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err

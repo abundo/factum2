@@ -55,7 +55,7 @@ func GUI(p *GuiParams) error {
 
 	devMode := os.Getenv("APP_ENV") == "development"
 
-	DB, err = util.ConnectMigrate(&util.Config.DB)
+	DB, err = util.ConnectDatabase(&util.Config.DB)
 	if err != nil {
 		return err
 	}

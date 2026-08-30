@@ -109,6 +109,7 @@ Hot-reloading dev workflow against the **real** DB/instance, per `DEV.md` -
 different port (`8090` + Vite on `5173`), not what this skill uses:
 
 ```bash
+go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0.0:8090
 cd web/frontend && npm run dev
 ```
@@ -116,7 +117,8 @@ cd web/frontend && npm run dev
 ## Gotchas
 
 - **CLI flags**: config file is `-f` (default `/etc/factum2/factum2.yaml`),
-  web subcommand is `start`. If a doc disagrees, trust
+  web subcommand is `start`. Schema changes are `migrate` (`setup.sh`
+  runs it before `createadmin`). If a doc disagrees, trust
   `cmd/cmd_base.go` / `cmd/web/factum-web-cli.go`.
 - **`-b`/`--bind` silently overrides `web.bind` from the config file, and
   defaults to `:8090`** if you don't pass it on the command line - even

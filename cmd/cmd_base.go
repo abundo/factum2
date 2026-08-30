@@ -1,6 +1,7 @@
 package cmdbase
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -37,6 +38,32 @@ func ShowConfig() boa.CmdIfc {
 		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
 			SetupLog(p.CommonParams)
 			util.Pprint(p.Config)
+			return nil
+		},
+	}
+}
+
+// Migrate applies schema migrations (util.MigrateDatabase) and nothing else.
+// Runtime commands connect with util.ConnectDatabase and must not call this
+// as a side effect: AutoMigrate while factum-web is serving will rewrite
+// tables out from under the GUI. Stop the web process, run migrate, start
+// it again. Uses Params (factum2.yaml with db:) even when the parent binary
+// is otherwise a ParamsAgent API client.
+func Migrate() boa.CmdIfc {
+	return boa.CmdT[Params]{
+		Use:   "migrate",
+		Short: "Apply database schema migrations",
+		Long:  "Apply schema migrations. Stop factum-web first if it is running — do not migrate while the GUI holds the database.",
+		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
+			SetupLog(p.CommonParams)
+			db, err := util.ConnectDatabase(&p.Config.DB)
+			if err != nil {
+				return err
+			}
+			if err := util.MigrateDatabase(db); err != nil {
+				return err
+			}
+			fmt.Println("database migrations applied")
 			return nil
 		},
 	}
