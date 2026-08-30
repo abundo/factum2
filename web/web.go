@@ -180,6 +180,9 @@ func GUI(p *GuiParams) error {
 	api.PUT("/service/:id/type", ctrl.ApiServiceTypeUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/service/:id/eline", ctrl.ApiServiceElineUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/service/:id/eline/push", ctrl.ApiServiceElinePush, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.POST("/service/:id/push", ctrl.ApiServicePush, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.GET("/service/:id/endpoints", ctrl.ApiServiceEndpointsGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.PUT("/service/:id/endpoints", ctrl.ApiServiceEndpointsPut, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/service/:id/path", ctrl.ApiServicePathGet, ctrl.RequireAPIAuth, ctrl.RequireRead, ctrl.RequireOpticalEnabled)
 	api.PUT("/service/:id/path", ctrl.ApiServicePathPut, ctrl.RequireAPIAuth, ctrl.RequireWrite, ctrl.RequireOpticalEnabled)
 

@@ -1,12 +1,15 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, ref, watch } from 'vue'
+import { listServiceTypes } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { getDevice } from '@/api/devices'
 import {
   deleteService,
   getService,
+  pushService,
   pushServiceEline,
+  putServiceEndpoints,
   updateService,
   updateServiceEline,
   updateServiceType,
@@ -66,13 +69,37 @@ const elinePushResults = ref([])
 // Mirrors ServiceCreateWizard.vue's capacity-product subset (ELINE/ELAN/
 // L3VPN/POLARIX) - Wavelength/Fiber have no ServiceType, so they aren't
 // offered here.
-const serviceTypeOptions = [
+const FALLBACK_SERVICE_TYPES = [
   { label: 'Not set', value: '' },
   { label: 'ELINE — L2VPN point to point', value: 'ELINE' },
   { label: 'ELAN — L2VPN multipoint', value: 'ELAN' },
   { label: 'L3VPN — L3 multipoint', value: 'L3VPN' },
   { label: 'Internet — Polarix', value: 'POLARIX' },
 ]
+const serviceTypeRows = ref([])
+const serviceTypeOptions = computed(() => {
+  if (!serviceTypeRows.value.length) return FALLBACK_SERVICE_TYPES
+  return [
+    { label: 'Not set', value: '' },
+    ...serviceTypeRows.value.map((t) => ({
+      label: t.description ? `${t.name} — ${t.description}` : t.name,
+      value: t.name,
+    })),
+  ]
+})
+const selectedServiceType = computed(() =>
+  serviceTypeRows.value.find((t) => t.name === service.value.service_type),
+)
+const genericRoles = computed(() =>
+  service.value.service_type && service.value.service_type !== 'ELINE'
+    ? (selectedServiceType.value?.endpoint_roles ?? [])
+    : [],
+)
+const genericEndpoints = ref([])
+const genericSaving = ref(false)
+const genericPushing = ref(false)
+const genericPushResults = ref([])
+const genericPickerIndex = ref(null)
 
 const customerOptions = computed(() => customers.value.map((c) => ({ id: c.id, name: c.name })))
 
@@ -111,6 +138,15 @@ const elineEndpointsSame = computed(() => {
     s.endpoint_a_interface_id === s.endpoint_b_interface_id
   )
 })
+
+function loadServiceTypes() {
+  if (serviceTypeRows.value.length > 0) return
+  listServiceTypes()
+    .then((rows) => {
+      serviceTypeRows.value = rows ?? []
+    })
+    .catch(() => {})
+}
 
 function loadCustomers() {
   if (customers.value.length > 0) return
@@ -195,6 +231,18 @@ function loadServiceById(id) {
       loadPath(data.id)
       endpointALabel.value = ''
       endpointBLabel.value = ''
+      genericEndpoints.value = (data.endpoints ?? []).map((ep) => ({
+        role: ep.role,
+        device_id: ep.device_id,
+        interface_id: ep.interface_id,
+        fields: { ...ep.fields },
+        label: '',
+      }))
+      genericEndpoints.value.forEach((ep, i) => {
+        loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
+          genericEndpoints.value[i].label = label
+        })
+      })
       if (data.service_type === 'ELINE') {
         loadEndpointLabel(data.endpoint_a_device_id, data.endpoint_a_interface_id).then((label) => {
           endpointALabel.value = label
@@ -220,6 +268,7 @@ function loadServiceById(id) {
 watch(open, (isOpen) => {
   if (!isOpen || !props.serviceId) return
   loadCustomers()
+  loadServiceTypes()
   loadServiceById(props.serviceId)
 })
 
@@ -245,7 +294,139 @@ function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
     service.value.endpoint_b_device_id = deviceId
     service.value.endpoint_b_interface_id = interfaceId
     endpointBLabel.value = label
+  } else if (pickerTarget.value === 'generic' && genericPickerIndex.value != null) {
+    const ep = genericEndpoints.value[genericPickerIndex.value]
+    if (ep) {
+      ep.device_id = deviceId
+      ep.interface_id = interfaceId
+      ep.label = label
+    }
   }
+}
+
+function addGenericEndpoint(roleName) {
+  genericEndpoints.value.push({
+    role: roleName,
+    device_id: null,
+    interface_id: null,
+    fields: {},
+    label: '',
+  })
+}
+
+function removeGenericEndpoint(i) {
+  genericEndpoints.value.splice(i, 1)
+}
+
+function openGenericPicker(i) {
+  genericPickerIndex.value = i
+  pickerTarget.value = 'generic'
+  pickerOpen.value = true
+}
+
+function saveGenericEndpoints() {
+  genericSaving.value = true
+  const payload = {
+    endpoints: genericEndpoints.value.map((ep) => ({
+      role: ep.role,
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    })),
+  }
+  putServiceEndpoints(service.value.id, payload)
+    .then((rows) => {
+      service.value.endpoints = rows
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'Endpoints saved',
+        duration: 3000,
+      })
+      emit('saved')
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      genericSaving.value = false
+    })
+}
+
+function genericDeviceIds() {
+  return [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
+}
+
+function saveAndPushGeneric() {
+  genericSaving.value = true
+  const payload = {
+    endpoints: genericEndpoints.value.map((ep) => ({
+      role: ep.role,
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    })),
+  }
+  putServiceEndpoints(service.value.id, payload)
+    .then((rows) => {
+      service.value.endpoints = rows
+      emit('saved')
+      withCredentials(genericDeviceIds(), doPushGeneric)
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      genericSaving.value = false
+    })
+}
+
+function doPushGeneric(username, password) {
+  const deviceIds = genericDeviceIds()
+  genericPushing.value = true
+  pushService(service.value.id, { username, password })
+    .then((data) => {
+      genericPushResults.value = data.results ?? []
+      rememberSuccess(deviceIds, username, password)
+      const failed = genericPushResults.value.filter((r) => r.error)
+      if (failed.length === 0) {
+        toast.add({
+          color: 'success',
+          title: 'Pushed to devices',
+          description: 'Service config was applied.',
+          duration: 3000,
+        })
+      } else {
+        toast.add({
+          color: 'error',
+          title: 'Push completed with errors',
+          description: `${failed.length} of ${genericPushResults.value.length} device(s) failed.`,
+          duration: 5000,
+        })
+      }
+    })
+    .catch((err) => {
+      rememberFailure(deviceIds, username, password)
+      toast.add({
+        color: 'error',
+        title: 'Push failed',
+        description: err?.response?.data?.error ?? 'Failed to push config.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      genericPushing.value = false
+    })
 }
 
 // Single-button ELINE flow: provision endpoints/pseudowire in Netbox, then
@@ -710,6 +891,105 @@ function deleteServiceConfirmed() {
             <div v-if="elinePushResults.length" class="flex flex-col gap-1">
               <div
                 v-for="result in elinePushResults"
+                :key="result.device"
+                class="flex items-center gap-2 text-sm"
+              >
+                <UBadge
+                  :label="result.error ? 'Failed' : 'OK'"
+                  :color="result.error ? 'error' : 'success'"
+                  variant="subtle"
+                />
+                <span class="font-medium">{{ result.device }}</span>
+                <span v-if="result.error" class="text-red-500">{{ result.error }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-if="genericRoles.length">
+          <hr class="my-6" />
+          <div class="flex flex-col gap-4">
+            <h5 class="m-0">Endpoints</h5>
+            <div
+              v-for="(ep, i) in genericEndpoints"
+              :key="i"
+              class="flex flex-col gap-2 border border-default rounded p-3"
+            >
+              <div class="grid grid-cols-[9rem_1fr] items-center gap-y-3 gap-x-3">
+                <label class="font-bold">Role</label>
+                <USelectMenu
+                  v-model="ep.role"
+                  :disabled="!canWrite"
+                  :items="genericRoles.map((r) => ({ label: r.name, value: r.name }))"
+                  value-key="value"
+                  label-key="label"
+                />
+                <label class="font-bold">Device / interface</label>
+                <div class="flex items-center gap-2">
+                  <UInput
+                    :model-value="ep.label"
+                    disabled
+                    placeholder="Not selected"
+                    class="w-full"
+                  />
+                  <UButton
+                    icon="i-lucide-list-tree"
+                    variant="outline"
+                    color="neutral"
+                    :disabled="!canWrite"
+                    @click="openGenericPicker(i)"
+                  />
+                </div>
+                <template
+                  v-for="field in genericRoles.find((r) => r.name === ep.role)?.fields ?? []"
+                  :key="field.name"
+                >
+                  <label class="font-bold">{{ field.name }}</label>
+                  <UInput v-model="ep.fields[field.name]" :disabled="!canWrite" />
+                </template>
+              </div>
+              <div class="flex justify-end">
+                <UButton
+                  v-if="canWrite"
+                  label="Remove"
+                  variant="ghost"
+                  color="error"
+                  size="sm"
+                  @click="removeGenericEndpoint(i)"
+                />
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                v-for="role in genericRoles"
+                :key="role.name"
+                :label="`Add ${role.name}`"
+                variant="outline"
+                color="neutral"
+                size="sm"
+                :disabled="!canWrite"
+                @click="addGenericEndpoint(role.name)"
+              />
+            </div>
+            <div class="flex justify-end gap-2">
+              <UButton
+                label="Save endpoints"
+                variant="outline"
+                :loading="genericSaving"
+                :disabled="!canWrite"
+                @click="saveGenericEndpoints"
+              />
+              <UButton
+                label="Save & push"
+                icon="i-lucide-cloud-upload"
+                :loading="genericSaving || genericPushing"
+                :disabled="!canWrite"
+                @click="saveAndPushGeneric"
+              />
+            </div>
+            <div v-if="genericPushResults.length" class="flex flex-col gap-1">
+              <div
+                v-for="result in genericPushResults"
                 :key="result.device"
                 class="flex items-center gap-2 text-sm"
               >

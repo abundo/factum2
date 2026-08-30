@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -142,8 +143,14 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if dto.ServiceType != "" && !validServiceTypes[dto.ServiceType] {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid service_type"})
+	if dto.ServiceType != "" {
+		ok, err := cfgmgmt.ServiceTypeExists(ctrl.DB, dto.ServiceType)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !ok {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid service_type"})
+		}
 	}
 
 	updates := map[string]any{
@@ -171,7 +178,8 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 // cleanup option.
 type ServiceDetailResponse struct {
 	models.Service
-	AppliedToDevice bool `json:"applied_to_device"`
+	AppliedToDevice bool                     `json:"applied_to_device"`
+	Endpoints       []models.ServiceEndpoint `json:"endpoints,omitempty"`
 }
 
 func (ctrl *Controller) ApiServiceByID(c *echo.Context) error {
@@ -188,9 +196,11 @@ func (ctrl *Controller) ApiServiceByID(c *echo.Context) error {
 		}
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
+	eps, _ := cfgmgmt.ListEndpoints(ctrl.DB, item.ID)
 	return c.JSON(http.StatusOK, ServiceDetailResponse{
 		Service:         item,
 		AppliedToDevice: item.AppliedEndpointADeviceID != 0 || item.AppliedEndpointBDeviceID != 0,
+		Endpoints:       eps,
 	})
 }
 
@@ -207,8 +217,6 @@ var validCategories = map[string]bool{
 // (ELINE/ELAN/L3VPN/POLARIX) - wavelength (VL/VI) and fiber (LF/LI) rows
 // have no service type, since the prefix alone fully describes them.
 var capacityCategories = map[string]bool{"CN": true, "CI": true}
-
-var validServiceTypes = map[string]bool{"ELINE": true, "ELAN": true, "L3VPN": true, "POLARIX": true}
 
 // serviceIDRe matches the <category><5 digits> shape ApiServiceCreate
 // auto-assigns - used to pick out which existing ServiceID values count
@@ -239,8 +247,14 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 	if !validCategories[dto.Category] {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid category"})
 	}
-	if capacityCategories[dto.Category] && !validServiceTypes[dto.ServiceType] {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid service_type"})
+	if capacityCategories[dto.Category] {
+		ok, err := cfgmgmt.ServiceTypeExists(ctrl.DB, dto.ServiceType)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if !ok {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid service_type"})
+		}
 	}
 
 	var created models.Service
@@ -375,6 +389,9 @@ func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Serv
 
 		if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
 			if err := optical.DeletePathForService(tx, existing.ID); err != nil {
+				return err
+			}
+			if err := tx.Where("service_id = ?", existing.ID).Delete(&models.ServiceEndpoint{}).Error; err != nil {
 				return err
 			}
 			return tx.Delete(&existing).Error

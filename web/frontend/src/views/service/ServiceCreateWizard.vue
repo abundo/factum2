@@ -2,6 +2,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { listServiceTypes } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { createService } from '@/api/services'
 
@@ -15,20 +16,22 @@ const stepperItems = [
   { value: '2', title: 'Details' },
 ]
 
-const productOptions = [
+const FALLBACK_CAPACITY = [
   { label: 'ELINE — L2VPN point to point', value: 'ELINE' },
   { label: 'ELAN — L2VPN multipoint', value: 'ELAN' },
   { label: 'L3VPN — L3 multipoint', value: 'L3VPN' },
   { label: 'Internet — Polarix', value: 'POLARIX' },
+]
+const capacityOptions = ref([...FALLBACK_CAPACITY])
+const productOptions = computed(() => [
+  ...capacityOptions.value,
   { label: 'Wavelength', value: 'WAVELENGTH' },
   { label: 'Fiber', value: 'FIBER' },
-]
+])
 
-// ELINE/ELAN/L3VPN/POLARIX are "capacity" products: they carry a
-// ServiceType and a CN/CI service-ID category prefix. Wavelength and
-// Fiber have no service type - their VL/VI/LF/LI prefix already fully
-// describes them.
-const CAPACITY_PRODUCTS = ['ELINE', 'ELAN', 'L3VPN', 'POLARIX']
+// API service types (plus the seeded ELINE/ELAN/L3VPN/POLARIX fallback)
+// are capacity products: they carry a ServiceType and a CN/CI prefix.
+// Wavelength and Fiber have no service type.
 
 const categoryOptionsByProduct = {
   FIBER: [
@@ -51,7 +54,7 @@ const category = ref(null)
 const categoryOptions = computed(
   () => categoryOptionsByProduct[product.value] ?? DEFAULT_CATEGORY_OPTIONS,
 )
-const isCapacityProduct = computed(() => CAPACITY_PRODUCTS.includes(product.value))
+const isCapacityProduct = computed(() => !['WAVELENGTH', 'FIBER'].includes(product.value))
 const serviceType = computed(() => (isCapacityProduct.value ? product.value : ''))
 
 // A category chosen for one product isn't necessarily valid for another
@@ -90,6 +93,16 @@ onMounted(() => {
     .catch(() => {
       // Customer names are only needed for the optional company select, not critical.
     })
+  listServiceTypes()
+    .then((rows) => {
+      if (rows?.length) {
+        capacityOptions.value = rows.map((t) => ({
+          label: t.description ? `${t.name} — ${t.description}` : t.name,
+          value: t.name,
+        }))
+      }
+    })
+    .catch(() => {})
 })
 
 function handleProductNext() {

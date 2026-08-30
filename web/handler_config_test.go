@@ -134,6 +134,51 @@ func TestConfigAssignmentUpsertAndResolveRedactsSecret(t *testing.T) {
 	}
 }
 
+func TestApiServiceCreateAcceptsELINEAndUserType(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service", map[string]any{
+		"category": "CN", "service_type": "ELINE",
+	}, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("ELINE create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/service-types", map[string]any{
+		"name": "INTERNET", "description": "DIA",
+	}, nil, nil)
+	if err := ctrl.ApiConfigServiceTypeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("type status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/service", map[string]any{
+		"category": "CN", "service_type": "INTERNET",
+	}, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("user type create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/service", map[string]any{
+		"category": "CN", "service_type": "NOT-A-TYPE",
+	}, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown type status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiServiceElineUpdateStandaloneWithoutNetbox(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

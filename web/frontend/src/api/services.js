@@ -41,6 +41,18 @@ export function pushServiceEline(id, payload) {
   return http.post(`/service/${id}/eline/push`, payload).then((res) => res.data)
 }
 
+export function pushService(id, payload) {
+  return http.post(`/service/${id}/push`, payload).then((res) => res.data)
+}
+
+export function getServiceEndpoints(id) {
+  return http.get(`/service/${id}/endpoints`).then((res) => res.data ?? [])
+}
+
+export function putServiceEndpoints(id, payload) {
+  return http.put(`/service/${id}/endpoints`, payload).then((res) => res.data)
+}
+
 // payload is optional - {remove_from_netbox, remove_from_device, username,
 // password}, used to also tear down an ELINE service's NetBox objects
 // and/or device config as part of the delete (see

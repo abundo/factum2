@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"regexp"
 
 	"gorm.io/gorm"
@@ -193,6 +194,10 @@ type Service struct {
 	// identifier.
 	PseudowireID  int  `json:"pseudowire_id"`
 	L2VPNNetboxID uint `json:"l2vpn_netbox_id"`
+
+	// Fields holds instance-level values for generic (non-ELINE) service
+	// types. Empty for current ELINE rows, which keep using Endpoint*.
+	Fields json.RawMessage `json:"fields" gorm:"serializer:json"`
 
 	Source   string `json:"source"`
 	SourceID string `json:"source_id"`
