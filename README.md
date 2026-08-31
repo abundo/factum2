@@ -10,7 +10,9 @@ plus a web GUI (`factum-web`) with a Vue 3 SPA frontend (`web/frontend`).
 
 See [DEV.md](DEV.md) for full setup/build/run details (config file shape,
 Makefile targets, dev workflow, binaries list) and [AGENTS.md](AGENTS.md)
-for architecture notes.
+for architecture notes. To add a capacity service type (roles, platform
+packs, CLI templates), see
+[docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
 
 ## Prerequisites
 

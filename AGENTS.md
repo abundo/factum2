@@ -99,6 +99,12 @@ construction time) connect directly to the DB and call
 DNS/Icinga/LibreNMS/Oxidized below, nothing about Netbox or Lime sync is
 meant to run off the primary host.
 
+**Capacity service types (cfgmgmt):** new CN/CI types (ELAN, L3VPN, …)
+are a `ServiceType` + per-NOS `PlatformPack` in the DB, not a new Go
+package. Generic endpoints live in `service_endpoints`; ELINE keeps
+`Service.EndpointA/B*` and NetBox L2VPN. How to design one:
+[docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
+
 **ELINE / L2VPN path (device → Netbox → factum Service):**
 `factum-device-sync` writes on-device ELINEs into Netbox as EVPL L2VPNs +
 terminations. `factum-netbox sync` then reverse-imports those onto matching
