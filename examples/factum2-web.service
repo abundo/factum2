@@ -1,5 +1,5 @@
 
-# factum-web.service, start factum web
+# factum2-web.service, start factum web
 
 [Unit]
 Description=Factum web
@@ -9,7 +9,7 @@ Requires=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/factum2
-ExecStart=/opt/factum2/factum-web -f /etc/factum2/factum2.yaml start
+ExecStart=/opt/factum2/factum2-web -f /etc/factum2/factum2.yaml start
 TimeoutStopSec=10s
 
 Restart=on-failure

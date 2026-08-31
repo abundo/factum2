@@ -495,7 +495,7 @@ func TestRequireRead(t *testing.T) {
 		}
 	})
 
-	// Regression: factum-device-sync's GET /api/device/name/:name is gated
+	// Regression: factum2-device-sync's GET /api/device/name/:name is gated
 	// by RequireRead; a valid service token must pass even without a user.
 	t.Run("service token, no user needed", func(t *testing.T) {
 		c, rec := echoRequest("")

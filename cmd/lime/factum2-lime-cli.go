@@ -33,7 +33,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[ParamsRefresh]{
-		Use:     "lime",
+		Use:     "factum2-lime",
 		Short:   "lime",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

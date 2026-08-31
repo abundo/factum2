@@ -45,7 +45,7 @@ func ShowConfig() boa.CmdIfc {
 
 // Migrate applies schema migrations (util.MigrateDatabase) and nothing else.
 // Runtime commands connect with util.ConnectDatabase and must not call this
-// as a side effect: AutoMigrate while factum-web is serving will rewrite
+// as a side effect: AutoMigrate while factum2-web is serving will rewrite
 // tables out from under the GUI. Stop the web process, run migrate, start
 // it again. Uses Params (factum2.yaml with db:) even when the parent binary
 // is otherwise a ParamsAgent API client.
@@ -53,7 +53,7 @@ func Migrate() boa.CmdIfc {
 	return boa.CmdT[Params]{
 		Use:   "migrate",
 		Short: "Apply database schema migrations",
-		Long:  "Apply schema migrations. Stop factum-web first if it is running — do not migrate while the GUI holds the database.",
+		Long:  "Apply schema migrations. Stop factum2-web first if it is running — do not migrate while the GUI holds the database.",
 		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
 			SetupLog(p.CommonParams)
 			db, err := util.ConnectDatabase(&p.Config.DB)
@@ -75,7 +75,7 @@ func Migrate() boa.CmdIfc {
 // subcommands actually need.
 //
 // fetchRemote is optional: services that pull their database-backed settings
-// from the primary over REST (dns, icinga, librenms, oxidized) pass their
+// from the primary over REST (dns, icinga, librenms, oxidized, prometheus) pass their
 // FetchRemoteConfig, and its result is printed after the local config. A
 // fetch failure is logged and the command still exits 0 - show-config should
 // always report what it can, even with the primary unreachable, rather than

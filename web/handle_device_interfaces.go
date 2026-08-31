@@ -25,7 +25,7 @@ import (
 //	"sros-md", internal/drivers.IOSXRDriver for "ios-xr",
 //	internal/drivers.VrpDriver for "vrp"). Credentials are supplied
 //	per-request by the caller (never persisted), the same way the
-//	factum-driver-cli commands take --username/--password.
+//	factum2-driver-cli commands take --username/--password.
 //
 // --------------------------------------------------------------------------
 

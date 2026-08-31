@@ -270,7 +270,7 @@ func (m *NetboxMgr) EnsurePrefix(prefix string) error {
 // ----- VLAN -----
 
 // vlanSlugInvalidChars matches runs of characters not valid in a Netbox
-// slug - mirrors internal/netbox/factum-netbox.go's slugify, duplicated
+// slug - mirrors internal/netbox/factum2-netbox.go's slugify, duplicated
 // rather than shared since device-sync doesn't otherwise depend on that
 // package and this is the only place here that needs one.
 var vlanSlugInvalidChars = regexp.MustCompile(`[^a-z0-9]+`)

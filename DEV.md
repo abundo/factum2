@@ -2,7 +2,7 @@
 
 Factum is a Go monorepo (module `github.com/abundo/factum2`) that produces
 several CLI binaries plus a web GUI. The web GUI's frontend is a Vue 3 SPA
-that's either served from disk (dev) or embedded into the `factum-web`
+that's either served from disk (dev) or embedded into the `factum2-web`
 binary (release build).
 
 ## Prerequisites
@@ -23,14 +23,14 @@ grant all privileges on database factum to factum_user;
 alter database factum owner to factum_user;
 ```
 
-Schema migrations are a dedicated command (`factum-web migrate` or
-`factum migrate`, both `cmdbase.Migrate` → `util.MigrateDatabase`).
-Runtime commands (`factum-web start`, `createadmin`, `factum-netbox
+Schema migrations are a dedicated command (`factum2-web migrate` or
+`factum2 migrate`, both `cmdbase.Migrate` → `util.MigrateDatabase`).
+Runtime commands (`factum2-web start`, `createadmin`, `factum2-netbox
 sync`, …) only `ConnectDatabase` — they must not AutoMigrate while the
-GUI is serving. Stop `factum-web` first:
+GUI is serving. Stop `factum2-web` first:
 
 ```sh
-factum-web migrate -f /etc/factum2/factum2.yaml
+factum2-web migrate -f /etc/factum2/factum2.yaml
 # or, against a local/dev config:
 go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 ```
@@ -43,7 +43,7 @@ config file (`-f`, default `/etc/factum2/factum2.yaml`) into
 truth for available keys (`db`, `factum`, `web`, `worker`, `ldap_writeback`).
 See `examples/factum2.yaml` / `examples/factum2-worker.yaml`.
 
-`factum-worker` (`cmd/worker`) is the exception: it embeds
+`factum2-worker` (`cmd/worker`) is the exception: it embeds
 `cmdbase.ParamsAgent` instead, loading the smaller `util.ConfigAgentRoot`
 (just `factum` and `worker`) — a remote worker's config file only needs
 those two sections, not `db`/`web`.
@@ -51,29 +51,29 @@ those two sections, not `db`/`web`.
 Netbox, Lime and DNS are exceptions: none has a YAML config key. Their
 settings live in the `Settings` DB row instead (`util.GetOrCreateSettings`,
 `internal/util/settings.go`), editable from the admin UI's Netbox/Lime/DNS
-tabs — every place that needs one of these (`factum-netbox`,
-`internal/netbox`, `internal/librenms` for Netbox; `factum-lime`,
-`internal/lime` for Lime; `factum-dns`, `internal/dns` for DNS) reads it
+tabs — every place that needs one of these (`factum2-netbox`,
+`internal/netbox`, `internal/librenms` for Netbox; `factum2-lime`,
+`internal/lime` for Lime; `factum2-dns`, `internal/dns` for DNS) reads it
 from there, so it needs a DB connection (hence `-f` still has to point at a
-config with valid `db:` credentials, even for the read-only `factum-netbox
+config with valid `db:` credentials, even for the read-only `factum2-netbox
 get-*` commands).
 
 LibreNMS/Icinga/DNS/Oxidized/device-sync are DB-backed too, but their CLIs
 normally run on a different host than the primary, so they can't reach the
 DB directly — they fetch config from the primary's REST handlers
 (`GET /api/<service>-config`) via `util.FactumHTTP`. Co-located with
-`factum-worker start`, that is the unix socket
-(`/run/factum-worker/api.sock`); otherwise HTTPS with `factum.token` (see
+`factum2-worker start`, that is the unix socket
+(`/run/factum2-worker/api.sock`); otherwise HTTPS with `factum.token` (see
 below). Start-only YAML may omit `factum.url`/`factum.token`. Keep them
-for Stat/Dial fallback, for `factum-worker run`, and for any CLI that
+for Stat/Dial fallback, for `factum2-worker run`, and for any CLI that
 cannot open the socket. Plus `worker.*` if that host also runs
-`factum-worker start`. LibreNMS's own MySQL credentials are read from
+`factum2-worker start`. LibreNMS's own MySQL credentials are read from
 LibreNMS's `.env` on disk, not from factum config.
 
 `factum.token` is a shared secret (matched against the primary's
 `Settings.FactumApiToken`, set from the admin UI's Factum tab) used on the
-HTTPS fallback — `internal/factum`'s HTTP client, used by `factum-dns` and
-`factum-librenms-cli`. Unix-socket calls send no bearer (the socket ACL is
+HTTPS fallback — `internal/factum`'s HTTP client, used by `factum2-dns` and
+`factum2-librenms-cli`. Unix-socket calls send no bearer (the socket ACL is
 the auth). Set the token in both places (admin UI and the remote host's
 `factum.token` config key) if anything on that host still uses HTTPS, or
 those commands get 401s.
@@ -82,7 +82,7 @@ those commands get 401s.
 also enables source locations in log output.
 
 `web.jwtsecret` must be set to a random secret for anything but local dev —
-`factum-web gui` refuses to start without it unless `APP_ENV=development`,
+`factum2-web gui` refuses to start without it unless `APP_ENV=development`,
 in which case it falls back to a fixed insecure value and logs an error. It
 signs the API auth cookie (`web/auth.go`); anyone who knows it can forge a
 login for any user.
@@ -100,21 +100,22 @@ account, which any admin can already see via `GET /api/admin/settings`.
 
 | Binary                        | Source                     | Purpose                                                                                                      |
 | ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `factum`                      | `cmd/factum`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
-| `factum-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
-| `factum-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
-| `factum-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
-| `factum-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification        |
-| `factum-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                        |
-| `factum-librenms`             | `cmd/librenms`             | Sync/query LibreNMS with factum (`sync`, `get-devices`, `get-device`, `get-device-ports`, `get-locations`)   |
-| `factum-becs`                 | `cmd/becs`                 | Sync BECS elements into Netbox (then factum) (`get-element`, `sync`)                                         |
-| `factum-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                          |
-| `factum-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync` — currently a no-op stub, see below)                                       |
-| `factum-web`                  | `cmd/web`                  | Web GUI + API server (`start`, `createadmin`, `migrate`)                                                     |
-| `factum-worker`               | `cmd/worker`               | Hub-transport task runner/agent (`start`, `run`, `show-config`)                                              |
+| `factum2`                     | `cmd/factum2`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
+| `factum2-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
+| `factum2-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
+| `factum2-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
+| `factum2-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification        |
+| `factum2-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                        |
+| `factum2-librenms`             | `cmd/librenms`             | Sync/query LibreNMS with factum (`sync`, `get-devices`, `get-device`, `get-device-ports`, `get-locations`)   |
+| `factum2-becs`                 | `cmd/becs`                 | Sync BECS elements into Netbox (then factum) (`get-element`, `sync`)                                         |
+| `factum2-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                          |
+| `factum2-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync`)                                                                           |
+| `factum2-prometheus`           | `cmd/prometheus`           | Sync Prometheus snmp_exporter targets with factum (`sync`)                                                   |
+| `factum2-web`                  | `cmd/web`                  | Web GUI + API server (`start`, `createadmin`, `migrate`)                                                     |
+| `factum2-worker`               | `cmd/worker`               | Hub-transport task runner/agent (`start`, `run`, `show-config`)                                              |
 
 CLIs are built with `github.com/GiGurra/boa` on top of `spf13/cobra`
-(`boa.CmdT[...]`), not raw cobra - `factum-icinga-notifications` is the one
+(`boa.CmdT[...]`), not raw cobra - `factum2-icinga-notifications` is the one
 exception: Icinga2 invokes it with its own fixed flag shape (`-d`, `-l`,
 `-r`, `-t`, `--HOSTNAME`, a bare `--SERVICE` sentinel, ...), which collides
 with boa's global `-d`/`-l` (Debug/Loglevel, present on every other `cmd/*`
@@ -122,17 +123,22 @@ binary). It parses `os.Args` directly with `github.com/jessevdk/go-flags`
 instead, using the same short/long flag names as the Python script it
 replaced.
 
-`factum-oxidized sync` writes oxidized's `router.db` from factum devices
+`factum2-oxidized sync` writes oxidized's `router.db` from factum devices
 (filtered by enabled/`CfBackupOxidized`/`Settings.OxidizedIgnore*` plus a
 primary IPv4) and asks oxidized to reload only if the file changed.
+
+`factum2-prometheus sync` writes a Prometheus file_sd JSON of SNMP targets
+for snmp_exporter (filtered by enabled/`CfMonitorGrafana`/
+`Settings.PrometheusIgnore*` plus a primary IPv4) and POSTs
+`Settings.PrometheusReloadURL` only if the file changed and a URL is set.
 
 ## Building
 
 ```sh
 make            # all Go binaries except the web-release variant, into build/
-make factum-web # just the web binary (frontend NOT embedded, served from disk)
+make factum2-web # just the web binary (frontend NOT embedded, served from disk)
 make frontend   # npm ci && npm run build in web/frontend -> web/static/vue
-make release    # all binaries + factum-web-release (frontend embedded via go:embed)
+make release    # all binaries + factum2-web-release (frontend embedded via go:embed)
 make snapshot   # GoReleaser snapshot into dist/ (does not publish)
 make install    # release build + install to /opt/factum2 (no restart)
 ```
@@ -262,7 +268,7 @@ is the intended next step (not yet built):
 - **Opt-in real-container tier**: official images
   (`netbox-community/netbox-docker`, `librenms/librenms`) are each a
   multi-container app in their own right (NetBox: its own Postgres+Redis;
-  LibreNMS: MySQL+Redis, and `factum-librenms-cli` also reads LibreNMS's own
+  LibreNMS: MySQL+Redis, and `factum2-librenms-cli` also reads LibreNMS's own
   MySQL directly for `PortsGet`/`PortsUpdateIgnore` - see AGENTS.md's sync
   section) - too heavy to fold into `testdata/itest` above without slowing
   down every LDAP/mail test run. Give each its own compose file/Makefile
@@ -274,7 +280,7 @@ is the intended next step (not yet built):
 ## Release
 
 Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
-`CGO_ENABLED=0`; `factum-web` with `-tags release` so the Vue SPA is
+`CGO_ENABLED=0`; `factum2-web` with `-tags release` so the Vue SPA is
 embedded) and published to GitHub when a `v*` tag is pushed
 (`.github/workflows/release.yml`). Tests must pass first.
 
@@ -328,7 +334,7 @@ go run ./cmd/web createadmin -f /etc/factum2/factum2.yaml
 ### Frontend build output and routing
 
 - `npm run build` outputs to `web/static/vue` (`base: '/'`).
-- `factum-web` serves the SPA at `/` and falls back to `index.html` for any
+- `factum2-web` serves the SPA at `/` and falls back to `index.html` for any
   unmatched path so client-side routes survive a hard refresh (see
   `web/web.go`); unmatched `/api/*` returns a JSON 404 instead of falling
   through to the SPA.
@@ -363,13 +369,13 @@ web/frontend/src/
 
 ## Worker hub transport
 
-- The primary (`factum-web`) dials **out** to remote `factum-worker` hosts
+- The primary (`factum2-web`) dials **out** to remote `factum2-worker` hosts
   over WebSocket (`internal/worker/hub.go`/`hub_agent.go`), not the other
   way round — see `AGENTS.md`'s "Worker / hub transport" section for the
   wire protocol and why the dial direction is reversed. The admin UI's
   "Worker nodes" page (`models.WorkerNode`) is where you register a
-  `factum-worker start` instance's address/token so the primary can reach
-  it; sync-trigger buttons (`handle_sync.go`) and `factum-worker run`
+  `factum2-worker start` instance's address/token so the primary can reach
+  it; sync-trigger buttons (`handle_sync.go`) and `factum2-worker run`
   (`handle_worker.go`'s `ApiWorkerRun`) both dispatch predefined shell
   commands (`worker.Commands` in config) through the same path and stream
   logs back — see the comment on `util.ConfigWorkerCommand` for why the
@@ -381,7 +387,7 @@ web/frontend/src/
   token, anchored allowlist first). Probe (Stat missing / EACCES / EPERM /
   Dial fail) → HTTPS if `factum.url` is set. After a successful Dial, unix
   502 is **not** retried over HTTPS. Escape hatch:
-  `FACTUM_WORKER_API_SOCKET=none`. `factum-worker run` (`POST /api/worker/run`
+  `FACTUM_WORKER_API_SOCKET=none`. `factum2-worker run` (`POST /api/worker/run`
   NDJSON) is not tunneled and still needs HTTPS.
 - **Size and write deadline**: cap is 32 MiB of _marshaled envelope_
   (`hubMaxMessageSize`). Oversize returns 413 `{"error":"hub response too
@@ -405,12 +411,12 @@ large"}` without putting that body on the websocket (gorilla would close
         token: "<shared secret, matches this node's WorkerNode.Token>"
         commands:
             librenms:
-                cmd: /path/to/factum-librenms
+                cmd: /path/to/factum2-librenms
                 args: ["sync", "--job"]
     ```
     See `AGENTS.md`'s "Sync jobs" bullet for how the agent decides a stdout
     line is a structured event rather than plain text.
 
 See [README.md § Installing a worker node](README.md#installing-a-worker-node)
-for how to set up a `factum-worker` instance on a remote host (inbound
+for how to set up a `factum2-worker` instance on a remote host (inbound
 `/hub` only, group `factum`, when `:443` may close).

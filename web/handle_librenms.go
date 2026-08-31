@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// LibrenmsConfigResponse is what factum-librenms-cli (internal/librenms's
+// LibrenmsConfigResponse is what factum2-librenms-cli (internal/librenms's
 // FetchRemoteConfig) parses - keep the JSON tags in sync with that type.
 type LibrenmsConfigResponse struct {
 	util.CommonConfig
@@ -30,12 +30,12 @@ func settingOn(v *bool) bool {
 	return v != nil && *v
 }
 
-// ApiLibrenmsConfig returns everything factum-librenms-cli needs to run -
+// ApiLibrenmsConfig returns everything factum2-librenms-cli needs to run -
 // the default domain, LibreNMS REST API settings, and the Sync regex-filter
-// lists, all from the database-backed Settings row - so factum-librenms-cli,
+// lists, all from the database-backed Settings row - so factum2-librenms-cli,
 // which typically runs on a different host than the primary, doesn't need
 // any local librenms config of its own. LibreNMS's own MySQL credentials
-// aren't included here - factum-librenms-cli reads those directly from
+// aren't included here - factum2-librenms-cli reads those directly from
 // LibreNMS's .env file, since it assumes co-location with the LibreNMS
 // server.
 func (ctrl *Controller) ApiLibrenmsConfig(c *echo.Context) error {
@@ -62,7 +62,7 @@ func (ctrl *Controller) ApiLibrenmsConfig(c *echo.Context) error {
 }
 
 // ApiLibrenmsPendingDeleteList is GET /api/librenms/pending-deletes - the
-// UI's pending-deletion table and factum-librenms-cli's delete pass.
+// UI's pending-deletion table and factum2-librenms-cli's delete pass.
 func (ctrl *Controller) ApiLibrenmsPendingDeleteList(c *echo.Context) error {
 	var rows []models.LibrenmsPendingDelete
 	if err := ctrl.DB.Order("scheduled_at asc").Find(&rows).Error; err != nil {
@@ -75,7 +75,7 @@ func (ctrl *Controller) ApiLibrenmsPendingDeleteList(c *echo.Context) error {
 }
 
 // ApiLibrenmsPendingDeleteUpsert is PUT /api/librenms/pending-deletes/:device_id
-// - factum-librenms-cli records a newly quarantined device. An existing row
+// - factum2-librenms-cli records a newly quarantined device. An existing row
 // keeps its ScheduledAt and ForceDelete so a later sync cannot reset the
 // clock or clear a user's "delete next run" flag.
 func (ctrl *Controller) ApiLibrenmsPendingDeleteUpsert(c *echo.Context) error {
@@ -118,7 +118,7 @@ func (ctrl *Controller) ApiLibrenmsPendingDeleteUpsert(c *echo.Context) error {
 }
 
 // ApiLibrenmsPendingDeleteRemove is DELETE /api/librenms/pending-deletes/:device_id
-// - factum-librenms-cli drops the row after a real LibreNMS delete or a restore.
+// - factum2-librenms-cli drops the row after a real LibreNMS delete or a restore.
 func (ctrl *Controller) ApiLibrenmsPendingDeleteRemove(c *echo.Context) error {
 	deviceID, err := strconv.Atoi(c.Param("device_id"))
 	if err != nil || deviceID < 1 {
@@ -132,7 +132,7 @@ func (ctrl *Controller) ApiLibrenmsPendingDeleteRemove(c *echo.Context) error {
 
 // ApiLibrenmsPendingDeleteNextSync is POST
 // /api/librenms/pending-deletes/:device_id/delete-next-sync - the UI's
-// "delete on next sync" action. The next factum-librenms-cli run deletes
+// "delete on next sync" action. The next factum2-librenms-cli run deletes
 // the LibreNMS device even if the delay has not elapsed (and even if
 // delayed deletion is currently disabled).
 func (ctrl *Controller) ApiLibrenmsPendingDeleteNextSync(c *echo.Context) error {

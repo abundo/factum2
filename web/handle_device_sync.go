@@ -42,10 +42,10 @@ func splitLines(s string) []string {
 	return out
 }
 
-// ApiDeviceSyncConfig returns everything factum-device-sync-cli needs to
+// ApiDeviceSyncConfig returns everything factum2-device-sync-cli needs to
 // run: the default domain and VRFInGlobal/DeviceStates/DeviceIgnore lists
 // from the database-backed Settings row, plus per-device credentials from
-// the models.DeviceSyncAuth table - so factum-device-sync-cli, which
+// the models.DeviceSyncAuth table - so factum2-device-sync-cli, which
 // typically runs on a host with network access to the devices rather than
 // the primary, doesn't need any local device-sync config or DB access of
 // its own. The Netbox client itself isn't served here - that's

@@ -1,13 +1,13 @@
 package librenms
 
 //
-// factum-librenms-cli typically runs on a different host than the primary
+// factum2-librenms-cli typically runs on a different host than the primary
 // factum server, so its whole util.ConfigLibrenms - REST API URL/key and the
 // Sync regex-filter lists - is pulled from the primary over REST instead of
 // living in this host's own YAML config - see web.ApiLibrenmsConfig.
 // LibreNMS's own MySQL credentials aren't fetched this way - see
-// NewFactumLibrenmsClient in factum-librenms.go, which reads them directly
-// from LibreNMS's .env file on disk, since factum-librenms-cli assumes
+// NewFactumLibrenmsClient in factum2-librenms.go, which reads them directly
+// from LibreNMS's .env file on disk, since factum2-librenms-cli assumes
 // co-location with LibreNMS.
 //
 

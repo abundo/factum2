@@ -24,7 +24,7 @@ type FactumOxidizedClient struct {
 
 // NewFactumOxidizedClient fetches the Oxidized API connection settings and
 // the oxidized-sync settings (router.db path, ignore lists) from the
-// primary over REST - config.Oxidized is never used, since factum-oxidized
+// primary over REST - config.Oxidized is never used, since factum2-oxidized
 // typically runs on a different host than the primary and has no local
 // oxidized config of its own (see util.ConfigOxidized's doc comment).
 func NewFactumOxidizedClient(config *util.ConfigFactum) (*FactumOxidizedClient, error) {

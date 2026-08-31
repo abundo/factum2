@@ -30,7 +30,7 @@ type DNSClient struct {
 }
 
 // NewDNSClient fetches the DNS sync settings from the primary over REST -
-// factum-dns typically runs on a different host than the primary, so unlike
+// factum2-dns typically runs on a different host than the primary, so unlike
 // before, it no longer opens a direct connection to factum's Postgres just
 // to read these (see util.ConfigDNS's doc comment).
 func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {

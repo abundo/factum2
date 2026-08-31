@@ -77,7 +77,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[struct{}]{
-		Use:     "factum-netbox",
+		Use:     "factum2-netbox",
 		Short:   "Manage Netbox",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

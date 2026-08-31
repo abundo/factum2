@@ -122,7 +122,7 @@ func (ctrl *Controller) ApiWorkerNodeUpdate(c *echo.Context) error {
 	return c.JSON(http.StatusOK, node)
 }
 
-// ApiWorkerRunRequest is the body "factum-worker run" posts - see
+// ApiWorkerRunRequest is the body "factum2-worker run" posts - see
 // internal/worker/run_client.go's RunRemote, its client-side counterpart.
 type ApiWorkerRunRequest struct {
 	Command string   `json:"command"`
@@ -131,7 +131,7 @@ type ApiWorkerRunRequest struct {
 
 // ApiWorkerRun dispatches a predefined command to every connected node
 // handling the given role (ctrl.RemoteManager.RunAndWait) and streams each
-// LogMsg back as one NDJSON line, flushed immediately - the "factum-worker
+// LogMsg back as one NDJSON line, flushed immediately - the "factum2-worker
 // run" CLI's replacement for dialing rabbitmq directly, now that only the
 // primary holds the hub connections a command can actually be dispatched
 // over.

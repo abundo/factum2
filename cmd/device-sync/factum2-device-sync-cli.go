@@ -38,7 +38,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[Params]{
-		Use:     "factum-device-sync",
+		Use:     "factum2-device-sync",
 		Version: buildinfo.Version,
 		Short:   "Sync device interfaces/addresses/connections with Netbox",
 

@@ -40,7 +40,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[struct{}]{
-		Use:     "factum-librenms",
+		Use:     "factum2-librenms",
 		Short:   "Manage Librenms",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

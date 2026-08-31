@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// DNSConfigResponse is what factum-dns (internal/dns's FetchRemoteConfig)
+// DNSConfigResponse is what factum2-dns (internal/dns's FetchRemoteConfig)
 // parses - keep the JSON tags in sync with that type.
 type DNSConfigResponse struct {
 	util.CommonConfig
@@ -17,7 +17,7 @@ type DNSConfigResponse struct {
 }
 
 // ApiDNSConfig returns the DNS sync settings from the database-backed
-// Settings row, so factum-dns - which typically runs on a different host
+// Settings row, so factum2-dns - which typically runs on a different host
 // than the primary - doesn't need a direct Postgres connection just to read
 // these.
 func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {

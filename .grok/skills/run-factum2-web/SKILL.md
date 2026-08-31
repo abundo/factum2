@@ -10,7 +10,7 @@ are relative to the repo root (`factum2/`), not this skill directory.
 
 **Why isolated, not the already-running instance:** this machine usually
 already has a real factum2-web instance running on `:8090`
-(`/opt/factum2/factum-web start`, reading `/etc/factum2/factum2.yaml`) with
+(`/opt/factum2/factum2-web start`, reading `/etc/factum2/factum2.yaml`) with
 real org data - do not log into it, seed data into it, or reuse its DB.
 This skill's `factum2_skilltest` DB/role and port `18090` are separate from
 that, by design.
@@ -119,7 +119,7 @@ cd web/frontend && npm run dev
 - **CLI flags**: config file is `-f` (default `/etc/factum2/factum2.yaml`),
   web subcommand is `start`. Schema changes are `migrate` (`setup.sh`
   runs it before `createadmin`). If a doc disagrees, trust
-  `cmd/cmd_base.go` / `cmd/web/factum-web-cli.go`.
+  `cmd/cmd_base.go` / `cmd/web/factum2-web-cli.go`.
 - **`-b`/`--bind` silently overrides `web.bind` from the config file, and
   defaults to `:8090`** if you don't pass it on the command line - even
   with `web.bind` set correctly in the YAML, omitting `-b` binds `:8090`

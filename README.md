@@ -6,7 +6,7 @@ Factum tracks network infrastructure (devices, customers, services) and
 syncs it with external systems of record — NetBox and Lime CRM sync data
 _into_ factum's Postgres DB, while DNS, Icinga and LibreNMS are synced
 _from_ factum. It's a Go monorepo producing several CLI binaries (`cmd/*`)
-plus a web GUI (`factum-web`) with a Vue 3 SPA frontend (`web/frontend`).
+plus a web GUI (`factum2-web`) with a Vue 3 SPA frontend (`web/frontend`).
 
 See [DEV.md](DEV.md) for full setup/build/run details (config file shape,
 Makefile targets, dev workflow, binaries list) and [AGENTS.md](AGENTS.md)
@@ -39,14 +39,14 @@ grant all privileges on database factum2 to factum2_user;
 alter database factum2 owner to factum2_user;
 ```
 
-Schema migrations are a dedicated command (`factum-web migrate` / `factum
+Schema migrations are a dedicated command (`factum2-web migrate` / `factum2
 migrate`) — they do **not** run when the GUI or a sync CLI starts, because
-rewriting tables while `factum-web` is serving is unsafe. `install.py`
+rewriting tables while `factum2-web` is serving is unsafe. `install.py`
 applies them during install (step 3); to run them by hand, stop the GUI
 first:
 
 ```sh
-sudo /opt/factum2/factum-web migrate -f /etc/factum2/factum2.yaml
+sudo /opt/factum2/factum2-web migrate -f /etc/factum2/factum2.yaml
 ```
 
 #### 2. Config and installer
@@ -84,8 +84,8 @@ sudo /etc/factum2/install.py
 On a TTY the installer lists GitHub releases; highlight one and press Enter.
 Non-interactive: `sudo /etc/factum2/install.py --install latest --yes`.
 
-That copies binaries to `/opt/factum2`, stops `factum-web` if it is running,
-applies schema migrations (`factum-web migrate`), then installs systemd units:
+That copies binaries to `/opt/factum2`, stops `factum2-web` if it is running,
+applies schema migrations (`factum2-web migrate`), then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
 - **each enabled worker node:** `factum2-worker.service`
@@ -98,7 +98,7 @@ diff and asks before overwriting (`--yes` overwrites without asking).
 #### 4. Create the first admin user
 
 ```sh
-sudo /opt/factum2/factum-web createadmin -f /etc/factum2/factum2.yaml
+sudo /opt/factum2/factum2-web createadmin -f /etc/factum2/factum2.yaml
 ```
 
 Then log in at the address in `web.bind` (the example config uses
@@ -112,7 +112,7 @@ sudo cp examples/factum2.yaml /etc/factum2/
 ```
 
 ```sh
-make            # all CLI binaries into build/ (excludes factum-web-release)
+make            # all CLI binaries into build/ (excludes factum2-web-release)
 make frontend   # builds web/frontend -> web/static/vue
 ```
 
@@ -140,27 +140,27 @@ and everything else, see [DEV.md](DEV.md).
 
 ## Installing a worker node
 
-A worker node is a `factum-worker` instance running the `start` subcommand
-on a remote host (typically the DNS/Icinga/LibreNMS/Oxidized server, or any
+A worker node is a `factum2-worker` instance running the `start` subcommand
+on a remote host (typically the DNS/Icinga/LibreNMS/Oxidized/Prometheus server, or any
 other host that needs to run one of the sync tools). The primary dials
 **out** to it, so the worker host only needs one inbound firewall rule
 scoped to the primary's IP (`/hub` on `worker.listen`) — see [AGENTS.md §
 Worker / hub transport](AGENTS.md#worker--hub-transport-internalworker)
 for why the dial direction is reversed.
 
-Co-located CLIs (`factum-dns`, `factum-icinga`, `factum-librenms`,
-`factum-oxidized`, `factum-device-sync`, `factum-driver`,
-`factum-icinga-notifications`) reach the primary's REST handlers through
+Co-located CLIs (`factum2-dns`, `factum2-icinga`, `factum2-librenms`,
+`factum2-oxidized`, `factum2-prometheus`, `factum2-device-sync`, `factum2-driver`,
+`factum2-icinga-notifications`) reach the primary's REST handlers through
 that hub connection, via a localhost-only unix socket
-(`/run/factum-worker/api.sock`). Worker networks then do **not** need a
+(`/run/factum2-worker/api.sock`). Worker networks then do **not** need a
 route to the primary's HTTPS port. The primary still serves HTTPS to
 operators and to NetBox's `POST /api/netbox-webhook`.
 
 ```
   worker host                              management network
   ───────────                              ──────────────────
-  factum-worker :8443 /hub  <── ws:// ───  factum-web (dials out)
-  unix /run/factum-worker/api.sock         HTTPS :443  <── operators
+  factum2-worker :8443 /hub  <── ws:// ───  factum2-web (dials out)
+  unix /run/factum2-worker/api.sock         HTTPS :443  <── operators
   CLIs ── HTTP ────────────^               HTTPS :443  <── NetBox webhook
 ```
 
@@ -174,7 +174,7 @@ operators and to NetBox's `POST /api/netbox-webhook`.
 Closing worker-net → primary `:443` is an **operator firewall step** after
 this stack is in production; the software does not unbind the port. Do not
 close it until Icinga notification commands can open the unix socket (see
-group `factum` below). `factum-worker run` is not tunneled (`POST
+group `factum` below). `factum2-worker run` is not tunneled (`POST
 /api/worker/run` NDJSON) and still needs HTTPS from whatever host you run
 it on — typically a management-net host, not the worker.
 
@@ -183,9 +183,9 @@ that config secrets ride it. Until that follow-up, `/hub` is plaintext;
 keep it off the public internet and scoped to the primary's IP. Do not
 treat those secrets as TLS-protected on the hub.
 
-1. **Build and copy the binary.** `make factum-worker` (or `make release`
-   for every binary) builds `build/factum-worker`; copy it to the target
-   host, e.g. `/opt/factum2/factum-worker`. (`/etc/factum2/install.py` from
+1. **Build and copy the binary.** `make factum2-worker` (or `make release`
+   for every binary) builds `build/factum2-worker`; copy it to the target
+   host, e.g. `/opt/factum2/factum2-worker`. (`/etc/factum2/install.py` from
    a GitHub release, or `./install.py --source` from this tree, automates
    this step — plus `groupadd -r factum` and the systemd unit in step 4 —
    over ssh for every node already registered and enabled in the
@@ -203,8 +203,8 @@ treat those secrets as TLS-protected on the hub.
     - `factum.url` / `factum.token` — Stat/Dial fallback only (socket
       missing, unreadable, or undialable). They are **not** a retry path
       for unix 502 / timeout after Dial succeeded. Start-only hosts may
-      omit both. Keep them for `factum-worker run` if you use it from this
-      host, for `factum-icinga-notifications` until the icinga/nagios user
+      omit both. Keep them for `factum2-worker run` if you use it from this
+      host, for `factum2-icinga-notifications` until the icinga/nagios user
       is in group `factum`, and for any CLI not co-located with a worker.
       Force HTTPS even if the socket exists with
       `FACTUM_WORKER_API_SOCKET=none` (or `0`) in that CLI's environment
@@ -215,7 +215,7 @@ treat those secrets as TLS-protected on the hub.
       connect; set the same value on the matching `WorkerNode.Token` in step 3.
     - `worker.commands` — trim the map down to only the commands this host
       should handle, with `cmd` pointing at that tool's path on this host
-      (e.g. `/opt/factum2/factum-dns`). Add `--job` to a command's `args` to
+      (e.g. `/opt/factum2/factum2-dns`). Add `--job` to a command's `args` to
       get structured sync-job events instead of plain console output (see
       [DEV.md § Sync job events](DEV.md#worker-hub-transport)).
     - Relocate the unix socket with `FACTUM_WORKER_API_SOCKET` on the worker
@@ -256,7 +256,7 @@ determine group credentials`) and takes **hub command dispatch** down —
     ```
 
     On Icinga hosts, add the notification UID to the group so
-    `factum-icinga-notifications` can open the socket (until then, Stat
+    `factum2-icinga-notifications` can open the socket (until then, Stat
     EACCES falls back to HTTPS). Supplementary groups take effect at
     process start, so restart the Icinga daemon (and any long-lived
     notification helper) after `usermod`, then verify as that UID before
@@ -265,17 +265,17 @@ determine group credentials`) and takes **hub command dispatch** down —
     ```sh
     sudo usermod -aG factum icinga    # or nagios, matching the NotificationCommand user
     sudo systemctl restart icinga2    # or nagios
-    sudo -u icinga stat /run/factum-worker/api.sock
+    sudo -u icinga stat /run/factum2-worker/api.sock
     ```
 
-    The socket dir is `/run/factum-worker` (`root:factum` `0750`); the
-    socket is `0660` (chmod'd by `factum-worker start`, independent of
+    The socket dir is `/run/factum2-worker` (`root:factum` `0750`); the
+    socket is `0660` (chmod'd by `factum2-worker start`, independent of
     umask). Connecting to it is equivalent to possessing the service token.
 
 5. **Verify**: `/sync/status` in the web UI (or `GET /api/worker/status`)
    lists connected nodes and what they handle; `journalctl -u factum2-worker -f` on the worker host for logs. Confirm a co-located CLI
-   (e.g. `factum-librenms show-config`) hits the socket. Then, if mixed-UID
-   CLIs are in group `factum` and you are not using `factum-worker run` from
+   (e.g. `factum2-librenms show-config`) hits the socket. Then, if mixed-UID
+   CLIs are in group `factum` and you are not using `factum2-worker run` from
    this host, you may close worker-net → primary `:443`. Leave
    `FACTUM_WORKER_API_SOCKET=none` unset when you do — a unix 502 after Dial
    will not fail over to HTTPS.
@@ -283,7 +283,7 @@ determine group credentials`) and takes **hub command dispatch** down —
 ## NetBox webhook (partial sync)
 
 `POST /api/netbox-webhook` lets NetBox push change events instead of waiting
-for `factum-netbox sync`'s full polling sync. On a Device, Interface or IP
+for `factum2-netbox sync`'s full polling sync. On a Device, Interface or IP
 Address create/update (or an Interface/IP delete) it resyncs just that one
 device (interfaces, addresses and tags included). On a Device deletion it
 removes the matching netbox-sourced factum row by the payload's id —
@@ -324,7 +324,7 @@ if that secret isn't set. Configure it in two places:
       sample payload — useful for confirming the secret matches without
       waiting for a real change.
 
-`factum-netbox check` reads the live NetBox extras API and verifies that
+`factum2-netbox check` reads the live NetBox extras API and verifies that
 setup: a webhook whose URL is `{PublicBaseURL}/api/netbox-webhook`, enabled
 event rules covering Device / Interface / IP Address / Cable / Site
 create+update+delete,

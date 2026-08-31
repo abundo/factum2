@@ -32,7 +32,7 @@ type FactumIcingaClient struct {
 // NewFactumIcingaClient fetches the Icinga API connection settings and the
 // icinga_sync config (hosts/users file paths, templates, ignore list, ...)
 // from the primary over REST - config.Icinga is never used, since
-// factum-icinga typically runs on a different host than the primary and has
+// factum2-icinga typically runs on a different host than the primary and has
 // no local icinga config of its own (see util.ConfigIcinga's doc comment).
 func NewFactumIcingaClient(config *util.ConfigFactum) (*FactumIcingaClient, error) {
 	client := new(FactumIcingaClient)
@@ -134,7 +134,7 @@ type hostTemplateData struct {
 // Dependency objects (Settings.IcingaDependencyTemplate) aren't rendered:
 // models.Device has no Parents field to build them from -
 // internal/librenms hit the same gap and skipped parent sync for the same
-// reason, see factum-librenms.go.
+// reason, see factum2-librenms.go.
 func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter jobevent.Reporter) (bool, error) {
 	hostTmpl, err := template.New("host").Funcs(hostTemplateFuncs(fic.IcingaConfig.DefaultDomain)).Parse(fic.IcingaConfig.HostTemplate)
 	if err != nil {

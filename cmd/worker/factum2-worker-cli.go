@@ -24,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Params embeds cmdbase.ParamsAgent, not cmdbase.Params - factum-worker
+// Params embeds cmdbase.ParamsAgent, not cmdbase.Params - factum2-worker
 // never reads the db/web/librenms sections of the full util.ConfigRoot
 // (internal/worker only ever touches ConfigWorker), so
 // there's no reason to force an operator to fill in unrelated required
@@ -42,7 +42,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum-worker",
+		Use:     "factum2-worker",
 		Short:   "Run factum background tasks dispatched by the primary over the hub transport",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

@@ -1,7 +1,7 @@
 package netbox
 
 //
-// factum-librenms-cli's Sync() needs a Netbox client but typically runs on
+// factum2-librenms-cli's Sync() needs a Netbox client but typically runs on
 // the LibreNMS host, not the primary - so it pulls util.ConfigNetbox from
 // the primary over REST instead of connecting to Postgres directly - see
 // web.ApiNetboxConfig.

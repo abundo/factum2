@@ -1,13 +1,13 @@
 // Package worker runs predefined shell commands dispatched by the primary
 // over the hub transport (see hub.go/hub_agent.go).
 //
-// A factum-worker instance activates every entry in ConfigWorker.Commands,
+// A factum2-worker instance activates every entry in ConfigWorker.Commands,
 // keyed by name - there's no separate addressing by node name, and any
 // instance with a given command name will run it if the primary dispatches
 // to that name. If the name is also a valid sync target
 // (worker.IsValidSyncTarget), the same predefined command also runs
 // whenever someone clicks that target's "Sync" button on the web UI's sync
-// overview page - web.ApiSyncTrigger and "factum-worker run" both go
+// overview page - web.ApiSyncTrigger and "factum2-worker run" both go
 // through the exact same RemoteManager.SendCommand/RunAndWait dispatch path
 // on the primary, so there's no separate mechanism to keep in sync.
 //
@@ -84,7 +84,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.runCtx = ctx
 
 	if w.cfg.Listen == "" {
-		return fmt.Errorf("worker.listen must be set - factum-worker has no transport without it")
+		return fmt.Errorf("worker.listen must be set - factum2-worker has no transport without it")
 	}
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return w.runHubListener(ctx) })

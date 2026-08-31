@@ -76,7 +76,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum",
+		Use:     "factum2",
 		Short:   "Manage Factum",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

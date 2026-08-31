@@ -33,7 +33,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum-icinga",
+		Use:     "factum2-icinga",
 		Short:   "Manage Icinga",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

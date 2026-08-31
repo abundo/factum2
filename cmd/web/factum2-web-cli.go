@@ -19,7 +19,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum-web",
+		Use:     "factum2-web",
 		Short:   "Manager factum WEB GUI",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

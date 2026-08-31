@@ -2,7 +2,7 @@
 """Install factum2 on the primary and its remote workers.
 
 Two sources, one install path (binaries to /opt/factum2, systemd units to
-/etc/systemd/system, stop factum-web, apply `factum-web migrate`, restart
+/etc/systemd/system, stop factum2-web, apply `factum2-web migrate`, restart
 services, then the same binaries out to every enabled worker_nodes row).
 
 On the primary this installs factum2-web.service and factum2-worker.service;
@@ -63,26 +63,27 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 7
+INSTALLER_VERSION = 8
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
-# any other top-level `factum*` file so a newly added cmd/ still installs.
+# any other top-level `factum2*` file so a newly added cmd/ still installs.
 KNOWN_BINARIES = (
-    "factum",
-    "factum-becs",
-    "factum-device-sync",
-    "factum-dns",
-    "factum-driver",
-    "factum-icinga",
-    "factum-icinga-notifications",
-    "factum-lime",
-    "factum-librenms",
-    "factum-netbox",
-    "factum-oxidized",
-    "factum-web",
-    "factum-worker",
+    "factum2",
+    "factum2-becs",
+    "factum2-device-sync",
+    "factum2-dns",
+    "factum2-driver",
+    "factum2-icinga",
+    "factum2-icinga-notifications",
+    "factum2-lime",
+    "factum2-librenms",
+    "factum2-netbox",
+    "factum2-oxidized",
+    "factum2-prometheus",
+    "factum2-web",
+    "factum2-worker",
 )
 
 
@@ -439,7 +440,7 @@ def read_installed_version(install_dir: Path) -> str:
         text = version_file.read_text(encoding="utf-8", errors="replace").strip()
         if text:
             return text.splitlines()[0].strip()
-    for name in ("factum-web", "factum", "factum-worker"):
+    for name in ("factum2-web", "factum2", "factum2-worker"):
         binary = install_dir / name
         if not binary.is_file():
             continue
@@ -447,8 +448,8 @@ def read_installed_version(install_dir: Path) -> str:
         if ver:
             return ver
     if (
-        not (install_dir / "factum-web").exists()
-        and not (install_dir / "factum").exists()
+        not (install_dir / "factum2-web").exists()
+        and not (install_dir / "factum2").exists()
     ):
         return "not installed"
     return "unknown"
@@ -996,11 +997,11 @@ def extract_archive(archive: Path, dest: Path) -> Path:
     subs = [p for p in dest.iterdir() if p.is_dir()]
     if len(subs) == 1 and _looks_like_release_root(subs[0]):
         return subs[0]
-    raise InstallError(f"Could not find factum binaries in {archive.name}")
+    raise InstallError(f"Could not find factum2 binaries in {archive.name}")
 
 
 def _looks_like_release_root(path: Path) -> bool:
-    return any(p.is_file() and p.name.startswith("factum") for p in path.iterdir())
+    return any(p.is_file() and p.name.startswith("factum2") for p in path.iterdir())
 
 
 def find_binaries(root: Path) -> list[Path]:
@@ -1008,10 +1009,10 @@ def find_binaries(root: Path) -> list[Path]:
     for p in sorted(root.iterdir()):
         if not p.is_file():
             continue
-        if p.name.startswith("factum") and p.suffix == "":
+        if p.name.startswith("factum2") and p.suffix == "":
             found.append(p)
     if not found:
-        raise InstallError(f"No factum* binaries in {root}")
+        raise InstallError(f"No factum2* binaries in {root}")
     return found
 
 
@@ -1249,13 +1250,13 @@ def migrate_database(
     ssh_user: str,
     dry_run: bool,
 ) -> None:
-    """Stop factum-web, apply schema migrations, leave the unit stopped.
+    """Stop factum2-web, apply schema migrations, leave the unit stopped.
 
     AutoMigrate must not run while the GUI is serving; the caller restarts
     units after this returns. A missing unit (first install) is ignored.
     """
     web_unit = PRIMARY_UNITS[0]
-    web_bin = install_dir / "factum-web"
+    web_bin = install_dir / "factum2-web"
     where = "this host" if is_local_host(target_host) else target_host
     log(f"==> Applying database migrations on {where} (stop {web_unit} first)")
     if is_local_host(target_host):

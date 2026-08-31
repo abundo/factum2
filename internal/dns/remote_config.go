@@ -1,7 +1,7 @@
 package dns
 
 //
-// factum-dns typically runs on a different host than the primary factum
+// factum2-dns typically runs on a different host than the primary factum
 // server, so its util.ConfigDNS is pulled from the primary over REST
 // instead of connecting directly to factum's Postgres - see
 // web.ApiDNSConfig.

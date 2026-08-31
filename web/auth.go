@@ -44,7 +44,7 @@ func GenerateJWT(userID uint) (string, error) {
 
 // checkServiceToken authenticates a server-to-server caller (no browser, no
 // session cookie - e.g. internal/factum's HTTP client, used by
-// factum-dns/factum-librenms-cli which may run on a different host than the
+// factum2-dns/factum2-librenms-cli which may run on a different host than the
 // primary) via "Authorization: Bearer <token>", matched against
 // Settings.FactumApiToken. An unconfigured (empty) token never matches, even
 // against an empty/missing header, so leaving it unset doesn't silently
@@ -386,7 +386,7 @@ func GetUserByID(db *gorm.DB, userID uint) (*models.User, error) {
 // service, device interfaces, sync triggers, ...). A user with no role, or
 // only "viewer", is rejected with 403. A valid service token (auth_method
 // "token", set by RequireAPIAuth) is also allowed - remote CLIs such as
-// factum-device-sync have no session user. Must run after RequireAPIAuth.
+// factum2-device-sync have no session user. Must run after RequireAPIAuth.
 func (ctrl *Controller) RequireWrite(next echo.HandlerFunc) echo.HandlerFunc {
 	return requireAnyRole(next, "admin", "operator")
 }
@@ -409,7 +409,7 @@ func requireAnyRole(next echo.HandlerFunc, roles ...string) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		// Service tokens pass RequireAPIAuth with auth_method "token" but
 		// no "user". Without this branch, every RequireRead/RequireWrite
-		// route 401s token callers - which is exactly how factum-device-sync
+		// route 401s token callers - which is exactly how factum2-device-sync
 		// and other remote CLIs authenticate (see checkServiceToken).
 		if c.Get("auth_method") == "token" {
 			return next(c)

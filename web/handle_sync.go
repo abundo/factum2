@@ -28,7 +28,7 @@ func (ctrl *Controller) ApiSyncTargets(c *echo.Context) error {
 // ApiSyncTrigger dispatches :target to exactly one connected worker node
 // activated for it (see internal/worker/hub.go's RemoteManager.StartJob -
 // deliberately single-node per target, not a fan-out like SendCommand/
-// "factum-worker run", so a target maps to exactly one execution) and
+// "factum2-worker run", so a target maps to exactly one execution) and
 // creates a Job row (with one JobTask child) tracking it. Unlike the old
 // rabbitmq-based PublishSync, which silently "succeeded" even with nobody
 // listening, matched==0 is now an observable fact and reported as an error

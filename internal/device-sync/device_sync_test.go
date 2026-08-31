@@ -361,7 +361,7 @@ func (f *fakeNetboxAPI) CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netb
 
 // fakeFactumAPI is a minimal in-memory FactumAPI, recording every call so
 // tests can assert on what device-sync read from factum without a real
-// factum-web. Locked for the same reason as fakeNetboxAPI.
+// factum2-web. Locked for the same reason as fakeNetboxAPI.
 type fakeFactumAPI struct {
 	mu sync.Mutex
 

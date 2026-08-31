@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// IcingaConfigResponse is what factum-icinga (internal/icinga's
+// IcingaConfigResponse is what factum2-icinga (internal/icinga's
 // FetchRemoteConfig) parses - keep the JSON tags in sync with that type.
 type IcingaConfigResponse struct {
 	util.CommonConfig
@@ -25,7 +25,7 @@ type IcingaConfigResponse struct {
 }
 
 // ApiIcingaConfig returns the Icinga API connection settings from the
-// database-backed Settings row, so factum-icinga - which typically runs on
+// database-backed Settings row, so factum2-icinga - which typically runs on
 // a different host than the primary - doesn't need its own copy of these
 // credentials in a local YAML config file.
 func (ctrl *Controller) ApiIcingaConfig(c *echo.Context) error {

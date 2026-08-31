@@ -139,7 +139,7 @@ flowchart LR
     CF["custom_fields.optical_kind"]
   end
 
-  subgraph factumSync [factum-netbox Sync]
+  subgraph factumSync [factum2-netbox Sync]
     syncDev[syncDevice]
     syncIf[syncInterfaces]
     syncCab[syncCables]
@@ -158,7 +158,7 @@ flowchart LR
     Maint[MaintenanceWindow]
   end
 
-  subgraph factumApp [factum-web]
+  subgraph factumApp [factum2-web]
     Trace[internal/optical.Walk]
     Hops[RebuildHops]
     Impact[ImpactQuery]
@@ -192,7 +192,7 @@ NetBox remains the inventory of boxes and patch cords. The optical graph is the 
 
 ### Device kinds
 
-**Problem.** `Device.Role` is overwritten every `syncDevice` (`internal/netbox/factum-netbox.go`, fields copied from `nb_device.Role` / `RoleID`). A renamed NetBox role, or a role reused for a non-optical device, must not silently break Factum.
+**Problem.** `Device.Role` is overwritten every `syncDevice` (`internal/netbox/factum2-netbox.go`, fields copied from `nb_device.Role` / `RoleID`). A renamed NetBox role, or a role reused for a non-optical device, must not silently break Factum.
 
 **Decision.** Add a Factum-owned `Device.OpticalKind` that sync _computes and writes_ on every run, from a NetBox-side signal plus an admin-editable mapping. It is not a free-form operator field that sync would clobber to `""`.
 
@@ -419,7 +419,7 @@ A degree↔degree trunk with **no** intermediate chassis in the cable path is a 
 
 ### LLDP auto-cabling must not own optical or fiber hops
 
-`factum-device-sync` (`internal/device-sync/device-sync.go` `syncConnections` / `syncConnection`) currently treats every LLDP neighbor pair as _the_ cable for those two interfaces. If either side already has a `CableID`, it **loads that cable and retargets the other termination** to the LLDP neighbor; if the two sides have _different_ cables it **deletes** the remote one. It does not distinguish a human-drawn cable from one it created. `CreateCable` writes no label (`netboxtool.CreateCable` posts only the two `dcim.interface` terminations).
+`factum2-device-sync` (`internal/device-sync/device-sync.go` `syncConnections` / `syncConnection`) currently treats every LLDP neighbor pair as _the_ cable for those two interfaces. If either side already has a `CableID`, it **loads that cable and retargets the other termination** to the LLDP neighbor; if the two sides have _different_ cables it **deletes** the remote one. It does not distinguish a human-drawn cable from one it created. `CreateCable` writes no label (`netboxtool.CreateCable` posts only the two `dcim.interface` terminations).
 
 That is correct for grey packet meshes. It is fatal for WDM and dark fiber.
 
@@ -903,7 +903,7 @@ Follow existing Vue 3 + Prime/Nuxt UI + `src/api/*.js` + Echo handler patterns. 
 
 ### Sync behavior (exact hook points)
 
-`internal/netbox/factum-netbox.go` `syncDevice` — after copying NetBox fields, before the upsert:
+`internal/netbox/factum2-netbox.go` `syncDevice` — after copying NetBox fields, before the upsert:
 
 ```go
 device.OpticalKindCF = normalizeOpticalKindCF(nb_device.CustomFields) // "" if unset/invalid
@@ -1098,7 +1098,7 @@ DELETE /api/customer/:id/contacts/:contact_id
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Models   | new `models/optical.go`; `models/device.go` (`Device.OpticalKind`, `Device.OpticalKindCF`); `models/organisation.go` (`Contact` fields); `models/models.go` only if Settings gains a field (prefer not)                                                                                                                                 |
 | Migrate  | `internal/util/db.go` — AutoMigrate new types; unique index; `dedupeInterfaces` reparents                                                                                                                                                                                                                                               |
-| Sync     | `internal/netbox/factum-netbox.go` — `resolveOpticalKind`, `deleteInterface` cascade, `syncCables` stale hook                                                                                                                                                                                                                           |
+| Sync     | `internal/netbox/factum2-netbox.go` — `resolveOpticalKind`, `deleteInterface` cascade, `syncCables` stale hook                                                                                                                                                                                                                           |
 | Domain   | new `internal/optical/{freq,kind,validate,trace,hops,impact}.go` + tests                                                                                                                                                                                                                                                                |
 | Lime     | no change if path is a separate table                                                                                                                                                                                                                                                                                                   |
 | Web      | new `web/handler_optical.go`, `web/handler_maintenance.go`, tests; `web/web.go` routes; `web/handle_dcim.go` service-on-interface; `web/handle_topology.go` DTO                                                                                                                                                                         |
@@ -1316,7 +1316,7 @@ Out of scope even as questions: CDC ROADMs, regeneration, OTN, CN-on-VL stacking
 
 - `models/device.go` — `Device`, `Interface`, `Connection`, `Site`; `Interface.CfRole` is NetBox `cf_role`.
 - `models/organisation.go` — `Service` categories via `ServiceID` prefix; ELINE `EndpointA/B*`; `Contact` as it exists today.
-- `internal/netbox/factum-netbox.go` — `Sync` / `syncDevice` / `syncInterfaces` / `syncCables` / `deleteInterface` / `deleteMissingDevices`.
+- `internal/netbox/factum2-netbox.go` — `Sync` / `syncDevice` / `syncInterfaces` / `syncCables` / `deleteInterface` / `deleteMissingDevices`.
 - `internal/util/db.go` — `MigrateDatabase`, `dedupeInterfaces`.
 - `internal/lime/lime.go` — `SaveDelivery` preserve-list (ELINE fields only).
 - `web/handler_service.go` — `validCategories`, `categoryFromServiceID`, create/update/delete.
@@ -1341,7 +1341,7 @@ Incremental, independently reviewable, each mergeable without enabling the next.
 ### PR 1 — Optical models, migrate, kind mapping, feature flag, sync hook
 
 - **Title:** `optical: Device.OpticalKind, mapping table, OpticalEnabled, NetBox sync resolution`
-- **Files:** `models/models.go` (`Settings.OpticalEnabled`), `models/optical.go` (`OpticalKindMap` + DTO + allowed kinds including `ila`/`passive`), `models/device.go` (`OpticalKind`, `OpticalKindCF`), `internal/util/db.go`, `internal/netbox/factum-netbox.go`, `internal/optical/kind.go` (`normalizeOpticalKindCF`, `resolveOpticalKind`, `ReresolveAllKinds`), tests (both CF shapes, case-insensitive map, alias `transponder`/`muxponder` → `wdm_shelf`, **CF=wdm_shelf + Role mapped to roadm + mapping CRUD → kind stays wdm_shelf**), `web/handler_optical.go` (admin kind-map wrappers + `RequireOpticalEnabled`), `web/handle_user_api.go` (`optical_enabled` on `/api/me`), `web/web.go`, `web/frontend` `SettingsFactumPage.vue` (`USwitch`), `/admin/settings/optical` (menu only if enabled), `auth` store.
+- **Files:** `models/models.go` (`Settings.OpticalEnabled`), `models/optical.go` (`OpticalKindMap` + DTO + allowed kinds including `ila`/`passive`), `models/device.go` (`OpticalKind`, `OpticalKindCF`), `internal/util/db.go`, `internal/netbox/factum2-netbox.go`, `internal/optical/kind.go` (`normalizeOpticalKindCF`, `resolveOpticalKind`, `ReresolveAllKinds`), tests (both CF shapes, case-insensitive map, alias `transponder`/`muxponder` → `wdm_shelf`, **CF=wdm_shelf + Role mapped to roadm + mapping CRUD → kind stays wdm_shelf**), `web/handler_optical.go` (admin kind-map wrappers + `RequireOpticalEnabled`), `web/handle_user_api.go` (`optical_enabled` on `/api/me`), `web/web.go`, `web/frontend` `SettingsFactumPage.vue` (`USwitch`), `/admin/settings/optical` (menu only if enabled), `auth` store.
 - **Depends on:** none
 - **Changes:** Add `devices.optical_kind` and `devices.optical_kind_cf`. Add `optical_kind_maps`. Add `settings.optical_enabled` (default off). `syncDevice` writes both kind columns. Mapping CRUD **always** re-resolves with CF-then-map. Optical routes 404 when the flag is off. No ports yet.
 
@@ -1362,7 +1362,7 @@ Incremental, independently reviewable, each mergeable without enabling the next.
 ### PR 2 — Optical ports
 
 - **Title:** `optical: interface optical roles and wavelengths`
-- **Files:** `models/optical.go` (`OpticalPort`), `internal/util/db.go` (`dedupeInterfaces` reparent `optical_ports` + `connections.interface_a/b_id`), `internal/optical/freq.go` + tests (`Nm(193100000000000) == 1552.52`), `internal/netbox/factum-netbox.go` (`deleteInterface` cascade), `web/handler_optical.go` (port routes), `web/frontend` **device detail dialog** Role/λ columns + editor, `src/api/optical.js`.
+- **Files:** `models/optical.go` (`OpticalPort`), `internal/util/db.go` (`dedupeInterfaces` reparent `optical_ports` + `connections.interface_a/b_id`), `internal/optical/freq.go` + tests (`Nm(193100000000000) == 1552.52`), `internal/netbox/factum2-netbox.go` (`deleteInterface` cascade), `web/handler_optical.go` (port routes), `web/frontend` **device detail dialog** Role/λ columns + editor, `src/api/optical.js`.
 - **Depends on:** PR 1
 - **Changes:** Sync-proof port metadata. `uint64` Hz primary (`0` = unset). UI only in the device interfaces dialog (and only if optical is enabled). Extend `shouldSkipLLDPCabling` to any interface that has an `optical_ports` row (`fiber_port` included).
 

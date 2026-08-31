@@ -105,7 +105,7 @@ func (s *Scheduler) fire(sched *models.JobSchedule, now time.Time) {
 	// Postgres timestamptz round-trips can disagree with the Go value
 	// Find just loaded, which would silently skip the fire. Overlapping
 	// Ticks are already serialized by mu; a second process seeing the
-	// same due row is not a deployment we support (one factum-web).
+	// same due row is not a deployment we support (one factum2-web).
 	res := s.db.Model(&models.JobSchedule{}).
 		Where("id = ? AND enabled = ? AND next_run_at <= ?", sched.ID, true, now).
 		Updates(map[string]any{

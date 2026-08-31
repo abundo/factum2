@@ -732,7 +732,7 @@ func (m *RemoteManager) clearRunning(target, taskID string) {
 // ExpectedTasks (set once at creation) tells the two cases apart. The
 // parent update is guarded by WHERE finished_at IS NULL so two sibling
 // tasks finishing concurrently can't race to double-write it. A harmless
-// no-op for any taskID that isn't tracked (e.g. a plain "factum-worker
+// no-op for any taskID that isn't tracked (e.g. a plain "factum2-worker
 // run" invocation, which never goes through StartJob).
 func (m *RemoteManager) resolveTask(taskID string, exitCode int, errMsg string) {
 	var task models.JobTask

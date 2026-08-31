@@ -81,7 +81,7 @@ type FactumLibrenmsClient struct {
 
 // NewFactumLibrenmsClient fetches the LibreNMS config (REST API URL/key and
 // the Sync regex-filter maps) from the primary over REST - config.Librenms
-// is never used, since factum-librenms-cli typically runs on a different
+// is never used, since factum2-librenms-cli typically runs on a different
 // host than the primary and has no local librenms config of its own (see
 // util.ConfigLibrenms's doc comment).
 func NewFactumLibrenmsClient(config *util.ConfigFactum) (*FactumLibrenmsClient, error) {

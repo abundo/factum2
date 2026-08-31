@@ -126,7 +126,7 @@ func DeviceFQDN(name string, defaultDomain string) string {
 // the device itself (GET /api/device/name/:name, for its platform) and
 // util.CommonConfig (GET /api/common-config, for the default domain used to
 // turn a short device name into something resolvable). That's what lets
-// factum-driver-cli run on a host that can reach the devices but has no
+// factum2-driver-cli run on a host that can reach the devices but has no
 // database access - the same remote-config pattern the DNS/Icinga/LibreNMS/
 // Oxidized tools use, see internal/util.FetchRemoteConfig.
 func NewDriverName(factumConfig *util.ConfigFactum, name string, username string, password string) (DriverClient, error) {

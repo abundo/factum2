@@ -1,7 +1,7 @@
 package devicesync
 
 //
-// factum-device-sync-cli fetches its config (vrf_in_global/device_states/
+// factum2-device-sync-cli fetches its config (vrf_in_global/device_states/
 // device_ignore/auth, all database-backed - see models.Settings and
 // models.DeviceSyncAuth) from the primary over REST, same pattern as
 // internal/netbox/internal/oxidized - it typically runs on a host with

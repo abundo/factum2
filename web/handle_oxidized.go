@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// OxidizedConfigResponse is what factum-oxidized (internal/oxidized's
+// OxidizedConfigResponse is what factum2-oxidized (internal/oxidized's
 // FetchRemoteConfig) parses - keep the JSON tags in sync with that type.
 type OxidizedConfigResponse struct {
 	util.CommonConfig
@@ -23,7 +23,7 @@ type OxidizedConfigResponse struct {
 }
 
 // ApiOxidizedConfig returns the Oxidized API connection settings from the
-// database-backed Settings row, so factum-oxidized - which typically runs
+// database-backed Settings row, so factum2-oxidized - which typically runs
 // on a different host than the primary - doesn't need its own copy of
 // these credentials in a local YAML config file.
 func (ctrl *Controller) ApiOxidizedConfig(c *echo.Context) error {

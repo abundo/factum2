@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// DefaultHubSocket is the unix HTTP path factum-worker listens on and
+// DefaultHubSocket is the unix HTTP path factum2-worker listens on and
 // co-located CLIs probe. One constant so the two sides cannot drift.
-const DefaultHubSocket = "/run/factum-worker/api.sock"
+const DefaultHubSocket = "/run/factum2-worker/api.sock"
 
 // HubRPCTimeout is the per-request bound for hub RPC (ServeHTTP after the
 // websocket dies, CLI HTTP clients). Canonical here so util does not import

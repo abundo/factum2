@@ -11,7 +11,7 @@ GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinf
 
 .PHONY: build test frontend release install snapshot
 
-build: factum factum-becs factum-device-sync factum-dns factum-driver factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web factum-worker
+build: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
 
 # JS deps can ship stray .go files (e.g. flatted); they are not this module.
 GO_PACKAGES := $(shell go list ./... | grep -v /node_modules/)
@@ -59,58 +59,61 @@ test-integration-web:
 	FACTUM_TEST_MAILPIT_API=$${FACTUM_TEST_MAILPIT_API:-http://localhost:18025} \
 	go test -tags integration -count=1 -v ./web/
 
-factum:
+factum2:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum cmd/factum/factum-cli.go
-factum-becs:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2 cmd/factum2/factum2-cli.go
+factum2-becs:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-becs cmd/becs/factum-becs-cli.go
-factum-device-sync:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-becs cmd/becs/factum2-becs-cli.go
+factum2-device-sync:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-device-sync cmd/device-sync/factum-device-sync-cli.go
-factum-dns:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-device-sync cmd/device-sync/factum2-device-sync-cli.go
+factum2-dns:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-dns cmd/dns/factum-dns-cli.go
-factum-driver:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-dns cmd/dns/factum2-dns-cli.go
+factum2-driver:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-driver cmd/driver/factum-driver-cli.go
-factum-icinga:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-driver cmd/driver/factum2-driver-cli.go
+factum2-icinga:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-icinga cmd/icinga/factum-icinga-cli.go
-factum-icinga-notifications:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-icinga cmd/icinga/factum2-icinga-cli.go
+factum2-icinga-notifications:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-icinga-notifications cmd/icinga-notifications/factum-icinga-notifications.go
-factum-lime:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-icinga-notifications cmd/icinga-notifications/factum2-icinga-notifications.go
+factum2-lime:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-lime cmd/lime/factum-lime-cli.go
-factum-librenms:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-lime cmd/lime/factum2-lime-cli.go
+factum2-librenms:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-librenms cmd/librenms/factum-librenms-cli.go
-factum-netbox:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-librenms cmd/librenms/factum2-librenms-cli.go
+factum2-netbox:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-netbox cmd/netbox/factum-netbox-cli.go
-factum-oxidized:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-netbox cmd/netbox/factum2-netbox-cli.go
+factum2-oxidized:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-oxidized cmd/oxidized/factum-oxidized-cli.go
-factum-web:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-oxidized cmd/oxidized/factum2-oxidized-cli.go
+factum2-prometheus:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-web cmd/web/factum-web-cli.go
-factum-worker:
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-prometheus cmd/prometheus/factum2-prometheus-cli.go
+factum2-web:
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum-worker cmd/worker/factum-worker-cli.go
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go
+factum2-worker:
+	@mkdir -p $(BUILD_DIR)
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-worker cmd/worker/factum2-worker-cli.go
 
-# Builds the Vue SPA into web/static/vue, which factum-web serves directly.
+# Builds the Vue SPA into web/static/vue, which factum2-web serves directly.
 frontend:
 	cd web/frontend && npm ci && npm run build
 
 # Self-contained release binary: static/, templates/ and the built frontend
 # (web/static/vue, are embedded into the binary via go:embed , so it needs no web/ directory
 # alongside it at runtime.
-factum-web-release: frontend
+factum2-web-release: frontend
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum-web cmd/web/factum-web-cli.go
+	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go
 
-release: factum factum-becs factum-device-sync factum-dns factum-driver factum-icinga factum-icinga-notifications factum-lime factum-librenms factum-netbox factum-oxidized factum-web-release factum-worker
+release: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web-release factum2-worker
 
 snapshot:
 	goreleaser release --snapshot --clean --skip=publish

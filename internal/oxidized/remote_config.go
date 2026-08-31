@@ -1,7 +1,7 @@
 package oxidized
 
 //
-// factum-oxidized typically runs on a different host than the primary
+// factum2-oxidized typically runs on a different host than the primary
 // factum server, so its util.ConfigOxidized is pulled from the primary
 // over REST instead of living in this host's own YAML config - see
 // web.ApiOxidizedConfig.

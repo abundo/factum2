@@ -1,4 +1,4 @@
-// factum-icinga-notifications is the Icinga2 NotificationCommand invoked
+// factum2-icinga-notifications is the Icinga2 NotificationCommand invoked
 // directly by icinga2 whenever a host/service alarm fires. It builds an
 // HTML alert email (alarm details plus a live "hosts/services currently
 // down" summary from the Icinga API) from a Go html/template on disk, and
@@ -166,7 +166,7 @@ func (n notification) subject(defaultDomain string) string {
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "factum-icinga-notifications:", err)
+		fmt.Fprintln(os.Stderr, "factum2-icinga-notifications:", err)
 		os.Exit(1)
 	}
 }

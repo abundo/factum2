@@ -32,7 +32,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[Params]{
-		Use:     "factum-dns",
+		Use:     "factum2-dns",
 		Short:   "Manage DNS",
 		Version: buildinfo.Version,
 

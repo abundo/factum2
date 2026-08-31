@@ -1,7 +1,7 @@
 package worker
 
 // hub_agent.go is the agent-side half of the hub transport (see hub.go for
-// the primary-side RemoteManager it's dialed by). factum-worker has never
+// the primary-side RemoteManager it's dialed by). factum2-worker has never
 // run an HTTP server before this - it's a single unauthenticated-by-default
 // route deliberately kept off Echo/the web module, since an agent binary
 // has no other use for a web framework.

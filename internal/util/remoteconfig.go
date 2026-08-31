@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	factumUnixBaseURL = "http://factum-worker"
+	factumUnixBaseURL = "http://factum2-worker"
 	// unixProbeTimeout bounds Stat/Dial of the hub socket. HubRPCTimeout is
 	// 60s and would stall fallback when the inode is stale.
 	unixProbeTimeout = 3 * time.Second
@@ -26,19 +26,19 @@ var osStat = os.Stat
 // CommonConfig holds settings shared by every remote-config-fetching CLI
 // tool, not just one of them: DefaultDomain (Settings.DefaultDomain, edited
 // in the admin UI's Factum tab) is needed by DNS (the $ORIGIN of the
-// generated zone file) as well as Icinga/LibreNMS/Oxidized sync (matching
+// generated zone file) as well as Icinga/LibreNMS/Oxidized/Prometheus sync (matching
 // factum device names against fully-qualified DNS names).
 //
 // Every service's REST response and runtime Config type embeds this instead
 // of each declaring its own copy of the fields. Tools that don't need any
-// other service-specific config (currently just factum-worker agents) can
+// other service-specific config (currently just factum2-worker agents) can
 // fetch this alone from web.ApiCommonConfig (GET /api/common-config).
 type CommonConfig struct {
 	DefaultDomain string `json:"default_domain"`
 
 	// SmtpHost/Port/User/Pass/TLSMode and EmailSender are the shared
 	// outbound mail relay settings (Settings.Smtp*/EmailSender, edited on
-	// the admin UI's "Email" destination tab) - factum-icinga-notifications
+	// the admin UI's "Email" destination tab) - factum2-icinga-notifications
 	// is the first consumer, but any tool needing to send mail can reuse
 	// these instead of having its own copy.
 	SmtpHost    string `json:"smtp_host"`
@@ -135,8 +135,9 @@ func unixFactumClient(socket string) *http.Client {
 // "Authorization: Bearer "+factumConfig.Token - see
 // web.Controller.checkServiceToken). A unix 502 is returned as an error; it
 // is not retried over HTTPS. Shared by CLI tools that typically run on a
-// different host than the primary (factum-icinga, factum-oxidized,
-// factum-dns, factum-librenms-cli) to fetch their database-backed settings
+// different host than the primary (factum2-icinga, factum2-oxidized,
+// factum2-dns, factum2-librenms-cli, factum2-prometheus) to fetch their
+// database-backed settings
 // instead of needing a local copy - each package wraps this in its own
 // FetchRemoteConfig returning its own config type, see e.g.
 // internal/librenms/remote_config.go.

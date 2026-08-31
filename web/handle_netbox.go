@@ -26,7 +26,7 @@ type NetboxConfigResponse struct {
 
 // ApiNetboxConfig returns the Netbox API connection settings from the
 // database-backed Settings row, so callers that can't reach the primary's
-// Postgres DB directly - currently factum-librenms-cli's Sync(), which
+// Postgres DB directly - currently factum2-librenms-cli's Sync(), which
 // typically runs on the LibreNMS host, not the primary - can fetch them over
 // REST instead.
 func (ctrl *Controller) ApiNetboxConfig(c *echo.Context) error {

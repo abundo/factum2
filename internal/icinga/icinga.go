@@ -23,7 +23,7 @@ import (
 // HostState is the parsed, factum-relevant subset of an Icinga Host object
 // (icinga's own https://icinga.com/docs/icinga2/latest/doc/12-icinga2-api/
 // "results[].attrs" shape, with the "vars.factum_*" custom vars set by
-// Settings.IcingaHostTemplate - see internal/icinga/factum-icinga.go).
+// Settings.IcingaHostTemplate - see internal/icinga/factum2-icinga.go).
 type HostState struct {
 	Name                 string
 	Acknowledgement      int

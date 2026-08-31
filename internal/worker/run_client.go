@@ -1,6 +1,6 @@
 package worker
 
-// run_client.go is the HTTP client half of "factum-worker run" - the
+// run_client.go is the HTTP client half of "factum2-worker run" - the
 // rabbitmq-era CLI dialed the message bus directly; post-cutover, only the
 // primary holds hub connections, so the CLI instead asks the primary to run
 // the command and stream results back, the same way any other remote CLI
@@ -33,7 +33,7 @@ type runRequest struct {
 // command, matching the old rabbitmq-based CLI's behavior.
 func RunRemote(ctx context.Context, cfg *util.ConfigFactum, command string, args []string, onLine func(LogMsg)) (exitCode int, err error) {
 	if cfg.URL == "" {
-		return -1, fmt.Errorf("factum.url is not set - required for \"factum-worker run\"")
+		return -1, fmt.Errorf("factum.url is not set - required for \"factum2-worker run\"")
 	}
 
 	body, err := json.Marshal(runRequest{Command: command, Args: args})

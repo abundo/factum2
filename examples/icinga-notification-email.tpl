@@ -1,5 +1,5 @@
 <!--
-    Example Icinga notification email template for factum-icinga-notifications
+    Example Icinga notification email template for factum2-icinga-notifications
     (cmd/icinga-notifications). Copy this to the path passed as
     --template-file (default /etc/factum2/icinga-notification-email.tpl) and
     adjust as desired.
@@ -7,7 +7,7 @@
     This is a Go html/template - every interpolated field is HTML-escaped
     automatically, and the "nl2br" function (registered by the binary)
     safely turns a multi-line field into <br>-separated, escaped lines.
-    See cmd/icinga-notifications/factum-icinga-notifications.go's emailData
+    See cmd/icinga-notifications/factum2-icinga-notifications.go's emailData
     struct for every field available here.
 -->
 <!DOCTYPE html>

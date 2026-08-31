@@ -1,7 +1,7 @@
 package icinga
 
 //
-// factum-icinga typically runs on a different host than the primary factum
+// factum2-icinga typically runs on a different host than the primary factum
 // server, so its util.ConfigIcinga is pulled from the primary over REST
 // instead of living in this host's own YAML config - see
 // web.ApiIcingaConfig.

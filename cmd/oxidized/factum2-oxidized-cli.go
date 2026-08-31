@@ -37,7 +37,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum-oxidized",
+		Use:     "factum2-oxidized",
 		Short:   "Manage oxidized",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

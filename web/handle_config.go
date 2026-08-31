@@ -9,7 +9,7 @@ import (
 
 // ApiCommonConfig returns util.CommonConfig - settings shared by every
 // remote-config-fetching CLI tool, not tied to any one service. Tools that
-// don't need any service-specific config (currently just factum-worker
+// don't need any service-specific config (currently just factum2-worker
 // agents, via internal/worker.FetchRemoteConfig) fetch this directly instead
 // of one of the per-service endpoints (ApiDNSConfig, ApiIcingaConfig, etc.),
 // which already embed the same util.CommonConfig for tools that do need

@@ -39,7 +39,7 @@ func main() {
 	cmdbase.SetupCLI()
 
 	boa.CmdT[boa.NoParams]{
-		Use:     "factum-becs",
+		Use:     "factum2-becs",
 		Short:   "Manage BECS",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(

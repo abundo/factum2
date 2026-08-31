@@ -479,7 +479,7 @@ func requireIPHostnames(devices []*LibrenmsDevice, reporter jobevent.Reporter) e
 	if len(bad) == 0 {
 		return nil
 	}
-	err := fmt.Errorf("sync aborted: %d LibreNMS device(s) do not have an IPv4 or IPv6 address as hostname (run factum-librenms normalize-hostnames first): %s", len(bad), strings.Join(bad, ", "))
+	err := fmt.Errorf("sync aborted: %d LibreNMS device(s) do not have an IPv4 or IPv6 address as hostname (run factum2-librenms normalize-hostnames first): %s", len(bad), strings.Join(bad, ", "))
 	reporter.EmitErr(err)
 	return err
 }
