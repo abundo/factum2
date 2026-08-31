@@ -6,6 +6,8 @@ package librenms
 // (disabled + ignore, display stamped with the scheduled date) and
 // delete it after Settings.LibrenmsDelayedDeleteDays, or on the next
 // run if the pending row has ForceDelete set.
+// All LibreNMS hostnames must already be IPv4 or IPv6 addresses; Sync
+// aborts otherwise (run normalize-hostnames first).
 // For each device, check and adjust librenms
 // - device
 //     enabled flag
@@ -24,7 +26,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -369,6 +370,16 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	var librenms_delete []*LibrenmsDevice
 
 	reporter.Emit(jobevent.Info, "Librenms sync started")
+
+	librenmsDevices, err := fl.Librenms.DevicesGet()
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+	if err := requireIPHostnames(librenmsDevices, reporter); err != nil {
+		return err
+	}
+
 	slog.Debug("Get list of factum-devices")
 	fl.Factum = factum.NewFactumClient(fl.Config)
 	err = fl.RefreshFactumDevices()
@@ -383,12 +394,6 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	// not the primary, and has no access to factum's Postgres DB, so fetch
 	// them over REST instead (see web.ApiNetboxConfig).
 	fl.Netbox, err = netbox.RemoteClient(fl.Config)
-	if err != nil {
-		reporter.EmitErr(err)
-		return err
-	}
-
-	librenmsDevices, err := fl.Librenms.DevicesGet()
 	if err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -581,7 +586,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		if factumDevice.PrimaryIPv4 != "" {
 			addr := strings.Split(factumDevice.PrimaryIPv4, "/")[0]
 			if librenmsDevice.Hostname != addr {
-				if net.ParseIP(librenmsDevice.Hostname) == nil {
+				if !hostnameIsIP(librenmsDevice.Hostname) {
 					reporter.Emit(jobevent.Info, "%s: hostname is not an IP, renaming to %s", librenmsDevice.Hostname, addr)
 					if _, err := fl.Librenms.DeviceRename(librenmsDevice.DeviceID, addr); err != nil {
 						reporter.EmitErr(err)

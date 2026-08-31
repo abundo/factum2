@@ -458,6 +458,32 @@ func (librenms *LibrenmsClient) DeviceDelete(deviceID int) (*string, error) {
 	return parseApiResponse(response, err)
 }
 
+// hostnameIsIP reports whether hostname is a bare IPv4 or IPv6 address
+// (the form LibreNMS sync uses as the device key / SNMP polling target).
+func hostnameIsIP(hostname string) bool {
+	return net.ParseIP(hostname) != nil
+}
+
+// requireIPHostnames fails if any device's hostname is not an IPv4 or IPv6
+// address. Sync requires this so matching and polling stay keyed on IP;
+// run NormalizeHostnames first to convert leftover name-based hostnames.
+func requireIPHostnames(devices []*LibrenmsDevice, reporter jobevent.Reporter) error {
+	var bad []string
+	for _, device := range devices {
+		if device == nil || hostnameIsIP(device.Hostname) {
+			continue
+		}
+		reporter.Emit(jobevent.Error, "%s (id=%d): hostname is not an IPv4 or IPv6 address", device.Hostname, device.DeviceID)
+		bad = append(bad, fmt.Sprintf("%s (id=%d)", device.Hostname, device.DeviceID))
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	err := fmt.Errorf("sync aborted: %d LibreNMS device(s) do not have an IPv4 or IPv6 address as hostname (run factum-librenms normalize-hostnames first): %s", len(bad), strings.Join(bad, ", "))
+	reporter.EmitErr(err)
+	return err
+}
+
 // NormalizeHostnames finds every device whose hostname is not an IP address
 // (e.g. a legacy/manually-added device keyed on a name), preserves that name
 // as the device's display name, then renames the device's hostname to its
@@ -474,7 +500,7 @@ func (librenms *LibrenmsClient) NormalizeHostnames(reporter jobevent.Reporter) (
 
 	renamed := 0
 	for _, device := range devices {
-		if net.ParseIP(device.Hostname) != nil {
+		if hostnameIsIP(device.Hostname) {
 			continue // already keyed on an IP address
 		}
 		if device.IP == "" {
