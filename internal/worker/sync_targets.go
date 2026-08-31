@@ -7,10 +7,10 @@ import (
 )
 
 // SyncTargets lists the systems that can be synced from the web UI. Each
-// name doubles as the role/command name a factum-worker instance activates
-// to handle it - each one matches a corresponding "factum-<name> sync" CLI
+// name doubles as the role/command name a factum2-worker instance activates
+// to handle it - each one matches a corresponding "factum2-<name> sync" CLI
 // command.
-var SyncTargets = []string{"becs", "netbox", "lime", "librenms", "icinga", "oxidized", "dns", "device-sync"}
+var SyncTargets = []string{"becs", "netbox", "lime", "librenms", "icinga", "oxidized", "prometheus", "dns", "device-sync"}
 
 // sourceSyncTargets are the upstream systems synced *into* factum, as
 // opposed to the downstream destinations synced *from* factum - see
@@ -62,6 +62,7 @@ func EnabledSyncTargets(s *models.Settings) []string {
 		"librenms":    s.LibrenmsEnabled,
 		"icinga":      s.IcingaEnabled,
 		"oxidized":    s.OxidizedEnabled,
+		"prometheus":  s.PrometheusEnabled,
 		"dns":         s.DnsEnabled,
 		"device-sync": s.DeviceSyncEnabled,
 	}

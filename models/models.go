@@ -86,7 +86,7 @@ type LdapRoleMappingDTO struct {
 	RoleID  uint   `json:"role_id"`
 }
 
-// WorkerNode is a remote factum-worker host the primary dials out to over a
+// WorkerNode is a remote factum2-worker host the primary dials out to over a
 // WebSocket connection (internal/worker.RemoteManager) - the reverse of a
 // worker dialing in, so the firewall hole is a single narrow rule on the
 // worker host (source = primary) rather than any inbound rule on the
@@ -224,7 +224,7 @@ type JobTask struct {
 // internal/jobevent.Reporter, relayed over the hub transport's "event"
 // envelope and persisted by internal/worker.RemoteManager. JobTaskID is
 // nullable - a --job-flagged command run outside a tracked job (e.g. ad
-// hoc "factum-worker run") still produces rows here with no owning
+// hoc "factum2-worker run") still produces rows here with no owning
 // JobTask, they're just never queried since nothing links to them from
 // the UI.
 type JobTaskEvent struct {
@@ -290,6 +290,7 @@ type Settings struct {
 	LimeEnabled       *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
 	NetboxEnabled     *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
 	OxidizedEnabled   *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
+	PrometheusEnabled *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
 	DeviceSyncEnabled *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
 
 	// factum
@@ -304,13 +305,13 @@ type Settings struct {
 	// something that ends up in an email.
 	PublicBaseURL string `gorm:"column:public_base_url" form:"public_base_url" json:"public_base_url"`
 	// DefaultDomain is shared by every downstream sync target
-	// (DNS/Icinga/LibreNMS/Oxidized), not just DNS - it's the $ORIGIN of the
-	// generated DNS zone file, and also used to match factum device names
-	// against fully-qualified DNS names during Icinga/LibreNMS/Oxidized
-	// sync. It lives here rather than in local YAML config so each CLI tool
-	// can fetch it over REST (via util.CommonConfig) like the rest of its
-	// settings, since they typically run on a different host than the
-	// primary.
+	// (DNS/Icinga/LibreNMS/Oxidized/Prometheus), not just DNS - it's the
+	// $ORIGIN of the generated DNS zone file, and also used to match factum
+	// device names against fully-qualified DNS names during Icinga/LibreNMS/
+	// Oxidized/Prometheus sync. It lives here rather than in local YAML
+	// config so each CLI tool can fetch it over REST (via util.CommonConfig)
+	// like the rest of its settings, since they typically run on a different
+	// host than the primary.
 	DefaultDomain string `gorm:"column:default_domain" form:"default_domain" json:"default_domain"`
 
 	// BECS
@@ -328,7 +329,7 @@ type Settings struct {
 	DnsIgnorePlatforms string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
 
 	// Email / SMTP - a general-purpose outbound mail relay, not tied to
-	// Icinga specifically (factum-icinga-notifications is the first
+	// Icinga specifically (factum2-icinga-notifications is the first
 	// consumer, via util.CommonConfig, but any tool that needs to send
 	// mail can fetch the same settings).
 	SmtpHost string `gorm:"column:smtp_host" form:"smtp_host" json:"smtp_host"`
@@ -347,14 +348,14 @@ type Settings struct {
 	IcingaHostsFile string `gorm:"column:icinga_hosts_file" form:"icinga_hosts_file" json:"icinga_hosts_file"`
 	IcingaUsersFile string `gorm:"column:icinga_users_file" form:"icinga_users_file" json:"icinga_users_file"`
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
-	// per line) that factum-icinga's Update() skips entirely.
+	// per line) that factum2-icinga's Update() skips entirely.
 	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`
 	// IcingaDefaultNotification is the Icinga config line(s) applied to a
 	// host that has no cf_alarm_destination set, e.g.
 	// `  vars.pe_notify_default = true`.
 	IcingaDefaultNotification string `gorm:"column:icinga_default_notification;type:text" form:"icinga_default_notification" json:"icinga_default_notification"`
 	// IcingaHostTemplate/IcingaDependencyTemplate/IcingaUserTemplate are
-	// Go text/template (see internal/icinga/factum-icinga.go for the data
+	// Go text/template (see internal/icinga/factum2-icinga.go for the data
 	// each is executed with).
 	IcingaHostTemplate       string `gorm:"column:icinga_host_template;type:text" form:"icinga_host_template" json:"icinga_host_template"`
 	IcingaDependencyTemplate string `gorm:"column:icinga_dependency_template;type:text" form:"icinga_dependency_template" json:"icinga_dependency_template"`
@@ -429,6 +430,33 @@ type Settings struct {
 	OxidizedIgnoreManufacturers string `gorm:"column:oxidized_ignore_manufacturers;type:text" form:"oxidized_ignore_manufacturers" json:"oxidized_ignore_manufacturers"`
 	OxidizedIgnoreModels        string `gorm:"column:oxidized_ignore_models;type:text" form:"oxidized_ignore_models" json:"oxidized_ignore_models"`
 	OxidizedIgnorePlatforms     string `gorm:"column:oxidized_ignore_platforms;type:text" form:"oxidized_ignore_platforms" json:"oxidized_ignore_platforms"`
+
+	// Prometheus + snmp_exporter. factum2-prometheus writes a Prometheus
+	// file_sd JSON of SNMP targets (Settings.PrometheusDestFile) from
+	// devices flagged CfMonitorGrafana, then POSTs PrometheusReloadURL
+	// if the file changed and a URL is set. Module/Auth are snmp_exporter
+	// names (snmp.yml), not community strings.
+	PrometheusDestFile string `gorm:"column:prometheus_dest_file" form:"prometheus_dest_file" json:"prometheus_dest_file"`
+	// PrometheusReloadURL is the full URL POSTed after a file change
+	// (typically http://127.0.0.1:9090/-/reload, which needs Prometheus
+	// --web.enable-lifecycle). Empty skips the reload - file_sd still
+	// re-reads the dest file on its own refresh interval.
+	PrometheusReloadURL string `gorm:"column:prometheus_reload_url" form:"prometheus_reload_url" json:"prometheus_reload_url"`
+	// PrometheusModule is the snmp_exporter module name stamped on every
+	// target (e.g. "if_mib"). Empty is treated as "if_mib" at write time.
+	PrometheusModule string `gorm:"column:prometheus_module" form:"prometheus_module" json:"prometheus_module"`
+	// PrometheusAuth is the snmp_exporter auth name stamped on every
+	// target (an auths: key in snmp.yml, e.g. "public_v2"). Empty is
+	// treated as "public_v2" at write time.
+	PrometheusAuth string `gorm:"column:prometheus_auth" form:"prometheus_auth" json:"prometheus_auth"`
+	// PrometheusIgnoreDevices/Manufacturers/Models/Platforms are
+	// newline-separated lists, same convention as Oxidized's Ignore* -
+	// a device matching any one of them is skipped by
+	// FactumPrometheusClient.Sync.
+	PrometheusIgnoreDevices       string `gorm:"column:prometheus_ignore_devices;type:text" form:"prometheus_ignore_devices" json:"prometheus_ignore_devices"`
+	PrometheusIgnoreManufacturers string `gorm:"column:prometheus_ignore_manufacturers;type:text" form:"prometheus_ignore_manufacturers" json:"prometheus_ignore_manufacturers"`
+	PrometheusIgnoreModels        string `gorm:"column:prometheus_ignore_models;type:text" form:"prometheus_ignore_models" json:"prometheus_ignore_models"`
+	PrometheusIgnorePlatforms     string `gorm:"column:prometheus_ignore_platforms;type:text" form:"prometheus_ignore_platforms" json:"prometheus_ignore_platforms"`
 
 	// Device Sync (internal/device-sync) - VRFInGlobal/DeviceStates/
 	// DeviceIgnore are newline-separated lists, edited as multiline boxes in

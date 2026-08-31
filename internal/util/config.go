@@ -10,7 +10,7 @@ type ConfigDB struct {
 type ConfigFactum struct {
 	// URL/Token are optional at the boa level - like ConfigWorker.Roles,
 	// not every subcommand of every binary that embeds ConfigFactum
-	// actually calls out to the primary (e.g. "factum-worker start" never
+	// actually calls out to the primary (e.g. "factum2-worker start" never
 	// does, only "run" does, via internal/worker.RunRemote), so requiring
 	// them unconditionally would force values into a config file that
 	// aren't needed for that particular subcommand. Call sites that do
@@ -18,13 +18,13 @@ type ConfigFactum struct {
 	// empty URL/Token themselves and fail with a clear error instead.
 	URL string `boa:"configonly" yaml:"url" optional:"true"`
 	// Token authenticates server-to-server callers (internal/factum's HTTP
-	// client, used by e.g. factum-dns and factum-librenms-cli, the latter
+	// client, used by e.g. factum2-dns and factum2-librenms-cli, the latter
 	// typically running on a different host than the primary) against the
 	// primary's Settings.FactumApiToken, sent as "Authorization: Bearer
 	// <token>". See web.Controller.RequireAPIAuth.
 	Token string `boa:"configonly" yaml:"token" optional:"true"`
 	// Socket is the local unix API path when this CLI is co-located with
-	// factum-worker. Empty uses DefaultHubSocket unless FACTUM_WORKER_API_SOCKET
+	// factum2-worker. Empty uses DefaultHubSocket unless FACTUM_WORKER_API_SOCKET
 	// overrides it; "none"/"0" disables the socket (CLI-only escape hatch).
 	Socket string `boa:"configonly" yaml:"socket" optional:"true"`
 }
@@ -33,7 +33,7 @@ type ConfigFactum struct {
 // ConfigLibrenms's Sync maps, every field here already has a DB-backed
 // equivalent (Settings.IcingaApiURL/User/Pass/HostsFile/UsersFile/
 // IgnoreDevices/DefaultNotification/HostTemplate/DependencyTemplate/
-// UserTemplate), so factum-icinga - which typically runs on a different
+// UserTemplate), so factum2-icinga - which typically runs on a different
 // host than the primary - fetches this entirely over REST
 // (internal/icinga.FetchRemoteConfig/RemoteClient, GET /api/icinga-config,
 // served by web.ApiIcingaConfig from the Settings row) rather than reading
@@ -87,6 +87,25 @@ type ConfigOxidized struct {
 	IgnorePlatforms     string
 }
 
+// ConfigPrometheus is a runtime-only DTO, not part of ConfigRoot - same
+// pattern as ConfigOxidized: every field has a DB-backed equivalent
+// (Settings.PrometheusDestFile/ReloadURL/Module/Auth/Ignore*), fetched over
+// REST by internal/prometheus.FetchRemoteConfig from web.ApiPrometheusConfig.
+// factum2-prometheus typically runs on the Prometheus/snmp_exporter host,
+// not the primary, so it has no local prometheus YAML of its own.
+type ConfigPrometheus struct {
+	CommonConfig
+	DestFile  string
+	ReloadURL string
+	Module    string
+	Auth      string
+
+	IgnoreDevices       string
+	IgnoreManufacturers string
+	IgnoreModels        string
+	IgnorePlatforms     string
+}
+
 // ConfigDNS is a runtime-only DTO, not part of ConfigRoot - same pattern as
 // ConfigIcinga: every field has a DB-backed equivalent
 // (Settings.DnsDestFile/DnsIgnoreModels/DnsIgnorePlatforms, plus
@@ -103,7 +122,7 @@ type ConfigDNS struct {
 // as ConfigIcinga: every field has a DB-backed equivalent
 // (Settings.NetboxApiURL/NetboxApiToken), fetched over REST by
 // internal/netbox.FetchRemoteConfig/RemoteClient from web.ApiNetboxConfig -
-// so factum-librenms-cli (which typically runs on a different host than the
+// so factum2-librenms-cli (which typically runs on a different host than the
 // primary, without direct Postgres access) doesn't need its own copy of
 // these credentials, or a direct DB connection, to build a Netbox client.
 type ConfigNetbox struct {
@@ -127,7 +146,7 @@ type ConfigDeviceSyncAuth struct {
 // models.DeviceSyncAuth table instead of a Settings column, since it's a
 // list of credentials, not a single value), fetched over REST by
 // internal/device-sync.FetchRemoteConfig/RemoteClient from
-// web.ApiDeviceSyncConfig - factum-device-sync-cli typically runs on a host
+// web.ApiDeviceSyncConfig - factum2-device-sync-cli typically runs on a host
 // with network access to the devices, not the primary, so it has no direct
 // DB connection to read either from. The Netbox client itself isn't fetched
 // here - internal/netbox.RemoteClient/FetchRemoteConfig already does that
@@ -150,11 +169,11 @@ type ConfigDeviceSync struct {
 // LibrenmsPersistentDevices/LibrenmsDelayedDeleteEnabled/
 // LibrenmsDelayedDeleteDays/LibrenmsRolesEnabled/LibrenmsInterfacesDisabled),
 // fetched over REST by internal/librenms.FetchRemoteConfig/RemoteClient from
-// web.ApiLibrenmsConfig - so factum-librenms-cli, which typically runs on a
+// web.ApiLibrenmsConfig - so factum2-librenms-cli, which typically runs on a
 // different host than the primary, doesn't need any local librenms config of
 // its own. LibreNMS's own MySQL credentials aren't part of this struct at
 // all - NewFactumLibrenmsClient reads those directly from LibreNMS's .env
-// file on disk instead, since factum-librenms-cli assumes co-location with
+// file on disk instead, since factum2-librenms-cli assumes co-location with
 // the LibreNMS server.
 type ConfigLibrenms struct {
 	CommonConfig
@@ -194,7 +213,7 @@ type ConfigWorkerCommand struct {
 
 type ConfigWorker struct {
 	// Roles lists what this worker instance does. "primary" runs the
-	// primary loop (dispatches ad hoc commands via "factum-worker run" and
+	// primary loop (dispatches ad hoc commands via "factum2-worker run" and
 	// logs everything agents report); any other entry is the name of a
 	// Commands entry that this instance additionally runs as an agent for
 	// - so one worker process can be primary AND handle one or more
@@ -228,7 +247,7 @@ type ConfigWorker struct {
 	Token string `boa:"configonly" yaml:"token" optional:"true"`
 	// APISocket is the unix HTTP listener for hub RPC. Empty uses
 	// DefaultHubSocket / FACTUM_WORKER_API_SOCKET; "none"/"0" is invalid
-	// for factum-worker start (fail closed). Not a route on worker.listen.
+	// for factum2-worker start (fail closed). Not a route on worker.listen.
 	APISocket string `boa:"configonly" yaml:"api_socket" optional:"true"`
 }
 
@@ -261,7 +280,7 @@ type ConfigRoot struct {
 	LdapWriteback ConfigLdapWriteback `yaml:"ldap_writeback"`
 }
 
-// Agents get most of their configuration from the Factum API - factum-worker
+// Agents get most of their configuration from the Factum API - factum2-worker
 // is the one exception, needing its own local Worker section (worker.listen/
 // .token/.roles/.commands - see the comment on ConfigWorker for why these
 // must stay local rather than fetched remotely).

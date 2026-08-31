@@ -113,6 +113,7 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("location", "text", dev)
 	add("monitor_icinga", "boolean", dev)
 	add("monitor_librenms", "boolean", dev)
+	add("monitor_grafana", "boolean", dev)
 	add("parents", "text", dev)
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
@@ -361,7 +362,7 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	if contains(got, "becs_oid") || contains(got, "librenms_id") || contains(got, "optical_role") {
 		t.Fatalf("conditional fields present when flags off: %v", got)
 	}
-	for _, want := range []string{"source", "source_id", "orgno", "additional_name"} {
+	for _, want := range []string{"source", "source_id", "orgno", "additional_name", "monitor_grafana"} {
 		if !contains(got, want) {
 			t.Errorf("always-on field %s missing: %v", want, got)
 		}

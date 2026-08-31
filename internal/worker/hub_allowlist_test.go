@@ -16,6 +16,7 @@ func TestAllowHubAPI(t *testing.T) {
 		{http.MethodGet, "/api/icinga-config", true},
 		{http.MethodGet, "/api/dns-config", true},
 		{http.MethodGet, "/api/oxidized-config", true},
+		{http.MethodGet, "/api/prometheus-config", true},
 		{http.MethodGet, "/api/netbox-config", true},
 		{http.MethodGet, "/api/device-sync-config", true},
 		{http.MethodGet, "/api/device", true},

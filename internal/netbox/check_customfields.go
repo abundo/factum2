@@ -70,6 +70,8 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 			description: "If true the device will be monitored by Icinga"},
 		{name: "monitor_librenms", objectTypes: device, typ: netboxtool.CFTypeBoolean,
 			description: "If true the device will be monitored by LibreNMS"},
+		{name: "monitor_grafana", objectTypes: device, typ: netboxtool.CFTypeBoolean,
+			description: "If true the device will be scraped by Prometheus via snmp_exporter"},
 		{name: "parents", objectTypes: device, typ: netboxtool.CFTypeText,
 			description: "Comma-separated list of parents. If all parents are down, no alarms will be generated for this device"},
 		{name: "role", objectTypes: []string{"dcim.interface"}, typ: netboxtool.CFTypeSelect},

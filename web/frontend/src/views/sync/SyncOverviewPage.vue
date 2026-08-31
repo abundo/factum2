@@ -17,6 +17,7 @@ const targetInfo = {
   icinga: { label: 'Icinga', icon: 'i-lucide-heart', section: 'destination' },
   librenms: { label: 'LibreNMS', icon: 'i-lucide-line-chart', section: 'destination' },
   oxidized: { label: 'Oxidized', icon: 'i-lucide-save', section: 'destination' },
+  prometheus: { label: 'Prometheus', icon: 'i-lucide-gauge', section: 'destination' },
 }
 
 const targets = ref([])

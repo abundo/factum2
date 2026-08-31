@@ -201,8 +201,8 @@ func GUI(p *GuiParams) error {
 
 	// ----- API: per-service (and common) config for CLI tools that
 	// typically run on a different host than the primary
-	// (factum-librenms-cli, factum-icinga, factum-dns, factum-oxidized,
-	// factum-worker agents) -----
+	// (factum2-librenms-cli, factum2-icinga, factum2-dns, factum2-oxidized,
+	// factum2-prometheus, factum2-worker agents) -----
 	// Not under adminApi: that group's RequireAdmin rejects service-token
 	// callers outright (no "user" in context), but these routes need to
 	// accept both an admin browsing the API directly and the remote CLI's
@@ -215,7 +215,8 @@ func GUI(p *GuiParams) error {
 	api.GET("/icinga-config", ctrl.ApiIcingaConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/dns-config", ctrl.ApiDNSConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/oxidized-config", ctrl.ApiOxidizedConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
-	// "factum-worker run" - streams an NDJSON response, see ApiWorkerRun.
+	api.GET("/prometheus-config", ctrl.ApiPrometheusConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	// "factum2-worker run" - streams an NDJSON response, see ApiWorkerRun.
 	api.POST("/worker/run", ctrl.ApiWorkerRun, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/netbox-config", ctrl.ApiNetboxConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/device-sync-config", ctrl.ApiDeviceSyncConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)

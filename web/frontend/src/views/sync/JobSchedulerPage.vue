@@ -20,6 +20,7 @@ const targetInfo = {
   icinga: { label: 'Icinga' },
   librenms: { label: 'LibreNMS' },
   oxidized: { label: 'Oxidized' },
+  prometheus: { label: 'Prometheus' },
   'device-sync': { label: 'Device sync' },
 }
 
