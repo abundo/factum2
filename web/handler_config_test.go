@@ -233,8 +233,80 @@ func TestApiServiceElineUpdateStandaloneWithoutNetbox(t *testing.T) {
 	if updated.L2VPNNetboxID != 0 {
 		t.Errorf("standalone save wrote netbox id %d", updated.L2VPNNetboxID)
 	}
-	if updated.EndpointAVlan != 100 || updated.EndpointBVlan != 200 {
-		t.Errorf("vlans = %d/%d", updated.EndpointAVlan, updated.EndpointBVlan)
+	eps, err := cfgmgmt.ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 2 {
+		t.Fatalf("endpoints = %d, want 2", len(eps))
+	}
+	byRole := map[string]models.ServiceEndpoint{}
+	for _, ep := range eps {
+		byRole[ep.Role] = ep
+	}
+	if byRole["a"].InterfaceID != ifa.ID || cfgmgmt.VLANFromFields(byRole["a"].Fields) != 100 {
+		t.Errorf("endpoint a = %+v", byRole["a"])
+	}
+	if byRole["b"].InterfaceID != ifb.ID || cfgmgmt.VLANFromFields(byRole["b"].Fields) != 200 {
+		t.Errorf("endpoint b = %+v", byRole["b"])
+	}
+}
+
+func TestApiServiceEndpointsPutELINE(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00002", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a2", Platform: "eos", NetboxID: 201}
+	devB := models.Device{Name: "pe-b2", Platform: "eos", NetboxID: 202}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&devB).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"endpoints": []map[string]any{
+			{"role": "a", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+			{"role": "b", "device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 20}},
+		},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	eps, err := cfgmgmt.ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 2 {
+		t.Fatalf("endpoints = %d, want 2", len(eps))
+	}
+	var stored models.Service
+	if err := db.First(&stored, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.PseudowireID == 0 {
+		t.Fatal("expected pseudowire_id")
 	}
 }
 

@@ -552,9 +552,6 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	if err := ctrl.DB.First(&svc, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
-	if svc.ServiceType == "ELINE" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "ELINE endpoints are set via PUT .../eline"})
-	}
 	st, err := cfgmgmt.LookupServiceType(ctrl.DB, svc.ServiceType)
 	if err != nil {
 		return configWriteError(c, err)
@@ -572,8 +569,17 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	if err := cfgmgmt.ValidateEndpoints(ctrl.DB, st, eps); err != nil {
 		return configWriteError(c, err)
 	}
-	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
-		return configWriteError(c, err)
+	if svc.ServiceType == "ELINE" {
+		if err := cfgmgmt.ValidateELINEShape(ctrl.DB, eps); err != nil {
+			return configWriteError(c, err)
+		}
+		if err := ctrl.persistELINEEndpoints(c.Request().Context(), &svc, eps); err != nil {
+			return elinePersistError(c, err)
+		}
+	} else {
+		if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
+			return configWriteError(c, err)
+		}
 	}
 	if len(body.Fields) > 0 && string(body.Fields) != "null" {
 		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Update("fields", body.Fields).Error; err != nil {
@@ -587,8 +593,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	return c.JSON(http.StatusOK, rows)
 }
 
-// ApiServicePush applies a service: ELINE uses the existing push path;
-// other types render the platform pack and apply CLI sessions.
+// ApiServicePush renders the platform pack and applies CLI sessions.
 func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -597,9 +602,6 @@ func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 	var svc models.Service
 	if err := ctrl.DB.First(&svc, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
-	}
-	if svc.ServiceType == "ELINE" {
-		return ctrl.ApiServiceElinePush(c)
 	}
 	return ctrl.apiServiceGenericPush(c, &svc)
 }
@@ -616,6 +618,9 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 	if len(eps) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has no endpoints"})
 	}
+	if svc.ServiceType == "ELINE" && svc.PseudowireID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has not been provisioned yet"})
+	}
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -623,23 +628,63 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 
 	order := []uint{}
 	byDev := map[uint][]models.ServiceEndpoint{}
+	currentDeviceIDs := map[uint]bool{}
 	for _, ep := range eps {
 		if _, ok := byDev[ep.DeviceID]; !ok {
 			order = append(order, ep.DeviceID)
 		}
 		byDev[ep.DeviceID] = append(byDev[ep.DeviceID], ep)
+		currentDeviceIDs[ep.DeviceID] = true
 	}
+
+	if svc.ServiceType == "ELINE" {
+		seenAbandoned := map[uint]bool{}
+		for _, id := range []uint{svc.AppliedEndpointADeviceID, svc.AppliedEndpointBDeviceID} {
+			if id != 0 && !currentDeviceIDs[id] && !seenAbandoned[id] {
+				seenAbandoned[id] = true
+				order = append(order, id)
+			}
+		}
+	}
+
+	fetchIDs := append([]uint{}, order...)
+	fetched, err := fetchDevices(c.Request().Context(), ctrl.DB, fetchIDs)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	devicesByID := map[uint]models.Device{}
+	for _, d := range fetched {
+		devicesByID[d.ID] = d
+	}
+
 	results := []ApiServiceElinePushResult{}
+	deviceOK := map[uint]bool{}
+	abandonedErr := map[uint]string{}
+
 	for _, deviceID := range order {
-		devices, err := fetchDevices(c.Request().Context(), ctrl.DB, []uint{deviceID})
-		if err != nil || len(devices) == 0 {
-			results = append(results, ApiServiceElinePushResult{
+		device, ok := devicesByID[deviceID]
+		if !ok {
+			res := ApiServiceElinePushResult{
 				Device: "device #" + strconv.FormatUint(uint64(deviceID), 10),
 				Error:  "device not found",
-			})
+			}
+			if !currentDeviceIDs[deviceID] {
+				res.Error = "abandoned ELINE endpoint device no longer exists in factum - stale config was not removed"
+				abandonedErr[deviceID] = res.Error
+			}
+			results = append(results, res)
 			continue
 		}
-		device := devices[0]
+		if !currentDeviceIDs[deviceID] {
+			res := ctrl.removeELINEFromDevice(&device, creds, settings, &drivers.ELINERemoval{
+				Name:               svc.ServiceID,
+				StaleSubinterfaces: abandonedSubsForDevice(svc, deviceID),
+			})
+			abandonedErr[deviceID] = res.Error
+			results = append(results, res)
+			continue
+		}
+
 		pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, svc.ServiceType, device.Platform)
 		if err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
@@ -669,7 +714,11 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			})
 			continue
 		}
-		cleanupDone := false
+
+		var cmds []string
+		var firstData *cfgmgmt.GenericRenderData
+		label := device.Name
+		pushErr := ""
 		for i := range byDev[deviceID] {
 			ep := &byDev[deviceID][i]
 			var iface *models.Interface
@@ -680,40 +729,130 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 					break
 				}
 			}
-			label := device.Name
 			if iface != nil {
 				label = device.Name + " " + iface.Name
 			}
 			data, err := cfgmgmt.GenericData(ctrl.DB, svc, ep, &device, iface)
 			if err != nil {
-				results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
-				continue
+				pushErr = err.Error()
+				break
+			}
+			if firstData == nil {
+				firstData = data
+				cl, err := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
+				if err != nil {
+					pushErr = err.Error()
+					break
+				}
+				cmds = append(cmds, cl...)
 			}
 			body, err := cfgmgmt.RenderPackApplyBody(ctrl.DB, pack, data)
 			if err != nil {
-				results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
-				continue
+				pushErr = err.Error()
+				break
 			}
-			cmds := body
-			if !cleanupDone {
-				cl, err := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
-				if err != nil {
+			cmds = append(cmds, body...)
+		}
+		if pushErr != "" {
+			results = append(results, ApiServiceElinePushResult{Device: label, Error: pushErr})
+			continue
+		}
+		if firstData != nil {
+			if prep, ok := drv.(drivers.ELINEPrepareChecker); ok {
+				if err := prep.PrepareELINEApply(elineIntentFromData(firstData)); err != nil {
 					results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
 					continue
 				}
-				cmds = append(cl, body...)
 			}
-			session := svc.ServiceID
-			if ep.ID != 0 {
-				session = svc.ServiceID + "-" + strconv.FormatUint(uint64(ep.ID), 10)
-			}
-			if err := applier.ApplyCLISession(session, cmds); err != nil {
-				results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
-				continue
-			}
-			cleanupDone = true
-			results = append(results, ApiServiceElinePushResult{Device: label})
 		}
+		if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
+			results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
+			continue
+		}
+		deviceOK[deviceID] = true
+		results = append(results, ApiServiceElinePushResult{Device: label})
+	}
+
+	if svc.ServiceType == "ELINE" {
+		ctrl.stampELINEApplied(svc, eps, deviceOK, abandonedErr)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"results": results})
+}
+
+func (ctrl *Controller) stampELINEApplied(svc *models.Service, eps []models.ServiceEndpoint, deviceOK map[uint]bool, abandonedErr map[uint]string) {
+	updates := map[string]any{}
+	for _, ep := range eps {
+		if !deviceOK[ep.DeviceID] {
+			continue
+		}
+		prev := uint(0)
+		if ep.Role == "a" {
+			prev = svc.AppliedEndpointADeviceID
+		} else if ep.Role == "b" {
+			prev = svc.AppliedEndpointBDeviceID
+		}
+		if prev != 0 && prev != ep.DeviceID && abandonedErr[prev] != "" {
+			continue
+		}
+		var iface models.Interface
+		if err := ctrl.DB.First(&iface, ep.InterfaceID).Error; err != nil {
+			continue
+		}
+		vlan := cfgmgmt.VLANFromFields(ep.Fields)
+		switch ep.Role {
+		case "a":
+			updates["applied_endpoint_a_device_id"] = ep.DeviceID
+			updates["applied_endpoint_a_iface"] = iface.Name
+			updates["applied_endpoint_a_vlan"] = vlan
+		case "b":
+			updates["applied_endpoint_b_device_id"] = ep.DeviceID
+			updates["applied_endpoint_b_iface"] = iface.Name
+			updates["applied_endpoint_b_vlan"] = vlan
+		}
+	}
+	if len(updates) == 0 {
+		return
+	}
+	_ = ctrl.DB.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error
+}
+
+func abandonedSubsForDevice(svc *models.Service, deviceID uint) []drivers.ELINEStaleSubinterface {
+	var out []drivers.ELINEStaleSubinterface
+	if svc.AppliedEndpointADeviceID == deviceID && svc.AppliedEndpointAIface != "" {
+		out = append(out, drivers.ELINEStaleSubinterface{Iface: svc.AppliedEndpointAIface, VLAN: svc.AppliedEndpointAVlan})
+	}
+	if svc.AppliedEndpointBDeviceID == deviceID && svc.AppliedEndpointBIface != "" {
+		out = append(out, drivers.ELINEStaleSubinterface{Iface: svc.AppliedEndpointBIface, VLAN: svc.AppliedEndpointBVlan})
+	}
+	return out
+}
+
+func elineIntentFromData(data *cfgmgmt.GenericRenderData) *drivers.ELINEIntent {
+	if data == nil {
+		return &drivers.ELINEIntent{}
+	}
+	intent := &drivers.ELINEIntent{
+		Name:             data.Name,
+		Description:      data.Description,
+		LocalIface:       data.LocalIface,
+		LocalVLAN:        data.LocalVLAN,
+		PeerLocalIface:   data.PeerLocalIface,
+		PeerLocalVLAN:    data.PeerLocalVLAN,
+		ServiceNumericID: data.ServiceNumericID,
+	}
+	for _, s := range data.StaleSubinterfaces {
+		intent.StaleSubinterfaces = append(intent.StaleSubinterfaces, drivers.ELINEStaleSubinterface{Iface: s.Iface, VLAN: s.VLAN})
+	}
+	if data.Remote != nil {
+		intent.Remote = &drivers.ELINERemotePeer{
+			NeighborIP:   data.Remote.NeighborIP,
+			PseudowireID: data.Remote.PseudowireID,
+			MTU:          data.Remote.MTU,
+			ControlWord:  data.Remote.ControlWord,
+			DeviceName:   data.Remote.DeviceName,
+			RemoteIface:  data.Remote.RemoteIface,
+			RemoteVLAN:   data.Remote.RemoteVLAN,
+		}
+	}
+	return intent
 }

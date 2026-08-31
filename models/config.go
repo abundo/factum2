@@ -202,7 +202,7 @@ type ConfigMacroDTO struct {
 	Body string `json:"body"`
 }
 
-// ServiceEndpoint is a generic (non-ELINE) service termination.
+// ServiceEndpoint is a service termination (including ELINE a/b).
 type ServiceEndpoint struct {
 	FactumModel
 	ServiceID   uint            `json:"service_id" gorm:"index;not null"`

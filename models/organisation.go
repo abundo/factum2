@@ -151,13 +151,10 @@ type Service struct {
 	Service         string `json:"service"`
 	AgreementStatus string `json:"agreement_status"` // Lime agreement_status.text (e.g. "Active"); empty for factum-created rows
 
-	// ELINE endpoint/provisioning data (ServiceType == "ELINE" only, zero
-	// otherwise) - set via PUT /service/:id/eline
-	// (web/handler_service_eline.go), which also creates the matching
-	// Netbox L2VPN + L2VPNTerminations. EndpointXInterfaceID is the
-	// physical interface (factum Interface.ID) chosen by the user;
-	// EndpointXSubinterfaceNetboxID is the Netbox ID of the per-VLAN
-	// subinterface created to carry the L2VPN termination.
+	// Leftover ELINE columns. New code stores terminations in
+	// service_endpoints (roles a/b, vlan + netbox ids in Fields). These
+	// columns are no longer written; they remain so AutoMigrate does not
+	// drop them.
 	EndpointADeviceID             uint `json:"endpoint_a_device_id"`
 	EndpointAInterfaceID          uint `json:"endpoint_a_interface_id"`
 	EndpointAVlan                 int  `json:"endpoint_a_vlan"`
@@ -195,8 +192,7 @@ type Service struct {
 	PseudowireID  int  `json:"pseudowire_id"`
 	L2VPNNetboxID uint `json:"l2vpn_netbox_id"`
 
-	// Fields holds instance-level values for generic (non-ELINE) service
-	// types. Empty for current ELINE rows, which keep using Endpoint*.
+	// Fields holds instance-level values for a service type's schema.
 	Fields json.RawMessage `json:"fields" gorm:"serializer:json"`
 
 	Source   string `json:"source"`

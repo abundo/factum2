@@ -15,7 +15,7 @@ import (
 // Call this from the web server and CLIs. Schema changes belong in the
 // dedicated `migrate` command (cmdbase.Migrate → MigrateDatabase); running
 // AutoMigrate as a side effect of start/sync/createadmin rewrites tables
-// while factum-web may already be serving.
+// while factum2-web may already be serving.
 func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	var dns string
 	dns = fmt.Sprintf("host=%s user=%s password=%s dbname=%s timezone=Europe/Stockholm",
@@ -235,6 +235,7 @@ func dedupeInterfaces(db *gorm.DB) error {
 			{"tags", `UPDATE tags SET interface_id = d.keep_id FROM interface_dupes d WHERE tags.interface_id = d.lose_id`},
 			{"services", `UPDATE services SET endpoint_a_interface_id = d.keep_id FROM interface_dupes d WHERE services.endpoint_a_interface_id = d.lose_id`},
 			{"services", `UPDATE services SET endpoint_b_interface_id = d.keep_id FROM interface_dupes d WHERE services.endpoint_b_interface_id = d.lose_id`},
+			{"service_endpoints", `UPDATE service_endpoints SET interface_id = d.keep_id FROM interface_dupes d WHERE service_endpoints.interface_id = d.lose_id`},
 			{"optical_ports", `UPDATE optical_ports SET interface_id = d.keep_id FROM interface_dupes d WHERE optical_ports.interface_id = d.lose_id`},
 			{"optical_x_connects", `UPDATE optical_x_connects SET interface_a_id = d.keep_id FROM interface_dupes d WHERE optical_x_connects.interface_a_id = d.lose_id`},
 			{"optical_x_connects", `UPDATE optical_x_connects SET interface_b_id = d.keep_id FROM interface_dupes d WHERE optical_x_connects.interface_b_id = d.lose_id`},

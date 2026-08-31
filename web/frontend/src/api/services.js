@@ -25,18 +25,12 @@ export function updateServiceType(id, payload) {
   return http.put(`/service/${id}/type`, payload).then((res) => res.data)
 }
 
-// Provisions (or re-provisions) an ELINE service's device/interface/VLAN
-// endpoints: creates the Netbox L2VPN + subinterfaces + terminations and
-// persists the choice on the service - see web/handler_service_eline.go.
+// Historical A/B DTO for ELINE endpoints. The GUI uses putServiceEndpoints;
+// this adapter remains for API clients.
 export function updateServiceEline(id, payload) {
   return http.put(`/service/${id}/eline`, payload).then((res) => res.data)
 }
 
-// Pushes an already-provisioned ELINE service's config out to its endpoint
-// device(s) - a separate, explicit step from updateServiceEline above,
-// since it mutates live devices. payload is {username, password}; the
-// response is {results: [{device, error}]}, one entry per endpoint device -
-// see web.ApiServiceElinePush.
 export function pushServiceEline(id, payload) {
   return http.post(`/service/${id}/eline/push`, payload).then((res) => res.data)
 }

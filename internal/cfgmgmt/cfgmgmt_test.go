@@ -507,7 +507,7 @@ func TestRenderELINEPackMatchesEmbed(t *testing.T) {
 	if err != nil || pack == nil {
 		t.Fatalf("pack: %v", err)
 	}
-	intent := ELINERenderData{
+	intent := GenericRenderData{
 		Name:        "CN00570",
 		Description: "ID=CN00570 Acme AB",
 		LocalIface:  "Ethernet1",
@@ -547,6 +547,63 @@ func TestRenderELINEPackMatchesEmbed(t *testing.T) {
 	}
 	if !foundIface {
 		t.Fatalf("apply body missing interface config: %v", bodyOnly)
+	}
+}
+
+func TestRenderELINEFromServiceEndpoints(t *testing.T) {
+	db := newTestDB(t)
+	cust := models.Customer{Name: "Acme AB"}
+	mustCreate(t, db, &cust)
+	pe1 := models.Device{Name: "pe1", Platform: "eos", NetboxID: 501}
+	pe2 := models.Device{Name: "pe2", Platform: "eos", NetboxID: 502}
+	mustCreate(t, db, &pe1)
+	mustCreate(t, db, &pe2)
+	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 510}
+	ifb := models.Interface{DeviceID: pe2.ID, Name: "Ethernet2", Type: "1000base-t", NetboxID: 520}
+	mustCreate(t, db, &ifa)
+	mustCreate(t, db, &ifb)
+	lo1 := models.Interface{DeviceID: pe1.ID, Name: "Loopback0", Type: "virtual", NetboxID: 511}
+	lo2 := models.Interface{DeviceID: pe2.ID, Name: "Loopback0", Type: "virtual", NetboxID: 521}
+	mustCreate(t, db, &lo1)
+	mustCreate(t, db, &lo2)
+	mustCreate(t, db, &models.Address{InterfaceID: lo1.ID, Address: "10.0.0.1/32"})
+	mustCreate(t, db, &models.Address{InterfaceID: lo2.ID, Address: "10.0.0.2/32"})
+
+	svc := models.Service{
+		CustomerID:   cust.ID,
+		ServiceID:    "CN00570",
+		ServiceType:  "ELINE",
+		PseudowireID: 1000570,
+	}
+	mustCreate(t, db, &svc)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "a", DeviceID: pe1.ID, InterfaceID: ifa.ID,
+		Fields: EncodeEndpointFields(100, 0, 0),
+	})
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "b", DeviceID: pe2.ID, InterfaceID: ifb.ID,
+		Fields: EncodeEndpointFields(200, 0, 0),
+	})
+
+	out, err := RenderService(db, svc.ID)
+	if err != nil {
+		t.Fatalf("RenderService: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("no sources")
+	}
+	var joined string
+	for _, src := range out {
+		if src.Error != "" {
+			t.Fatalf("render error: %s", src.Error)
+		}
+		joined += strings.Join(src.Commands, "\n") + "\n"
+	}
+	if !strings.Contains(joined, "neighbor 10.0.0.2") {
+		t.Errorf("missing remote neighbor in %v", joined)
+	}
+	if !strings.Contains(joined, "interface Ethernet1.100") {
+		t.Errorf("missing local subinterface in %v", joined)
 	}
 }
 

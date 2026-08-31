@@ -8,10 +8,8 @@ import {
   deleteService,
   getService,
   pushService,
-  pushServiceEline,
   putServiceEndpoints,
   updateService,
-  updateServiceEline,
   updateServiceType,
 } from '@/api/services'
 import { getServicePath, putServicePath } from '@/api/optical'
@@ -57,14 +55,8 @@ const deleting = ref(false)
 const deleteRemoveNetbox = ref(false)
 const deleteRemoveDevice = ref(false)
 
-const endpointALabel = ref('')
-const endpointBLabel = ref('')
 const pickerOpen = ref(false)
-const pickerTarget = ref(null) // 'a' | 'b'
-const elineSubmitted = ref(false)
-const elineSaving = ref(false)
-const elinePushing = ref(false)
-const elinePushResults = ref([])
+const pickerTarget = ref(null)
 
 // Mirrors ServiceCreateWizard.vue's capacity-product subset (ELINE/ELAN/
 // L3VPN/POLARIX) - Wavelength/Fiber have no ServiceType, so they aren't
@@ -91,9 +83,7 @@ const selectedServiceType = computed(() =>
   serviceTypeRows.value.find((t) => t.name === service.value.service_type),
 )
 const genericRoles = computed(() =>
-  service.value.service_type && service.value.service_type !== 'ELINE'
-    ? (selectedServiceType.value?.endpoint_roles ?? [])
-    : [],
+  service.value.service_type ? (selectedServiceType.value?.endpoint_roles ?? []) : [],
 )
 const genericEndpoints = ref([])
 const genericSaving = ref(false)
@@ -118,26 +108,6 @@ const readOnly = computed(() => service.value.source === 'lime')
 // rejects those calls outright (web/auth.go's RequireWrite), so disabling
 // them here just avoids a submit-then-403 round trip.
 const canWrite = computed(() => authStore.canWrite)
-
-const elineEndpointsValid = computed(() => {
-  const s = service.value
-  return Boolean(
-    s.endpoint_a_device_id &&
-    s.endpoint_a_interface_id &&
-    s.endpoint_a_vlan &&
-    s.endpoint_b_device_id &&
-    s.endpoint_b_interface_id &&
-    s.endpoint_b_vlan,
-  )
-})
-
-const elineEndpointsSame = computed(() => {
-  const s = service.value
-  return (
-    s.endpoint_a_device_id === s.endpoint_b_device_id &&
-    s.endpoint_a_interface_id === s.endpoint_b_interface_id
-  )
-})
 
 function loadServiceTypes() {
   if (serviceTypeRows.value.length > 0) return
@@ -222,15 +192,11 @@ function attachPath() {
 
 function loadServiceById(id) {
   submitted.value = false
-  elineSubmitted.value = false
-  elinePushResults.value = []
   loading.value = true
   getService(id)
     .then((data) => {
       service.value = { ...data }
       loadPath(data.id)
-      endpointALabel.value = ''
-      endpointBLabel.value = ''
       genericEndpoints.value = (data.endpoints ?? []).map((ep) => ({
         role: ep.role,
         device_id: ep.device_id,
@@ -238,19 +204,17 @@ function loadServiceById(id) {
         fields: { ...ep.fields },
         label: '',
       }))
+      if (data.service_type === 'ELINE' && genericEndpoints.value.length === 0) {
+        genericEndpoints.value = [
+          { role: 'a', device_id: null, interface_id: null, fields: {}, label: '' },
+          { role: 'b', device_id: null, interface_id: null, fields: {}, label: '' },
+        ]
+      }
       genericEndpoints.value.forEach((ep, i) => {
         loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
           genericEndpoints.value[i].label = label
         })
       })
-      if (data.service_type === 'ELINE') {
-        loadEndpointLabel(data.endpoint_a_device_id, data.endpoint_a_interface_id).then((label) => {
-          endpointALabel.value = label
-        })
-        loadEndpointLabel(data.endpoint_b_device_id, data.endpoint_b_interface_id).then((label) => {
-          endpointBLabel.value = label
-        })
-      }
     })
     .catch(() => {
       toast.add({
@@ -272,29 +236,26 @@ watch(open, (isOpen) => {
   loadServiceById(props.serviceId)
 })
 
+watch(
+  () => service.value.service_type,
+  (t) => {
+    if (t === 'ELINE' && genericEndpoints.value.length === 0) {
+      genericEndpoints.value = [
+        { role: 'a', device_id: null, interface_id: null, fields: {}, label: '' },
+        { role: 'b', device_id: null, interface_id: null, fields: {}, label: '' },
+      ]
+    }
+  },
+)
+
 function hideDialog() {
   open.value = false
   submitted.value = false
-  elineSubmitted.value = false
-  elinePushResults.value = []
-}
-
-function openPicker(target) {
-  pickerTarget.value = target
-  pickerOpen.value = true
 }
 
 function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
   const label = `${deviceName} / ${interfaceName}`
-  if (pickerTarget.value === 'a') {
-    service.value.endpoint_a_device_id = deviceId
-    service.value.endpoint_a_interface_id = interfaceId
-    endpointALabel.value = label
-  } else if (pickerTarget.value === 'b') {
-    service.value.endpoint_b_device_id = deviceId
-    service.value.endpoint_b_interface_id = interfaceId
-    endpointBLabel.value = label
-  } else if (pickerTarget.value === 'generic' && genericPickerIndex.value != null) {
+  if (pickerTarget.value === 'generic' && genericPickerIndex.value != null) {
     const ep = genericEndpoints.value[genericPickerIndex.value]
     if (ep) {
       ep.device_id = deviceId
@@ -337,6 +298,12 @@ function saveGenericEndpoints() {
   putServiceEndpoints(service.value.id, payload)
     .then((rows) => {
       service.value.endpoints = rows
+      return getService(service.value.id)
+    })
+    .then((data) => {
+      if (data) {
+        service.value = { ...service.value, ...data }
+      }
       toast.add({
         color: 'success',
         title: 'Successful',
@@ -426,98 +393,6 @@ function doPushGeneric(username, password) {
     })
     .finally(() => {
       genericPushing.value = false
-    })
-}
-
-// Single-button ELINE flow: provision endpoints/pseudowire in Netbox, then
-// on success push the resulting config to both endpoint devices. The push
-// step needs device credentials (same as the old separate "Push to devices"
-// button); withCredentials may open a nested credentials dialog.
-function saveAndPushEline() {
-  elineSubmitted.value = true
-  if (!elineEndpointsValid.value || elineEndpointsSame.value) {
-    return
-  }
-
-  elineSaving.value = true
-  const payload = {
-    endpoint_a_device_id: service.value.endpoint_a_device_id,
-    endpoint_a_interface_id: service.value.endpoint_a_interface_id,
-    endpoint_a_vlan: Number(service.value.endpoint_a_vlan),
-    endpoint_b_device_id: service.value.endpoint_b_device_id,
-    endpoint_b_interface_id: service.value.endpoint_b_interface_id,
-    endpoint_b_vlan: Number(service.value.endpoint_b_vlan),
-  }
-
-  updateServiceEline(service.value.id, payload)
-    .then((data) => {
-      service.value = { ...service.value, ...data }
-      toast.add({
-        color: 'success',
-        title: 'Successful',
-        description: 'ELINE provisioned in Netbox',
-        duration: 3000,
-      })
-      emit('saved')
-      withCredentials(elineDeviceIds(), doPushEline)
-    })
-    .catch((err) => {
-      toast.add({
-        color: 'error',
-        title: 'Error',
-        description: err?.response?.data?.error ?? 'Failed to provision ELINE in Netbox.',
-        duration: 4000,
-      })
-    })
-    .finally(() => {
-      elineSaving.value = false
-    })
-}
-
-function elineDeviceIds() {
-  const s = service.value
-  return [s?.endpoint_a_device_id, s?.endpoint_b_device_id].filter(Boolean)
-}
-
-function doPushEline(username, password) {
-  const deviceIds = elineDeviceIds()
-  elinePushing.value = true
-  pushServiceEline(service.value.id, { username, password })
-    .then((data) => {
-      elinePushResults.value = data.results ?? []
-      const failed = elinePushResults.value.filter((r) => r.error)
-      // HTTP 200 with per-device results: credentials were accepted enough to
-      // attempt the push. Cache them so a config error on one side does not
-      // force a re-prompt; only the .catch path treats the pair as bad.
-      rememberSuccess(deviceIds, username, password)
-      if (failed.length === 0) {
-        toast.add({
-          color: 'success',
-          title: 'Pushed to devices',
-          description: 'ELINE config was applied to both endpoint devices.',
-          duration: 3000,
-        })
-        hideDialog()
-      } else {
-        toast.add({
-          color: 'error',
-          title: 'Push completed with errors',
-          description: `${failed.length} of ${elinePushResults.value.length} device(s) failed - see details below.`,
-          duration: 5000,
-        })
-      }
-    })
-    .catch((err) => {
-      rememberFailure(deviceIds, username, password)
-      toast.add({
-        color: 'error',
-        title: 'Push failed',
-        description: err?.response?.data?.error ?? 'Failed to push ELINE config to devices.',
-        duration: 4000,
-      })
-    })
-    .finally(() => {
-      elinePushing.value = false
     })
 }
 
@@ -616,7 +491,7 @@ function hideDeleteDialog() {
 function doDeleteService(username, password) {
   if (!deleteTarget.value) return
 
-  const deviceIds = elineDeviceIds()
+  const deviceIds = genericDeviceIds()
   deleting.value = true
   deleteService(deleteTarget.value.id, {
     remove_from_netbox: deleteRemoveNetbox.value,
@@ -656,22 +531,14 @@ function doDeleteService(username, password) {
 }
 
 // Removing the device config is a real device operation, so it needs
-// credentials the same way saveAndPushEline does - the backend blocks the
-// whole delete (row kept, service still shows up) if that cleanup fails, so
-// there's no partial state to reconcile afterward. Closes the delete
-// dialog first when credentials are needed: withCredentials's own dialog
-// would otherwise stack three deep (service dialog -> delete dialog ->
-// credentials dialog), and a third nested UModal's backdrop overlay ends
-// up covering its own "Continue" button, blocking clicks - saveAndPushEline
-// never hits this since it only ever nests two (service dialog ->
-// credentials dialog). deleteTarget/deleteRemoveNetbox/deleteRemoveDevice
-// are left set (only deleteDialog itself closes), so doDeleteService below
-// still has everything it needs.
+// credentials. The backend blocks the whole delete (row kept) if that
+// cleanup fails. Closes the delete dialog first when credentials are
+// needed so UModal backdrops don't stack three deep.
 function deleteServiceConfirmed() {
   if (!deleteTarget.value) return
   if (deleteRemoveDevice.value) {
     deleteDialog.value = false
-    withCredentials(elineDeviceIds(), doDeleteService)
+    withCredentials(genericDeviceIds(), doDeleteService)
   } else {
     doDeleteService('', '')
   }
@@ -807,109 +674,17 @@ function deleteServiceConfirmed() {
           </div>
         </div>
 
-        <template v-if="service.service_type === 'ELINE'">
-          <hr class="my-6" />
-          <div class="flex flex-col gap-4">
-            <h5 class="m-0">ELINE endpoints</h5>
-
-            <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
-              <label class="font-bold">Endpoint A</label>
-              <div class="flex items-center gap-2">
-                <UInput
-                  :model-value="endpointALabel"
-                  disabled
-                  placeholder="Not selected"
-                  class="w-full"
-                />
-                <UButton
-                  icon="i-lucide-list-tree"
-                  variant="outline"
-                  color="neutral"
-                  :disabled="!canWrite"
-                  @click="openPicker('a')"
-                />
-              </div>
-
-              <label class="font-bold">VLAN A</label>
-              <UInputNumber
-                v-model="service.endpoint_a_vlan"
-                :disabled="!canWrite"
-                :min="1"
-                :max="4094"
-                class="w-full"
-              />
-
-              <label class="font-bold">Endpoint B</label>
-              <div class="flex items-center gap-2">
-                <UInput
-                  :model-value="endpointBLabel"
-                  disabled
-                  placeholder="Not selected"
-                  class="w-full"
-                />
-                <UButton
-                  icon="i-lucide-list-tree"
-                  variant="outline"
-                  color="neutral"
-                  :disabled="!canWrite"
-                  @click="openPicker('b')"
-                />
-              </div>
-
-              <label class="font-bold">VLAN B</label>
-              <UInputNumber
-                v-model="service.endpoint_b_vlan"
-                :disabled="!canWrite"
-                :min="1"
-                :max="4094"
-                class="w-full"
-              />
-
-              <template v-if="service.pseudowire_id">
-                <label class="font-bold">Pseudowire ID</label>
-                <UInput :model-value="service.pseudowire_id" disabled class="w-full" />
-              </template>
-            </div>
-
-            <small v-if="elineSubmitted && elineEndpointsSame" class="text-red-500">
-              Endpoint A and endpoint B must not be the same device/interface.
-            </small>
-            <small v-else-if="elineSubmitted && !elineEndpointsValid" class="text-red-500">
-              Select both endpoints and enter both VLANs before provisioning.
-            </small>
-
-            <div class="flex justify-end gap-2">
-              <UButton
-                label="Save, provision & push"
-                icon="i-lucide-cloud-upload"
-                :loading="elineSaving || elinePushing"
-                :disabled="!canWrite"
-                @click="saveAndPushEline"
-              />
-            </div>
-
-            <div v-if="elinePushResults.length" class="flex flex-col gap-1">
-              <div
-                v-for="result in elinePushResults"
-                :key="result.device"
-                class="flex items-center gap-2 text-sm"
-              >
-                <UBadge
-                  :label="result.error ? 'Failed' : 'OK'"
-                  :color="result.error ? 'error' : 'success'"
-                  variant="subtle"
-                />
-                <span class="font-medium">{{ result.device }}</span>
-                <span v-if="result.error" class="text-red-500">{{ result.error }}</span>
-              </div>
-            </div>
-          </div>
-        </template>
-
         <template v-if="genericRoles.length">
           <hr class="my-6" />
           <div class="flex flex-col gap-4">
             <h5 class="m-0">Endpoints</h5>
+            <div
+              v-if="service.pseudowire_id"
+              class="grid grid-cols-[9rem_1fr] items-center gap-x-3"
+            >
+              <label class="font-bold">Pseudowire ID</label>
+              <UInput :model-value="service.pseudowire_id" disabled class="w-full" />
+            </div>
             <div
               v-for="(ep, i) in genericEndpoints"
               :key="i"

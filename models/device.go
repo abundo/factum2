@@ -105,10 +105,9 @@ type Interface struct {
 
 	// Services lists the factum services terminating on this interface,
 	// assembled by fetchDevices (web/handle_dcim.go) - not a DB relation
-	// on Interface itself. For ELINE, EndpointA/BInterfaceID is the
-	// physical port the operator chose; when a per-VLAN subinterface
-	// exists (EndpointXSubinterfaceNetboxID / "<parent>.<vlan>"), the
-	// service is attached to that subinterface row instead.
+	// on Interface itself. Terminations come from service_endpoints; when
+	// a per-VLAN subinterface exists, the service is attached to that
+	// subinterface row instead of the physical port.
 	Services []InterfaceServiceRef `json:"services,omitempty" gorm:"-"`
 	// Optical is assembled by fetchDevices — not a DB relation on Interface.
 	Optical *OpticalPort `json:"optical,omitempty" gorm:"-"`

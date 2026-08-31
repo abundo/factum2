@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
@@ -254,86 +255,85 @@ func vlanFromSubinterfaceName(name string) int {
 	return vlan
 }
 
-// applyL2VPNEndsToService writes endpoint fields for ends (1 or 2) onto
-// svc. Returns whether anything actually changed.
+// applyL2VPNEndsToService writes generic service_endpoints for ends (1 or 2)
+// onto svc. Returns whether anything actually changed.
 func applyL2VPNEndsToService(db *gorm.DB, svc *models.Service, l2vpn *netboxtool.NBL2VPN, ends []resolvedELineEnd) (bool, error) {
-	var a, b resolvedELineEnd
-	a = ends[0]
-	if len(ends) > 1 {
-		b = ends[1]
+	roles := []string{"a", "b"}
+	want := make([]models.ServiceEndpoint, 0, len(ends))
+	for i, end := range ends {
+		if end.physicalInterfaceID == 0 {
+			continue
+		}
+		role := roles[i]
+		if i >= len(roles) {
+			break
+		}
+		want = append(want, models.ServiceEndpoint{
+			Role:        role,
+			DeviceID:    end.deviceID,
+			InterfaceID: end.physicalInterfaceID,
+			Fields:      cfgmgmt.EncodeEndpointFields(end.vlan, end.subinterfaceNetboxID, end.terminationNetboxID),
+		})
 	}
 
 	pseudowireID := l2vpn.Identifier
 	if pseudowireID == 0 {
-		// Keep any previously stored value if Netbox has no identifier
-		// (same-device patches often omit it).
 		pseudowireID = svc.PseudowireID
 	}
 
-	updates := map[string]any{
-		"service_type":                      "ELINE",
-		"l2_vpn_netbox_id":                  l2vpn.NetboxID,
-		"pseudowire_id":                     pseudowireID,
-		"endpoint_a_device_id":              a.deviceID,
-		"endpoint_a_interface_id":           a.physicalInterfaceID,
-		"endpoint_a_vlan":                   a.vlan,
-		"endpoint_a_subinterface_netbox_id": a.subinterfaceNetboxID,
-		"endpoint_a_termination_netbox_id":  a.terminationNetboxID,
-		"endpoint_b_device_id":              b.deviceID,
-		"endpoint_b_interface_id":           b.physicalInterfaceID,
-		"endpoint_b_vlan":                   b.vlan,
-		"endpoint_b_subinterface_netbox_id": b.subinterfaceNetboxID,
-		"endpoint_b_termination_netbox_id":  b.terminationNetboxID,
+	existing, err := cfgmgmt.ListEndpoints(db, svc.ID)
+	if err != nil {
+		return false, err
 	}
-
-	if !serviceEndpointsDiffer(svc, updates, pseudowireID, l2vpn.NetboxID) {
+	if !serviceEndpointsDiffer(svc, existing, want, pseudowireID, l2vpn.NetboxID) {
 		return false, nil
 	}
 
+	updates := map[string]any{
+		"service_type":     "ELINE",
+		"l2_vpn_netbox_id": l2vpn.NetboxID,
+		"pseudowire_id":    pseudowireID,
+	}
 	if err := db.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error; err != nil {
 		return false, fmt.Errorf("update service %s from l2vpn %q: %w", svc.ServiceID, l2vpn.Name, err)
 	}
+	if err := cfgmgmt.ReplaceEndpoints(db, svc.ID, want); err != nil {
+		return false, fmt.Errorf("update service %s endpoints from l2vpn %q: %w", svc.ServiceID, l2vpn.Name, err)
+	}
 
-	// Reflect in the in-memory copy for subsequent index lookups.
 	svc.ServiceType = "ELINE"
 	svc.L2VPNNetboxID = l2vpn.NetboxID
 	svc.PseudowireID = pseudowireID
-	svc.EndpointADeviceID = a.deviceID
-	svc.EndpointAInterfaceID = a.physicalInterfaceID
-	svc.EndpointAVlan = a.vlan
-	svc.EndpointASubinterfaceNetboxID = a.subinterfaceNetboxID
-	svc.EndpointATerminationNetboxID = a.terminationNetboxID
-	svc.EndpointBDeviceID = b.deviceID
-	svc.EndpointBInterfaceID = b.physicalInterfaceID
-	svc.EndpointBVlan = b.vlan
-	svc.EndpointBSubinterfaceNetboxID = b.subinterfaceNetboxID
-	svc.EndpointBTerminationNetboxID = b.terminationNetboxID
-
 	return true, nil
 }
 
-// serviceEndpointsDiffer reports whether updates would change anything on
-// svc worth writing.
-func serviceEndpointsDiffer(svc *models.Service, updates map[string]any, pseudowireID int, l2vpnID uint) bool {
+func serviceEndpointsDiffer(svc *models.Service, existing, want []models.ServiceEndpoint, pseudowireID int, l2vpnID uint) bool {
 	if svc.ServiceType != "ELINE" {
 		return true
 	}
 	if svc.L2VPNNetboxID != l2vpnID || svc.PseudowireID != pseudowireID {
 		return true
 	}
-	if svc.EndpointADeviceID != updates["endpoint_a_device_id"].(uint) ||
-		svc.EndpointAInterfaceID != updates["endpoint_a_interface_id"].(uint) ||
-		svc.EndpointAVlan != updates["endpoint_a_vlan"].(int) ||
-		svc.EndpointASubinterfaceNetboxID != updates["endpoint_a_subinterface_netbox_id"].(uint) ||
-		svc.EndpointATerminationNetboxID != updates["endpoint_a_termination_netbox_id"].(uint) {
+	if len(existing) != len(want) {
 		return true
 	}
-	if svc.EndpointBDeviceID != updates["endpoint_b_device_id"].(uint) ||
-		svc.EndpointBInterfaceID != updates["endpoint_b_interface_id"].(uint) ||
-		svc.EndpointBVlan != updates["endpoint_b_vlan"].(int) ||
-		svc.EndpointBSubinterfaceNetboxID != updates["endpoint_b_subinterface_netbox_id"].(uint) ||
-		svc.EndpointBTerminationNetboxID != updates["endpoint_b_termination_netbox_id"].(uint) {
-		return true
+	byRole := map[string]models.ServiceEndpoint{}
+	for _, e := range existing {
+		byRole[e.Role] = e
+	}
+	for _, w := range want {
+		got, ok := byRole[w.Role]
+		if !ok || got.DeviceID != w.DeviceID || got.InterfaceID != w.InterfaceID {
+			return true
+		}
+		if cfgmgmt.VLANFromFields(got.Fields) != cfgmgmt.VLANFromFields(w.Fields) {
+			return true
+		}
+		gs, gt := cfgmgmt.NetboxIDsFromFields(got.Fields)
+		ws, wt := cfgmgmt.NetboxIDsFromFields(w.Fields)
+		if gs != ws || gt != wt {
+			return true
+		}
 	}
 	return false
 }

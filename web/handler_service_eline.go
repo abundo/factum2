@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -116,7 +118,7 @@ func resolveELineEndpoint(devices map[uint]models.Device, deviceID, interfaceID 
 	if !found {
 		return nil, fmt.Errorf("endpoint %s: interface not found on device %q", label, device.Name)
 	}
-	if !isPhysicalInterfaceType(iface.Type) {
+	if !cfgmgmt.IsPhysicalInterfaceType(iface.Type) {
 		return nil, fmt.Errorf("endpoint %s: interface %q is not a physical interface", label, iface.Name)
 	}
 	if vlan < 1 || vlan > 4094 {
@@ -229,12 +231,8 @@ func reconcileELineSubinterface(db *gorm.DB, nb *netboxtool.NetboxClient, ep *eL
 	return &eLineReconcileResult{subinterfaceNetboxID: created.ID}, nil
 }
 
-// ApiServiceElineUpdate provisions (or re-provisions, on later edits) the
-// device/interface/VLAN endpoints of an ELINE service and persists them on
-// the Service row. When NetBox is configured it also creates a per-VLAN
-// subinterface on each side and an ipam.L2VPN (type "evpl") with two
-// terminations; otherwise endpoints and a locally derived PseudowireID are
-// stored without NetBox objects. It does not push config to live devices.
+// ApiServiceElineUpdate is a thin adapter around persistELINEEndpoints:
+// maps the historical A/B DTO onto generic service_endpoints (roles a/b).
 func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -248,149 +246,170 @@ func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
 	if service.ServiceType != "ELINE" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service is not an ELINE service"})
 	}
-	var customer models.Customer
-	if err := ctrl.DB.First(&customer, service.CustomerID).Error; err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has no valid customer"})
-	}
 
 	var dto ServiceElineDTO
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if dto.EndpointADeviceID == dto.EndpointBDeviceID && dto.EndpointAInterfaceID == dto.EndpointBInterfaceID {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "endpoint A and endpoint B must not be the same device/interface"})
+	eps := []models.ServiceEndpoint{
+		{
+			Role: "a", DeviceID: dto.EndpointADeviceID, InterfaceID: dto.EndpointAInterfaceID,
+			Fields: cfgmgmt.EncodeEndpointFields(dto.EndpointAVlan, 0, 0),
+		},
+		{
+			Role: "b", DeviceID: dto.EndpointBDeviceID, InterfaceID: dto.EndpointBInterfaceID,
+			Fields: cfgmgmt.EncodeEndpointFields(dto.EndpointBVlan, 0, 0),
+		},
 	}
-
-	ctx := c.Request().Context()
-	devices, err := fetchDevices(ctx, ctrl.DB, []uint{dto.EndpointADeviceID, dto.EndpointBDeviceID})
+	st, err := cfgmgmt.LookupServiceType(ctrl.DB, "ELINE")
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := cfgmgmt.ValidateEndpoints(ctrl.DB, st, eps); err != nil {
+		if se := cfgmgmt.AsStatusError(err); se != nil {
+			return c.JSON(se.Status, map[string]any{"error": se.Message})
+		}
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := cfgmgmt.ValidateELINEShape(ctrl.DB, eps); err != nil {
+		if se := cfgmgmt.AsStatusError(err); se != nil {
+			return c.JSON(se.Status, map[string]any{"error": se.Message})
+		}
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := ctrl.persistELINEEndpoints(c.Request().Context(), &service, eps); err != nil {
+		return elinePersistError(c, err)
+	}
+	var updated models.Service
+	if err := ctrl.DB.First(&updated, id).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	rows, _ := cfgmgmt.ListEndpoints(ctrl.DB, id)
+	return c.JSON(http.StatusOK, ServiceDetailResponse{
+		Service:         updated,
+		AppliedToDevice: updated.AppliedEndpointADeviceID != 0 || updated.AppliedEndpointBDeviceID != 0,
+		Endpoints:       rows,
+	})
+}
+
+type elineHTTPError struct {
+	status int
+	msg    string
+}
+
+func (e *elineHTTPError) Error() string { return e.msg }
+
+func elinePersistError(c *echo.Context, err error) error {
+	if se := cfgmgmt.AsStatusError(err); se != nil {
+		return c.JSON(se.Status, map[string]any{"error": se.Message})
+	}
+	var he *elineHTTPError
+	if errors.As(err, &he) {
+		return c.JSON(he.status, map[string]any{"error": he.msg})
+	}
+	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+}
+
+// persistELINEEndpoints writes generic service_endpoints for an ELINE,
+// optionally reconciling NetBox L2VPN + subinterfaces. Does not write
+// Service.EndpointA/B* columns.
+func (ctrl *Controller) persistELINEEndpoints(ctx context.Context, svc *models.Service, eps []models.ServiceEndpoint) error {
+	var customer models.Customer
+	if err := ctrl.DB.First(&customer, svc.CustomerID).Error; err != nil {
+		return &elineHTTPError{http.StatusBadRequest, "service has no valid customer"}
+	}
+	pseudowireID, err := pseudowireIDFromServiceID(svc.ServiceID)
+	if err != nil {
+		return &elineHTTPError{http.StatusBadRequest, err.Error()}
+	}
+
+	ids := make([]uint, 0, len(eps))
+	for _, ep := range eps {
+		ids = append(ids, ep.DeviceID)
+	}
+	devices, err := fetchDevices(ctx, ctrl.DB, ids)
+	if err != nil {
+		return err
 	}
 	devicesByID := make(map[uint]models.Device, len(devices))
 	for _, d := range devices {
 		devicesByID[d.ID] = d
 	}
 
-	epA, err := resolveELineEndpoint(devicesByID, dto.EndpointADeviceID, dto.EndpointAInterfaceID, dto.EndpointAVlan, "A")
+	existing, err := cfgmgmt.ListEndpoints(ctrl.DB, svc.ID)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return err
 	}
-	epB, err := resolveELineEndpoint(devicesByID, dto.EndpointBDeviceID, dto.EndpointBInterfaceID, dto.EndpointBVlan, "B")
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	prevByRole := map[string]models.ServiceEndpoint{}
+	for _, e := range existing {
+		prevByRole[e.Role] = e
 	}
 
-	pseudowireID, err := pseudowireIDFromServiceID(service.ServiceID)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	resolved := make([]*eLineEndpoint, len(eps))
+	for i := range eps {
+		vlan := cfgmgmt.VLANFromFields(eps[i].Fields)
+		ep, err := resolveELineEndpoint(devicesByID, eps[i].DeviceID, eps[i].InterfaceID, vlan, eps[i].Role)
+		if err != nil {
+			return &elineHTTPError{http.StatusBadRequest, err.Error()}
+		}
+		resolved[i] = ep
 	}
 
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return err
 	}
 
-	if !netboxConfigured(settings) {
-		updates := map[string]any{
-			"endpoint_a_device_id":    dto.EndpointADeviceID,
-			"endpoint_a_interface_id": dto.EndpointAInterfaceID,
-			"endpoint_a_vlan":         dto.EndpointAVlan,
-			"endpoint_b_device_id":    dto.EndpointBDeviceID,
-			"endpoint_b_interface_id": dto.EndpointBInterfaceID,
-			"endpoint_b_vlan":         dto.EndpointBVlan,
-			"pseudowire_id":           pseudowireID,
-		}
-		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		var updated models.Service
-		if err := ctrl.DB.First(&updated, id).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, updated)
-	}
-
-	nb, err := ctrl.newNetboxClient(settings)
-	if err != nil {
-		slog.Warn("eline: netbox client unavailable, persisting locally", "err", err)
-		updates := map[string]any{
-			"endpoint_a_device_id":    dto.EndpointADeviceID,
-			"endpoint_a_interface_id": dto.EndpointAInterfaceID,
-			"endpoint_a_vlan":         dto.EndpointAVlan,
-			"endpoint_b_device_id":    dto.EndpointBDeviceID,
-			"endpoint_b_interface_id": dto.EndpointBInterfaceID,
-			"endpoint_b_vlan":         dto.EndpointBVlan,
-			"pseudowire_id":           pseudowireID,
-		}
-		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		var updated models.Service
-		if err := ctrl.DB.First(&updated, id).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, updated)
-	}
-
-	tenant, err := netbox.FindOrCreateTenant(nb, customer)
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to resolve netbox tenant for customer: " + err.Error()})
-	}
-
-	description := elineInterfaceDescription(service.ServiceID, customer.Name)
-	resA, err := reconcileELineSubinterface(ctrl.DB, nb, epA, service.EndpointASubinterfaceNetboxID, service.EndpointATerminationNetboxID, description, "A")
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
-	}
-	resB, err := reconcileELineSubinterface(ctrl.DB, nb, epB, service.EndpointBSubinterfaceNetboxID, service.EndpointBTerminationNetboxID, description, "B")
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
-	}
-
-	l2vpnID := service.L2VPNNetboxID
-	if l2vpnID == 0 {
-		created, err := nb.CreateL2VPN(service.ServiceID, strings.ToLower(service.ServiceID), "evpl", pseudowireID)
+	l2vpnID := svc.L2VPNNetboxID
+	if netboxConfigured(settings) {
+		nb, err := ctrl.newNetboxClient(settings)
 		if err != nil {
-			return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to create netbox l2vpn: " + err.Error()})
+			slog.Warn("eline: netbox client unavailable, persisting locally", "err", err)
+		} else {
+			tenant, err := netbox.FindOrCreateTenant(nb, customer)
+			if err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "failed to resolve netbox tenant for customer: " + err.Error()}
+			}
+			description := elineInterfaceDescription(svc.ServiceID, customer.Name)
+			for i := range eps {
+				prev := prevByRole[eps[i].Role]
+				oldSub, oldTerm := cfgmgmt.NetboxIDsFromFields(prev.Fields)
+				res, err := reconcileELineSubinterface(ctrl.DB, nb, resolved[i], oldSub, oldTerm, description, eps[i].Role)
+				if err != nil {
+					return &elineHTTPError{http.StatusBadGateway, err.Error()}
+				}
+				if l2vpnID == 0 {
+					created, err := nb.CreateL2VPN(svc.ServiceID, strings.ToLower(svc.ServiceID), "evpl", pseudowireID)
+					if err != nil {
+						return &elineHTTPError{http.StatusBadGateway, "failed to create netbox l2vpn: " + err.Error()}
+					}
+					l2vpnID = created.NetboxID
+				}
+				term, err := nb.CreateL2VPNTermination(l2vpnID, res.subinterfaceNetboxID)
+				if err != nil {
+					return &elineHTTPError{http.StatusBadGateway, "failed to create l2vpn termination " + eps[i].Role + ": " + err.Error()}
+				}
+				eps[i].Fields = cfgmgmt.EncodeEndpointFields(resolved[i].vlan, res.subinterfaceNetboxID, term.NetboxID)
+			}
+			if err := nb.UpdateL2VPN(l2vpnID, map[string]any{"tenant": tenant.NetboxID}); err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "failed to set netbox l2vpn tenant: " + err.Error()}
+			}
 		}
-		l2vpnID = created.NetboxID
-	}
-	if err := nb.UpdateL2VPN(l2vpnID, map[string]any{"tenant": tenant.NetboxID}); err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to set netbox l2vpn tenant: " + err.Error()})
 	}
 
-	termA, err := nb.CreateL2VPNTermination(l2vpnID, resA.subinterfaceNetboxID)
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to create l2vpn termination A: " + err.Error()})
+	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, svc.ID, eps); err != nil {
+		return err
 	}
-	termB, err := nb.CreateL2VPNTermination(l2vpnID, resB.subinterfaceNetboxID)
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to create l2vpn termination B: " + err.Error()})
+	updates := map[string]any{"pseudowire_id": pseudowireID}
+	if l2vpnID != 0 {
+		updates["l2_vpn_netbox_id"] = l2vpnID
 	}
-
-	updates := map[string]any{
-		"endpoint_a_device_id":              dto.EndpointADeviceID,
-		"endpoint_a_interface_id":           dto.EndpointAInterfaceID,
-		"endpoint_a_vlan":                   dto.EndpointAVlan,
-		"endpoint_a_subinterface_netbox_id": resA.subinterfaceNetboxID,
-		"endpoint_a_termination_netbox_id":  termA.NetboxID,
-		"endpoint_b_device_id":              dto.EndpointBDeviceID,
-		"endpoint_b_interface_id":           dto.EndpointBInterfaceID,
-		"endpoint_b_vlan":                   dto.EndpointBVlan,
-		"endpoint_b_subinterface_netbox_id": resB.subinterfaceNetboxID,
-		"endpoint_b_termination_netbox_id":  termB.NetboxID,
-		"pseudowire_id":                     pseudowireID,
-		"l2_vpn_netbox_id":                  l2vpnID,
+	if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error; err != nil {
+		return err
 	}
-	if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-
-	var updated models.Service
-	if err := ctrl.DB.First(&updated, id).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, updated)
+	svc.PseudowireID = pseudowireID
+	svc.L2VPNNetboxID = l2vpnID
+	return nil
 }
 
 // --------------------------------------------------------------------------
@@ -403,15 +422,6 @@ func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
 //	effect of the NetBox-only save.
 //
 // --------------------------------------------------------------------------
-
-// elineDefaultMTU/elineDefaultControlWord are hardcoded for v1 rather than
-// fields on Service - matches the real fixture in
-// driver_arista_eos_config_test.go. Worth revisiting as a per-service field
-// if any service ever needs a different value.
-const (
-	elineDefaultMTU         = 9100
-	elineDefaultControlWord = true
-)
 
 // deviceLoopbackIfaceName returns the interface name a device's platform
 // uses for its loopback/system address - "Loopback0" everywhere except SR
@@ -652,27 +662,23 @@ func (ctrl *Controller) removeELINEServiceFromNetbox(service *models.Service) er
 		return err
 	}
 
-	if service.EndpointATerminationNetboxID != 0 {
-		if err := nb.DeleteL2VPNTermination(service.EndpointATerminationNetboxID); err != nil {
-			return fmt.Errorf("endpoint A termination: %w", err)
-		}
+	eps, err := cfgmgmt.ListEndpoints(ctrl.DB, service.ID)
+	if err != nil {
+		return err
 	}
-	if service.EndpointBTerminationNetboxID != 0 {
-		if err := nb.DeleteL2VPNTermination(service.EndpointBTerminationNetboxID); err != nil {
-			return fmt.Errorf("endpoint B termination: %w", err)
+	for _, ep := range eps {
+		sub, term := cfgmgmt.NetboxIDsFromFields(ep.Fields)
+		if term != 0 {
+			if err := nb.DeleteL2VPNTermination(term); err != nil {
+				return fmt.Errorf("endpoint %s termination: %w", ep.Role, err)
+			}
 		}
-	}
-	if service.EndpointASubinterfaceNetboxID != 0 {
-		if err := nb.InterfaceDelete(int(service.EndpointASubinterfaceNetboxID)); err != nil {
-			return fmt.Errorf("endpoint A subinterface: %w", err)
+		if sub != 0 {
+			if err := nb.InterfaceDelete(int(sub)); err != nil {
+				return fmt.Errorf("endpoint %s subinterface: %w", ep.Role, err)
+			}
+			deleteFactumInterfaceByNetboxID(ctrl.DB, sub, ep.Role)
 		}
-		deleteFactumInterfaceByNetboxID(ctrl.DB, service.EndpointASubinterfaceNetboxID, "A")
-	}
-	if service.EndpointBSubinterfaceNetboxID != 0 {
-		if err := nb.InterfaceDelete(int(service.EndpointBSubinterfaceNetboxID)); err != nil {
-			return fmt.Errorf("endpoint B subinterface: %w", err)
-		}
-		deleteFactumInterfaceByNetboxID(ctrl.DB, service.EndpointBSubinterfaceNetboxID, "B")
 	}
 	if service.L2VPNNetboxID != 0 {
 		if err := nb.DeleteL2VPN(service.L2VPNNetboxID); err != nil {
@@ -726,10 +732,8 @@ func elineComputeStale(applied elineAppliedState, desiredDeviceID uint, desiredI
 	}
 }
 
-// ApiServiceElinePush pushes an already-provisioned ELINE service's config
-// to its endpoint device(s) - see ApiServiceElineUpdate for the NetBox-only
-// step that must run first (it's what populates EndpointADeviceID/
-// PseudowireID/etc. below).
+// ApiServiceElinePush is kept as a dedicated route; it delegates to the
+// generic pack-based push used by POST /service/:id/push.
 func (ctrl *Controller) ApiServiceElinePush(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -743,215 +747,5 @@ func (ctrl *Controller) ApiServiceElinePush(c *echo.Context) error {
 	if service.ServiceType != "ELINE" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service is not an ELINE service"})
 	}
-	if service.EndpointADeviceID == 0 || service.EndpointBDeviceID == 0 || service.PseudowireID == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has not been provisioned yet - PUT .../eline must run first"})
-	}
-	var customer models.Customer
-	if err := ctrl.DB.First(&customer, service.CustomerID).Error; err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has no valid customer"})
-	}
-
-	var creds deviceCredentialsRequest
-	if err := c.Bind(&creds); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-
-	ctx := c.Request().Context()
-	// Also fetch whichever device(s) the last successful push actually
-	// landed on (AppliedEndpointX*), even if a since-edited service no
-	// longer points at them - that's exactly the device a stale
-	// pseudowire/patch/subinterface might need removing from below.
-	fetchIDs := []uint{service.EndpointADeviceID, service.EndpointBDeviceID}
-	if service.AppliedEndpointADeviceID != 0 {
-		fetchIDs = append(fetchIDs, service.AppliedEndpointADeviceID)
-	}
-	if service.AppliedEndpointBDeviceID != 0 {
-		fetchIDs = append(fetchIDs, service.AppliedEndpointBDeviceID)
-	}
-	devices, err := fetchDevices(ctx, ctrl.DB, fetchIDs)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	devicesByID := make(map[uint]models.Device, len(devices))
-	for _, d := range devices {
-		devicesByID[d.ID] = d
-	}
-
-	epA, err := resolveELineEndpoint(devicesByID, service.EndpointADeviceID, service.EndpointAInterfaceID, service.EndpointAVlan, "A")
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	epB, err := resolveELineEndpoint(devicesByID, service.EndpointBDeviceID, service.EndpointBInterfaceID, service.EndpointBVlan, "B")
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-
-	settings, err := util.GetOrCreateSettings(ctrl.DB)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-
-	description := elineInterfaceDescription(service.ServiceID, customer.Name)
-	sameDevice := service.EndpointADeviceID == service.EndpointBDeviceID
-
-	var intentA, intentB *drivers.ELINEIntent
-	if sameDevice {
-		intentA = &drivers.ELINEIntent{
-			Name:             service.ServiceID,
-			Description:      description,
-			LocalIface:       epA.iface.Name,
-			LocalVLAN:        epA.vlan,
-			PeerLocalIface:   epB.iface.Name,
-			PeerLocalVLAN:    epB.vlan,
-			ServiceNumericID: service.PseudowireID,
-		}
-	} else {
-		loopbackA, err := deviceLoopback0Address(epA.device)
-		if err != nil {
-			return c.JSON(http.StatusBadGateway, map[string]any{"error": "endpoint A: " + err.Error()})
-		}
-		loopbackB, err := deviceLoopback0Address(epB.device)
-		if err != nil {
-			return c.JSON(http.StatusBadGateway, map[string]any{"error": "endpoint B: " + err.Error()})
-		}
-		intentA = &drivers.ELINEIntent{
-			Name:             service.ServiceID,
-			Description:      description,
-			LocalIface:       epA.iface.Name,
-			LocalVLAN:        epA.vlan,
-			ServiceNumericID: service.PseudowireID,
-			Remote: &drivers.ELINERemotePeer{
-				NeighborIP:   loopbackB,
-				PseudowireID: service.PseudowireID,
-				MTU:          elineDefaultMTU,
-				ControlWord:  elineDefaultControlWord,
-				DeviceName:   epB.device.Name,
-				RemoteIface:  epB.iface.Name,
-				RemoteVLAN:   epB.vlan,
-			},
-		}
-		intentB = &drivers.ELINEIntent{
-			Name:             service.ServiceID,
-			Description:      description,
-			LocalIface:       epB.iface.Name,
-			LocalVLAN:        epB.vlan,
-			ServiceNumericID: service.PseudowireID,
-			Remote: &drivers.ELINERemotePeer{
-				NeighborIP:   loopbackA,
-				PseudowireID: service.PseudowireID,
-				MTU:          elineDefaultMTU,
-				ControlWord:  elineDefaultControlWord,
-				DeviceName:   epA.device.Name,
-				RemoteIface:  epA.iface.Name,
-				RemoteVLAN:   epA.vlan,
-			},
-		}
-	}
-
-	// Detect whether either side's device/interface/VLAN moved since the
-	// last successful push, and route the stale subinterface it left
-	// behind accordingly: merged into the relevant device's own
-	// ApplyELINE call below if that device is still one of this push's
-	// endpoints, or queued for a separate teardown-only RemoveELINE call
-	// if it's been abandoned entirely (see elineComputeStale).
-	currentDeviceIDs := map[uint]bool{epA.device.ID: true}
-	if !sameDevice {
-		currentDeviceIDs[epB.device.ID] = true
-	}
-	staleA := elineComputeStale(
-		elineAppliedState{service.AppliedEndpointADeviceID, service.AppliedEndpointAIface, service.AppliedEndpointAVlan},
-		epA.device.ID, epA.iface.Name, epA.vlan, currentDeviceIDs)
-	staleB := elineComputeStale(
-		elineAppliedState{service.AppliedEndpointBDeviceID, service.AppliedEndpointBIface, service.AppliedEndpointBVlan},
-		epB.device.ID, epB.iface.Name, epB.vlan, currentDeviceIDs)
-
-	abandonedSubs := map[uint][]drivers.ELINEStaleSubinterface{}
-	attachStale := func(s *elineStale) {
-		if s == nil {
-			return
-		}
-		if s.Abandoned {
-			abandonedSubs[s.DeviceID] = append(abandonedSubs[s.DeviceID], s.Sub)
-			return
-		}
-		// Not abandoned: s.DeviceID is guaranteed to be epA.device.ID or
-		// epB.device.ID (or both, when sameDevice) - fold into that
-		// device's own apply so the removal commits atomically with the
-		// rest of its config.
-		if sameDevice || s.DeviceID == epA.device.ID {
-			intentA.StaleSubinterfaces = append(intentA.StaleSubinterfaces, s.Sub)
-		} else {
-			intentB.StaleSubinterfaces = append(intentB.StaleSubinterfaces, s.Sub)
-		}
-	}
-	attachStale(staleA)
-	attachStale(staleB)
-
-	// Push both endpoints every time, not just the one that changed:
-	// moving A to a different device means B's pseudowire must start
-	// pointing its "neighbor" at A's new loopback, which only happens by
-	// re-rendering and re-applying B's intent (its NeighborIP above is
-	// always computed from the *current* peer). Skipping the "unchanged"
-	// side as an optimization would silently strand its neighbor pointed
-	// at the old device.
-	resultA := ctrl.applyELINEToDevice(epA.device, creds, settings, intentA)
-	results := []ApiServiceElinePushResult{resultA}
-	resultB := resultA // sameDevice: A's one call provisions both sides
-	if !sameDevice {
-		resultB = ctrl.applyELINEToDevice(epB.device, creds, settings, intentB)
-		results = append(results, resultB)
-	}
-
-	// Abandoned devices (an endpoint moved off them entirely) get their
-	// own teardown-only call, since no ApplyELINE above touches them.
-	abandonedErr := map[uint]string{}
-	for deviceID, subs := range abandonedSubs {
-		device, ok := devicesByID[deviceID]
-		if !ok {
-			abandonedErr[deviceID] = "device not found"
-			results = append(results, ApiServiceElinePushResult{
-				Device: fmt.Sprintf("device #%d", deviceID),
-				Error:  "abandoned ELINE endpoint device no longer exists in factum - stale config was not removed",
-			})
-			continue
-		}
-		res := ctrl.removeELINEFromDevice(&device, creds, settings, &drivers.ELINERemoval{
-			Name:               service.ServiceID,
-			StaleSubinterfaces: subs,
-		})
-		abandonedErr[deviceID] = res.Error
-		results = append(results, res)
-	}
-
-	// Only advance Applied* (and so treat this side as reconciled) once
-	// its own push succeeded and, if it left a device abandoned, that
-	// device's cleanup succeeded too - otherwise the next push retries
-	// the same stale cleanup rather than losing track of it.
-	sideOK := func(result ApiServiceElinePushResult, stale *elineStale) bool {
-		if result.Error != "" {
-			return false
-		}
-		if stale != nil && stale.Abandoned && abandonedErr[stale.DeviceID] != "" {
-			return false
-		}
-		return true
-	}
-	updates := map[string]any{}
-	if sideOK(resultA, staleA) {
-		updates["applied_endpoint_a_device_id"] = epA.device.ID
-		updates["applied_endpoint_a_iface"] = epA.iface.Name
-		updates["applied_endpoint_a_vlan"] = epA.vlan
-	}
-	if sideOK(resultB, staleB) {
-		updates["applied_endpoint_b_device_id"] = epB.device.ID
-		updates["applied_endpoint_b_iface"] = epB.iface.Name
-		updates["applied_endpoint_b_vlan"] = epB.vlan
-	}
-	if len(updates) > 0 {
-		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-	}
-
-	return c.JSON(http.StatusOK, map[string]any{"results": results})
+	return ctrl.apiServiceGenericPush(c, &service)
 }

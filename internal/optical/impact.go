@@ -68,13 +68,31 @@ func DeviceDownImpact(db *gorm.DB, deviceID uint) (DeviceImpact, error) {
 		})
 	}
 
-	var elines []models.Service
-	if err := db.Where("endpoint_a_device_id = ? OR endpoint_b_device_id = ?", deviceID, deviceID).
-		Find(&elines).Error; err != nil {
+	var eps []models.ServiceEndpoint
+	if err := db.Where("device_id = ?", deviceID).Find(&eps).Error; err != nil {
 		return out, err
 	}
-	for _, s := range elines {
-		add(s, "eline")
+	if len(eps) > 0 {
+		ids := make([]uint, 0, len(eps))
+		seenSvc := map[uint]bool{}
+		for _, ep := range eps {
+			if seenSvc[ep.ServiceID] {
+				continue
+			}
+			seenSvc[ep.ServiceID] = true
+			ids = append(ids, ep.ServiceID)
+		}
+		var svcs []models.Service
+		if err := db.Where("id IN ?", ids).Find(&svcs).Error; err != nil {
+			return out, err
+		}
+		for _, s := range svcs {
+			src := "endpoint"
+			if s.ServiceType == "ELINE" {
+				src = "eline"
+			}
+			add(s, src)
+		}
 	}
 
 	var hops []models.ServiceHop

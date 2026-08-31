@@ -5,9 +5,10 @@ and push to devices. The machinery lives in `internal/cfgmgmt`. You design
 the type and its platform packs in the database (Config GUI or API); you
 do **not** add a new Go package per service.
 
-ELINE is the exception: it is a built-in, first-class path with NetBox L2VPN
-provisioning and dedicated `Service.EndpointA/B*` columns. Do not copy that
-shape for a new type. New types use **generic endpoints** + **platform packs**.
+ELINE uses the same **generic endpoints** + **platform packs** path as
+every other capacity type. It still has NetBox L2VPN reconcile on save
+(and reverse-import from `factum-netbox sync`). Do not add
+`Service.EndpointA/B*` columns for a new type.
 
 Related code:
 
@@ -86,7 +87,7 @@ Built-in types seeded on migrate (`cfgmgmt.Seed`):
 
 | Name | Description | Seeded roles |
 | ---- | ----------- | ------------ |
-| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan`. **Not** the generic path. |
+| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan` |
 | `ELAN` | L2VPN multipoint | `endpoint` min=1 max=0 (unlimited), no fields |
 | `L3VPN` | L3 multipoint | same as ELAN |
 | `POLARIX` | Internet | same as ELAN |
@@ -182,7 +183,10 @@ Validation on `PUT /api/service/:id/endpoints` (`cfgmgmt.ValidateEndpoints`):
 - Required role fields are present and type-check.
 - Role counts satisfy min/max.
 
-ELINE endpoints **cannot** go through this API (`PUT .../eline` instead).
+ELINE uses this API too (`PUT .../eline` remains as an A/B DTO adapter).
+ELINE extra checks: physical interfaces, A and B not the same
+device+interface. When NetBox is configured, save also reconciles
+subinterfaces and an EVPL L2VPN.
 
 ### Field types
 
@@ -267,12 +271,12 @@ Idempotent cleanup: `no` / `delete` of objects keyed by `.Name`
 
 ### Generic template context
 
-Non-ELINE packs execute against `cfgmgmt.GenericRenderData`:
+Packs execute against `cfgmgmt.GenericRenderData`:
 
 ```
 .Name               string            Service.ServiceID (e.g. CN00012)
-.Description        string            Service.Comment
-.ServiceNumericID   int               Fields["service_numeric_id"], else 0
+.Description        string            Service.Comment (ELINE: "ID=<ServiceID> <customer>")
+.ServiceNumericID   int               Service.PseudowireID, else Fields["service_numeric_id"]
 .Fields             map[string]any    Service.Fields
 .Endpoint.Role      string
 .Endpoint.DeviceID  uint
@@ -284,6 +288,11 @@ Non-ELINE packs execute against `cfgmgmt.GenericRenderData`:
 .LocalIface         string            Interface.Name
 .LocalVLAN          int               Endpoint.Fields["vlan"], else 0
 .Role               string            same as Endpoint.Role
+.PeerLocalIface     string            other endpoint on the same device (ELINE)
+.PeerLocalVLAN      int
+.Remote             *ELINERemote      other endpoint on a different device (ELINE)
+.SDPID              int               SR OS shared SDP id from neighbor last octet
+.StaleSubinterfaces []ELINEStale      previous apply's leftover subinterfaces
 ```
 
 `.Vars` is a `map`; use `{{index .Vars "mtu"}}` (not `.Vars.mtu`). Missing
@@ -291,9 +300,7 @@ keys on a map index yield nil rather than `missingkey=error`.
 
 DCIM is read-only inventory. Do not try to write it from a template.
 
-ELINE packs use a different struct (`ELINERenderData`: `.Remote`,
-`.SDPID`, `.StaleSubinterfaces`, …). That context is **not** passed to
-generic types.
+Non-ELINE packs leave Peer/Remote/SDPID/Stale zero; do not reference them.
 
 ### Example: EOS ELAN (VPLS-shaped) body
 
@@ -363,7 +370,7 @@ matches and whose scope is on the device's ancestor chain. Those are
 1. **Create** a CN/CI service with this type (wizard or
    `POST /api/service`). Lime-synced rows can have the type attached later
    (`PUT /api/service/:id/type`) without editing Lime-owned fields.
-2. **Endpoints** in the service dialog (anything except ELINE), or:
+2. **Endpoints** in the service dialog, or:
 
    ```http
    PUT /api/service/:id/endpoints
@@ -376,16 +383,17 @@ matches and whose scope is on the device's ancestor chain. Those are
    }
    ```
 
-   The whole set is replaced. ELINE is rejected here.
+   The whole set is replaced. ELINE also derives `PseudowireID` and, when
+   NetBox is configured, reconciles L2VPN + subinterfaces.
 3. **Push** `POST /api/service/:id/push` with device credentials
-   (`username`, `password`). ELINE is delegated to the ELINE push path.
-   Generic push, per endpoint device:
+   (`username`, `password`). Per endpoint device:
 
    - look up the pack for `service_type` + device platform
    - require `payload_kind=cli` and a `CLISessionApplier` driver
      (`eos`, `ios-xr`, `sros` / `sros-md`)
-   - render cleanup once, then each endpoint body
-   - `ApplyCLISession(serviceID[-endpointID], commands)`
+   - render cleanup once, then each endpoint body, one CLI session
+   - ELINE: `PrepareELINEApply` (SR OS SDP guard), stamp `AppliedEndpoint*`,
+     teardown abandoned devices
 
    EOS uses the session name as `configure session`; other platforms ignore
    it. Failures are returned per device; there is no automatic rollback of
@@ -411,22 +419,22 @@ value leaves the stored secret unchanged.
 
 ---
 
-## ELINE (do not re-implement)
+## ELINE extras
 
-ELINE stays on the dedicated path:
+ELINE is a normal cfgmgmt type with extra NetBox and peer-render behaviour:
 
-- Endpoints: `PUT /api/service/:id/eline` (NetBox L2VPN + subinterfaces).
-- Push: `POST /api/service/:id/eline/push` (or `/push`, which delegates).
-- Render context: `ELINERenderData`, including `.Remote` (neighbor loopback,
-  pseudowire id, MTU, control-word) and SR OS `.SDPID` (last IPv4 octet of
-  the neighbor, not 0/255).
+- Endpoints: `PUT /api/service/:id/endpoints` (roles `a`/`b`).
+  `PUT /api/service/:id/eline` is an A/B DTO adapter onto the same helper.
+- Push: `POST /api/service/:id/push` (and `/eline/push`, same path).
+- Render context: `GenericRenderData` with `.Remote`, `.PeerLocal*`,
+  `.SDPID`, `.StaleSubinterfaces` filled from sibling endpoints.
 - Packs: seeded from `internal/drivers/templates/{eos,iosxr,sros}_eline.tmpl`.
 - Edit the pack in the GUI to tweak CLI; leave `seed_checksum` mismatched
   so migrate will not clobber it. Change the embed file + Seed when the
   default for **new** databases should move.
+- Reverse-import: `factum-netbox sync` writes `service_endpoints`.
 
-Do not add generic `ServiceEndpoint` rows to an ELINE service. Do not add
-`EndpointA*` columns for a new type.
+Do not add `EndpointA*` columns for a new type.
 
 ---
 
@@ -466,8 +474,8 @@ reach NETCONF/OpenConfig until `payload_kind` other than `cli` is applied.
 | GET/POST | `/api/config/macros` | Named `{{include}}` snippets |
 | POST | `/api/config/render` | Preview device or service |
 | PUT | `/api/service/:id/type` | Set type on an instance (incl. Lime) |
-| GET/PUT | `/api/service/:id/endpoints` | Generic endpoints (not ELINE) |
-| POST | `/api/service/:id/push` | Apply CLI (ELINE delegates) |
+| GET/PUT | `/api/service/:id/endpoints` | Endpoints (including ELINE) |
+| POST | `/api/service/:id/push` | Apply CLI |
 
 Write routes need `RequireWrite`. Config seed runs from
 `util.MigrateDatabase` → `cfgmgmt.Seed`.

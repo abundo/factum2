@@ -4,6 +4,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -150,25 +151,43 @@ func TestSyncServiceEndpointsFromL2VPNs_LinksByServiceID(t *testing.T) {
 		t.Errorf("PseudowireID = %d, want 1000078", got.PseudowireID)
 	}
 
-	// Stable A/B by device id + parent name: pi1-r4 before pi1-r5.
-	if got.EndpointADeviceID != devA || got.EndpointAInterfaceID != ifA["Ethernet3"] {
+	eps := mustListEndpoints(t, db, got.ID)
+	a, b := eps["a"], eps["b"]
+	if a.DeviceID != devA || a.InterfaceID != ifA["Ethernet3"] {
 		t.Errorf("endpoint A = device %d iface %d, want device %d iface %d",
-			got.EndpointADeviceID, got.EndpointAInterfaceID, devA, ifA["Ethernet3"])
+			a.DeviceID, a.InterfaceID, devA, ifA["Ethernet3"])
 	}
-	if got.EndpointAVlan != 338 || got.EndpointASubinterfaceNetboxID != 101 {
-		t.Errorf("endpoint A vlan/sub = %d/%d, want 338/101", got.EndpointAVlan, got.EndpointASubinterfaceNetboxID)
+	if cfgmgmt.VLANFromFields(a.Fields) != 338 {
+		t.Errorf("endpoint A vlan = %d, want 338", cfgmgmt.VLANFromFields(a.Fields))
 	}
-	if got.EndpointBDeviceID != devB || got.EndpointBInterfaceID != ifB["Ethernet1"] {
+	subA, termA := cfgmgmt.NetboxIDsFromFields(a.Fields)
+	if subA != 101 || termA != 501 {
+		t.Errorf("endpoint A sub/term = %d/%d, want 101/501", subA, termA)
+	}
+	if b.DeviceID != devB || b.InterfaceID != ifB["Ethernet1"] {
 		t.Errorf("endpoint B = device %d iface %d, want device %d iface %d",
-			got.EndpointBDeviceID, got.EndpointBInterfaceID, devB, ifB["Ethernet1"])
+			b.DeviceID, b.InterfaceID, devB, ifB["Ethernet1"])
 	}
-	if got.EndpointBVlan != 338 || got.EndpointBSubinterfaceNetboxID != 201 {
-		t.Errorf("endpoint B vlan/sub = %d/%d, want 338/201", got.EndpointBVlan, got.EndpointBSubinterfaceNetboxID)
+	if cfgmgmt.VLANFromFields(b.Fields) != 338 {
+		t.Errorf("endpoint B vlan = %d, want 338", cfgmgmt.VLANFromFields(b.Fields))
 	}
-	if got.EndpointATerminationNetboxID != 501 || got.EndpointBTerminationNetboxID != 502 {
-		t.Errorf("terminations A/B = %d/%d, want 501/502",
-			got.EndpointATerminationNetboxID, got.EndpointBTerminationNetboxID)
+	subB, termB := cfgmgmt.NetboxIDsFromFields(b.Fields)
+	if subB != 201 || termB != 502 {
+		t.Errorf("endpoint B sub/term = %d/%d, want 201/502", subB, termB)
 	}
+}
+
+func mustListEndpoints(t *testing.T, db *gorm.DB, svcID uint) map[string]models.ServiceEndpoint {
+	t.Helper()
+	rows, err := cfgmgmt.ListEndpoints(db, svcID)
+	if err != nil {
+		t.Fatalf("list endpoints: %v", err)
+	}
+	out := map[string]models.ServiceEndpoint{}
+	for _, ep := range rows {
+		out[ep.Role] = ep
+	}
+	return out
 }
 
 func TestSyncServiceEndpointsFromL2VPNs_Idempotent(t *testing.T) {
@@ -205,9 +224,13 @@ func TestSyncServiceEndpointsFromL2VPNs_Idempotent(t *testing.T) {
 		// GORM may bump UpdatedAt on no-op Updates depending on version;
 		// check field equality instead.
 	}
-	if afterSecond.EndpointAInterfaceID != afterFirst.EndpointAInterfaceID ||
-		afterSecond.L2VPNNetboxID != afterFirst.L2VPNNetboxID {
-		t.Errorf("second sync changed endpoints: %+v vs %+v", afterFirst, afterSecond)
+	if afterSecond.L2VPNNetboxID != afterFirst.L2VPNNetboxID {
+		t.Errorf("second sync changed l2vpn: %+v vs %+v", afterFirst, afterSecond)
+	}
+	first := mustListEndpoints(t, db, afterFirst.ID)
+	second := mustListEndpoints(t, db, afterSecond.ID)
+	if first["a"].InterfaceID != second["a"].InterfaceID {
+		t.Errorf("second sync changed endpoints: %+v vs %+v", first, second)
 	}
 }
 
@@ -234,8 +257,11 @@ func TestSyncServiceEndpointsFromL2VPNs_SkipsNonELINEType(t *testing.T) {
 	if err := db.First(&got, svc.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.EndpointAInterfaceID != 0 || got.L2VPNNetboxID != 0 {
-		t.Errorf("ELAN service was modified: endpoints=%d l2vpn=%d", got.EndpointAInterfaceID, got.L2VPNNetboxID)
+	if got.L2VPNNetboxID != 0 {
+		t.Errorf("ELAN service was modified: l2vpn=%d", got.L2VPNNetboxID)
+	}
+	if len(mustListEndpoints(t, db, got.ID)) != 0 {
+		t.Errorf("ELAN service grew endpoints")
 	}
 	if got.ServiceType != "ELAN" {
 		t.Errorf("ServiceType = %q, want ELAN", got.ServiceType)
@@ -270,8 +296,9 @@ func TestSyncServiceEndpointsFromL2VPNs_MatchesByL2VPNNetboxID(t *testing.T) {
 	if err := db.First(&got, svc.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.EndpointAInterfaceID != ifs["Eth1"] {
-		t.Errorf("EndpointAInterfaceID = %d, want %d", got.EndpointAInterfaceID, ifs["Eth1"])
+	eps := mustListEndpoints(t, db, got.ID)
+	if eps["a"].InterfaceID != ifs["Eth1"] {
+		t.Errorf("endpoint a iface = %d, want %d", eps["a"].InterfaceID, ifs["Eth1"])
 	}
 	if got.ServiceType != "ELINE" {
 		t.Errorf("ServiceType = %q, want ELINE", got.ServiceType)
@@ -302,9 +329,10 @@ func TestSyncServiceEndpointsFromL2VPNs_NameFallbackWithoutParentID(t *testing.T
 	if err := db.First(&got, svc.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.EndpointAInterfaceID != ifs["Ethernet3"] || got.EndpointAVlan != 5711 {
+	eps := mustListEndpoints(t, db, got.ID)
+	if eps["a"].InterfaceID != ifs["Ethernet3"] || cfgmgmt.VLANFromFields(eps["a"].Fields) != 5711 {
 		t.Errorf("endpoint A iface/vlan = %d/%d, want %d/5711",
-			got.EndpointAInterfaceID, got.EndpointAVlan, ifs["Ethernet3"])
+			eps["a"].InterfaceID, cfgmgmt.VLANFromFields(eps["a"].Fields), ifs["Ethernet3"])
 	}
 }
 

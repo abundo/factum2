@@ -17,7 +17,7 @@ section before adding tests there.
 ## Working in this repo
 
 - **Do not use the live instance.** Port `:8090` is the installed
-  `/opt/factum2/factum-web` process reading `/etc/factum2/factum2.yaml` and
+  `/opt/factum2/factum2-web` process reading `/etc/factum2/factum2.yaml` and
   the real `factum2` Postgres database. Do not log into it, seed data into
   it, or point a Vite proxy at it to "verify" a change.
 - **UI verification:** use the `run-factum2-web` skill
@@ -35,7 +35,7 @@ section before adding tests there.
   attached and `psql` silently succeeds while doing nothing.
 - **CLI flags:** config file is `-f` (default `/etc/factum2/factum2.yaml`;
   worker default `/etc/factum2/factum2-worker.yaml`); web subcommand is
-  `start`. Schema changes are `factum-web migrate` (or `factum migrate`) —
+  `start`. Schema changes are `factum2-web migrate` (or `factum2 migrate`) —
   start/createadmin/sync do not AutoMigrate. `web.GuiParams.Bind` defaults
   to `:8090` and overrides YAML `web.bind` — always pass `-b` for an
   isolated instance or it collides with the live process.
@@ -67,22 +67,26 @@ shape) are in [DEV.md](DEV.md) — don't duplicate them here.
 Factum tracks network infrastructure (devices, customers, services) and
 syncs it with external systems of record. It's a Go monorepo producing
 several single-purpose CLI binaries (`cmd/*`) that share `internal/` and
-`models/` packages, plus a web GUI (`factum-web`) with a Vue 3 SPA frontend
+`models/` packages, plus a web GUI (`factum2-web`) with a Vue 3 SPA frontend
 (`web/frontend`).
 
 ### Sync model: external systems -> factum -> DNS/monitoring
 
 Factum is a hub, not a source of truth for everything: NetBox and Lime CRM
-are upstream sources synced _into_ factum's Postgres DB (`factum-netbox
-sync`, `factum-lime sync` — see `internal/netbox`, `internal/lime`), while
-DNS, Icinga, LibreNMS and Oxidized are downstream targets synced _from_
-factum (`factum-dns sync`, `factum-icinga sync`, `factum-librenms-cli
-sync`, `factum-oxidized sync`) — same shape as Icinga: `internal/oxidized`'s
+are upstream sources synced _into_ factum's Postgres DB (`factum2-netbox
+sync`, `factum2-lime sync` — see `internal/netbox`, `internal/lime`), while
+DNS, Icinga, LibreNMS, Oxidized and Prometheus are downstream targets
+synced _from_ factum (`factum2-dns sync`, `factum2-icinga sync`,
+`factum2-librenms-cli sync`, `factum2-oxidized sync`, `factum2-prometheus
+sync`) — same shape as Icinga: `internal/oxidized`'s
 `FactumOxidizedClient.Sync` filters devices (enabled, `CfBackupOxidized`,
 not on any `Settings.OxidizedIgnore*` list, has a primary IPv4), writes
 oxidized's router.db (`Settings.OxidizedDestFile`), and asks oxidized to
-reload only if the file's content actually changed. BECS is an upstream
-source like Netbox: `factum-becs sync` (`internal/becs`) writes ibos
+reload only if the file's content actually changed. Prometheus
+(`internal/prometheus`) writes a file_sd JSON of snmp_exporter targets
+(`Settings.PrometheusDestFile`) from devices with `CfMonitorGrafana` and
+POSTs `Settings.PrometheusReloadURL` only if the file changed. BECS is an upstream
+source like Netbox: `factum2-becs sync` (`internal/becs`) writes ibos
 elements into Netbox (matched by custom field `becs_oid`) then calls
 `netbox.Sync` so factum sees the result. The Netbox write path is its own
 reconciler; `internal/netbox`'s helpers write to factum keyed by
@@ -99,30 +103,31 @@ construction time) connect directly to the DB and call
 DNS/Icinga/LibreNMS/Oxidized below, nothing about Netbox or Lime sync is
 meant to run off the primary host.
 
-**Capacity service types (cfgmgmt):** new CN/CI types (ELAN, L3VPN, …)
+**Capacity service types (cfgmgmt):** CN/CI types (ELINE, ELAN, L3VPN, …)
 are a `ServiceType` + per-NOS `PlatformPack` in the DB, not a new Go
-package. Generic endpoints live in `service_endpoints`; ELINE keeps
-`Service.EndpointA/B*` and NetBox L2VPN. How to design one:
+package. Endpoints live in `service_endpoints`. ELINE still has NetBox
+L2VPN reconcile on save/import. How to design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
 
 **ELINE / L2VPN path (device → Netbox → factum Service):**
-`factum-device-sync` writes on-device ELINEs into Netbox as EVPL L2VPNs +
-terminations. `factum-netbox sync` then reverse-imports those onto matching
+`factum2-device-sync` writes on-device ELINEs into Netbox as EVPL L2VPNs +
+terminations. `factum2-netbox sync` then reverse-imports those onto matching
 factum `Service` rows (`internal/netbox.syncServiceEndpointsFromL2VPNs`):
 match by `Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`,
 resolve terminations to physical ports + VLAN/subinterface, set
-`ServiceType=ELINE` and the `Endpoint*` fields the device interface table
-uses for Service buttons. Does not create Service rows (Lime/manual still
+`ServiceType=ELINE` and `service_endpoints` (roles a/b, vlan + netbox ids
+in Fields). Does not create Service rows (Lime/manual still
 own that). Skips services whose `ServiceType` is already set to something
 other than ELINE/empty.
 
-DNS, Icinga, LibreNMS and Oxidized are different: their CLI tools
-(`factum-dns`, `factum-icinga`, `factum-librenms-cli`, `factum-oxidized`)
-are meant to run on a _different host_ than the primary (the DNS/Icinga/
-LibreNMS/Oxidized server itself), so they can't just open a direct Postgres
+DNS, Icinga, LibreNMS, Oxidized and Prometheus are different: their CLI tools
+(`factum2-dns`, `factum2-icinga`, `factum2-librenms-cli`, `factum2-oxidized`,
+`factum2-prometheus`) are meant to run on a _different host_ than the primary
+(the DNS/Icinga/LibreNMS/Oxidized/Prometheus server itself), so they can't just
+open a direct Postgres
 connection the way Netbox/Lime do. They still talk to the primary's existing
 REST handlers (same paths and JSON; see "Service-to-service auth" below),
-but the transport is the hub unix socket when a co-located `factum-worker
+but the transport is the hub unix socket when a co-located `factum2-worker
 start` is running. HTTPS (`factum.url` + bearer `ConfigFactum.Token`) is
 only a probe-time fallback — see `util.FactumHTTP` and "Worker / hub
 transport" below. Worker networks do not need a route to the primary's
@@ -134,7 +139,7 @@ firewall step, not something the process unbinds.
 - **Generic client-side fetch**: `util.FetchRemoteConfig[T]`
   (`internal/util/remoteconfig.go`) GETs a path and unmarshals JSON.
   Transport is `util.FactumHTTP`: Stat/Dial the unix socket
-  (`/run/factum-worker/api.sock`, overridable via `FACTUM_WORKER_API_SOCKET`
+  (`/run/factum2-worker/api.sock`, overridable via `FACTUM_WORKER_API_SOCKET`
   / `factum.socket`), and use it when that probe succeeds; otherwise HTTPS
   to `factum.url` with `Authorization: Bearer {token}`. After a successful
   unix Dial, 502 / timeout / hub-disconnected are **not** retried over
@@ -142,22 +147,26 @@ firewall step, not something the process unbinds.
   `0`) forces HTTPS even if the socket exists. Each package wraps
   `FetchRemoteConfig` in its own helper returning its own config type -
   `internal/dns/remote_config.go`, `internal/icinga/remote_config.go`,
-  `internal/librenms/remote_config.go`, `internal/oxidized/remote_config.go`.
+  `internal/librenms/remote_config.go`, `internal/oxidized/remote_config.go`,
+  `internal/prometheus/remote_config.go`.
   `internal/icinga`/`internal/librenms` also expose a `RemoteClient`
   convenience (`FetchRemoteConfig` + constructing the API client in one
-  call). `NewFactumIcingaClient`/`NewFactumLibrenmsClient`/`dns.NewDNSClient`
-  all fetch eagerly at construction time (not lazily inside
-  `Sync()`/`Update()`), and now return an error since the fetch can fail.
+  call). `NewFactumIcingaClient`/`NewFactumLibrenmsClient`/`dns.NewDNSClient`/
+  `NewFactumPrometheusClient` all fetch eagerly at construction time (not
+  lazily inside `Sync()`/`Update()`), and now return an error since the
+  fetch can fail.
 - **Server side**: one `GET /api/<service>-config` route per service
   (`web/handle_dns.go`, `web/handle_icinga.go`, `web/handle_librenms.go`,
-  `web/handle_oxidized.go`), each reading the relevant `Settings` fields and
-  registered in `web.go` with `RequireAPIAuth, RequireAdminOrServiceToken`
+  `web/handle_oxidized.go`, `web/handle_prometheus.go`), each reading the
+  relevant `Settings` fields and registered in `web.go` with
+  `RequireAPIAuth, RequireAdminOrServiceToken`
   (not under `adminApi`: plain `RequireAdmin` 401s a service-token caller
   outright, since there's no "user" in context for it to check a role on).
 - **None of these have local YAML config** (`util.ConfigIcinga`,
-  `util.ConfigDNS`, `util.ConfigOxidized`, `util.ConfigLibrenms` are all
-  runtime-only DTOs, not part of `ConfigRoot` at all - `ConfigRoot.Icinga`/
-  `.Defaultdomain`/`.Librenms` were removed once each was wired up).
+  `util.ConfigDNS`, `util.ConfigOxidized`, `util.ConfigLibrenms`,
+  `util.ConfigPrometheus` are all runtime-only DTOs, not part of
+  `ConfigRoot` at all - `ConfigRoot.Icinga`/`.Defaultdomain`/`.Librenms`
+  were removed once each was wired up).
   LibreNMS's Sync regex-filter lists (`RolesEnabled`/`InterfacesDisabled`,
   plus the still-unused `PersistentDevices` - see the delete-flow note
   below) used to be the one exception, YAML-only with no DB-backed
@@ -172,33 +181,34 @@ firewall step, not something the process unbinds.
   of settings shared by _every_ remote-config-fetching tool, not tied to one
   service - currently just `DefaultDomain` (`Settings.DefaultDomain`, edited
   in the admin UI's Factum tab, not the DNS tab - it's also needed by
-  Icinga/LibreNMS/Oxidized sync, matching factum device names against
+  Icinga/LibreNMS/Oxidized/Prometheus sync, matching factum device names against
   fully-qualified DNS names). `util.NewCommonConfig(settings)` builds it;
   every `web.ApiXxxConfig` handler embeds it in its response via that
   helper, and every `util.ConfigXxx` runtime type embeds it too. A tool
   that needs nothing service-specific can
   fetch just this from `GET /api/common-config` (`web.ApiCommonConfig`) —
-  `drivers.NewDriverName` does. A `factum-worker start` host only needs
+  `drivers.NewDriverName` does. A `factum2-worker start` host only needs
   `worker.listen`/`.token`/`.commands` (all local - see "Worker / hub
   transport" below). `factum.url`/`.token` are Stat/Dial fallback for
   co-located CLIs and may be omitted from start-only YAML; they remain
-  required for `factum-worker run` (`POST /api/worker/run` stays on HTTPS,
+  required for `factum2-worker run` (`POST /api/worker/run` stays on HTTPS,
   not the hub RPC) and for any CLI that cannot open the socket.
 - DNS's `Settings.DnsDestFile` and `IgnoreModels`/`IgnorePlatforms`
   (newline-separated text) are carried over as-is from the old YAML config -
   `internal/dns.Sync` doesn't actually filter on the ignore fields, never
   did even back when they were a YAML map.
 - LibreNMS's own MySQL credentials are _not_ part of any of this - they're
-  not in `Settings` or fetched over REST at all. `factum-librenms-cli`
+  not in `Settings` or fetched over REST at all. `factum2-librenms-cli`
   assumes it runs co-located with the LibreNMS server, and reads them
   directly from LibreNMS's own `.env` file on disk
-  (`NewFactumLibrenmsClient` in `internal/librenms/factum-librenms.go`,
+  (`NewFactumLibrenmsClient` in `internal/librenms/factum2-librenms.go`,
   trying `/opt/librenms/.env` then `/opt/librenms-docker/.env`), wiring the
   result into `LibrenmsClient.DBConfig` for `PortsGet`/`PortsUpdateIgnore`.
 - **Triggering a sync**: in production the trigger is always a cron job on
   the primary itself, not a human or a scheduler on the worker/target host -
-  `factum-dns`/`factum-icinga`/`factum-librenms-cli`/`factum-oxidized` are
-  never invoked by their own local cron, only ever dispatched by the primary
+  `factum2-dns`/`factum2-icinga`/`factum2-librenms-cli`/`factum2-oxidized`/
+  `factum2-prometheus` are never invoked by their own local cron, only ever
+  dispatched by the primary
   over the hub. The Job overview page
   (`web/frontend/src/views/sync/SyncOverviewPage.vue`) exposes the same path
   manually, with one button per `worker.SyncTargets` entry; clicking one
@@ -213,21 +223,21 @@ firewall step, not something the process unbinds.
   with all of them - one `Job` row dispatching a `JobTask` per target, one
   target at a time, each waited on to finish before the next starts
   (`RemoteManager.dispatchRemainingSequentially`) - a destination sync
-  (DNS/Icinga/LibreNMS/Oxidized) must never run while, or before, the
+  (DNS/Icinga/LibreNMS/Oxidized/Prometheus) must never run while, or before, the
   source sync (NetBox/Lime/BECS) that's supposed to feed it is still
   updating factum's own data. The parent `Job`'s `ExpectedTasks` (set once
   at creation) is what lets `resolveTask` tell "batch truly finished" apart
   from "only the first target's `JobTask` row exists so far" - see "Jobs
   and job tasks" below. The other half - actually running the sync
   on whichever host runs that target's CLI - goes through
-  `factum-worker`'s agent commands (`internal/worker`), reusing their
+  `factum2-worker`'s agent commands (`internal/worker`), reusing their
   existing predefined-command mechanism rather than each service CLI
   having its own bespoke listener: an agent activates a command by name
   via `worker.commands` (e.g. a `worker.commands.librenms` entry running
-  `factum-librenms-cli sync`), and `StartJob` dispatches a `command`
+  `factum2-librenms-cli sync`), and `StartJob` dispatches a `command`
   envelope per task to exactly one connected node whose hello-reported
   roles include the target name (deliberately _not_ a fan-out to every
-  matching node the way `factum-worker run`'s `SendCommand`/`RunAndWait`
+  matching node the way `factum2-worker run`'s `SendCommand`/`RunAndWait`
   still is - see "Jobs and job tasks" below for why). A sync trigger still
   can't run anything outside the agent's own `worker.commands` allowlist,
   same security property as before. Unlike the old rabbitmq-based
@@ -244,7 +254,7 @@ firewall step, not something the process unbinds.
   a plain merge of the DB's configured `models.WorkerNode` rows with
   `RemoteManager.StatusAll()`'s live connection state. Unlike the old
   rabbitmq-based ping/pong (a fanout broadcast with a fixed timeout window,
-  answered by _every_ running `factum-worker start` instance regardless of
+  answered by _every_ running `factum2-worker start` instance regardless of
   `worker.commands`), this is a passive read of state `RemoteManager` already
   knows - it's always either connected or actively retrying every
   configured node (see "Worker / hub transport" below), so there's no
@@ -295,12 +305,12 @@ firewall step, not something the process unbinds.
   print well-formed-but-unrelated JSON (`internal/icinga/icinga.go`
   dumping a request body) that would otherwise silently decode into a
   blank event and swallow the real line.
-- `Sync()` in `internal/librenms/factum-librenms.go` gets its Netbox client
+- `Sync()` in `internal/librenms/factum2-librenms.go` gets its Netbox client
   the same way as everything else on this page: `internal/netbox`'s
   `FetchRemoteConfig`/`RemoteClient` fetch `Settings.NetboxApiURL/
 NetboxApiToken` from the primary (`GET /api/netbox-config`,
   `web.ApiNetboxConfig`, `util.ConfigNetbox`) via `util.FactumHTTP` rather
-  than opening a direct Postgres connection — `factum-librenms-cli` runs on
+  than opening a direct Postgres connection — `factum2-librenms-cli` runs on
   the LibreNMS host, not the primary, and has no access to its Postgres DB.
   LibreNMS's own REST/MySQL and the NetBox API after those credentials are
   fetched stay local / on NetBox's URL; they are not tunneled.
@@ -323,7 +333,7 @@ name over the Factum API_ - `GET /api/device/name/:name` for its platform (via
 `internal/factum.FactumClient.GetDeviceByName`) plus `GET /api/common-config`
 for `DefaultDomain` (`drivers.DeviceFQDN` needs it to turn a short factum
 device name into something resolvable), both through `util.FactumHTTP`.
-That's what lets `factum-driver-cli` (`cmd/driver`, which embeds
+That's what lets `factum2-driver-cli` (`cmd/driver`, which embeds
 `cmdbase.ParamsAgent`) run on any host with network access to the devices,
 with no Postgres access at all - same shape as the
 DNS/Icinga/LibreNMS/Oxidized tools above.
@@ -437,12 +447,12 @@ RPC: method/path/body), `response` (primary -> agent: status/body, or
 supervised, auto-reconnecting connection per enabled `WorkerNode`.
 `web.GUI()` registers routes, calls `remoteManager.SetAPIHandler(e)`,
 **then** `go remoteManager.Run` so a connected worker never observes a nil
-API handler. `factum-worker start` runs `runHubListener` (`hub_agent.go`)
+API handler. `factum2-worker start` runs `runHubListener` (`hub_agent.go`)
 and the unix HTTP shim (`runLocalAPI`) together under an errgroup — either
 dying fails `Start`.
 
 **Local unix API**: CLIs on the worker host speak HTTP to
-`/run/factum-worker/api.sock` (dir `0750`, socket `0660`, group `factum`;
+`/run/factum2-worker/api.sock` (dir `0750`, socket `0660`, group `factum`;
 relocate both sides with `FACTUM_WORKER_API_SOCKET`). That is **not** a
 route on `worker.listen` — `/hub` stays the only thing on the address the
 primary can reach. Filesystem ACL is the auth (no extra token on the
@@ -484,7 +494,7 @@ the old rabbitmq topic-exchange binding had. `RemoteManager.RunAndWait`
 additionally registers a temporary waiter (keyed by the generated command
 ID) _before_ dispatching, so a fast agent response can't race ahead of the
 primary listening for it, and blocks until the first `StreamExit` line (or
-`ctx` cancellation) - used by `factum-worker run` (`POST /api/worker/run`,
+`ctx` cancellation) - used by `factum2-worker run` (`POST /api/worker/run`,
 `web.ApiWorkerRun`, streamed back as NDJSON - see
 `internal/worker/run_client.go`'s `RunRemote`, the CLI's HTTP client).
 `RemoteManager.dispatchSingle`/`createAndDispatchTask`/`StartJob` are the
@@ -517,7 +527,7 @@ gone - every `worker.commands` entry is activated unconditionally, and
 standalone process.
 
 `worker.listen`/`worker.token` are effectively required for
-`factum-worker start` to be useful - `Start` errors if `worker.listen` is
+`factum2-worker start` to be useful - `Start` errors if `worker.listen` is
 unset, since the instance would otherwise have no hub transport at all.
 The unix API path cannot be disabled on the listener (`none`/`0` fails
 `Start`); CLIs force HTTPS with `FACTUM_WORKER_API_SOCKET=none` instead.
@@ -528,7 +538,7 @@ The unix API path cannot be disabled on the listener (`none`/`0` fails
 
 All `cmd/*` binaries are built with `github.com/GiGurra/boa`
 (`boa.CmdT[ParamsStruct]{...}`) on top of `spf13/cobra`, not raw cobra
-(`factum-icinga-notifications` is the exception: Icinga2's flag shape
+(`factum2-icinga-notifications` is the exception: Icinga2's flag shape
 collides with boa, so it uses `jessevdk/go-flags`). Params structs
 normally embed `cmdbase.Params` (`cmd/cmd_base.go`), which supplies `-f`
 (not `-c`) config-file loading into the full `util.ConfigRoot` (`db`/
@@ -537,9 +547,10 @@ Oxidized settings live in the `Settings` DB row, not YAML) and
 `--debug`/`--loglevel`. boa treats most fields as required by default, so
 embedding the full root forces a config file to fill in every section
 regardless of whether the binary actually reads it. Binaries that run off
-the primary (`factum-worker`, `factum-dns`, `factum-icinga`,
-`factum-librenms`, `factum-oxidized`, `factum-device-sync`, `factum-driver`,
-`factum`) embed `cmdbase.ParamsAgent` instead, which loads the leaner
+the primary (`factum2-worker`, `factum2-dns`, `factum2-icinga`,
+`factum2-librenms`, `factum2-oxidized`, `factum2-prometheus`,
+`factum2-device-sync`, `factum2-driver`, `factum2`) embed `cmdbase.ParamsAgent`
+instead, which loads the leaner
 `util.ConfigAgentRoot` (`factum`/`worker` only, default file
 `/etc/factum2/factum2-worker.yaml`). `cmdbase.ShowConfig()` is the
 `show-config` for full-`Params` binaries; `cmdbase.ShowConfigAgent`

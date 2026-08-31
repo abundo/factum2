@@ -63,23 +63,16 @@ func DCIMFromInterface(iface *models.Interface) DCIMInterface {
 	}
 }
 
-// ELINERenderData is the template context for ELINE packs. Field names match
-// the existing embed templates (.Name, .LocalIface, .Remote, .SDPID, …).
-type ELINERenderData struct {
-	Name               string
-	Description        string
-	LocalIface         string
-	LocalVLAN          int
-	PeerLocalIface     string
-	PeerLocalVLAN      int
-	ServiceNumericID   int
-	Remote             *ELINERemote
-	StaleSubinterfaces []ELINEStale
-	SDPID              int
-	Vars               map[string]any
-	Device             DCIMDevice
-	Interface          DCIMInterface
-}
+const (
+	// DefaultELINEMTU/DefaultELINEControlWord are hardcoded for v1 rather
+	// than service fields — matches the EOS fixture.
+	DefaultELINEMTU         = 9100
+	DefaultELINEControlWord = true
+
+	FieldVLAN                 = "vlan"
+	FieldSubinterfaceNetboxID = "subinterface_netbox_id"
+	FieldTerminationNetboxID  = "termination_netbox_id"
+)
 
 type ELINERemote struct {
 	NeighborIP   string
@@ -114,19 +107,25 @@ func IsSROS(platform string) bool {
 	return p == "sros" || p == "sros-md"
 }
 
-// GenericRenderData is the template context for non-ELINE services.
+// GenericRenderData is the template context for platform packs. ELINE packs
+// use the extra Peer/Remote/SDPID/Stale fields; other types leave them zero.
 type GenericRenderData struct {
-	Name             string
-	Description      string
-	ServiceNumericID int
-	Fields           map[string]any
-	Endpoint         map[string]any
-	Vars             map[string]any
-	Device           DCIMDevice
-	Interface        DCIMInterface
-	LocalIface       string
-	LocalVLAN        int
-	Role             string
+	Name               string
+	Description        string
+	ServiceNumericID   int
+	Fields             map[string]any
+	Endpoint           map[string]any
+	Vars               map[string]any
+	Device             DCIMDevice
+	Interface          DCIMInterface
+	LocalIface         string
+	LocalVLAN          int
+	Role               string
+	PeerLocalIface     string
+	PeerLocalVLAN      int
+	Remote             *ELINERemote
+	StaleSubinterfaces []ELINEStale
+	SDPID              int
 }
 
 func fieldsMap(raw json.RawMessage) map[string]any {
@@ -160,7 +159,7 @@ func loadDevice(db *gorm.DB, id uint) (*models.Device, error) {
 }
 
 func vlanFromFields(m map[string]any) int {
-	v, ok := m["vlan"]
+	v, ok := m[FieldVLAN]
 	if !ok {
 		return 0
 	}
@@ -200,10 +199,127 @@ func GenericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 	if iface != nil {
 		data.LocalIface = iface.Name
 	}
-	if n, ok := asInt(data.Fields["service_numeric_id"]); ok {
+	if svc.PseudowireID != 0 {
+		data.ServiceNumericID = svc.PseudowireID
+	} else if n, ok := asInt(data.Fields["service_numeric_id"]); ok {
 		data.ServiceNumericID = int(n)
 	}
+	if svc.ServiceType == "ELINE" {
+		data.Description = elineDescription(svc.ServiceID, customerName(db, svc.CustomerID))
+		siblings, err := ListEndpoints(db, svc.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := fillELINEPeer(db, svc, ep, device, data, siblings); err != nil {
+			return nil, err
+		}
+		data.StaleSubinterfaces = staleOnDevice(db, svc, ep.DeviceID, siblings)
+	}
 	return data, nil
+}
+
+func fillELINEPeer(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, data *GenericRenderData, siblings []models.ServiceEndpoint) error {
+	other := otherEndpoint(ep, siblings)
+	if other == nil {
+		return nil
+	}
+	if other.DeviceID == ep.DeviceID {
+		peerIface, err := loadInterface(db, other.InterfaceID)
+		if err != nil {
+			return err
+		}
+		data.PeerLocalIface = peerIface.Name
+		data.PeerLocalVLAN = vlanFromFields(fieldsMap(other.Fields))
+		return nil
+	}
+	peerDev, err := loadDevice(db, other.DeviceID)
+	if err != nil {
+		return err
+	}
+	peerIface, _ := loadInterface(db, other.InterfaceID)
+	remoteIface := ""
+	if peerIface != nil {
+		remoteIface = peerIface.Name
+	}
+	neighbor := loopbackAddr(db, peerDev)
+	if neighbor == "" {
+		return fmt.Errorf("device %q has no %s address", peerDev.Name, loopbackIfaceName(peerDev.Platform))
+	}
+	data.Remote = &ELINERemote{
+		NeighborIP:   neighbor,
+		PseudowireID: svc.PseudowireID,
+		MTU:          DefaultELINEMTU,
+		ControlWord:  DefaultELINEControlWord,
+		DeviceName:   peerDev.Name,
+		RemoteIface:  remoteIface,
+		RemoteVLAN:   vlanFromFields(fieldsMap(other.Fields)),
+	}
+	if IsSROS(device.Platform) {
+		id, err := SDPIDFromNeighbor(neighbor)
+		if err != nil {
+			return err
+		}
+		data.SDPID = id
+	}
+	return nil
+}
+
+func otherEndpoint(ep *models.ServiceEndpoint, siblings []models.ServiceEndpoint) *models.ServiceEndpoint {
+	for i := range siblings {
+		s := &siblings[i]
+		if ep.ID != 0 && s.ID == ep.ID {
+			continue
+		}
+		if ep.ID == 0 && s.DeviceID == ep.DeviceID && s.InterfaceID == ep.InterfaceID && s.Role == ep.Role {
+			continue
+		}
+		return s
+	}
+	return nil
+}
+
+func staleOnDevice(db *gorm.DB, svc *models.Service, deviceID uint, eps []models.ServiceEndpoint) []ELINEStale {
+	current := map[string]bool{}
+	for _, ep := range eps {
+		if ep.DeviceID != deviceID {
+			continue
+		}
+		iface, err := loadInterface(db, ep.InterfaceID)
+		if err != nil {
+			continue
+		}
+		key := fmt.Sprintf("%s\x00%d", iface.Name, vlanFromFields(fieldsMap(ep.Fields)))
+		current[key] = true
+	}
+	applied := []struct {
+		deviceID uint
+		iface    string
+		vlan     int
+	}{
+		{svc.AppliedEndpointADeviceID, svc.AppliedEndpointAIface, svc.AppliedEndpointAVlan},
+		{svc.AppliedEndpointBDeviceID, svc.AppliedEndpointBIface, svc.AppliedEndpointBVlan},
+	}
+	var out []ELINEStale
+	seen := map[string]bool{}
+	for _, a := range applied {
+		if a.deviceID != deviceID || a.iface == "" {
+			continue
+		}
+		key := fmt.Sprintf("%s\x00%d", a.iface, a.vlan)
+		if current[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ELINEStale{Iface: a.iface, VLAN: a.vlan})
+	}
+	return out
+}
+
+func loopbackIfaceName(platform string) string {
+	if IsSROS(platform) {
+		return "system"
+	}
+	return "Loopback0"
 }
 
 // RenderedSource is one template or service's rendered CLI (or other payload).
@@ -249,50 +365,8 @@ func deviceScopeChain(db *gorm.DB, deviceID uint) (map[uint]bool, error) {
 	return ancestorIDs(db, s)
 }
 
-func elineSidesForDevice(svc *models.Service, deviceID uint) []struct {
-	ifaceID uint
-	vlan    int
-	peer    bool
-	peerID  uint
-	peerIf  uint
-	peerV   int
-} {
-	var sides []struct {
-		ifaceID uint
-		vlan    int
-		peer    bool
-		peerID  uint
-		peerIf  uint
-		peerV   int
-	}
-	if svc.EndpointADeviceID == deviceID {
-		sides = append(sides, struct {
-			ifaceID uint
-			vlan    int
-			peer    bool
-			peerID  uint
-			peerIf  uint
-			peerV   int
-		}{svc.EndpointAInterfaceID, svc.EndpointAVlan, svc.EndpointBDeviceID != 0, svc.EndpointBDeviceID, svc.EndpointBInterfaceID, svc.EndpointBVlan})
-	}
-	if svc.EndpointBDeviceID == deviceID && svc.EndpointBDeviceID != svc.EndpointADeviceID {
-		sides = append(sides, struct {
-			ifaceID uint
-			vlan    int
-			peer    bool
-			peerID  uint
-			peerIf  uint
-			peerV   int
-		}{svc.EndpointBInterfaceID, svc.EndpointBVlan, svc.EndpointADeviceID != 0, svc.EndpointADeviceID, svc.EndpointAInterfaceID, svc.EndpointAVlan})
-	}
-	return sides
-}
-
 func loopbackAddr(db *gorm.DB, device *models.Device) string {
-	name := "Loopback0"
-	if IsSROS(device.Platform) {
-		name = "system"
-	}
+	name := loopbackIfaceName(device.Platform)
 	var ifaces []models.Interface
 	if err := db.Where("device_id = ? AND name = ?", device.ID, name).Find(&ifaces).Error; err != nil || len(ifaces) == 0 {
 		return ""
@@ -315,79 +389,6 @@ func customerName(db *gorm.DB, customerID uint) string {
 
 func elineDescription(serviceID, customer string) string {
 	return fmt.Sprintf("ID=%s %s", serviceID, customer)
-}
-
-func renderELINEForDevice(db *gorm.DB, svc *models.Service, device *models.Device) []RenderedSource {
-	pack, err := LookupPlatformPack(db, "ELINE", device.Platform)
-	if err != nil || pack == nil {
-		return []RenderedSource{{
-			Source: "service:" + svc.ServiceID, Kind: "service",
-			Platform: NormalizePlatform(device.Platform),
-			Error:    "no ELINE platform pack for " + device.Platform,
-		}}
-	}
-	cust := customerName(db, svc.CustomerID)
-	desc := elineDescription(svc.ServiceID, cust)
-	var out []RenderedSource
-	for _, side := range elineSidesForDevice(svc, device.ID) {
-		iface, err := loadInterface(db, side.ifaceID)
-		if err != nil {
-			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
-			continue
-		}
-		vars, _ := ResolveMap(db, iface.ID)
-		data := ELINERenderData{
-			Name:             svc.ServiceID,
-			Description:      desc,
-			LocalIface:       iface.Name,
-			LocalVLAN:        side.vlan,
-			ServiceNumericID: svc.PseudowireID,
-			Vars:             vars,
-			Device:           DCIMFromDevice(device),
-			Interface:        DCIMFromInterface(iface),
-		}
-		if side.peer && side.peerID == device.ID {
-			peerIface, err := loadInterface(db, side.peerIf)
-			if err == nil {
-				data.PeerLocalIface = peerIface.Name
-				data.PeerLocalVLAN = side.peerV
-			}
-		} else if side.peer {
-			peerDev, err := loadDevice(db, side.peerID)
-			if err == nil {
-				peerIface, _ := loadInterface(db, side.peerIf)
-				remoteIface := ""
-				if peerIface != nil {
-					remoteIface = peerIface.Name
-				}
-				data.Remote = &ELINERemote{
-					NeighborIP:   loopbackAddr(db, peerDev),
-					PseudowireID: svc.PseudowireID,
-					MTU:          9100,
-					ControlWord:  true,
-					DeviceName:   peerDev.Name,
-					RemoteIface:  remoteIface,
-					RemoteVLAN:   side.peerV,
-				}
-				if IsSROS(device.Platform) && data.Remote.NeighborIP != "" {
-					if id, err := SDPIDFromNeighbor(data.Remote.NeighborIP); err == nil {
-						data.SDPID = id
-					}
-				}
-			}
-		}
-		cmds, err := RenderPackApply(db, pack, data)
-		src := RenderedSource{
-			Source: "service:" + svc.ServiceID, Kind: "service",
-			Platform: pack.Platform, PayloadKind: pack.PayloadKind,
-			Commands: cmds,
-		}
-		if err != nil {
-			src.Error = err.Error()
-		}
-		out = append(out, src)
-	}
-	return out
 }
 
 func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps []models.ServiceEndpoint) []RenderedSource {
@@ -485,15 +486,6 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 		result.Sources = append(result.Sources, src)
 	}
 
-	var elines []models.Service
-	if err := db.Where("service_type = ? AND (endpoint_a_device_id = ? OR endpoint_b_device_id = ?)",
-		"ELINE", deviceID, deviceID).Find(&elines).Error; err != nil {
-		return nil, err
-	}
-	for i := range elines {
-		result.Sources = append(result.Sources, renderELINEForDevice(db, &elines[i], device)...)
-	}
-
 	var eps []models.ServiceEndpoint
 	if err := db.Where("device_id = ?", deviceID).Find(&eps).Error; err != nil {
 		return nil, err
@@ -507,9 +499,6 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 		if err := db.First(&svc, svcID).Error; err != nil {
 			continue
 		}
-		if svc.ServiceType == "ELINE" {
-			continue
-		}
 		result.Sources = append(result.Sources, renderGenericForDevice(db, &svc, device, group)...)
 	}
 	return result, nil
@@ -520,25 +509,6 @@ func RenderService(db *gorm.DB, serviceID uint) ([]RenderedSource, error) {
 	var svc models.Service
 	if err := db.First(&svc, serviceID).Error; err != nil {
 		return nil, statusErr(404, "service not found")
-	}
-	if svc.ServiceType == "ELINE" {
-		var out []RenderedSource
-		ids := []uint{}
-		if svc.EndpointADeviceID != 0 {
-			ids = append(ids, svc.EndpointADeviceID)
-		}
-		if svc.EndpointBDeviceID != 0 && svc.EndpointBDeviceID != svc.EndpointADeviceID {
-			ids = append(ids, svc.EndpointBDeviceID)
-		}
-		for _, id := range ids {
-			dev, err := loadDevice(db, id)
-			if err != nil {
-				out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
-				continue
-			}
-			out = append(out, renderELINEForDevice(db, &svc, dev)...)
-		}
-		return out, nil
 	}
 	var eps []models.ServiceEndpoint
 	if err := db.Where("service_id = ?", serviceID).Find(&eps).Error; err != nil {

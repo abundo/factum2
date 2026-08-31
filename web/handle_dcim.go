@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -74,19 +75,36 @@ func fetchDevices(ctx context.Context, DB *gorm.DB, ids []uint) ([]models.Device
 		addressesByInterfaceID[addr.InterfaceID] = append(addressesByInterfaceID[addr.InterfaceID], addr)
 	}
 
-	services, err := gorm.G[models.Service](DB).
-		Where("endpoint_a_interface_id IN ? OR endpoint_b_interface_id IN ?", interfaceIDs, interfaceIDs).
-		Find(ctx)
-	if err != nil {
-		return nil, err
+	var epRows []models.ServiceEndpoint
+	if len(interfaceIDs) > 0 {
+		epRows, err = gorm.G[models.ServiceEndpoint](DB).
+			Where("interface_id IN ?", interfaceIDs).
+			Find(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	svcIDs := make([]uint, 0, len(epRows))
+	seenSvc := map[uint]bool{}
+	for _, ep := range epRows {
+		if seenSvc[ep.ServiceID] {
+			continue
+		}
+		seenSvc[ep.ServiceID] = true
+		svcIDs = append(svcIDs, ep.ServiceID)
+	}
+	var services []models.Service
+	if len(svcIDs) > 0 {
+		services, err = gorm.G[models.Service](DB).Where("id IN ?", svcIDs).Find(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Service.EndpointXInterfaceID stores the physical port the operator
-	// picked (e.g. Ethernet10). Once provisioned, the real termination is
-	// the per-VLAN subinterface (Ethernet10.12) recorded as
-	// EndpointXSubinterfaceNetboxID and mirrored into factum's interfaces
-	// table - hang the Services button on that subinterface when it
-	// exists, not on the parent physical port.
+	// ServiceEndpoint.InterfaceID is the physical port. Once provisioned,
+	// the real termination is the per-VLAN subinterface ("<parent>.<vlan>")
+	// recorded in Fields.subinterface_netbox_id - hang the Services button
+	// on that subinterface when it exists, not on the parent physical port.
 	ifaceByID := make(map[uint]models.Interface, len(interfaces))
 	ifaceIDByNetboxID := make(map[uint]uint, len(interfaces))
 	ifaceIDByDeviceAndName := make(map[string]uint, len(interfaces))
@@ -98,10 +116,6 @@ func fetchDevices(ctx context.Context, DB *gorm.DB, ids []uint) ([]models.Device
 		ifaceIDByDeviceAndName[fmt.Sprintf("%d\x00%s", iface.DeviceID, iface.Name)] = iface.ID
 	}
 
-	// resolveServiceInterfaceID maps one ELINE endpoint onto the factum
-	// interface row that should show the service link: prefer the
-	// provisioned subinterface (by Netbox ID, then by "<parent>.<vlan>"
-	// name on the same device), else the physical port.
 	resolveServiceInterfaceID := func(physicalID, subNetboxID uint, vlan int) uint {
 		if physicalID == 0 {
 			return 0
@@ -139,19 +153,23 @@ func fetchDevices(ctx context.Context, DB *gorm.DB, ids []uint) ([]models.Device
 		}
 	}
 
-	servicesByInterfaceID := make(map[uint][]models.InterfaceServiceRef, len(services))
-	for _, svc := range services {
-		ref := models.InterfaceServiceRef{ID: svc.ID, ServiceID: svc.ServiceID}
-		if id := resolveServiceInterfaceID(svc.EndpointAInterfaceID, svc.EndpointASubinterfaceNetboxID, svc.EndpointAVlan); id != 0 {
-			servicesByInterfaceID[id] = append(servicesByInterfaceID[id], ref)
-		}
-		if id := resolveServiceInterfaceID(svc.EndpointBInterfaceID, svc.EndpointBSubinterfaceNetboxID, svc.EndpointBVlan); id != 0 {
-			servicesByInterfaceID[id] = append(servicesByInterfaceID[id], ref)
-		}
-	}
 	svcByID := make(map[uint]models.Service, len(services))
 	for _, svc := range services {
 		svcByID[svc.ID] = svc
+	}
+	servicesByInterfaceID := make(map[uint][]models.InterfaceServiceRef, len(epRows))
+	for _, ep := range epRows {
+		svc, ok := svcByID[ep.ServiceID]
+		if !ok {
+			continue
+		}
+		sub, _ := cfgmgmt.NetboxIDsFromFields(ep.Fields)
+		id := resolveServiceInterfaceID(ep.InterfaceID, sub, cfgmgmt.VLANFromFields(ep.Fields))
+		if id == 0 {
+			continue
+		}
+		ref := models.InterfaceServiceRef{ID: svc.ID, ServiceID: svc.ServiceID}
+		servicesByInterfaceID[id] = append(servicesByInterfaceID[id], ref)
 	}
 	for _, h := range hopRows {
 		if h.InterfaceID == nil {
@@ -207,7 +225,7 @@ func (ctrl *Controller) ApiGetDevices(c *echo.Context) error {
 // array (empty if there's no such device), not as a bare object - the same
 // shape as /api/device, so internal/factum.FactumClient parses both with the
 // same []*models.Device. Used by tools that only know a device by name and
-// have no access to the primary's Postgres (currently factum-driver-cli, via
+// have no access to the primary's Postgres (currently factum2-driver-cli, via
 // internal/drivers.NewDriverName).
 func (ctrl *Controller) ApiGetDeviceByName(c *echo.Context) error {
 	ctx := c.Request().Context()

@@ -1,6 +1,7 @@
 package cfgmgmt
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -108,4 +109,66 @@ func ListEndpoints(db *gorm.DB, serviceID uint) ([]models.ServiceEndpoint, error
 		return nil, err
 	}
 	return rows, nil
+}
+
+// EncodeEndpointFields stores vlan plus optional NetBox ids on an endpoint.
+func EncodeEndpointFields(vlan int, subNetboxID, termNetboxID uint) json.RawMessage {
+	m := map[string]any{FieldVLAN: vlan}
+	if subNetboxID != 0 {
+		m[FieldSubinterfaceNetboxID] = subNetboxID
+	}
+	if termNetboxID != 0 {
+		m[FieldTerminationNetboxID] = termNetboxID
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return b
+}
+
+func FieldUint(m map[string]any, key string) uint {
+	n, ok := asInt(m[key])
+	if !ok || n < 0 {
+		return 0
+	}
+	return uint(n)
+}
+
+func NetboxIDsFromFields(raw json.RawMessage) (sub, term uint) {
+	m := fieldsMap(raw)
+	return FieldUint(m, FieldSubinterfaceNetboxID), FieldUint(m, FieldTerminationNetboxID)
+}
+
+func VLANFromFields(raw json.RawMessage) int {
+	return vlanFromFields(fieldsMap(raw))
+}
+
+func IsPhysicalInterfaceType(t string) bool {
+	return t != "" && t != "virtual" && t != "lag"
+}
+
+// ValidateELINEShape enforces physical ports and that A/B are not the same
+// device+interface. Call after ValidateEndpoints.
+func ValidateELINEShape(db *gorm.DB, eps []models.ServiceEndpoint) error {
+	type key struct {
+		device, iface uint
+	}
+	seen := map[key]bool{}
+	for i := range eps {
+		ep := &eps[i]
+		var iface models.Interface
+		if err := db.First(&iface, ep.InterfaceID).Error; err != nil {
+			return err
+		}
+		if !IsPhysicalInterfaceType(iface.Type) {
+			return statusErrf(400, "endpoint role %q: interface %q is not a physical interface", ep.Role, iface.Name)
+		}
+		k := key{ep.DeviceID, ep.InterfaceID}
+		if seen[k] {
+			return statusErr(400, "endpoint A and endpoint B must not be the same device/interface")
+		}
+		seen[k] = true
+	}
+	return nil
 }

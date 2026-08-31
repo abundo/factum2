@@ -16,15 +16,16 @@ func TestDeviceDownImpactELINE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Device{}, &models.Customer{}, &models.Service{}, &models.ServiceHop{}, &models.ServicePath{}); err != nil {
+	if err := db.AutoMigrate(&models.Device{}, &models.Customer{}, &models.Service{}, &models.ServiceEndpoint{}, &models.ServiceHop{}, &models.ServicePath{}); err != nil {
 		t.Fatal(err)
 	}
 	cust := models.Customer{Name: "Acme"}
 	db.Create(&cust)
 	dev := models.Device{Name: "pe1", Status: "offline"}
 	db.Create(&dev)
-	svc := models.Service{ServiceID: "CN00001", CustomerID: cust.ID, EndpointADeviceID: dev.ID}
+	svc := models.Service{ServiceID: "CN00001", CustomerID: cust.ID, ServiceType: "ELINE"}
 	db.Create(&svc)
+	db.Create(&models.ServiceEndpoint{ServiceID: svc.ID, Role: "a", DeviceID: dev.ID, InterfaceID: 1})
 
 	out, err := DeviceDownImpact(db, dev.ID)
 	if err != nil {
