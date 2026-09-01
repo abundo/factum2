@@ -159,6 +159,7 @@ archives:
           - LICENSE
           - README.md
           - examples/*
+          - install.py
 
 nfpms:
     - maintainer: Anders Lowinger <anders@abundo.se>
@@ -184,6 +185,10 @@ nfpms:
             dst: /lib/systemd/system/factum2-worker.service
           - dst: /etc/factum2
             type: dir
+          - src: install.py
+            dst: /etc/factum2/install.py
+            file_info:
+                mode: 0755
 
 checksum:
     name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"

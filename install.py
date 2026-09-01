@@ -11,9 +11,12 @@ from this release, the installer shows a diff and asks before overwriting
 (--yes overwrites without asking). Newly installed units are enabled.
 
   ./install.py                 GitHub release (production). TUI on a TTY,
-                               or --list / --install TAG. A standalone copy
-                               (no git checkout) is offered a self-update if
-                               GitHub has a newer install.py.
+                               or --list / --install TAG. After a tag is
+                               chosen, that release's install.py (from the
+                               tarball, else the git tag) does the install
+                               so CLI steps match those binaries. A
+                               standalone copy is offered a self-update from
+                               the latest GitHub *release*, not from main.
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
@@ -62,10 +65,16 @@ WORKER_UNIT = "factum2-worker.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
-# a newer GitHub version. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 8
+# a newer GitHub *release*. Missing/unparseable counts as 0.
+INSTALLER_VERSION = 9
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
+# Set when this process is already the selected tag's installer (parent
+# unpacked the archive and re-invoked that copy).
+PINNED_ENV = "FACTUM2_INSTALL_PINNED"
+# Parent's extracted-archive work dir (arch/ subdirs). Pinned children skip
+# a second download when this is set.
+RELEASE_WORK_ENV = "FACTUM2_RELEASE_WORK"
 
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum2*` file so a newly added cmd/ still installs.
@@ -1004,6 +1013,25 @@ def _looks_like_release_root(path: Path) -> bool:
     return any(p.is_file() and p.name.startswith("factum2") for p in path.iterdir())
 
 
+def roots_from_work(work: Path) -> dict[str, Path]:
+    """Rebuild arch -> extracted root from prepare_roots' work dir."""
+    if not work.is_dir():
+        raise InstallError(f"Release work dir missing: {work}")
+    roots: dict[str, Path] = {}
+    for p in sorted(work.iterdir()):
+        if not p.is_dir():
+            continue
+        if _looks_like_release_root(p):
+            roots[p.name] = p
+            continue
+        subs = [s for s in p.iterdir() if s.is_dir() and _looks_like_release_root(s)]
+        if len(subs) == 1:
+            roots[p.name] = subs[0]
+    if not roots:
+        raise InstallError(f"Could not find extracted archives in {work}")
+    return roots
+
+
 def find_binaries(root: Path) -> list[Path]:
     found = []
     for p in sorted(root.iterdir()):
@@ -1853,19 +1881,25 @@ def in_git_checkout() -> bool:
 
 
 def confirm_self_update(
-    local_ver: int, remote_ver: int, repo: str, assume_yes: bool
+    local_ver: int,
+    remote_ver: int,
+    repo: str,
+    assume_yes: bool,
+    *,
+    release_tag: str | None = None,
 ) -> bool:
+    src = f"{repo} {release_tag}" if release_tag else repo
     if assume_yes:
         return True
     if not sys.stdin.isatty():
         log(
             f"==> A newer {INSTALLER_FILENAME} is on GitHub "
-            f"({repo}: {remote_ver}, this copy: {local_ver}). "
+            f"({src}: {remote_ver}, this copy: {local_ver}). "
             "Re-run on a TTY, or pass --self-update / --yes."
         )
         return False
     log("")
-    log(f"A newer {INSTALLER_FILENAME} is available on GitHub ({repo}).")
+    log(f"A newer {INSTALLER_FILENAME} is available on GitHub ({src}).")
     log(f"  this copy : {local_ver}")
     log(f"  GitHub    : {remote_ver}")
     try:
@@ -1903,10 +1937,14 @@ def reexec_self() -> None:
 
 
 def maybe_self_update(args: argparse.Namespace) -> None:
-    """Replace this script from GitHub if a newer copy exists. May os.execve."""
+    """Replace this script from the latest GitHub *release* if newer. May os.execve.
+
+    Never fetches from the default branch: unreleased main can invoke CLI
+    steps that a selected (older) tag's binaries do not have.
+    """
     if args.skip_self_update:
         return
-    if os.environ.get(SELF_UPDATED_ENV):
+    if os.environ.get(SELF_UPDATED_ENV) or os.environ.get(PINNED_ENV):
         return
     if in_git_checkout() and not args.self_update:
         return
@@ -1914,7 +1952,14 @@ def maybe_self_update(args: argparse.Namespace) -> None:
     token = github_token()
     client = GithubClient(args.repo, token)
     try:
-        remote = client.fetch_file(INSTALLER_FILENAME)
+        releases = client.list_releases(limit=args.limit)
+        rel = latest_stable(releases, include_pre=args.pre)
+        if rel is None:
+            log(
+                f"!!  No GitHub releases; cannot check for a newer {INSTALLER_FILENAME}"
+            )
+            return
+        remote = client.fetch_file(INSTALLER_FILENAME, ref=rel.tag)
     except (InstallError, OSError, json.JSONDecodeError, ValueError) as exc:
         log(f"!!  Could not check for a newer {INSTALLER_FILENAME}: {exc}")
         return
@@ -1943,31 +1988,36 @@ def maybe_self_update(args: argparse.Namespace) -> None:
         if args.self_update:
             log(
                 f"==> This {INSTALLER_FILENAME} (version {local_ver}) is newer than "
-                f"GitHub ({remote_ver}); not downgrading"
+                f"GitHub {rel.tag} ({remote_ver}); not downgrading"
             )
         return
     if remote == local:
         if args.self_update:
             log(
-                f"==> {INSTALLER_FILENAME} is already the GitHub copy (version {local_ver})"
+                f"==> {INSTALLER_FILENAME} is already the {rel.tag} copy "
+                f"(version {local_ver})"
             )
         return
 
     if remote_ver > local_ver:
         log(
-            f"==> Newer {INSTALLER_FILENAME} on GitHub "
+            f"==> Newer {INSTALLER_FILENAME} on GitHub {rel.tag} "
             f"(this copy {local_ver}, GitHub {remote_ver})"
         )
     else:
         log(
-            f"==> GitHub has an updated {INSTALLER_FILENAME} "
+            f"==> GitHub {rel.tag} has an updated {INSTALLER_FILENAME} "
             f"(version {remote_ver}, content differs from this copy)"
         )
     if args.dry_run:
         log(f"==> Dry run: would replace {local_path} and re-run")
         return
     if not confirm_self_update(
-        local_ver, remote_ver, args.repo, assume_yes=args.yes or args.self_update
+        local_ver,
+        remote_ver,
+        args.repo,
+        assume_yes=args.yes or args.self_update,
+        release_tag=rel.tag,
     ):
         return
     try:
@@ -1975,13 +2025,124 @@ def maybe_self_update(args: argparse.Namespace) -> None:
     except OSError as exc:
         log(f"!!  Could not replace {local_path}: {exc}")
         return
-    log(f"==> Updated {local_path} ({local_ver} -> {remote_ver})")
+    log(f"==> Updated {local_path} ({local_ver} -> {remote_ver}, {rel.tag})")
     standalone = args.self_update and not args.list and args.install is None
     if standalone:
         return
     log("==> Re-running with the new installer")
     reexec_self()
     raise InstallError("failed to re-exec updated installer")
+
+
+def installer_bytes_from_text(payload: bytes) -> bytes | None:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not looks_like_installer(text):
+        return None
+    return payload
+
+
+def load_release_installer(
+    primary_root: Path, client: GithubClient, tag: str
+) -> bytes | None:
+    """Tag-pinned installer: tarball first, then the git tag."""
+    bundled = primary_root / INSTALLER_FILENAME
+    if bundled.is_file():
+        try:
+            data = bundled.read_bytes()
+        except OSError:
+            data = b""
+        parsed = installer_bytes_from_text(data)
+        if parsed is not None:
+            return parsed
+        log(f"!!  {bundled} does not look like this installer; trying git {tag}")
+    try:
+        remote = client.fetch_file(INSTALLER_FILENAME, ref=tag)
+    except (InstallError, OSError, json.JSONDecodeError, ValueError) as exc:
+        log(f"!!  {tag} has no {INSTALLER_FILENAME}: {exc}")
+        return None
+    parsed = installer_bytes_from_text(remote)
+    if parsed is None:
+        log(f"!!  GitHub {tag} {INSTALLER_FILENAME} does not look like this installer")
+        return None
+    return parsed
+
+
+def pinned_child_argv(argv: Sequence[str], tag: str) -> list[str]:
+    """Rebuild argv so the tag installer installs that tag without self-update."""
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--self-update":
+            i += 1
+            continue
+        if a == "--install":
+            i += 2 if i + 1 < len(argv) else 1
+            continue
+        if a.startswith("--install="):
+            i += 1
+            continue
+        out.append(a)
+        i += 1
+    if "--skip-self-update" not in out:
+        out.append("--skip-self-update")
+    if "--yes" not in out and "-y" not in out:
+        out.append("--yes")
+    out.extend(["--install", tag])
+    return out
+
+
+def run_pinned_installer_if_needed(
+    selected: Release,
+    primary_root: Path,
+    work: Path,
+    client: GithubClient,
+) -> int | None:
+    """If this copy is not the selected tag's installer, run that copy.
+
+    Returns the child's exit code, or None to continue in-process.
+    """
+    if os.environ.get(PINNED_ENV):
+        return None
+    payload = load_release_installer(primary_root, client, selected.tag)
+    if payload is None:
+        log(
+            f"!!  {selected.tag} has no {INSTALLER_FILENAME}; installing with this copy"
+        )
+        return None
+    current = Path(__file__).resolve().read_bytes()
+    if payload == current:
+        return None
+    log(
+        f"==> Running {selected.tag}'s {INSTALLER_FILENAME} "
+        "(install steps must match that release's binaries)"
+    )
+    fd, tmp_name = tempfile.mkstemp(prefix="factum2-rel-install-", suffix=".py")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_name, 0o755)
+        env = os.environ.copy()
+        env[PINNED_ENV] = "1"
+        env[SELF_UPDATED_ENV] = "1"
+        env[RELEASE_WORK_ENV] = str(work)
+        child_argv = pinned_child_argv(sys.argv[1:], selected.tag)
+        proc = subprocess.run(
+            [sys.executable, tmp_name, *child_argv],
+            env=env,
+            check=False,
+        )
+        return proc.returncode
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -2022,7 +2183,7 @@ Examples:
   /etc/factum2/install.py --list
   /etc/factum2/install.py --install latest --yes
   ./install.py --install v1.0.0 --dry-run
-  ./install.py --self-update
+  ./install.py --self-update          # from latest GitHub release, not main
   ./install.py --source
   ./install.py --source lab-primary --dry-run
   ./install.py --source --skip-build --primary-only
@@ -2076,13 +2237,13 @@ Examples:
     p.add_argument(
         "--self-update",
         action="store_true",
-        help="replace this script from GitHub if a newer copy exists, then exit "
-        "(or continue when combined with --list / --install)",
+        help="replace this script from the latest GitHub release if a newer copy "
+        "exists, then exit (or continue when combined with --list / --install)",
     )
     p.add_argument(
         "--skip-self-update",
         action="store_true",
-        help="do not check GitHub for a newer install.py",
+        help="do not check the latest GitHub release for a newer install.py",
     )
     return p.parse_args(argv)
 
@@ -2375,8 +2536,8 @@ def main_release(args: argparse.Namespace) -> int:
     if args.dry_run:
         log("==> Dry run: would download " + ", ".join(sorted(archs)))
         log(
-            f"==> Would install {selected.tag} on this host, migrate the database, "
-            f"and restart {', '.join(PRIMARY_UNITS)}"
+            f"==> Would run {selected.tag}'s {INSTALLER_FILENAME} to install "
+            f"on this host, migrate the database, and restart {', '.join(PRIMARY_UNITS)}"
         )
         for host in workers:
             log(
@@ -2384,9 +2545,26 @@ def main_release(args: argparse.Namespace) -> int:
             )
         return 0
 
-    work, roots = prepare_roots(client, selected, archs)
+    inherited_work = (
+        os.environ.get(RELEASE_WORK_ENV) if os.environ.get(PINNED_ENV) else None
+    )
+    own_work = False
+    if inherited_work:
+        work = Path(inherited_work)
+        log(f"==> Using already-extracted {selected.tag} archives in {work}")
+        roots = roots_from_work(work)
+        if goarch not in roots:
+            raise InstallError(
+                f"Pinned release work dir {work} has no {ARCHIVE_OS}/{goarch} tree"
+            )
+    else:
+        work, roots = prepare_roots(client, selected, archs)
+        own_work = True
     try:
         primary_root = roots[goarch]
+        pinned_rc = run_pinned_installer_if_needed(selected, primary_root, work, client)
+        if pinned_rc is not None:
+            return pinned_rc
         install_primary(
             primary_root,
             primary_root / "examples",
@@ -2418,7 +2596,8 @@ def main_release(args: argparse.Namespace) -> int:
         if failures:
             raise InstallError("Failed updating workers: " + ", ".join(failures))
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        if own_work:
+            shutil.rmtree(work, ignore_errors=True)
     return 0
 
 
