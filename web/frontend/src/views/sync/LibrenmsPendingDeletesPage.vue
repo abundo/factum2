@@ -121,7 +121,7 @@ onMounted(load)
 <template>
   <div class="card">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
-      <h4 class="m-0">LibreNMS deletions</h4>
+      <h4 class="m-0">Device deletions</h4>
       <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
     </div>
 

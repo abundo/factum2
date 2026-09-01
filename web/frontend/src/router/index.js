@@ -114,7 +114,7 @@ const router = createRouter({
         {
           path: '/sync/librenms-deletions',
           name: 'sync-librenms-deletions',
-          meta: { title: 'LibreNMS deletions', requiresRead: true },
+          meta: { title: 'Device deletions', requiresRead: true },
           component: () => import('@/views/sync/LibrenmsPendingDeletesPage.vue'),
         },
         {

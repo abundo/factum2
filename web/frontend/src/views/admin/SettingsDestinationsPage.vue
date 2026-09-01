@@ -271,7 +271,7 @@ const destinationTabItems = [
               alerts) and shown as
               <span class="font-mono">(scheduled for deletion YYYY-MM-DD)</span>
               on the display name. They are deleted after the delay below. Queue an earlier delete
-              from Jobs → LibreNMS deletions.
+              from Jobs → Device deletions.
             </p>
             <div>
               <label for="librenms_delayed_delete_days" class="block font-bold mb-3"
