@@ -72,6 +72,12 @@ const router = createRouter({
           component: () => import('@/views/device/DeviceList.vue'),
         },
         {
+          path: '/oxidized',
+          name: 'oxidized',
+          meta: { title: 'Oxidized', requiresRead: true },
+          component: () => import('@/views/oxidized/OxidizedBrowserPage.vue'),
+        },
+        {
           path: '/ipam',
           name: 'ipam',
           meta: { requiresRead: true, requiresIpam: true },

@@ -162,6 +162,13 @@ firewall step, not something the process unbinds.
   `RequireAPIAuth, RequireAdminOrServiceToken`
   (not under `adminApi`: plain `RequireAdmin` 401s a service-token caller
   outright, since there's no "user" in context for it to check a role on).
+  The GUI Oxidized browser (`/oxidized`) is a separate set of
+  `RequireRead` routes on the same handler file
+  (`/api/oxidized/nodes`, `/api/oxidized/node/config|versions|version|diff`)
+  that proxy oxidized-web through `internal/oxidized`'s REST methods.
+  `Settings.OxidizedApiURL` must be reachable from factum-web for that
+  page. Deleted devices are not in the API: `/nodes` is the current
+  source list, and version/fetch/diff look the node up there first.
 - **None of these have local YAML config** (`util.ConfigIcinga`,
   `util.ConfigDNS`, `util.ConfigOxidized`, `util.ConfigLibrenms`,
   `util.ConfigPrometheus` are all runtime-only DTOs, not part of

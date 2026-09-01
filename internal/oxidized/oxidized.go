@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -29,15 +30,25 @@ type OxidizedDevice struct {
 	Model string
 }
 
+type doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 type oxidizedClient struct {
 	c       util.ConfigOxidized
+	http    doer
 	devices map[string]*OxidizedDevice
 }
 
 func NewOxidizedClient(c util.ConfigOxidized) *oxidizedClient {
-	client := new(oxidizedClient)
-	client.c = c
-	return client
+	return newOxidizedClient(c, nil)
+}
+
+func newOxidizedClient(c util.ConfigOxidized, h doer) *oxidizedClient {
+	if h == nil {
+		h = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &oxidizedClient{c: c, http: h}
 }
 
 // get issues a GET request against url, using basic auth if the config has
@@ -50,7 +61,7 @@ func (o *oxidizedClient) get(url string) (*http.Response, error) {
 	if o.c.User != "" {
 		req.SetBasicAuth(o.c.User, o.c.Pass)
 	}
-	return http.DefaultClient.Do(req)
+	return o.http.Do(req)
 }
 
 // LoadDevices reads oxidized's own router.db (DestFile), one "name:model"
@@ -98,9 +109,11 @@ func (o *oxidizedClient) GetDevices() (map[string]*OxidizedDevice, error) {
 }
 
 // GetDeviceConfig fetches the last configuration oxidized stored for name.
-// Returns "", nil if oxidized has no configuration for it.
+// Short hostnames are qualified with the default domain first — oxidized
+// nodes are always stored as FQDNs. Returns "", nil if oxidized has no
+// configuration for it.
 func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
-	url := fmt.Sprintf("%s/node/fetch/%s", o.c.URL, name)
+	url := fmt.Sprintf("%s/node/fetch/%s", o.c.URL, util.FormatName(o.c.DefaultDomain, name))
 	resp, err := o.get(url)
 	if err != nil {
 		return "", err
@@ -118,10 +131,11 @@ func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
 }
 
 // SaveDevices writes one "name:model" line per device to filename - the
-// router.db format oxidized (and LoadDevices above) expects. A device whose
-// name is already its own primary IPv4 address is written as
-// "address:model" instead, to match the device-api naming used by the
-// primary. Devices with no primary IPv4 are skipped.
+// router.db format oxidized (and LoadDevices above) expects. Oxidized
+// always uses FQDNs, so a short hostname (no '.') is qualified with
+// DefaultDomain. A device whose name is already its own primary IPv4
+// address is written as "address:model" instead, to match the device-api
+// naming used by the primary. Devices with no primary IPv4 are skipped.
 func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) (int, error) {
 	f, err := os.Create(filename)
 	if err != nil {
@@ -139,7 +153,7 @@ func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) 
 		if device.Name == addr4 {
 			fmt.Fprintf(f, "%s:%s\n", addr4, model)
 		} else {
-			fmt.Fprintf(f, "%s:%s\n", device.Name, model)
+			fmt.Fprintf(f, "%s:%s\n", util.FormatName(o.c.DefaultDomain, device.Name), model)
 		}
 		count++
 	}

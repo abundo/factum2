@@ -27,12 +27,14 @@ func StructToString(data any) string {
 	return string(s)
 }
 
-// Add default domain on names without .
+// FormatName appends defaultDomain when name has no '.' (a short hostname).
+// Names that are already FQDNs (or IPv4 literals) are returned unchanged.
+// An empty defaultDomain is a no-op so callers don't get a trailing dot.
 func FormatName(defaultDomain string, name string) string {
-	if !strings.Contains(name, ".") {
-		return name + "." + defaultDomain
+	if defaultDomain == "" || name == "" || strings.Contains(name, ".") {
+		return name
 	}
-	return name
+	return name + "." + defaultDomain
 }
 
 // ShortName strips the trailing ".defaultDomain" suffix from a fully

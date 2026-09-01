@@ -215,6 +215,11 @@ func GUI(p *GuiParams) error {
 	api.GET("/icinga-config", ctrl.ApiIcingaConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/dns-config", ctrl.ApiDNSConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/oxidized-config", ctrl.ApiOxidizedConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.GET("/oxidized/nodes", ctrl.ApiOxidizedNodes, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/oxidized/node/config", ctrl.ApiOxidizedNodeConfig, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/oxidized/node/versions", ctrl.ApiOxidizedNodeVersions, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/oxidized/node/version", ctrl.ApiOxidizedNodeVersion, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/oxidized/node/diff", ctrl.ApiOxidizedNodeDiff, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/prometheus-config", ctrl.ApiPrometheusConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	// "factum2-worker run" - streams an NDJSON response, see ApiWorkerRun.
 	api.POST("/worker/run", ctrl.ApiWorkerRun, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)

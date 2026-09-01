@@ -1,6 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   getDevice,
   getDeviceImpact,
@@ -23,6 +24,7 @@ import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 
 const toast = useToast()
+const router = useRouter()
 const authStore = useAuthStore()
 const {
   credentialsDialog,
@@ -468,6 +470,14 @@ onMounted(loadDevices)
             color="neutral"
             variant="outline"
             @click="showInterfaces(row.original)"
+          />
+          <UButton
+            v-if="row.original.cf_backup_oxidized"
+            label="Oxidized"
+            size="sm"
+            color="neutral"
+            variant="outline"
+            @click="router.push({ name: 'oxidized', query: { node: row.original.name } })"
           />
         </div>
       </template>

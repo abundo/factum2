@@ -340,6 +340,14 @@ const destinationTabItems = [
             <div>
               <label for="oxidized_api_url" class="block font-bold mb-3">API URL</label>
               <UInput id="oxidized_api_url" v-model="settings.oxidized_api_url" class="w-full" />
+              <p class="text-muted-color mt-1">
+                oxidized-web REST API, used by
+                <span class="font-mono">factum2-oxidized</span>
+                and the Oxidized device browser. The browser runs on this factum-web host, so the
+                URL must be reachable from here (not only
+                <span class="font-mono">127.0.0.1</span>
+                on the Oxidized server).
+              </p>
             </div>
             <div>
               <label for="oxidized_api_user" class="block font-bold mb-3">API User</label>
