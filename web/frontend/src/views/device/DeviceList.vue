@@ -1,7 +1,6 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   getDevice,
   getDeviceImpact,
@@ -16,6 +15,7 @@ import {
   listXConnects,
   putOpticalPort,
 } from '@/api/optical'
+import OxidizedNodeDialog from '@/components/OxidizedNodeDialog.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
@@ -24,7 +24,6 @@ import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 
 const toast = useToast()
-const router = useRouter()
 const authStore = useAuthStore()
 const {
   credentialsDialog,
@@ -58,9 +57,16 @@ const columns = [
 
 const detailDialog = ref(false)
 const interfacesDialog = ref(false)
+const oxidizedDialogOpen = ref(false)
+const oxidizedNodeName = ref('')
 const device = ref(null)
 const deviceLoading = ref(false)
 const deviceError = ref(null)
+
+function showOxidized(deviceRow) {
+  oxidizedNodeName.value = deviceRow.name
+  oxidizedDialogOpen.value = true
+}
 
 function loadDevices() {
   loading.value = true
@@ -477,7 +483,7 @@ onMounted(loadDevices)
             size="sm"
             color="neutral"
             variant="outline"
-            @click="router.push({ name: 'oxidized', query: { node: row.original.name } })"
+            @click="showOxidized(row.original)"
           />
         </div>
       </template>
@@ -855,4 +861,6 @@ onMounted(loadDevices)
     :platform="device?.platform"
     @saved="onVlanSaved"
   />
+
+  <OxidizedNodeDialog v-model:open="oxidizedDialogOpen" :node-name="oxidizedNodeName" />
 </template>
