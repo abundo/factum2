@@ -18,18 +18,28 @@ const items = computed(() => {
   if (authStore.canRead) {
     groups.push(
       [
-        { type: 'label', label: 'Organisation' },
+        { type: 'label', label: 'Organization' },
         { label: 'Customers', icon: 'i-lucide-building-2', to: '/tenant/customer' },
         { label: 'Contacts', icon: 'i-lucide-book-user', to: '/tenant/contact' },
       ],
       [
-        { type: 'label', label: 'Network' },
+        { type: 'label', label: 'Devices' },
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
         { label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' },
+      ],
+      ...(authStore.ipamEnabled
+        ? [
+            [
+              { type: 'label', label: 'IPAM' },
+              { label: 'Prefixes', icon: 'i-lucide-binary', to: '/ipam' },
+            ],
+          ]
+        : []),
+      [
+        { type: 'label', label: 'Provisioning' },
         { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
         { label: 'Config', icon: 'i-lucide-settings-2', to: '/config' },
-        ...(authStore.ipamEnabled ? [{ label: 'IPAM', icon: 'i-lucide-binary', to: '/ipam' }] : []),
         ...(authStore.opticalEnabled
           ? [{ label: 'Maintenance', icon: 'i-lucide-wrench', to: '/maintenance' }]
           : []),
