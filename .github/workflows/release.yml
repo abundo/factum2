@@ -26,6 +26,12 @@ jobs:
                   repository: abundo/limetool
                   path: limetool
 
+            - name: Checkout netboxtool
+              uses: actions/checkout@v7
+              with:
+                  repository: abundo/netboxtool
+                  path: netboxtool
+
             - name: Set up Go
               uses: actions/setup-go@v7
               with:
@@ -53,6 +59,12 @@ jobs:
               with:
                   repository: abundo/limetool
                   path: limetool
+
+            - name: Checkout netboxtool
+              uses: actions/checkout@v7
+              with:
+                  repository: abundo/netboxtool
+                  path: netboxtool
 
             - name: Set up Go
               uses: actions/setup-go@v7
