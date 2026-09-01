@@ -105,20 +105,22 @@ meant to run off the primary host.
 
 **Capacity service types (cfgmgmt):** CN/CI types (ELINE, ELAN, L3VPN, …)
 are a `ServiceType` + per-NOS `PlatformPack` in the DB, not a new Go
-package. Endpoints live in `service_endpoints`. ELINE still has NetBox
-L2VPN reconcile on save/import. How to design one:
+package. Endpoints live in `service_endpoints`. Each type can carry
+`sync_source` / `netbox_type` so device-sync and NetBox reverse-import
+are not ELINE-hardcoded. How to design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
 
-**ELINE / L2VPN path (device → Netbox → factum Service):**
-`factum2-device-sync` writes on-device ELINEs into Netbox as EVPL L2VPNs +
-terminations. `factum2-netbox sync` then reverse-imports those onto matching
-factum `Service` rows (`internal/netbox.syncServiceEndpointsFromL2VPNs`):
-match by `Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`,
-resolve terminations to physical ports + VLAN/subinterface, set
-`ServiceType=ELINE` and `service_endpoints` (roles a/b, vlan + netbox ids
-in Fields). Does not create Service rows (Lime/manual still
-own that). Skips services whose `ServiceType` is already set to something
-other than ELINE/empty.
+**L2VPN path (device → Netbox → factum Service):**
+`factum2-device-sync` writes on-device services using cfgmgmt mappings
+(ELINE→EVPL L2VPN, ELAN→VPLS, L3VPN→VRF) plus terminations. `factum2-netbox
+sync` then reverse-imports L2VPNs onto matching factum `Service` rows
+(`internal/netbox.syncServiceEndpointsFromL2VPNs`): match by
+`Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`, resolve
+terminations to physical ports + VLAN/subinterface, set `ServiceType`
+from the mapping (ELINE/ELAN/…) and `service_endpoints` (roles from the
+type). Does not create Service rows (Lime/manual still own that). Skips
+services whose `ServiceType` is already set to something other than the
+mapped type or empty.
 
 DNS, Icinga, LibreNMS, Oxidized and Prometheus are different: their CLI tools
 (`factum2-dns`, `factum2-icinga`, `factum2-librenms-cli`, `factum2-oxidized`,

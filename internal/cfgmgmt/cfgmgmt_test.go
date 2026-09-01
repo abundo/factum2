@@ -93,6 +93,37 @@ func seedTree(t *testing.T, db *gorm.DB) (global, folder, deviceScope, ifaceScop
 	return
 }
 
+func TestInventoryMapsAndRolesForCount(t *testing.T) {
+	types := []models.ServiceType{
+		{Name: "ELINE", SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL, EndpointRoles: []models.EndpointRole{
+			{Name: "a", Min: 1, Max: 1}, {Name: "b", Min: 1, Max: 1},
+		}},
+		{Name: "ELAN", SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS, EndpointRoles: []models.EndpointRole{
+			{Name: "endpoint", Min: 1, Max: 0},
+		}},
+		{Name: "POLARIX", EndpointRoles: []models.EndpointRole{{Name: "endpoint", Min: 1, Max: 0}}},
+	}
+	got := InventoryMaps(types)
+	if got[models.SyncSourceELINE] != models.NetboxTypeEVPL || got[models.SyncSourceELAN] != models.NetboxTypeVPLS {
+		t.Errorf("InventoryMaps = %#v", got)
+	}
+	if _, ok := got[models.SyncSourceL3VPN]; ok {
+		t.Errorf("unexpected l3vpn mapping: %#v", got)
+	}
+	eline := TypeForNetboxKind(types, models.NetboxTypeEVPL)
+	if eline == nil || eline.Name != "ELINE" {
+		t.Fatalf("TypeForNetboxKind evpl = %#v", eline)
+	}
+	roles := EndpointRolesForCount(&types[0], 2)
+	if len(roles) != 2 || roles[0] != "a" || roles[1] != "b" {
+		t.Errorf("ELINE roles = %v, want [a b]", roles)
+	}
+	elanRoles := EndpointRolesForCount(&types[1], 3)
+	if len(elanRoles) != 3 || elanRoles[0] != "endpoint" || elanRoles[2] != "endpoint" {
+		t.Errorf("ELAN roles = %v, want 3x endpoint", elanRoles)
+	}
+}
+
 func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)
@@ -104,6 +135,28 @@ func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	}
 	if ok, err := ServiceTypeExists(db, "ELINE"); err != nil || !ok {
 		t.Fatalf("ELINE type missing: %v", err)
+	}
+	var eline, elan, l3 models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eline.SyncSource != models.SyncSourceELINE || eline.NetboxType != models.NetboxTypeEVPL {
+		t.Errorf("ELINE mapping = %s/%s, want eline/evpl", eline.SyncSource, eline.NetboxType)
+	}
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if elan.SyncSource != models.SyncSourceELAN || elan.NetboxType != models.NetboxTypeVPLS {
+		t.Errorf("ELAN mapping = %s/%s, want elan/vpls", elan.SyncSource, elan.NetboxType)
+	}
+	if !schemaHas(elan.Schema, "max_mac_addresses") {
+		t.Errorf("ELAN schema missing max_mac_addresses: %+v", elan.Schema)
+	}
+	if err := db.Where("name = ?", "L3VPN").First(&l3).Error; err != nil {
+		t.Fatal(err)
+	}
+	if l3.SyncSource != models.SyncSourceL3VPN || l3.NetboxType != models.NetboxTypeVRF {
+		t.Errorf("L3VPN mapping = %s/%s, want l3vpn/vrf", l3.SyncSource, l3.NetboxType)
 	}
 	pack, err := LookupPlatformPack(db, "ELINE", "eos")
 	if err != nil || pack == nil {
@@ -750,7 +803,9 @@ func TestValidateEndpointsInventory(t *testing.T) {
 	if err := ValidateEndpoints(db, st, missing); err == nil {
 		t.Fatal("expected missing device reject")
 	}
-	ok := []models.ServiceEndpoint{{Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID}}
+	ok := []models.ServiceEndpoint{
+		{Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0)},
+	}
 	if err := ValidateEndpoints(db, st, ok); err != nil {
 		t.Fatalf("valid endpoint: %v", err)
 	}

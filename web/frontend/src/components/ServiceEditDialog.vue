@@ -15,6 +15,7 @@ import {
 import { getServicePath, putServicePath } from '@/api/optical'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
+import SchemaFields from '@/components/SchemaFields.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 
@@ -58,30 +59,19 @@ const deleteRemoveDevice = ref(false)
 const pickerOpen = ref(false)
 const pickerTarget = ref(null)
 
-// Mirrors ServiceCreateWizard.vue's capacity-product subset (ELINE/ELAN/
-// L3VPN/POLARIX) - Wavelength/Fiber have no ServiceType, so they aren't
-// offered here.
-const FALLBACK_SERVICE_TYPES = [
-  { label: 'Not set', value: '' },
-  { label: 'ELINE — L2VPN point to point', value: 'ELINE' },
-  { label: 'ELAN — L2VPN multipoint', value: 'ELAN' },
-  { label: 'L3VPN — L3 multipoint', value: 'L3VPN' },
-  { label: 'Internet — Polarix', value: 'POLARIX' },
-]
 const serviceTypeRows = ref([])
-const serviceTypeOptions = computed(() => {
-  if (!serviceTypeRows.value.length) return FALLBACK_SERVICE_TYPES
-  return [
-    { label: 'Not set', value: '' },
-    ...serviceTypeRows.value.map((t) => ({
-      label: t.description ? `${t.name} — ${t.description}` : t.name,
-      value: t.name,
-    })),
-  ]
-})
+const serviceTypeOptions = computed(() => [
+  { label: 'Not set', value: '' },
+  ...serviceTypeRows.value.map((t) => ({
+    label: t.description ? `${t.name} — ${t.description}` : t.name,
+    value: t.name,
+  })),
+])
 const selectedServiceType = computed(() =>
   serviceTypeRows.value.find((t) => t.name === service.value.service_type),
 )
+const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
+const schemaValues = ref({})
 const genericRoles = computed(() =>
   service.value.service_type ? (selectedServiceType.value?.endpoint_roles ?? []) : [],
 )
@@ -110,8 +100,8 @@ const readOnly = computed(() => service.value.source === 'lime')
 const canWrite = computed(() => authStore.canWrite)
 
 function loadServiceTypes() {
-  if (serviceTypeRows.value.length > 0) return
-  listServiceTypes()
+  if (serviceTypeRows.value.length > 0) return Promise.resolve()
+  return listServiceTypes()
     .then((rows) => {
       serviceTypeRows.value = rows ?? []
     })
@@ -204,11 +194,12 @@ function loadServiceById(id) {
         fields: { ...ep.fields },
         label: '',
       }))
-      if (data.service_type === 'ELINE' && genericEndpoints.value.length === 0) {
-        genericEndpoints.value = [
-          { role: 'a', device_id: null, interface_id: null, fields: {}, label: '' },
-          { role: 'b', device_id: null, interface_id: null, fields: {}, label: '' },
-        ]
+      schemaValues.value = { ...data.fields }
+      if (schemaValues.value.max_mac_addresses == null && data.max_mac_addresses) {
+        schemaValues.value.max_mac_addresses = data.max_mac_addresses
+      }
+      if (genericEndpoints.value.length === 0) {
+        seedEndpointsForType(data.service_type)
       }
       genericEndpoints.value.forEach((ep, i) => {
         loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
@@ -232,21 +223,27 @@ function loadServiceById(id) {
 watch(open, (isOpen) => {
   if (!isOpen || !props.serviceId) return
   loadCustomers()
-  loadServiceTypes()
-  loadServiceById(props.serviceId)
+  loadServiceTypes().then(() => loadServiceById(props.serviceId))
 })
 
 watch(
   () => service.value.service_type,
   (t) => {
-    if (t === 'ELINE' && genericEndpoints.value.length === 0) {
-      genericEndpoints.value = [
-        { role: 'a', device_id: null, interface_id: null, fields: {}, label: '' },
-        { role: 'b', device_id: null, interface_id: null, fields: {}, label: '' },
-      ]
+    if (genericEndpoints.value.length === 0) {
+      seedEndpointsForType(t)
     }
   },
 )
+
+function seedEndpointsForType(typeName) {
+  const st = serviceTypeRows.value.find((x) => x.name === typeName)
+  for (const role of st?.endpoint_roles ?? []) {
+    const n = role.min || 0
+    for (let i = 0; i < n; i++) {
+      addGenericEndpoint(role.name)
+    }
+  }
+}
 
 function hideDialog() {
   open.value = false
@@ -411,8 +408,8 @@ function saveServiceType() {
   const payload = {
     service_type: service.value.service_type ?? '',
     bandwidth_mbps: Number(service.value.bandwidth_mbps) || 0,
-    max_mac_addresses:
-      service.value.service_type === 'ELAN' ? Number(service.value.max_mac_addresses) || 0 : 0,
+    fields: { ...schemaValues.value },
+    max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
   }
 
   updateServiceType(service.value.id, payload)
@@ -451,7 +448,11 @@ function saveService() {
   }
 
   saving.value = true
-  const payload = { ...service.value }
+  const payload = {
+    ...service.value,
+    fields: { ...schemaValues.value },
+    max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
+  }
 
   updateService(payload.id, payload)
     .then(() => {
@@ -667,18 +668,14 @@ function deleteServiceConfirmed() {
               :min="0"
               class="w-full"
             />
-
-            <template v-if="service.service_type === 'ELAN'">
-              <label for="max_mac_addresses" class="font-bold">Max MAC addresses</label>
-              <UInputNumber
-                id="max_mac_addresses"
-                v-model="service.max_mac_addresses"
-                :disabled="!canWrite"
-                :min="0"
-                class="w-full"
-              />
-            </template>
           </div>
+          <SchemaFields
+            v-if="schemaFields.length"
+            v-model="schemaValues"
+            class="mt-4 flex flex-col gap-3"
+            :fields="schemaFields"
+            :disabled="!canWrite"
+          />
         </div>
 
         <template v-if="genericRoles.length">

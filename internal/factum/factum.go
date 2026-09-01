@@ -81,6 +81,16 @@ func (factum *FactumClient) getDevices(path string) ([]*models.Device, error) {
 	return tmp, nil
 }
 
+// GetServiceTypes is GET /api/config/service-types — used by device-sync
+// to map on-device ELINE/ELAN/L3VPN collections onto NetBox object kinds.
+func (factum *FactumClient) GetServiceTypes() ([]models.ServiceType, error) {
+	var rows []models.ServiceType
+	if err := factum.doJSON(http.MethodGet, "/api/config/service-types", nil, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // GetDeviceByName returns the one device called name. web.ApiGetDeviceByName
 // answers with an array, so an unknown name is an empty list and a 200, not
 // an HTTP error - hence the explicit not-found here.

@@ -359,3 +359,68 @@ func TestSyncServiceEndpointsFromL2VPNs_NoMatchingService(t *testing.T) {
 		t.Errorf("created %d services, want 0 (import must not invent service rows)", n)
 	}
 }
+
+func TestSyncServiceEndpointsFromL2VPNs_ELANVPLS(t *testing.T) {
+	db := newImportTestDB(t)
+	devA, ifA := seedDeviceWithIfaces(t, db, "pe-a", 10, []models.Interface{
+		{NetboxID: 100, Name: "Ethernet1", Type: "1000base-t"},
+		{NetboxID: 101, Name: "Ethernet1.50", Type: "virtual", ParentID: 100},
+	})
+	devB, ifB := seedDeviceWithIfaces(t, db, "pe-b", 11, []models.Interface{
+		{NetboxID: 200, Name: "Ethernet2", Type: "1000base-t"},
+		{NetboxID: 201, Name: "Ethernet2.50", Type: "virtual", ParentID: 200},
+	})
+	_, ifC := seedDeviceWithIfaces(t, db, "pe-c", 12, []models.Interface{
+		{NetboxID: 300, Name: "Ethernet3", Type: "1000base-t"},
+		{NetboxID: 301, Name: "Ethernet3.50", Type: "virtual", ParentID: 300},
+	})
+	svc := models.Service{ServiceID: "CN00380", Source: "lime"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	api := &fakeL2VPNAPI{
+		l2vpns: []*netboxtool.NBL2VPN{{NetboxID: 8, Name: "CN00380", Type: "vpls"}},
+		terms: map[uint][]*netboxtool.NBL2VPNTermination{
+			8: {
+				{NetboxID: 81, L2VPNID: 8, InterfaceID: 101},
+				{NetboxID: 82, L2VPNID: 8, InterfaceID: 201},
+				{NetboxID: 83, L2VPNID: 8, InterfaceID: 301},
+			},
+		},
+	}
+	if err := syncServiceEndpointsFromL2VPNs(db, api, silentReporter()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	var got models.Service
+	if err := db.First(&got, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ServiceType != "ELAN" {
+		t.Errorf("ServiceType = %q, want ELAN", got.ServiceType)
+	}
+	rows, err := cfgmgmt.ListEndpoints(db, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("endpoints = %d, want 3", len(rows))
+	}
+	for _, ep := range rows {
+		if ep.Role != "endpoint" {
+			t.Errorf("role = %q, want endpoint", ep.Role)
+		}
+	}
+	byIface := map[uint]models.ServiceEndpoint{}
+	for _, ep := range rows {
+		byIface[ep.InterfaceID] = ep
+	}
+	if byIface[ifA["Ethernet1"]].DeviceID != devA {
+		t.Errorf("missing pe-a endpoint")
+	}
+	if byIface[ifB["Ethernet2"]].DeviceID != devB {
+		t.Errorf("missing pe-b endpoint")
+	}
+	if _, ok := byIface[ifC["Ethernet3"]]; !ok {
+		t.Errorf("missing pe-c endpoint")
+	}
+}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,28 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// intField reads a JSON number stored under key in raw Fields.
+func intField(raw json.RawMessage, key string) int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(v)
+		return n
+	}
+	return 0
+}
 
 // --------------------------------------------------------------------------
 //
@@ -115,9 +138,10 @@ func (ctrl *Controller) ApiServiceUpdate(services *SecureCRUDHandler[models.Serv
 // SaveDelivery (internal/lime/lime.go) now preserves these specific fields
 // across a Lime resync instead of overwriting them.
 type ServiceTypeDTO struct {
-	ServiceType     string `json:"service_type"`
-	BandwidthMbps   int    `json:"bandwidth_mbps"`
-	MaxMacAddresses int    `json:"max_mac_addresses"`
+	ServiceType     string          `json:"service_type"`
+	BandwidthMbps   int             `json:"bandwidth_mbps"`
+	MaxMacAddresses int             `json:"max_mac_addresses"`
+	Fields          json.RawMessage `json:"fields"`
 }
 
 // ApiServiceTypeUpdate lets the network GUI attach a service type,
@@ -153,10 +177,17 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 		}
 	}
 
+	maxMac := dto.MaxMacAddresses
+	if maxMac == 0 {
+		maxMac = intField(dto.Fields, "max_mac_addresses")
+	}
 	updates := map[string]any{
 		"service_type":      dto.ServiceType,
 		"bandwidth_mbps":    dto.BandwidthMbps,
-		"max_mac_addresses": dto.MaxMacAddresses,
+		"max_mac_addresses": maxMac,
+	}
+	if len(dto.Fields) > 0 && string(dto.Fields) != "null" {
+		updates["fields"] = dto.Fields
 	}
 	if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -301,17 +332,22 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 			}
 		}
 
+		maxMac := dto.MaxMacAddresses
+		if maxMac == 0 {
+			maxMac = intField(dto.Fields, "max_mac_addresses")
+		}
 		created = models.Service{
 			CustomerID:      dto.CustomerID,
 			Comment:         dto.Comment,
 			ServiceID:       serviceID,
 			ServiceType:     dto.ServiceType,
 			BandwidthMbps:   dto.BandwidthMbps,
-			MaxMacAddresses: dto.MaxMacAddresses,
+			MaxMacAddresses: maxMac,
 			DeliveryPoint1:  dto.DeliveryPoint1,
 			DeliveryPoint2:  dto.DeliveryPoint2,
 			Product:         dto.Product,
 			Service:         dto.Service,
+			Fields:          dto.Fields,
 		}
 		return tx.Create(&created).Error
 	})

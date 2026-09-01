@@ -48,6 +48,9 @@ type NetboxAPI interface {
 	UpdateL2VPN(l2vpnID uint, changes map[string]any) error
 	GetL2VPNTerminations(l2vpnID uint) ([]*netboxtool.NBL2VPNTermination, error)
 	CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netboxtool.NBL2VPNTermination, error)
+
+	GetVRFByName(name string) (*netboxtool.NBVRF, error)
+	CreateVRF(name, rd, description string) (*netboxtool.NBVRF, error)
 }
 
 // NetboxMgr wraps NetboxAPI with netboxtool's optional Cache (so repeated
@@ -360,7 +363,37 @@ func (m *NetboxMgr) VlanNetboxID(vid int) (uint, bool) {
 	return id, ok
 }
 
-// ----- L2VPN (ELINE → EVPL) -----
+// ----- VRF (L3VPN) -----
+
+// EnsureVRF finds or creates a Netbox VRF by name. RD is set on create
+// only; an existing VRF is left alone (device-sync does not rename or
+// rewrite operator-owned VRFs). Locked because two devices in the same
+// run can both see a new L3VPN and race to create it.
+func (m *NetboxMgr) EnsureVRF(deviceName, name, rd, description string) (*netboxtool.NBVRF, error) {
+	if name == "" {
+		return nil, fmt.Errorf("vrf name is empty")
+	}
+	m.sharedMu.Lock()
+	defer m.sharedMu.Unlock()
+
+	existing, err := m.api.GetVRFByName(name)
+	if err != nil {
+		m.reporter.Emit(jobevent.Error, "%s: lookup vrf %q: %v", deviceName, name, err)
+		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
+	}
+	created, err := m.api.CreateVRF(name, rd, description)
+	if err != nil {
+		m.reporter.Emit(jobevent.Error, "%s: create vrf %q: %v", deviceName, name, err)
+		return nil, err
+	}
+	m.reporter.Emit(jobevent.Info, "%s: created vrf %q rd=%q", deviceName, name, rd)
+	return created, nil
+}
+
+// ----- L2VPN (ELINE → EVPL, ELAN → VPLS) -----
 
 // l2vpnSlug turns an on-device ELINE name into a Netbox-safe slug. Same
 // rules as vlanGroupSlug - Netbox accepts [a-z0-9-] only, max 100 chars.
@@ -376,17 +409,20 @@ func l2vpnSlug(name string) string {
 	return s
 }
 
-// EnsureL2VPNEVPL finds or creates a Netbox L2VPN of type "evpl" for an
-// on-device ELINE. Lookup order: exact name, then (when identifier > 0)
-// pseudowire identifier - so a service-provisioned L2VPN named after the
-// ServiceID is reused when the device still carries that same pseudowire
-// ID under a matching or near-matching name. When found by identifier
-// alone the existing name is left alone (device-sync does not rename
-// service-owned L2VPNs). When creating, identifier is only sent if > 0
-// (same-device patches often have no PWID). Locked because the
+// EnsureL2VPN finds or creates a Netbox L2VPN of l2vpnType (evpl, vpls,
+// …) for an on-device service. Lookup order: exact name, then (when
+// identifier > 0) identifier - so a service-provisioned L2VPN named after
+// the ServiceID is reused when the device still carries that same
+// identifier under a matching or near-matching name. When found by
+// identifier alone the existing name is left alone (device-sync does not
+// rename service-owned L2VPNs). When creating, identifier is only sent if
+// > 0 (same-device patches often have no PWID). Locked because the
 // name/identifier check-then-create races when both ends of a
-// cross-device ELINE are synced concurrently in the same run.
-func (m *NetboxMgr) EnsureL2VPNEVPL(deviceName, name string, identifier int) (*netboxtool.NBL2VPN, error) {
+// cross-device service are synced concurrently in the same run.
+func (m *NetboxMgr) EnsureL2VPN(deviceName, name, l2vpnType string, identifier int) (*netboxtool.NBL2VPN, error) {
+	if l2vpnType == "" {
+		l2vpnType = models.NetboxTypeEVPL
+	}
 	m.sharedMu.Lock()
 	defer m.sharedMu.Unlock()
 
@@ -414,12 +450,12 @@ func (m *NetboxMgr) EnsureL2VPNEVPL(deviceName, name string, identifier int) (*n
 		return existing, nil
 	}
 
-	created, err := m.api.CreateL2VPN(name, l2vpnSlug(name), "evpl", identifier)
+	created, err := m.api.CreateL2VPN(name, l2vpnSlug(name), l2vpnType, identifier)
 	if err != nil {
-		m.reporter.Emit(jobevent.Error, "%s: create l2vpn %q (evpl): %v", deviceName, name, err)
+		m.reporter.Emit(jobevent.Error, "%s: create l2vpn %q (%s): %v", deviceName, name, l2vpnType, err)
 		return nil, err
 	}
-	m.reporter.Emit(jobevent.Info, "%s: created l2vpn %q type=evpl identifier=%d", deviceName, name, identifier)
+	m.reporter.Emit(jobevent.Info, "%s: created l2vpn %q type=%s identifier=%d", deviceName, name, l2vpnType, identifier)
 	return created, nil
 }
 

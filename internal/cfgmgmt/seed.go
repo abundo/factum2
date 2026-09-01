@@ -63,19 +63,35 @@ func seedRootScope(db *gorm.DB) error {
 	return db.Create(&root).Error
 }
 
-func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
-	elineRoles := []models.EndpointRole{
-		{Name: "a", Min: 1, Max: 1, Fields: []models.FieldSchema{{Name: "vlan", Type: models.VarTypeVLAN, Required: true}}},
-		{Name: "b", Min: 1, Max: 1, Fields: []models.FieldSchema{{Name: "vlan", Type: models.VarTypeVLAN, Required: true}}},
+func schemaHas(fields []models.FieldSchema, name string) bool {
+	for _, f := range fields {
+		if f.Name == name {
+			return true
+		}
 	}
-	endpointRole := []models.EndpointRole{
+	return false
+}
+
+func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
+	vlanField := models.FieldSchema{Name: "vlan", Type: models.VarTypeVLAN, Required: true, Description: "Customer VLAN / SAP tag"}
+	elineRoles := []models.EndpointRole{
+		{Name: "a", Min: 1, Max: 1, Fields: []models.FieldSchema{vlanField}},
+		{Name: "b", Min: 1, Max: 1, Fields: []models.FieldSchema{vlanField}},
+	}
+	elanRole := []models.EndpointRole{
+		{Name: "endpoint", Min: 1, Max: 0, Fields: []models.FieldSchema{vlanField}},
+	}
+	l3Role := []models.EndpointRole{
 		{Name: "endpoint", Min: 1, Max: 0},
 	}
+	elanSchema := []models.FieldSchema{
+		{Name: "max_mac_addresses", Type: models.VarTypeInt, Required: true, Description: "Max number of MAC addresses"},
+	}
 	seeds := []models.ServiceType{
-		{Name: "ELINE", Description: "L2VPN point to point", EndpointRoles: elineRoles, Builtin: true},
-		{Name: "ELAN", Description: "L2VPN multipoint", EndpointRoles: endpointRole, Builtin: true},
-		{Name: "L3VPN", Description: "L3 multipoint", EndpointRoles: endpointRole, Builtin: true},
-		{Name: "POLARIX", Description: "Internet", EndpointRoles: endpointRole, Builtin: true},
+		{Name: "ELINE", Description: "L2VPN point to point", EndpointRoles: elineRoles, Builtin: true, SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL},
+		{Name: "ELAN", Description: "L2VPN multipoint", Schema: elanSchema, EndpointRoles: elanRole, Builtin: true, SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS},
+		{Name: "L3VPN", Description: "L3 multipoint", EndpointRoles: l3Role, Builtin: true, SyncSource: models.SyncSourceL3VPN, NetboxType: models.NetboxTypeVRF},
+		{Name: "POLARIX", Description: "Internet", EndpointRoles: l3Role, Builtin: true},
 	}
 	var eline models.ServiceType
 	for _, s := range seeds {
@@ -85,10 +101,29 @@ func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 			if s.Name == "ELINE" {
 				eline = existing
 			}
+			changed := false
+			if existing.SyncSource == "" && s.SyncSource != "" {
+				existing.SyncSource = s.SyncSource
+				existing.NetboxType = s.NetboxType
+				changed = true
+			}
 			if len(existing.EndpointRoles) == 0 && len(s.EndpointRoles) > 0 {
 				existing.EndpointRoles = s.EndpointRoles
+				changed = true
+			} else if s.Name == "ELAN" && len(existing.EndpointRoles) == 1 && existing.EndpointRoles[0].Name == "endpoint" && len(existing.EndpointRoles[0].Fields) == 0 {
+				existing.EndpointRoles = s.EndpointRoles
+				changed = true
+			}
+			if !schemaHas(existing.Schema, "max_mac_addresses") && schemaHas(s.Schema, "max_mac_addresses") {
+				existing.Schema = append(existing.Schema, s.Schema...)
+				changed = true
+			}
+			if changed {
 				if err := db.Save(&existing).Error; err != nil {
 					return nil, err
+				}
+				if s.Name == "ELINE" {
+					eline = existing
 				}
 			}
 			continue

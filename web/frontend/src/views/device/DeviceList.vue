@@ -17,6 +17,7 @@ import {
 } from '@/api/optical'
 import OxidizedNodeDialog from '@/components/OxidizedNodeDialog.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
+import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
@@ -296,10 +297,22 @@ const interfaceColumns = [
 
 const serviceDialogOpen = ref(false)
 const editingServiceId = ref(null)
+const attachOpen = ref(false)
+const attachTarget = ref(null)
 
 function openService(id) {
   editingServiceId.value = id
   serviceDialogOpen.value = true
+}
+
+function openAttach(iface) {
+  attachTarget.value = {
+    deviceId: device.value?.id,
+    deviceName: device.value?.name,
+    interfaceId: iface.id,
+    interfaceName: iface.name,
+  }
+  attachOpen.value = true
 }
 
 // A service edit (e.g. changing an ELINE's endpoints) can change which
@@ -746,6 +759,15 @@ onMounted(loadDevices)
                 color="neutral"
                 @click="openService(svc.id)"
               />
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                size="sm"
+                variant="ghost"
+                color="neutral"
+                title="Add service"
+                @click="openAttach(row.original)"
+              />
             </div>
           </template>
           <template #addresses-cell="{ row }">
@@ -851,6 +873,15 @@ onMounted(loadDevices)
     :service-id="editingServiceId"
     @saved="reloadDeviceInterfaces"
     @deleted="reloadDeviceInterfaces"
+  />
+
+  <AttachServiceDialog
+    v-model:open="attachOpen"
+    :device-id="attachTarget?.deviceId"
+    :device-name="attachTarget?.deviceName"
+    :interface-id="attachTarget?.interfaceId"
+    :interface-name="attachTarget?.interfaceName"
+    @attached="reloadDeviceInterfaces"
   />
 
   <VlanEditDialog

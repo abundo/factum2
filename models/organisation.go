@@ -227,19 +227,20 @@ func (s *Service) BeforeCreate(tx *gorm.DB) error {
 // value has the backend auto-assign the next <category><5-digit> number for
 // Category, rather than the wizard reserving one up front.
 type ServiceDTO struct {
-	ID              uint   `json:"id"`
-	Name            string `json:"name"`
-	CustomerID      uint   `json:"company"`
-	Comment         string `json:"comment"`
-	ServiceID       string `json:"service_id"`
-	Category        string `json:"category"`
-	ServiceType     string `json:"service_type"`
-	BandwidthMbps   int    `json:"bandwidth_mbps"`
-	MaxMacAddresses int    `json:"max_mac_addresses"`
-	DeliveryPoint1  string `json:"deliverypoint1"`
-	DeliveryPoint2  string `json:"deliverypoint2"`
-	Product         string `json:"product"`
-	Service         string `json:"service"`
+	ID              uint            `json:"id"`
+	Name            string          `json:"name"`
+	CustomerID      uint            `json:"company"`
+	Comment         string          `json:"comment"`
+	ServiceID       string          `json:"service_id"`
+	Category        string          `json:"category"`
+	ServiceType     string          `json:"service_type"`
+	BandwidthMbps   int             `json:"bandwidth_mbps"`
+	MaxMacAddresses int             `json:"max_mac_addresses"`
+	DeliveryPoint1  string          `json:"deliverypoint1"`
+	DeliveryPoint2  string          `json:"deliverypoint2"`
+	Product         string          `json:"product"`
+	Service         string          `json:"service"`
+	Fields          json.RawMessage `json:"fields"`
 }
 
 // -------

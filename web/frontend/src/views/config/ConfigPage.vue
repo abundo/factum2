@@ -105,6 +105,19 @@ const platformOptions = [
   { label: 'vrp', value: 'vrp' },
 ]
 
+const syncSourceOptions = [
+  { label: '(none)', value: '' },
+  { label: 'eline — DeviceConfig.ELINEs', value: 'eline' },
+  { label: 'elan — DeviceConfig.ELANs', value: 'elan' },
+  { label: 'l3vpn — DeviceConfig.L3VPNs', value: 'l3vpn' },
+]
+const netboxTypeOptions = [
+  { label: '(none)', value: '' },
+  { label: 'evpl — L2VPN point to point', value: 'evpl' },
+  { label: 'vpls — L2VPN multipoint', value: 'vpls' },
+  { label: 'vrf — IPAM VRF', value: 'vrf' },
+]
+
 const deviceOptions = computed(() => devices.value.map((d) => ({ label: d.name, value: d.id })))
 const varOptions = computed(() => variables.value.map((v) => ({ label: v.name, value: v.name })))
 const typeOptions = computed(() => serviceTypes.value.map((t) => ({ label: t.name, value: t.id })))
@@ -499,7 +512,14 @@ function openType(row) {
         schema_text: JSON.stringify(row.schema ?? [], null, 2),
         roles_text: JSON.stringify(row.endpoint_roles ?? [], null, 2),
       }
-    : { name: '', description: '', schema_text: '[]', roles_text: '[]' }
+    : {
+        name: '',
+        description: '',
+        schema_text: '[]',
+        roles_text: '[]',
+        sync_source: '',
+        netbox_type: '',
+      }
   dialog.value = 'type'
 }
 
@@ -524,6 +544,8 @@ function saveType() {
     description: form.value.description ?? '',
     schema,
     endpoint_roles: roles,
+    sync_source: optionValue(form.value.sync_source) || '',
+    netbox_type: optionValue(form.value.netbox_type) || '',
   }
   const req = form.value.id ? updateServiceType(form.value.id, payload) : createServiceType(payload)
   req
@@ -899,6 +921,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             :columns="[
               { accessorKey: 'name', header: 'Name' },
               { accessorKey: 'description', header: 'Description' },
+              { accessorKey: 'sync_source', header: 'Sync source' },
+              { accessorKey: 'netbox_type', header: 'NetBox type' },
               { accessorKey: 'builtin', header: 'Builtin' },
               { id: 'actions', header: '' },
             ]"
@@ -1261,6 +1285,26 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         <div>
           <label class="block font-bold mb-2">Description</label>
           <UInput v-model="form.description" />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Device-sync source</label>
+          <USelectMenu
+            v-model="form.sync_source"
+            :items="syncSourceOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">NetBox type</label>
+          <USelectMenu
+            v-model="form.netbox_type"
+            :items="netboxTypeOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
         </div>
         <div>
           <label class="block font-bold mb-2">Schema (JSON)</label>

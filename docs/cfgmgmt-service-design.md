@@ -73,9 +73,9 @@ exist is a data migration, not a rename.
    service edit dialog.
 5. **Per-service fields.** Anything shared by every endpoint (VRF name,
    RT/RD, numeric service id, MTU). These live on `Service.Fields` as
-   `.Fields` in templates. The GUI does **not** yet render a form for
-   `schema`; set them via `PUT /api/service/:id/endpoints` (`fields` on
-   the body) or leave them optional and pick them up from config variables.
+   `.Fields` in templates. The create wizard and service dialog render a
+   form from `schema`. A field named `max_mac_addresses` is also copied
+   to `Service.MaxMacAddresses` for older API clients.
 6. **What is not a service field.** Device/site-wide knobs (AS number,
    loopback, NTP, default MTU) belong in **config variables** on the scope
    tree, not on the service type. Templates see them as `.Vars`.
@@ -85,16 +85,18 @@ exist is a data migration, not a rename.
 
 Built-in types seeded on migrate (`cfgmgmt.Seed`):
 
-| Name | Description | Seeded roles |
-| ---- | ----------- | ------------ |
-| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan` |
-| `ELAN` | L2VPN multipoint | `endpoint` min=1 max=0 (unlimited), no fields |
-| `L3VPN` | L3 multipoint | same as ELAN |
-| `POLARIX` | Internet | same as ELAN |
+| Name | Description | Seeded roles | Sync source → NetBox |
+| ---- | ----------- | ------------ | -------------------- |
+| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan` | `eline` → `evpl` |
+| `ELAN` | L2VPN multipoint | `endpoint` min=1 max=0, required `vlan`; schema `max_mac_addresses` | `elan` → `vpls` |
+| `L3VPN` | L3 multipoint | `endpoint` min=1 max=0 | `l3vpn` → `vrf` |
+| `POLARIX` | Internet | same as L3VPN | (none — on-device VRFs go through L3VPN) |
 
-Those three generic types exist so the create wizard can pick them. They
-have **no platform packs** until you add them. Built-in types cannot be
-renamed or deleted; you can still edit description, schema, and roles.
+The create wizard lists every type from this API as a capacity product
+(CN/CI), including extra form fields from `schema`. Built-in types cannot
+be renamed or deleted; you can still edit description, schema, roles, and
+the device-sync mapping. ELINE/ELAN/L3VPN have **no platform packs**
+besides the seeded ELINE ones until you add them.
 
 ---
 
@@ -120,7 +122,9 @@ renamed or deleted; you can still edit description, schema, and roles.
         { "name": "vlan", "type": "vlan", "required": true, "description": "Customer VLAN / SAP tag" }
       ]
     }
-  ]
+  ],
+  "sync_source": "elan",
+  "netbox_type": "vpls"
 }
 ```
 
@@ -129,7 +133,12 @@ renamed or deleted; you can still edit description, schema, and roles.
 - Unique, stored as `Service.ServiceType`. Match what operators already
   say (`ELAN`, not `l2vpn-mp`).
 - The create wizard lists every type from this API as a capacity product
-  (CN/CI). A new name appears there automatically.
+  (CN/CI). A new name appears there automatically. Extra create/edit
+  fields come from `schema` (for example ELAN's `max_mac_addresses`).
+- **Device-sync mapping** — `sync_source` (`eline` / `elan` / `l3vpn`)
+  names the parsed `DeviceConfig` collection; `netbox_type` (`evpl` /
+  `vpls` / `vrf`) is what `factum2-device-sync` upserts. Leave both empty
+  for GUI-only types.
 
 ### Schema (`FieldSchema[]`)
 
@@ -432,7 +441,9 @@ ELINE is a normal cfgmgmt type with extra NetBox and peer-render behaviour:
 - Edit the pack in the GUI to tweak CLI; leave `seed_checksum` mismatched
   so migrate will not clobber it. Change the embed file + Seed when the
   default for **new** databases should move.
-- Reverse-import: `factum-netbox sync` writes `service_endpoints`.
+- Reverse-import: `factum-netbox sync` writes `service_endpoints` for every
+  L2VPN whose type matches a service type's `netbox_type` (evpl→ELINE,
+  vpls→ELAN), using that type's endpoint roles.
 
 Do not add `EndpointA*` columns for a new type.
 
@@ -467,7 +478,7 @@ reach NETCONF/OpenConfig until `payload_kind` other than `cli` is applied.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET/POST | `/api/config/service-types` | List / create type |
+| GET/POST | `/api/config/service-types` | List / create type (`sync_source`, `netbox_type`) |
 | PUT/DELETE | `/api/config/service-types/:id` | Update / delete (not built-in delete) |
 | GET/POST | `/api/config/platform-packs` | List (`?service_type_id=`) / create pack |
 | PUT/DELETE | `/api/config/platform-packs/:id` | Update / delete pack |

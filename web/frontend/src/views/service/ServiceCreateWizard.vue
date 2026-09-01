@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { listServiceTypes } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { createService } from '@/api/services'
+import SchemaFields from '@/components/SchemaFields.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -16,22 +17,21 @@ const stepperItems = [
   { value: '2', title: 'Details' },
 ]
 
-const FALLBACK_CAPACITY = [
-  { label: 'ELINE — L2VPN point to point', value: 'ELINE' },
-  { label: 'ELAN — L2VPN multipoint', value: 'ELAN' },
-  { label: 'L3VPN — L3 multipoint', value: 'L3VPN' },
-  { label: 'Internet — Polarix', value: 'POLARIX' },
-]
-const capacityOptions = ref([...FALLBACK_CAPACITY])
+const capacityTypes = ref([])
+const typesError = ref('')
+const typesLoading = ref(true)
+
 const productOptions = computed(() => [
-  ...capacityOptions.value,
+  ...capacityTypes.value.map((t) => ({
+    label: t.description ? `${t.name} — ${t.description}` : t.name,
+    value: t.name,
+  })),
   { label: 'Wavelength', value: 'WAVELENGTH' },
   { label: 'Fiber', value: 'FIBER' },
 ])
 
-// API service types (plus the seeded ELINE/ELAN/L3VPN/POLARIX fallback)
-// are capacity products: they carry a ServiceType and a CN/CI prefix.
-// Wavelength and Fiber have no service type.
+// API service types are capacity products: they carry a ServiceType and a
+// CN/CI prefix. Wavelength and Fiber have no service type.
 
 const categoryOptionsByProduct = {
   FIBER: [
@@ -48,7 +48,7 @@ const DEFAULT_CATEGORY_OPTIONS = [
   { label: 'CI — Internal use', value: 'CI' },
 ]
 
-const product = ref('ELINE')
+const product = ref(null)
 const category = ref(null)
 
 const categoryOptions = computed(
@@ -56,12 +56,19 @@ const categoryOptions = computed(
 )
 const isCapacityProduct = computed(() => !['WAVELENGTH', 'FIBER'].includes(product.value))
 const serviceType = computed(() => (isCapacityProduct.value ? product.value : ''))
+const selectedType = computed(() => capacityTypes.value.find((t) => t.name === product.value))
+const schemaFields = computed(() => selectedType.value?.schema ?? [])
+const schemaValues = ref({})
 
 // A category chosen for one product isn't necessarily valid for another
 // (e.g. picking Fiber's "LI" then going back and switching to ELAN), so
 // clear it whenever the available options change.
 watch(categoryOptions, () => {
   category.value = null
+})
+
+watch(product, () => {
+  schemaValues.value = {}
 })
 
 const completing = ref(false)
@@ -82,7 +89,6 @@ const form = ref({
   service: '',
   comment: '',
   bandwidthMbps: null,
-  maxMacAddresses: null,
 })
 
 onMounted(() => {
@@ -93,17 +99,29 @@ onMounted(() => {
     .catch(() => {
       // Customer names are only needed for the optional company select, not critical.
     })
+  typesLoading.value = true
   listServiceTypes()
     .then((rows) => {
-      if (rows?.length) {
-        capacityOptions.value = rows.map((t) => ({
-          label: t.description ? `${t.name} — ${t.description}` : t.name,
-          value: t.name,
-        }))
+      capacityTypes.value = rows ?? []
+      if (!capacityTypes.value.length) {
+        typesError.value = 'No service types defined. Add them under Config → Service types.'
       }
     })
-    .catch(() => {})
+    .catch(() => {
+      typesError.value = 'Failed to load service types.'
+    })
+    .finally(() => {
+      typesLoading.value = false
+    })
 })
+
+function schemaMissingRequired() {
+  return schemaFields.value.some((f) => {
+    if (!f.required) return false
+    const v = schemaValues.value[f.name]
+    return v === null || v === undefined || v === ''
+  })
+}
 
 function handleProductNext() {
   submittedStep1.value = true
@@ -114,10 +132,11 @@ function handleProductNext() {
 function handleCreate() {
   submittedStep2.value = true
   if (isCapacityProduct.value && !form.value.bandwidthMbps) return
-  if (product.value === 'ELAN' && !form.value.maxMacAddresses) return
+  if (isCapacityProduct.value && schemaMissingRequired()) return
 
   completing.value = true
   const serviceID = form.value.serviceID
+  const fields = { ...schemaValues.value }
   const payload = {
     category: category.value,
     service_id:
@@ -132,7 +151,8 @@ function handleCreate() {
     comment: form.value.comment,
     service_type: serviceType.value,
     bandwidth_mbps: isCapacityProduct.value ? Number(form.value.bandwidthMbps) : 0,
-    max_mac_addresses: product.value === 'ELAN' ? Number(form.value.maxMacAddresses) : 0,
+    fields,
+    max_mac_addresses: Number(fields.max_mac_addresses) || 0,
   }
 
   createService(payload)
@@ -173,6 +193,8 @@ function cancelWizard() {
     <div v-if="activeStep === '1'" class="flex flex-col gap-6 py-4">
       <div>
         <label class="block font-bold mb-3">Product</label>
+        <p v-if="typesLoading" class="text-muted-color text-sm mb-2">Loading service types…</p>
+        <p v-else-if="typesError" class="text-red-500 text-sm mb-2">{{ typesError }}</p>
         <URadioGroup
           v-model="product"
           :items="productOptions"
@@ -258,19 +280,12 @@ function cancelWizard() {
           Bandwidth is required.
         </small>
       </div>
-      <div v-if="product === 'ELAN'">
-        <label class="block font-bold mb-3">Max number of MAC addresses</label>
-        <UInputNumber
-          v-model="form.maxMacAddresses"
-          :color="submittedStep2 && !form.maxMacAddresses ? 'error' : undefined"
-          :highlight="submittedStep2 && !form.maxMacAddresses"
-          :min="0"
-          class="w-full"
-        />
-        <small v-if="submittedStep2 && !form.maxMacAddresses" class="text-red-500">
-          Max MAC addresses is required.
-        </small>
-      </div>
+      <SchemaFields
+        v-if="isCapacityProduct && schemaFields.length"
+        v-model="schemaValues"
+        :fields="schemaFields"
+        :submitted="submittedStep2"
+      />
       <div>
         <label class="block font-bold mb-3">Comment</label>
         <UTextarea v-model="form.comment" :rows="3" class="w-full" />

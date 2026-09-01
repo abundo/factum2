@@ -13,10 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// l2vpnTypeEVPL is Netbox's L2VPN type for point-to-point ELINEs - the
-// only type device-sync and web.ApiServiceElineUpdate create.
-const l2vpnTypeEVPL = "evpl"
-
 // subinterfaceVLANRe matches a dotted per-VLAN subinterface name as used
 // on EOS/IOS-XR (and mirrored into Netbox by device-sync), e.g.
 // "Ethernet3.338" -> parent "Ethernet3", vlan 338. Other platforms'
@@ -44,22 +40,41 @@ type resolvedELineEnd struct {
 	sortKey string
 }
 
-// syncServiceEndpointsFromL2VPNs walks every Netbox EVPL L2VPN, matches it
-// to a factum Service (by L2VPNNetboxID or by ServiceID == L2VPN name),
-// resolves each termination onto factum interfaces, and writes the ELINE
-// endpoint fields the device interface table / ServiceEditDialog need.
+// syncServiceEndpointsFromL2VPNs walks Netbox L2VPNs whose type matches a
+// cfgmgmt service type's NetboxType (evpl→ELINE, vpls→ELAN, …), matches
+// each to a factum Service (by L2VPNNetboxID or by ServiceID == L2VPN name),
+// resolves terminations onto factum interfaces, and writes service_endpoints.
 //
 // Does not create Service rows - those come from Lime (or manual create).
 // L2VPNs with no matching service are skipped. Does not clear endpoints on
 // services whose L2VPN has disappeared (same non-delete stance as
-// device-sync's ELINE phase).
+// device-sync's L2 phase).
 func syncServiceEndpointsFromL2VPNs(db *gorm.DB, nb l2vpnAPI, reporter jobevent.Reporter) error {
-	l2vpns, err := nb.GetL2VPNs(l2vpnTypeEVPL)
+	types, err := cfgmgmt.ListServiceTypes(db)
+	if err != nil {
+		return err
+	}
+	typeByNetbox := map[string]*models.ServiceType{}
+	for i := range types {
+		st := &types[i]
+		if st.NetboxType == "" || st.NetboxType == models.NetboxTypeVRF {
+			continue
+		}
+		if _, ok := typeByNetbox[st.NetboxType]; !ok {
+			typeByNetbox[st.NetboxType] = st
+		}
+	}
+	if len(typeByNetbox) == 0 {
+		reporter.Emit(jobevent.Info, "L2VPN→service import: no service types with a NetBox L2VPN mapping")
+		return nil
+	}
+
+	l2vpns, err := nb.GetL2VPNs("")
 	if err != nil {
 		return fmt.Errorf("list netbox l2vpns: %w", err)
 	}
 	if len(l2vpns) == 0 {
-		reporter.Emit(jobevent.Info, "L2VPN→service import: no EVPL L2VPNs in netbox")
+		reporter.Emit(jobevent.Info, "L2VPN→service import: no L2VPNs in netbox")
 		return nil
 	}
 
@@ -90,9 +105,14 @@ func syncServiceEndpointsFromL2VPNs(db *gorm.DB, nb l2vpnAPI, reporter jobevent.
 		}
 	}
 
-	var countLinked, countUpdated, countSkipped, countNoService, countNoEnds int
+	var countLinked, countUpdated, countSkipped, countNoService, countNoEnds, countNoType int
 	for _, l2vpn := range l2vpns {
 		if l2vpn == nil || l2vpn.NetboxID == 0 {
+			continue
+		}
+		st := typeByNetbox[l2vpn.Type]
+		if st == nil {
+			countNoType++
 			continue
 		}
 
@@ -105,9 +125,9 @@ func syncServiceEndpointsFromL2VPNs(db *gorm.DB, nb l2vpnAPI, reporter jobevent.
 			continue
 		}
 		// Don't reclassify a service the operator marked as something else.
-		if svc.ServiceType != "" && svc.ServiceType != "ELINE" {
-			reporter.Emit(jobevent.Warning, "L2VPN→service: skip %q (service %s has type %q, not ELINE)",
-				l2vpn.Name, svc.ServiceID, svc.ServiceType)
+		if svc.ServiceType != "" && svc.ServiceType != st.Name {
+			reporter.Emit(jobevent.Warning, "L2VPN→service: skip %q (service %s has type %q, not %s)",
+				l2vpn.Name, svc.ServiceID, svc.ServiceType, st.Name)
 			countSkipped++
 			continue
 		}
@@ -121,13 +141,20 @@ func syncServiceEndpointsFromL2VPNs(db *gorm.DB, nb l2vpnAPI, reporter jobevent.
 			countNoEnds++
 			continue
 		}
-		if len(ends) > 2 {
-			reporter.Emit(jobevent.Warning, "L2VPN→service: %q has %d terminations, using first 2",
-				l2vpn.Name, len(ends))
-			ends = ends[:2]
+		roles := cfgmgmt.EndpointRolesForCount(st, len(ends))
+		if len(roles) == 0 {
+			reporter.Emit(jobevent.Warning, "L2VPN→service: skip %q (type %s has no endpoint roles for %d ends)",
+				l2vpn.Name, st.Name, len(ends))
+			countSkipped++
+			continue
+		}
+		if len(ends) > len(roles) {
+			reporter.Emit(jobevent.Warning, "L2VPN→service: %q has %d terminations, using first %d",
+				l2vpn.Name, len(ends), len(roles))
+			ends = ends[:len(roles)]
 		}
 
-		changed, err := applyL2VPNEndsToService(db, svc, l2vpn, ends)
+		changed, err := applyL2VPNEndsToService(db, svc, st, l2vpn, ends, roles)
 		if err != nil {
 			return err
 		}
@@ -142,8 +169,8 @@ func syncServiceEndpointsFromL2VPNs(db *gorm.DB, nb l2vpnAPI, reporter jobevent.
 	}
 
 	reporter.Emit(jobevent.Info,
-		"L2VPN→service import: %d updated, %d already linked, %d no matching service, %d no resolvable ends, %d skipped",
-		countUpdated, countLinked, countNoService, countNoEnds, countSkipped)
+		"L2VPN→service import: %d updated, %d already linked, %d no matching service, %d no resolvable ends, %d skipped, %d unmapped type",
+		countUpdated, countLinked, countNoService, countNoEnds, countSkipped, countNoType)
 	return nil
 }
 
@@ -255,21 +282,20 @@ func vlanFromSubinterfaceName(name string) int {
 	return vlan
 }
 
-// applyL2VPNEndsToService writes generic service_endpoints for ends (1 or 2)
-// onto svc. Returns whether anything actually changed.
-func applyL2VPNEndsToService(db *gorm.DB, svc *models.Service, l2vpn *netboxtool.NBL2VPN, ends []resolvedELineEnd) (bool, error) {
-	roles := []string{"a", "b"}
+// applyL2VPNEndsToService writes generic service_endpoints for ends onto svc
+// using roles from the matching service type. Returns whether anything
+// actually changed.
+func applyL2VPNEndsToService(db *gorm.DB, svc *models.Service, st *models.ServiceType, l2vpn *netboxtool.NBL2VPN, ends []resolvedELineEnd, roles []string) (bool, error) {
 	want := make([]models.ServiceEndpoint, 0, len(ends))
 	for i, end := range ends {
 		if end.physicalInterfaceID == 0 {
 			continue
 		}
-		role := roles[i]
 		if i >= len(roles) {
 			break
 		}
 		want = append(want, models.ServiceEndpoint{
-			Role:        role,
+			Role:        roles[i],
 			DeviceID:    end.deviceID,
 			InterfaceID: end.physicalInterfaceID,
 			Fields:      cfgmgmt.EncodeEndpointFields(end.vlan, end.subinterfaceNetboxID, end.terminationNetboxID),
@@ -285,12 +311,12 @@ func applyL2VPNEndsToService(db *gorm.DB, svc *models.Service, l2vpn *netboxtool
 	if err != nil {
 		return false, err
 	}
-	if !serviceEndpointsDiffer(svc, existing, want, pseudowireID, l2vpn.NetboxID) {
+	if !serviceEndpointsDiffer(svc, st.Name, existing, want, pseudowireID, l2vpn.NetboxID) {
 		return false, nil
 	}
 
 	updates := map[string]any{
-		"service_type":     "ELINE",
+		"service_type":     st.Name,
 		"l2_vpn_netbox_id": l2vpn.NetboxID,
 		"pseudowire_id":    pseudowireID,
 	}
@@ -301,14 +327,20 @@ func applyL2VPNEndsToService(db *gorm.DB, svc *models.Service, l2vpn *netboxtool
 		return false, fmt.Errorf("update service %s endpoints from l2vpn %q: %w", svc.ServiceID, l2vpn.Name, err)
 	}
 
-	svc.ServiceType = "ELINE"
+	svc.ServiceType = st.Name
 	svc.L2VPNNetboxID = l2vpn.NetboxID
 	svc.PseudowireID = pseudowireID
 	return true, nil
 }
 
-func serviceEndpointsDiffer(svc *models.Service, existing, want []models.ServiceEndpoint, pseudowireID int, l2vpnID uint) bool {
-	if svc.ServiceType != "ELINE" {
+func endpointKey(ep models.ServiceEndpoint) string {
+	sub, term := cfgmgmt.NetboxIDsFromFields(ep.Fields)
+	return fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d\x00%d",
+		ep.Role, ep.DeviceID, ep.InterfaceID, cfgmgmt.VLANFromFields(ep.Fields), sub, term)
+}
+
+func serviceEndpointsDiffer(svc *models.Service, typeName string, existing, want []models.ServiceEndpoint, pseudowireID int, l2vpnID uint) bool {
+	if svc.ServiceType != typeName {
 		return true
 	}
 	if svc.L2VPNNetboxID != l2vpnID || svc.PseudowireID != pseudowireID {
@@ -317,23 +349,16 @@ func serviceEndpointsDiffer(svc *models.Service, existing, want []models.Service
 	if len(existing) != len(want) {
 		return true
 	}
-	byRole := map[string]models.ServiceEndpoint{}
+	counts := map[string]int{}
 	for _, e := range existing {
-		byRole[e.Role] = e
+		counts[endpointKey(e)]++
 	}
 	for _, w := range want {
-		got, ok := byRole[w.Role]
-		if !ok || got.DeviceID != w.DeviceID || got.InterfaceID != w.InterfaceID {
+		k := endpointKey(w)
+		if counts[k] == 0 {
 			return true
 		}
-		if cfgmgmt.VLANFromFields(got.Fields) != cfgmgmt.VLANFromFields(w.Fields) {
-			return true
-		}
-		gs, gt := cfgmgmt.NetboxIDsFromFields(got.Fields)
-		ws, wt := cfgmgmt.NetboxIDsFromFields(w.Fields)
-		if gs != ws || gt != wt {
-			return true
-		}
+		counts[k]--
 	}
 	return false
 }

@@ -81,6 +81,9 @@ type fakeNetboxAPI struct {
 	terminationsByL2VPN map[uint][]*netboxtool.NBL2VPNTermination
 	createdTerminations [][2]uint // [l2vpnID, interfaceID]
 
+	vrfsByName  map[string]*netboxtool.NBVRF
+	createdVRFs []*netboxtool.NBVRF
+
 	deviceTypes map[string]*netboxtool.NetboxDeviceTypeDetail // key: "manufacturer/model"
 }
 
@@ -102,6 +105,7 @@ func newFakeNetboxAPI() *fakeNetboxAPI {
 		l2vpnsByID:          map[uint]*netboxtool.NBL2VPN{},
 		updatedL2VPNs:       map[uint]map[string]any{},
 		terminationsByL2VPN: map[uint][]*netboxtool.NBL2VPNTermination{},
+		vrfsByName:          map[string]*netboxtool.NBVRF{},
 		deviceTypes:         map[string]*netboxtool.NetboxDeviceTypeDetail{},
 	}
 }
@@ -350,6 +354,22 @@ func (f *fakeNetboxAPI) GetL2VPNTerminations(l2vpnID uint) ([]*netboxtool.NBL2VP
 	return out, nil
 }
 
+func (f *fakeNetboxAPI) GetVRFByName(name string) (*netboxtool.NBVRF, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.vrfsByName[name], nil
+}
+
+func (f *fakeNetboxAPI) CreateVRF(name, rd, description string) (*netboxtool.NBVRF, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	v := &netboxtool.NBVRF{NetboxID: f.nextID, Name: name, RD: rd, Description: description}
+	f.createdVRFs = append(f.createdVRFs, v)
+	f.vrfsByName[name] = v
+	return v, nil
+}
+
 func (f *fakeNetboxAPI) CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netboxtool.NBL2VPNTermination, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -370,7 +390,8 @@ func (f *fakeNetboxAPI) CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netb
 type fakeFactumAPI struct {
 	mu sync.Mutex
 
-	devices map[string]*models.Device
+	devices      map[string]*models.Device
+	serviceTypes []models.ServiceType
 
 	getDevicesCalls      int
 	getDeviceByNameCalls []string
@@ -404,6 +425,12 @@ func (f *fakeFactumAPI) GetDeviceByName(name string) (*models.Device, error) {
 		return nil, fmt.Errorf("unknown device %q", name)
 	}
 	return d, nil
+}
+
+func (f *fakeFactumAPI) GetServiceTypes() ([]models.ServiceType, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.serviceTypes, nil
 }
 
 // fakeDriver only implements GetNeighbors - the rest is promoted (and would
@@ -1638,6 +1665,75 @@ func TestSyncELINEsSkipsMissingInterface(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected warning about missing interface; lines = %v", reporter.lines)
+	}
+}
+
+func TestSyncInventoryL2ELANCreatesVPLS(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+	ds.inventoryMaps = map[string]string{
+		models.SyncSourceELINE: models.NetboxTypeEVPL,
+		models.SyncSourceELAN:  models.NetboxTypeVPLS,
+	}
+
+	dc := drivers.NewDeviceConfig()
+	dc.ELANs["CN00380"] = &drivers.ELAN{
+		Name:       "CN00380",
+		Interfaces: []string{"Ethernet1.100", "Ethernet2.100"},
+	}
+	nbDevice := &models.Device{
+		Name: "r1",
+		Interfaces: []models.Interface{
+			{NetboxID: 11, Name: "Ethernet1.100"},
+			{NetboxID: 12, Name: "Ethernet2.100"},
+		},
+	}
+
+	ds.syncInventoryL2(&devicePair{nbDevice: nbDevice, config: dc})
+
+	if len(fake.createdL2VPNs) != 1 {
+		t.Fatalf("createdL2VPNs = %d, want 1", len(fake.createdL2VPNs))
+	}
+	l := fake.createdL2VPNs[0]
+	if l.Name != "CN00380" || l.Type != "vpls" {
+		t.Errorf("l2vpn = %+v, want name=CN00380 type=vpls", l)
+	}
+	if len(fake.createdTerminations) != 2 {
+		t.Fatalf("createdTerminations = %v, want 2", fake.createdTerminations)
+	}
+}
+
+func TestSyncVRFsCreatesFromL3VPN(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+	ds.inventoryMaps = map[string]string{models.SyncSourceL3VPN: models.NetboxTypeVRF}
+
+	dc := drivers.NewDeviceConfig()
+	dc.L3VPNs["POLARIX"] = &drivers.L3VPN{
+		Name: "POLARIX",
+		VRF:  &drivers.VRF{Name: "POLARIX", RD: "1234:500", Description: "internet"},
+	}
+	ds.syncVRFs(&devicePair{nbDevice: &models.Device{Name: "r1"}, config: dc})
+
+	if len(fake.createdVRFs) != 1 {
+		t.Fatalf("createdVRFs = %d, want 1", len(fake.createdVRFs))
+	}
+	v := fake.createdVRFs[0]
+	if v.Name != "POLARIX" || v.RD != "1234:500" {
+		t.Errorf("vrf = %+v, want POLARIX rd=1234:500", v)
+	}
+}
+
+func TestSyncVRFsSkippedWithoutMapping(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	dc := drivers.NewDeviceConfig()
+	dc.L3VPNs["POLARIX"] = &drivers.L3VPN{Name: "POLARIX", VRF: &drivers.VRF{Name: "POLARIX"}}
+	ds.syncVRFs(&devicePair{nbDevice: &models.Device{Name: "r1"}, config: dc})
+
+	if len(fake.createdVRFs) != 0 {
+		t.Errorf("createdVRFs = %d, want 0 without l3vpn mapping", len(fake.createdVRFs))
 	}
 }
 

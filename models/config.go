@@ -32,6 +32,18 @@ const (
 	PayloadKindCLI      = "cli"
 	PayloadKindNETCONF  = "netconf"
 	PayloadKindRESTCONF = "restconf"
+
+	// SyncSource* is which parsed DeviceConfig collection device-sync
+	// reads for a service type. Empty means device-sync ignores the type.
+	SyncSourceELINE = "eline"
+	SyncSourceELAN  = "elan"
+	SyncSourceL3VPN = "l3vpn"
+
+	// NetboxType* is the NetBox object kind device-sync upserts for a
+	// SyncSource. L2VPN sources use the L2VPN type slug; L3VPN uses VRF.
+	NetboxTypeEVPL = "evpl"
+	NetboxTypeVPLS = "vpls"
+	NetboxTypeVRF  = "vrf"
 )
 
 // ConfigScope is one node in an arbitrary configuration hierarchy.
@@ -127,6 +139,12 @@ type ServiceType struct {
 	Schema        []FieldSchema  `json:"schema" gorm:"serializer:json"`
 	EndpointRoles []EndpointRole `json:"endpoint_roles" gorm:"serializer:json"`
 	Builtin       bool           `json:"builtin"`
+	// SyncSource names the on-device collection device-sync reads
+	// (eline / elan / l3vpn). Empty means the type is GUI-only.
+	SyncSource string `json:"sync_source" gorm:"type:varchar(32)"`
+	// NetboxType is the NetBox object to upsert for SyncSource
+	// (evpl / vpls / vrf).
+	NetboxType string `json:"netbox_type" gorm:"type:varchar(32)"`
 }
 
 func (ServiceType) TableName() string { return "service_types" }
@@ -137,6 +155,8 @@ type ServiceTypeDTO struct {
 	Description   string         `json:"description"`
 	Schema        []FieldSchema  `json:"schema"`
 	EndpointRoles []EndpointRole `json:"endpoint_roles"`
+	SyncSource    string         `json:"sync_source"`
+	NetboxType    string         `json:"netbox_type"`
 }
 
 // PlatformPack is one platform's apply/cleanup templates for a service type.

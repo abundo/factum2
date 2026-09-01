@@ -1,6 +1,7 @@
 // syncs interfaces, addresses, VRF-aware address
-// dedup, LLDP-discovered cable connections, and on-device ELINEs (as
-// NetBox L2VPNs of type EVPL) from live network devices into NetBox. The
+// dedup, LLDP-discovered cable connections, and on-device services
+// (ELINE/ELAN as NetBox L2VPNs, L3VPN as VRFs — kinds come from cfgmgmt
+// service types) from live network devices into NetBox. The
 // device/interface/address snapshot read for comparison comes from
 // factum's own DB (already synced from Netbox by internal/netbox, see
 // FactumAPI) rather than Netbox directly - only the actual writes go
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
@@ -58,6 +60,8 @@ type FactumAPI interface {
 	// GetDeviceByName returns one device with interfaces/addresses
 	// populated.
 	GetDeviceByName(name string) (*models.Device, error)
+	// GetServiceTypes returns cfgmgmt service types (sync_source / netbox_type).
+	GetServiceTypes() ([]models.ServiceType, error)
 }
 
 // devicePair is a factum device (already synced from Netbox) paired with
@@ -91,6 +95,10 @@ type DeviceSync struct {
 	// that are both being synced in this run.
 	deviceCache   map[string]*models.Device
 	deviceCacheMu sync.Mutex
+
+	// inventoryMaps is sync_source → netbox_type from cfgmgmt service
+	// types (ELINE→evpl, ELAN→vpls, L3VPN→vrf). Loaded once per run.
+	inventoryMaps map[string]string
 }
 
 // Sync fetches every eligible device from factum (already synced from
@@ -127,6 +135,7 @@ func (ds *DeviceSync) factumDevice(name string) (*models.Device, error) {
 
 func (ds *DeviceSync) run() error {
 	ds.reporter.Emit(jobevent.Info, "device-sync started")
+	ds.loadInventoryMaps()
 
 	if ds.opts.Platform != "" {
 		if _, ok := drivers.SupportedPlatforms[strings.ToLower(ds.opts.Platform)]; !ok {
@@ -157,6 +166,9 @@ func (ds *DeviceSync) run() error {
 		}
 	}
 
+	// VRFs first so interface/address VRF-by-name writes can resolve.
+	ds.forEachPair(ds.syncVRFs)
+
 	// Interfaces, order matters: delete before create so a moved
 	// interface can't collide with itself, description/vrf sync last.
 	ds.forEachPair(ds.interfacesDelete)
@@ -180,10 +192,11 @@ func (ds *DeviceSync) run() error {
 	// Prefixes for the addresses just synced.
 	ds.forEachPair(ds.syncPrefixes)
 
-	// ELINEs as Netbox L2VPNs (type EVPL) + terminations on the local AC
-	// interface(s). Runs after interfacesCreate so subinterfaces/SAPs
-	// already exist in Netbox and can be terminated on.
-	ds.forEachPair(ds.syncELINEs)
+	// On-device services as Netbox L2VPNs (ELINE→evpl, ELAN→vpls) +
+	// terminations on the local AC interface(s). Runs after
+	// interfacesCreate so subinterfaces/SAPs already exist in Netbox and
+	// can be terminated on. Mapping comes from cfgmgmt service types.
+	ds.forEachPair(ds.syncInventoryL2)
 
 	return nil
 }
@@ -992,7 +1005,92 @@ func (ds *DeviceSync) syncPrefixes(pair *devicePair) {
 	}
 }
 
-// ----- ELINEs (Netbox L2VPN type EVPL) -----
+// ----- Inventory services (cfgmgmt SyncSource → NetBox) -----
+
+func (ds *DeviceSync) loadInventoryMaps() {
+	ds.inventoryMaps = map[string]string{
+		models.SyncSourceELINE: models.NetboxTypeEVPL,
+	}
+	if ds.factum == nil {
+		return
+	}
+	types, err := ds.factum.GetServiceTypes()
+	if err != nil {
+		ds.reporter.Emit(jobevent.Warning, "service types: %v (using ELINE→evpl fallback)", err)
+		return
+	}
+	mapped := cfgmgmt.InventoryMaps(types)
+	if len(mapped) > 0 {
+		ds.inventoryMaps = mapped
+	}
+}
+
+func (ds *DeviceSync) netboxType(source string) string {
+	if ds.inventoryMaps != nil {
+		if t, ok := ds.inventoryMaps[source]; ok {
+			return t
+		}
+	}
+	if source == models.SyncSourceELINE {
+		return models.NetboxTypeEVPL
+	}
+	return ""
+}
+
+// l2Attachment is one on-device L2 service's contribution to a NetBox L2VPN:
+// local AC interface names plus an optional identifier (pseudowire ID).
+type l2Attachment struct {
+	name       string
+	kind       string // "eline" or "elan", for log lines
+	ifaceNames []string
+	pwid       int
+}
+
+func elineAttachments(dc *drivers.DeviceConfig) []l2Attachment {
+	if dc == nil || len(dc.ELINEs) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(dc.ELINEs))
+	for name := range dc.ELINEs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]l2Attachment, 0, len(names))
+	for _, name := range names {
+		eline := dc.ELINEs[name]
+		if eline == nil || eline.Name == "" {
+			continue
+		}
+		side := elineLocalSideOf(eline)
+		out = append(out, l2Attachment{
+			name: eline.Name, kind: "eline",
+			ifaceNames: side.ifaceNames, pwid: side.pwid,
+		})
+	}
+	return out
+}
+
+func elanAttachments(dc *drivers.DeviceConfig) []l2Attachment {
+	if dc == nil || len(dc.ELANs) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(dc.ELANs))
+	for name := range dc.ELANs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]l2Attachment, 0, len(names))
+	for _, name := range names {
+		elan := dc.ELANs[name]
+		if elan == nil || elan.Name == "" {
+			continue
+		}
+		out = append(out, l2Attachment{
+			name: elan.Name, kind: "elan", ifaceNames: elan.Interfaces,
+		})
+	}
+	return out
+}
 
 // elineLocalSide is what one device's parsed ELINE contributes to Netbox:
 // zero or more attachment-circuit interface names (EOS/XR *Interface, SR OS
@@ -1043,37 +1141,79 @@ func elinePseudowire(conn any) *drivers.Pseudowire {
 	return pw
 }
 
-// syncELINEs ensures each ELINE parsed from the device's running config
-// exists in Netbox as an L2VPN of type "evpl", with an L2VPNTermination on
-// every local AC interface that is already present in Netbox (created by
-// the earlier interfacesCreate phase). Cross-device ELINEs only contribute
-// this device's end; the peer's termination is added when that peer is
-// synced. Does not delete L2VPNs or terminations that no longer appear on
-// the device - those may be owned by factum services (web ApiServiceElineUpdate)
-// or by the other endpoint, and a partial --name run must not tear them down.
-func (ds *DeviceSync) syncELINEs(pair *devicePair) {
-	if len(pair.config.ELINEs) == 0 {
+func (ds *DeviceSync) syncVRFs(pair *devicePair) {
+	if ds.netboxType(models.SyncSourceL3VPN) != models.NetboxTypeVRF {
 		return
 	}
-	// Stable order for logs/tests.
-	names := make([]string, 0, len(pair.config.ELINEs))
-	for name := range pair.config.ELINEs {
+	if pair.config == nil || len(pair.config.L3VPNs) == 0 {
+		return
+	}
+	names := make([]string, 0, len(pair.config.L3VPNs))
+	for name := range pair.config.L3VPNs {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-
 	for _, name := range names {
-		eline := pair.config.ELINEs[name]
-		if eline == nil || eline.Name == "" {
+		l3 := pair.config.L3VPNs[name]
+		if l3 == nil {
 			continue
 		}
-		side := elineLocalSideOf(eline)
-		if len(side.ifaceNames) == 0 {
-			ds.reporter.Emit(jobevent.Warning, "%s: eline %q has no local interface attachment, skipping", pair.nbDevice.Name, eline.Name)
+		vrfName, rd, desc := name, "", l3.Description
+		if l3.VRF != nil {
+			if l3.VRF.Name != "" {
+				vrfName = l3.VRF.Name
+			}
+			rd = l3.VRF.RD
+			if l3.VRF.Description != "" {
+				desc = l3.VRF.Description
+			}
+		}
+		if vrfName == "" {
+			continue
+		}
+		_, _ = ds.nb.EnsureVRF(pair.nbDevice.Name, vrfName, rd, desc)
+	}
+}
+
+func (ds *DeviceSync) syncInventoryL2(pair *devicePair) {
+	if t := ds.netboxType(models.SyncSourceELINE); t != "" {
+		ds.syncL2Attachments(pair, t, elineAttachments(pair.config))
+	}
+	if t := ds.netboxType(models.SyncSourceELAN); t != "" {
+		ds.syncL2Attachments(pair, t, elanAttachments(pair.config))
+	}
+}
+
+// syncELINEs is the ELINE-only path kept so existing tests can call it
+// without loading service types. Production runs go through syncInventoryL2.
+func (ds *DeviceSync) syncELINEs(pair *devicePair) {
+	t := ds.netboxType(models.SyncSourceELINE)
+	if t == "" {
+		t = models.NetboxTypeEVPL
+	}
+	ds.syncL2Attachments(pair, t, elineAttachments(pair.config))
+}
+
+// syncL2Attachments ensures each attachment exists in Netbox as an L2VPN of
+// l2vpnType, with an L2VPNTermination on every local AC interface that is
+// already present in Netbox (created by the earlier interfacesCreate phase).
+// Cross-device services only contribute this device's end; the peer's
+// termination is added when that peer is synced. Does not delete L2VPNs or
+// terminations that no longer appear on the device.
+func (ds *DeviceSync) syncL2Attachments(pair *devicePair, l2vpnType string, attachments []l2Attachment) {
+	if l2vpnType == "" || len(attachments) == 0 {
+		return
+	}
+	for _, att := range attachments {
+		if att.name == "" {
+			continue
+		}
+		if len(att.ifaceNames) == 0 {
+			ds.reporter.Emit(jobevent.Warning, "%s: %s %q has no local interface attachment, skipping", pair.nbDevice.Name, att.kind, att.name)
 			continue
 		}
 
-		l2vpn, err := ds.nb.EnsureL2VPNEVPL(pair.nbDevice.Name, eline.Name, side.pwid)
+		l2vpn, err := ds.nb.EnsureL2VPN(pair.nbDevice.Name, att.name, l2vpnType, att.pwid)
 		if err != nil {
 			continue
 		}
@@ -1084,14 +1224,14 @@ func (ds *DeviceSync) syncELINEs(pair *devicePair) {
 			continue
 		}
 
-		for _, ifaceName := range side.ifaceNames {
+		for _, ifaceName := range att.ifaceNames {
 			nbIface := findInterfaceByName(pair.nbDevice.Interfaces, ifaceName)
 			if nbIface == nil {
-				ds.reporter.Emit(jobevent.Warning, "%s: eline %q: interface %s not in netbox yet, skipping termination", pair.nbDevice.Name, eline.Name, ifaceName)
+				ds.reporter.Emit(jobevent.Warning, "%s: %s %q: interface %s not in netbox yet, skipping termination", pair.nbDevice.Name, att.kind, att.name, ifaceName)
 				continue
 			}
 			if nbIface.NetboxID == 0 {
-				ds.reporter.Emit(jobevent.Warning, "%s: eline %q: interface %s has no netbox id, skipping termination", pair.nbDevice.Name, eline.Name, ifaceName)
+				ds.reporter.Emit(jobevent.Warning, "%s: %s %q: interface %s has no netbox id, skipping termination", pair.nbDevice.Name, att.kind, att.name, ifaceName)
 				continue
 			}
 			_ = ds.nb.EnsureL2VPNTermination(pair.nbDevice.Name, l2vpn.Name, l2vpn.NetboxID, nbIface.NetboxID, ifaceName, &terms)

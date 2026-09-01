@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AttachServiceDialog: typeof import('./src/components/AttachServiceDialog.vue')['default']
     BuildInfo: typeof import('./src/components/BuildInfo.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
@@ -20,6 +21,7 @@ declare module 'vue' {
     PasswordInput: typeof import('./src/components/PasswordInput.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SchemaFields: typeof import('./src/components/SchemaFields.vue')['default']
     ServiceEditDialog: typeof import('./src/components/ServiceEditDialog.vue')['default']
     SortableColumnHeader: typeof import('./src/components/SortableColumnHeader.vue')['default']
     UAlert: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']

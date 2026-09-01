@@ -174,11 +174,12 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
-	// Reverse-import Netbox EVPL L2VPNs (created by device-sync or the
-	// service GUI) onto matching factum Service rows so the device
-	// interface table can show Service buttons. Runs on single-device
-	// syncs too: interfaces for the just-synced device are fresh, and
-	// peer ends resolve from whatever is already in factum.
+	// Reverse-import Netbox L2VPNs (created by device-sync or the
+	// service GUI; type from cfgmgmt NetboxType, e.g. evpl/vpls) onto
+	// matching factum Service rows so the device interface table can
+	// show Service buttons. Runs on single-device syncs too: interfaces
+	// for the just-synced device are fresh, and peer ends resolve from
+	// whatever is already in factum.
 	if err := syncServiceEndpointsFromL2VPNs(db, nb, reporter); err != nil {
 		reporter.EmitErr(err)
 		return err

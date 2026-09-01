@@ -345,6 +345,7 @@ func (ctrl *Controller) ApiConfigServiceTypeCreate(c *echo.Context) error {
 	row := models.ServiceType{
 		Name: dto.Name, Description: dto.Description,
 		Schema: dto.Schema, EndpointRoles: dto.EndpointRoles,
+		SyncSource: dto.SyncSource, NetboxType: dto.NetboxType,
 	}
 	if err := ctrl.DB.Create(&row).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -374,6 +375,8 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 	existing.Description = dto.Description
 	existing.Schema = dto.Schema
 	existing.EndpointRoles = dto.EndpointRoles
+	existing.SyncSource = dto.SyncSource
+	existing.NetboxType = dto.NetboxType
 	if err := ctrl.DB.Save(&existing).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
