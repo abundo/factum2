@@ -459,8 +459,14 @@ function saveVariable() {
     })
 }
 
-function openAssign() {
-  form.value = { variable_def_id: null, value_text: '' }
+function openAssign(row) {
+  form.value = row?.variable_def_id
+    ? {
+        id: row.id,
+        variable_def_id: row.variable_def_id,
+        value_text: row.value == null ? '' : JSON.stringify(row.value),
+      }
+    : { variable_def_id: null, value_text: '' }
   dialog.value = 'assign'
 }
 
@@ -766,7 +772,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                   size="sm"
                   icon="i-lucide-plus"
                   label="Assign"
-                  @click="openAssign"
+                  @click="openAssign()"
                 />
               </div>
               <UTable
@@ -785,16 +791,25 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                   {{ JSON.stringify(row.original.value) }}
                 </template>
                 <template #actions-cell="{ row }">
-                  <UButton
-                    v-if="authStore.canWrite"
-                    icon="i-lucide-trash-2"
-                    variant="outline"
-                    color="error"
-                    size="sm"
-                    @click="
-                      confirm = { kind: 'assignment', id: row.original.id, label: 'assignment' }
-                    "
-                  />
+                  <div class="flex gap-1">
+                    <UButton
+                      icon="i-lucide-pencil"
+                      variant="outline"
+                      color="neutral"
+                      size="sm"
+                      @click="openAssign(row.original)"
+                    />
+                    <UButton
+                      v-if="authStore.canWrite"
+                      icon="i-lucide-trash-2"
+                      variant="outline"
+                      color="error"
+                      size="sm"
+                      @click="
+                        confirm = { kind: 'assignment', id: row.original.id, label: 'assignment' }
+                      "
+                    />
+                  </div>
                 </template>
               </UTable>
               <template v-if="selected.kind === 'interface'">
@@ -1185,7 +1200,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
   <UModal
     :open="dialog === 'assign'"
-    title="Assignment"
+    :title="form.id ? 'Edit assignment' : 'Assignment'"
     @update:open="(v) => !v && (dialog = null)"
   >
     <template #body>
@@ -1198,6 +1213,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             value-key="value"
             label-key="label"
             placeholder="Select variable"
+            :disabled="!!form.id"
             class="w-full"
           />
         </div>
