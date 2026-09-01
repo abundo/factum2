@@ -20,6 +20,7 @@ import (
 
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
@@ -713,7 +714,7 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 		}
 	}
 
-	if cable != nil && cable.Label != "lldp" {
+	if cable != nil && !netbox.IsLLDPCable(cable) {
 		// Manual / optical plant cable — never retarget or delete.
 		if !cableJoins(cable, localIf.NetboxID, remoteIf.NetboxID) {
 			ds.reporter.Emit(jobevent.Warning, "%s: interface %s: LLDP says %s %s but a manual cable already exists — leaving it",
@@ -724,7 +725,7 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 
 	if cable != nil && remoteIf.CableID != 0 && remoteIf.CableID != localIf.CableID {
 		if remoteCable, err := ds.nb.api.GetCable(remoteIf.CableID); err == nil && remoteCable != nil {
-			if remoteCable.Label == "lldp" {
+			if netbox.IsLLDPCable(remoteCable) {
 				ds.nb.DeleteCable(remoteCable)
 			}
 		}

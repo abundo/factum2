@@ -4,6 +4,8 @@ go 1.25.0
 
 replace github.com/abundo/limetool => ../limetool
 
+replace github.com/abundo/netboxtool => ../netboxtool
+
 require (
 	github.com/GiGurra/boa v1.0.28
 	github.com/abundo/limetool v1.0.0

@@ -8,6 +8,7 @@ import (
 
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
 )
@@ -28,7 +29,7 @@ type NetboxAPI interface {
 	AddressDelete(addressID int) error
 
 	GetCable(cableID uint) (*netboxtool.NBCable, error)
-	CreateCable(aInterfaceID, bInterfaceID uint) (*netboxtool.NBCable, error)
+	CreateCableWithOptions(aInterfaceID, bInterfaceID uint, extra map[string]any) (*netboxtool.NBCable, error)
 	DeleteCable(cableID uint) error
 	UpdateCableTermination(cableID uint, side int, interfaceID uint) error
 
@@ -215,7 +216,7 @@ func (m *NetboxMgr) DeleteAddress(device *models.Device, iface *models.Interface
 // ----- Cable -----
 
 func (m *NetboxMgr) CreateCable(device, remoteDevice *models.Device, localIface, remoteIface *models.Interface) error {
-	if _, err := m.api.CreateCable(localIface.NetboxID, remoteIface.NetboxID); err != nil {
+	if _, err := netbox.CreateLLDPCable(m.api, localIface.NetboxID, remoteIface.NetboxID); err != nil {
 		m.reporter.Emit(jobevent.Error, "%s: interface %s: create connection to %s %s: %v", device.Name, localIface.Name, remoteDevice.Name, remoteIface.Name, err)
 		return err
 	}

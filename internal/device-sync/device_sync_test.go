@@ -9,6 +9,7 @@ import (
 
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
@@ -183,12 +184,16 @@ func (f *fakeNetboxAPI) GetCable(cableID uint) (*netboxtool.NBCable, error) {
 	return f.cablesByID[cableID], nil
 }
 
-func (f *fakeNetboxAPI) CreateCable(aInterfaceID, bInterfaceID uint) (*netboxtool.NBCable, error) {
+func (f *fakeNetboxAPI) CreateCableWithOptions(aInterfaceID, bInterfaceID uint, extra map[string]any) (*netboxtool.NBCable, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createdCables = append(f.createdCables, [2]uint{aInterfaceID, bInterfaceID})
 	f.nextID++
-	cable := &netboxtool.NBCable{NetboxID: f.nextID, AInterface: aInterfaceID, BInterface: bInterfaceID, Label: "lldp"}
+	label := ""
+	if extra != nil {
+		label, _ = extra["label"].(string)
+	}
+	cable := &netboxtool.NBCable{NetboxID: f.nextID, AInterface: aInterfaceID, BInterface: bInterfaceID, Label: label}
 	f.cablesByID[cable.NetboxID] = cable
 	return cable, nil
 }
@@ -981,6 +986,16 @@ func TestSyncConnectionCreatesCableWhenNoneExists(t *testing.T) {
 	if len(fake.createdCables) != 1 || fake.createdCables[0] != [2]uint{100, 200} {
 		t.Fatalf("createdCables = %v, want [[100 200]]", fake.createdCables)
 	}
+	var created *netboxtool.NBCable
+	for _, c := range fake.cablesByID {
+		created = c
+	}
+	if created == nil {
+		t.Fatal("expected a created cable in cablesByID")
+	}
+	if created.Label != netbox.CableLabelLLDP {
+		t.Fatalf("created cable label = %q, want %q", created.Label, netbox.CableLabelLLDP)
+	}
 }
 
 func TestSyncConnectionLeavesCorrectCableAlone(t *testing.T) {
@@ -989,7 +1004,7 @@ func TestSyncConnectionLeavesCorrectCableAlone(t *testing.T) {
 
 	localIf := &models.Interface{NetboxID: 100, Name: "Ethernet1", CableID: 5}
 	remoteIf := &models.Interface{NetboxID: 200, Name: "Ethernet2"}
-	fake.cablesByID[5] = &netboxtool.NBCable{NetboxID: 5, AInterface: 100, BInterface: 200}
+	fake.cablesByID[5] = &netboxtool.NBCable{NetboxID: 5, AInterface: 100, BInterface: 200, Label: netbox.CableLabelLLDP}
 
 	device := &models.Device{NetboxID: 1, Name: "sw1"}
 	remote := &models.Device{NetboxID: 2, Name: "sw2"}
@@ -1009,7 +1024,7 @@ func TestSyncConnectionRepairsWrongTermination(t *testing.T) {
 	// other (stale) interface instead of remoteIf.
 	localIf := &models.Interface{NetboxID: 100, Name: "Ethernet1", CableID: 5}
 	remoteIf := &models.Interface{NetboxID: 200, Name: "Ethernet2"}
-	fake.cablesByID[5] = &netboxtool.NBCable{NetboxID: 5, AInterface: 100, BInterface: 999, Label: "lldp"}
+	fake.cablesByID[5] = &netboxtool.NBCable{NetboxID: 5, AInterface: 100, BInterface: 999, Label: netbox.CableLabelLLDP}
 
 	device := &models.Device{NetboxID: 1, Name: "sw1"}
 	remote := &models.Device{NetboxID: 2, Name: "sw2"}
