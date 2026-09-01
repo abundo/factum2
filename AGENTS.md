@@ -81,8 +81,9 @@ synced _from_ factum (`factum2-dns sync`, `factum2-icinga sync`,
 sync`) — same shape as Icinga: `internal/oxidized`'s
 `FactumOxidizedClient.Sync` filters devices (enabled, `CfBackupOxidized`,
 not on any `Settings.OxidizedIgnore*` list, has a primary IPv4), writes
-oxidized's router.db (`Settings.OxidizedDestFile`), and asks oxidized to
-reload only if the file's content actually changed. Prometheus
+oxidized's router.db (`Settings.OxidizedDestFile`, `name:ip:model` per
+line; Oxidized CSV must map `name: 0`, `ip: 1`, `model: 2`), and asks
+oxidized to reload only if the file's content actually changed. Prometheus
 (`internal/prometheus`) writes a file_sd JSON of snmp_exporter targets
 (`Settings.PrometheusDestFile`) from devices with `CfMonitorGrafana` and
 POSTs `Settings.PrometheusReloadURL` only if the file changed. BECS is an upstream

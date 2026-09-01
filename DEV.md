@@ -125,7 +125,9 @@ replaced.
 
 `factum2-oxidized sync` writes oxidized's `router.db` from factum devices
 (filtered by enabled/`CfBackupOxidized`/`Settings.OxidizedIgnore*` plus a
-primary IPv4) and asks oxidized to reload only if the file changed.
+primary IPv4) as `name:ip:model` per line and asks oxidized to reload only
+if the file changed. Oxidized's CSV source must map those columns
+(`name: 0`, `ip: 1`, `model: 2`).
 
 `factum2-prometheus sync` writes a Prometheus file_sd JSON of SNMP targets
 for snmp_exporter (filtered by enabled/`CfMonitorGrafana`/

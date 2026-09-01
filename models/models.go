@@ -420,7 +420,8 @@ type Settings struct {
 	OxidizedApiUser string `gorm:"column:oxidized_api_user" form:"oxidized_api_user" json:"oxidized_api_user"`
 	OxidizedApiPass string `gorm:"column:oxidized_api_pass" form:"oxidized_api_pass" json:"oxidized_api_pass"`
 	// OxidizedDestFile is oxidized's own router.db - internal/oxidized
-	// writes the filtered device list here (name:model per line).
+	// writes the filtered device list here (name:ip:model per line).
+	// Oxidized's CSV source must map name: 0, ip: 1, model: 2.
 	OxidizedDestFile string `gorm:"column:oxidized_dest_file" form:"oxidized_dest_file" json:"oxidized_dest_file"`
 	// OxidizedIgnoreDevices/Manufacturers/Models/Platforms are
 	// newline-separated lists, edited as multiline boxes in the admin UI -

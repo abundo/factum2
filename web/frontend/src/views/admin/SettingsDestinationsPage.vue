@@ -364,6 +364,21 @@ const destinationTabItems = [
                 v-model="settings.oxidized_dest_file"
                 class="w-full"
               />
+              <p class="text-muted-color mt-1">
+                Oxidized
+                <span class="font-mono">router.db</span>
+                written by
+                <span class="font-mono">factum2-oxidized</span>
+                as
+                <span class="font-mono">name:ip:model</span>
+                per line (FQDN, primary IPv4, platform). Oxidized's CSV source must map
+                <span class="font-mono">name: 0</span>,
+                <span class="font-mono">ip: 1</span>,
+                <span class="font-mono">model: 2</span>
+                — the previous two-column
+                <span class="font-mono">name:model</span>
+                map would treat the IP as the model.
+              </p>
             </div>
             <div>
               <label for="oxidized_ignore_devices" class="block font-bold mb-3"

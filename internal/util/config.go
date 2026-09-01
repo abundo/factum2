@@ -75,7 +75,7 @@ type ConfigOxidized struct {
 
 	// DestFile is oxidized's own router.db - the file
 	// internal/oxidized.FactumOxidizedClient.Sync writes the filtered
-	// device list to.
+	// device list to (name:ip:model per line).
 	DestFile string
 
 	// IgnoreDevices/IgnoreManufacturers/IgnoreModels/IgnorePlatforms are

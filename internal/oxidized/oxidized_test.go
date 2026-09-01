@@ -37,7 +37,7 @@ func TestSaveDevicesQualifiesShortNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(body)
-	want := "rtr1.example.com:eos\nrtr1.example.com:eos\nsw1.site.example.com:ios\n10.1.1.3:eos\n"
+	want := "rtr1.example.com:10.1.1.1:eos\nrtr1.example.com:10.1.1.4:eos\nsw1.site.example.com:10.1.1.2:ios\n10.1.1.3:10.1.1.3:eos\n"
 	if got != want {
 		t.Fatalf("router.db =\n%q\nwant\n%q", got, want)
 	}
@@ -70,8 +70,54 @@ func TestSaveDevicesEmptyDomainAllowsIPNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "10.1.1.3:eos\n" {
+	if string(body) != "10.1.1.3:10.1.1.3:eos\n" {
 		t.Fatalf("got %q", body)
+	}
+}
+
+func TestLoadDevicesParsesNameIPModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	if err := os.WriteFile(path, []byte("rtr1.example.com:10.1.1.1:eos\nsw1:ios\n:missing-name:eos\nbadline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := NewOxidizedClient(util.ConfigOxidized{DestFile: path})
+	got, err := client.GetDevices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len=%d got=%+v", len(got), got)
+	}
+	rtr := got["rtr1.example.com"]
+	if rtr == nil || rtr.IP != "10.1.1.1" || rtr.Model != "eos" {
+		t.Fatalf("rtr1 = %+v", rtr)
+	}
+	sw := got["sw1"]
+	if sw == nil || sw.IP != "" || sw.Model != "ios" {
+		t.Fatalf("sw1 = %+v", sw)
+	}
+}
+
+func TestParseRouterDBLine(t *testing.T) {
+	tests := []struct {
+		line            string
+		name, ip, model string
+		ok              bool
+	}{
+		{"rtr1.example.com:10.1.1.1:eos", "rtr1.example.com", "10.1.1.1", "eos", true},
+		{"rtr1:eos", "rtr1", "", "eos", true},
+		{"10.1.1.3:10.1.1.3:eos", "10.1.1.3", "10.1.1.3", "eos", true},
+		{"", "", "", "", false},
+		{"onlyname", "", "", "", false},
+		{":eos", "", "", "", false},
+		{"rtr1:", "", "", "", false},
+	}
+	for _, tt := range tests {
+		name, ip, model, ok := parseRouterDBLine(tt.line)
+		if name != tt.name || ip != tt.ip || model != tt.model || ok != tt.ok {
+			t.Errorf("parseRouterDBLine(%q) = %q %q %q %v, want %q %q %q %v",
+				tt.line, name, ip, model, ok, tt.name, tt.ip, tt.model, tt.ok)
+		}
 	}
 }
 
