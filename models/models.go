@@ -331,7 +331,8 @@ type Settings struct {
 	// Email / SMTP - a general-purpose outbound mail relay, not tied to
 	// Icinga specifically (factum2-icinga-notifications is the first
 	// consumer, via util.CommonConfig, but any tool that needs to send
-	// mail can fetch the same settings).
+	// mail can fetch the same settings). Edited on the admin UI's
+	// Factum > Email tab.
 	SmtpHost string `gorm:"column:smtp_host" form:"smtp_host" json:"smtp_host"`
 	SmtpPort uint16 `gorm:"column:smtp_port" form:"smtp_port" json:"smtp_port"`
 	SmtpUser string `gorm:"column:smtp_user" form:"smtp_user" json:"smtp_user"`

@@ -38,7 +38,7 @@ type CommonConfig struct {
 
 	// SmtpHost/Port/User/Pass/TLSMode and EmailSender are the shared
 	// outbound mail relay settings (Settings.Smtp*/EmailSender, edited on
-	// the admin UI's "Email" destination tab) - factum2-icinga-notifications
+	// the admin UI's Factum > Email tab) - factum2-icinga-notifications
 	// is the first consumer, but any tool needing to send mail can reuse
 	// these instead of having its own copy.
 	SmtpHost    string `json:"smtp_host"`

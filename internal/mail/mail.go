@@ -1,5 +1,5 @@
 // Package mail sends outbound email over the shared SMTP relay settings
-// (Settings.Smtp*/EmailSender, edited on the admin UI's "Email" destination
+// (Settings.Smtp*/EmailSender, edited on the admin UI's Factum > Email
 // tab, projected into util.CommonConfig by util.NewCommonConfig). Extracted
 // from cmd/icinga-notifications, the first consumer, so the web package's
 // password-reset flow can send mail without duplicating this logic.
@@ -16,7 +16,7 @@ import (
 // settings in smtp.
 func Send(smtp util.CommonConfig, from, to, subject, body string) error {
 	if smtp.SmtpHost == "" {
-		return fmt.Errorf("no SMTP host configured (Settings.SmtpHost, admin UI Destinations > Email tab)")
+		return fmt.Errorf("no SMTP host configured (Settings.SmtpHost, admin UI Factum > Email tab)")
 	}
 
 	m := mail.NewMsg()
