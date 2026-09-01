@@ -26,8 +26,10 @@ packs, CLI templates), see
 ### Production (GitHub release)
 
 No Go or Node needed. Tagged releases ship linux/amd64 and linux/arm64
-binaries plus systemd units. The installer lives at `/etc/factum2/install.py`
-so you can re-run it later to pick another tag.
+binaries, systemd units, and `install.py`. The copy at
+`/etc/factum2/install.py` is only a launcher: after you pick a tag it
+runs **that release's** `install.py` (from the tarball, or the git tag
+if the archive is older) so install steps match those binaries.
 
 #### 1. Create the PostgreSQL database
 
@@ -83,9 +85,14 @@ sudo /etc/factum2/install.py
 
 On a TTY the installer lists GitHub releases; highlight one and press Enter.
 Non-interactive: `sudo /etc/factum2/install.py --install latest --yes`.
+A standalone copy offers to replace itself from the latest GitHub
+**release** (`--self-update`), never from `main` — an unreleased installer
+must not drive binaries that lack its commands (for example `factum2-web
+migrate` on a tag from before that subcommand existed).
 
 That copies binaries to `/opt/factum2`, stops `factum2-web` if it is running,
-applies schema migrations (`factum2-web migrate`), then installs systemd units:
+applies schema migrations (`factum2-web migrate`, when that tag has the
+command), then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
 - **each enabled worker node:** `factum2-worker.service`

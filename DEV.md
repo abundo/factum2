@@ -98,9 +98,9 @@ account, which any admin can already see via `GET /api/admin/settings`.
 
 ## Binaries (`cmd/...`, built to `build/`)
 
-| Binary                        | Source                     | Purpose                                                                                                      |
-| ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `factum2`                     | `cmd/factum2`               | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
+| Binary                         | Source                     | Purpose                                                                                                      |
+| ------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `factum2`                      | `cmd/factum2`              | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
 | `factum2-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
 | `factum2-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
 | `factum2-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
@@ -172,9 +172,12 @@ sudo /etc/factum2/install.py --install v1.0.0
 That installs `factum2-web.service` and `factum2-worker.service` on the
 primary, and `factum2-worker.service` on each enabled worker. If a unit
 file on disk differs from the packaged one, the installer prints a diff
-and asks before overwriting. A standalone copy of `install.py` (not a git
-checkout) also checks GitHub at startup for a newer installer and offers to
-replace itself (`--self-update` / `--skip-self-update`).
+and asks before overwriting. `/etc/factum2/install.py` is a launcher: the
+selected tag's `install.py` (shipped in the release tarball; older tags
+are fetched from that git ref) performs copy/migrate/units so the CLI
+matches those binaries. A standalone copy also checks the latest GitHub
+**release** (not `main`) at startup for a newer launcher (`--self-update`
+/ `--skip-self-update`).
 
 ## Testing
 
@@ -289,8 +292,9 @@ embedded) and published to GitHub when a `v*` tag is pushed
 
 Each release is one `tar.gz` (and a `.deb`) per linux/amd64 and
 linux/arm64, containing every `cmd/*` binary plus `LICENSE`, `README.md`,
-and `examples/`. The `.deb` installs binaries to `/opt/factum2` and systemd
-units to `/lib/systemd/system`.
+`examples/`, and `install.py`. The `.deb` installs binaries to `/opt/factum2`,
+systemd units to `/lib/systemd/system`, and the installer to
+`/etc/factum2/install.py`.
 
 Local dry-run (writes `dist/`, does not publish):
 
