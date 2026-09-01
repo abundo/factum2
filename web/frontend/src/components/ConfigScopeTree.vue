@@ -14,20 +14,48 @@ const el = ref(null)
 let tree
 let onContextMenu
 
-function toWbNode(n) {
+function toWbNode(n, expandedKeys) {
   const node = {
     key: n.key,
     title: n.title,
-    expanded: false,
+    expanded: expandedKeys.has(n.key),
     type: n.type,
     ...n.data,
   }
   if (Array.isArray(n.children) && n.children.length) {
-    node.children = n.children.map(toWbNode)
+    node.children = n.children.map((c) => toWbNode(c, expandedKeys))
   } else {
     node.children = []
   }
   return node
+}
+
+function collectState() {
+  const expandedKeys = new Set()
+  const keys = new Set()
+  let activeKey = null
+  if (!tree) return { expandedKeys, keys, activeKey }
+  tree.visit((node) => {
+    if (!node.key) return
+    keys.add(node.key)
+    if (node.expanded) expandedKeys.add(node.key)
+  })
+  activeKey = tree.getActiveNode()?.key ?? null
+  return { expandedKeys, keys, activeKey }
+}
+
+// A full reload (attach/delete) rebuilds every node as collapsed. Re-open
+// parents of newly inserted nodes so the addition stays on screen.
+function expandParentsOfNewNodes(nodes, previousKeys, expandedKeys, parentKey = null) {
+  for (const n of nodes ?? []) {
+    const isNew = previousKeys.size && !previousKeys.has(n.key)
+    if (isNew && parentKey && previousKeys.has(parentKey)) {
+      expandedKeys.add(parentKey)
+    }
+    if (Array.isArray(n.children) && n.children.length) {
+      expandParentsOfNewNodes(n.children, previousKeys, expandedKeys, n.key)
+    }
+  }
 }
 
 function selectedPayload(node) {
@@ -145,15 +173,22 @@ function expandOneLevel() {
 }
 
 function load() {
+  const prev = collectState()
   return getScopeTree()
     .then((rows) => {
-      const source = (rows ?? []).map(toWbNode)
+      const list = rows ?? []
+      const expandedKeys = new Set(prev.expandedKeys)
+      expandParentsOfNewNodes(list, prev.keys, expandedKeys)
+      const source = list.map((n) => toWbNode(n, expandedKeys))
       if (tree) {
         return tree.load(source)
       }
       buildTree(source)
     })
-    .then(() => expandFirstLevel())
+    .then(() => {
+      if (!prev.keys.size) expandFirstLevel()
+      if (prev.activeKey) tree?.findKey(prev.activeKey)?.setActive()
+    })
     .catch(() => {
       if (!tree) buildTree([])
     })
