@@ -127,6 +127,39 @@ func TestApiOxidizedBrowser(t *testing.T) {
 	}
 }
 
+func TestApiOxidizedConfig(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.DefaultDomain = "example.com"
+	settings.OxidizedApiURL = "http://oxidized.example.com"
+	settings.OxidizedDestFile = "/etc/oxidized/router.db"
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/oxidized-config", nil, nil, nil)
+	if err := ctrl.ApiOxidizedConfig(c); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	var body OxidizedConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.URL != settings.OxidizedApiURL {
+		t.Fatalf("url = %q", body.URL)
+	}
+	if body.DestFile != settings.OxidizedDestFile {
+		t.Fatalf("dest_file = %q", body.DestFile)
+	}
+	if body.DefaultDomain != "example.com" {
+		t.Fatalf("default_domain = %q", body.DefaultDomain)
+	}
+}
+
 func TestApiOxidizedNodeConfigMissingParam(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

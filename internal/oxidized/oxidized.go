@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -113,7 +114,7 @@ func (o *oxidizedClient) GetDevices() (map[string]*OxidizedDevice, error) {
 // nodes are always stored as FQDNs. Returns "", nil if oxidized has no
 // configuration for it.
 func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
-	url := fmt.Sprintf("%s/node/fetch/%s", o.c.URL, util.FormatName(o.c.DefaultDomain, name))
+	url := fmt.Sprintf("%s/node/fetch/%s", o.c.URL, deviceFQDN(name, o.c.DefaultDomain))
 	resp, err := o.get(url)
 	if err != nil {
 		return "", err
@@ -132,11 +133,27 @@ func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
 
 // SaveDevices writes one "name:model" line per device to filename - the
 // router.db format oxidized (and LoadDevices above) expects. Oxidized
-// always uses FQDNs, so a short hostname (no '.') is qualified with
-// DefaultDomain. A device whose name is already its own primary IPv4
-// address is written as "address:model" instead, to match the device-api
-// naming used by the primary. Devices with no primary IPv4 are skipped.
+// uses the name as its SSH/DNS target, so it must be an FQDN (the same
+// name factum2-dns publishes), not a short factum hostname. A device
+// whose name is already its own primary IPv4 address is written as
+// "address:model" instead, to match the device-api naming used by the
+// primary. Devices with no primary IPv4 are skipped. Named devices
+// require DefaultDomain; writing a short hostname would make oxidized
+// fail its DNS lookup.
 func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) (int, error) {
+	domain := strings.TrimSpace(o.c.DefaultDomain)
+	if domain == "" {
+		for _, device := range devices {
+			if device.PrimaryIPv4 == "" {
+				continue
+			}
+			addr4 := strings.Split(device.PrimaryIPv4, "/")[0]
+			if device.Name != addr4 {
+				return 0, fmt.Errorf("default_domain is not configured; oxidized router.db requires FQDNs so oxidized can resolve devices via DNS")
+			}
+		}
+	}
+
 	f, err := os.Create(filename)
 	if err != nil {
 		return 0, err
@@ -149,15 +166,45 @@ func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) 
 			continue
 		}
 		model := device.Platform // device-api 'platform' is called 'model' in oxidized
-		addr4 := strings.Split(device.PrimaryIPv4, "/")[0]
-		if device.Name == addr4 {
-			fmt.Fprintf(f, "%s:%s\n", addr4, model)
-		} else {
-			fmt.Fprintf(f, "%s:%s\n", util.FormatName(o.c.DefaultDomain, device.Name), model)
-		}
+		fmt.Fprintf(f, "%s:%s\n", routerDBName(device, domain), model)
 		count++
 	}
 	return count, nil
+}
+
+// routerDBName is the first field of a router.db line: the name oxidized
+// uses to reach the device. Named devices are written as FQDNs; a device
+// named after its own primary IPv4 is left as the address.
+func routerDBName(device *models.Device, domain string) string {
+	addr4 := strings.Split(device.PrimaryIPv4, "/")[0]
+	if device.Name == addr4 {
+		return addr4
+	}
+	return deviceFQDN(device.Name, domain)
+}
+
+// deviceFQDN qualifies name with domain so oxidized can resolve it via DNS.
+// Names that already end with the default domain, and IPv4/IPv6 literals,
+// are returned unchanged. Unlike util.FormatName, extra labels such as
+// "rtr1.site" are still qualified ("rtr1.site.example.com") so they match
+// the absolute names factum2-dns publishes.
+func deviceFQDN(name, domain string) string {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".")
+	domain = strings.Trim(strings.TrimSpace(domain), ".")
+	if name == "" {
+		return name
+	}
+	if net.ParseIP(name) != nil {
+		return name
+	}
+	if domain == "" {
+		return name
+	}
+	suffix := "." + domain
+	if strings.EqualFold(name, domain) || strings.HasSuffix(strings.ToLower(name), strings.ToLower(suffix)) {
+		return name
+	}
+	return name + suffix
 }
 
 // Reload asks oxidized to reload its router.db configuration file. Returns
