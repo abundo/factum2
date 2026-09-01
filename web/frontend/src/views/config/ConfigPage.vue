@@ -1173,6 +1173,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             :items="variables.map((v) => ({ label: v.name, value: v.id }))"
             value-key="value"
             label-key="label"
+            placeholder="Select variable"
+            class="w-full"
           />
         </div>
         <div>
