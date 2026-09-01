@@ -285,6 +285,13 @@ function openGenericPicker(i) {
   pickerOpen.value = true
 }
 
+const pickerDeviceId = computed(
+  () => genericEndpoints.value[genericPickerIndex.value]?.device_id ?? null,
+)
+const pickerInterfaceId = computed(
+  () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
+)
+
 function saveGenericEndpoints() {
   genericSaving.value = true
   const payload = {
@@ -843,7 +850,12 @@ function deleteServiceConfirmed() {
     </template>
   </UModal>
 
-  <DeviceInterfacePicker v-model:open="pickerOpen" @select="onPickerSelect" />
+  <DeviceInterfacePicker
+    v-model:open="pickerOpen"
+    :device-id="pickerDeviceId"
+    :interface-id="pickerInterfaceId"
+    @select="onPickerSelect"
+  />
   <DeviceInterfacePicker
     :open="!!pathPicker"
     :mode="pathMode"
