@@ -32,13 +32,13 @@ const router = createRouter({
         {
           path: '/tenant/customer',
           name: 'customers',
-          meta: { requiresRead: true },
+          meta: { requiresRead: true, requiresOrganization: true },
           component: () => import('@/views/customer/CustomerList.vue'),
         },
         {
           path: '/tenant/contact',
           name: 'contacts',
-          meta: { title: 'Contacts', requiresRead: true },
+          meta: { title: 'Contacts', requiresRead: true, requiresOrganization: true },
           component: () => import('@/views/contact/ContactList.vue'),
         },
         {
@@ -240,6 +240,9 @@ router.beforeEach((to) => {
     return { path: '/' }
   }
   if (to.meta?.requiresIpam && !authStore.ipamEnabled) {
+    return { path: '/' }
+  }
+  if (to.meta?.requiresOrganization && !authStore.organizationEnabled) {
     return { path: '/' }
   }
 })

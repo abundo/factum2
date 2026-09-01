@@ -168,15 +168,16 @@ func (ctrl *Controller) ApiUserDelete(c *echo.Context) error {
 func mePayload(db *gorm.DB, u models.User) map[string]any {
 	dto := toUserDTO(u)
 	return map[string]any{
-		"id":              dto.ID,
-		"username":        dto.Username,
-		"name":            dto.Name,
-		"email":           dto.Email,
-		"mobile":          dto.Mobile,
-		"roles":           dto.Roles,
-		"role_ids":        dto.RoleIDs,
-		"optical_enabled": optical.OpticalEnabled(db),
-		"ipam_enabled":    ipam.Enabled(db),
+		"id":                   dto.ID,
+		"username":             dto.Username,
+		"name":                 dto.Name,
+		"email":                dto.Email,
+		"mobile":               dto.Mobile,
+		"roles":                dto.Roles,
+		"role_ids":             dto.RoleIDs,
+		"optical_enabled":      optical.OpticalEnabled(db),
+		"ipam_enabled":         ipam.Enabled(db),
+		"organization_enabled": util.OrganizationEnabled(db),
 	}
 }
 

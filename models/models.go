@@ -285,13 +285,18 @@ type Settings struct {
 	// IpamEnabled gates the standalone IPAM UI and /api/ipam/* routes.
 	// Off (nil/false) is the default. Turning it off only hides the
 	// feature — namespaces, VRFs and prefixes stay in the database.
-	IpamEnabled       *bool `gorm:"column:ipam_enabled" form:"ipam_enabled" json:"ipam_enabled"`
-	LibrenmsEnabled   *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
-	LimeEnabled       *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
-	NetboxEnabled     *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
-	OxidizedEnabled   *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
-	PrometheusEnabled *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
-	DeviceSyncEnabled *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
+	IpamEnabled *bool `gorm:"column:ipam_enabled" form:"ipam_enabled" json:"ipam_enabled"`
+	// OrganizationEnabled gates the Organization menu (Customers, Contacts)
+	// in the web GUI. Off (nil/false) is the default. Turning it off only
+	// hides the menu — customer and contact rows stay in the database, and
+	// services may still reference them.
+	OrganizationEnabled *bool `gorm:"column:organization_enabled" form:"organization_enabled" json:"organization_enabled"`
+	LibrenmsEnabled     *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
+	LimeEnabled         *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
+	NetboxEnabled       *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
+	OxidizedEnabled     *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
+	PrometheusEnabled   *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
+	DeviceSyncEnabled   *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
 
 	// factum
 	FactumApiToken string `gorm:"column:factum_api_token" form:"factum_api_token" json:"factum_api_token"`

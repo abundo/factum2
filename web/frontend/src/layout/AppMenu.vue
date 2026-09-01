@@ -17,11 +17,15 @@ const items = computed(() => {
   // which reject every other API route for them.
   if (authStore.canRead) {
     groups.push(
-      [
-        { type: 'label', label: 'Organization' },
-        { label: 'Customers', icon: 'i-lucide-building-2', to: '/tenant/customer' },
-        { label: 'Contacts', icon: 'i-lucide-book-user', to: '/tenant/contact' },
-      ],
+      ...(authStore.organizationEnabled
+        ? [
+            [
+              { type: 'label', label: 'Organization' },
+              { label: 'Customers', icon: 'i-lucide-building-2', to: '/tenant/customer' },
+              { label: 'Contacts', icon: 'i-lucide-book-user', to: '/tenant/contact' },
+            ],
+          ]
+        : []),
       [
         { type: 'label', label: 'Devices' },
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },

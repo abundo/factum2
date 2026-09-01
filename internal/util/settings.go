@@ -28,3 +28,14 @@ func GetOrCreateSettings(db *gorm.DB) (*models.Settings, error) {
 	}
 	return &settings, nil
 }
+
+// OrganizationEnabled reports Settings.OrganizationEnabled (nil/false = off).
+// Disabling the flag only hides the Customers/Contacts menu — it does not
+// touch customer or contact rows.
+func OrganizationEnabled(db *gorm.DB) bool {
+	var s models.Settings
+	if err := db.Select("organization_enabled").First(&s, 1).Error; err != nil {
+		return false
+	}
+	return s.OrganizationEnabled != nil && *s.OrganizationEnabled
+}

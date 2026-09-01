@@ -104,6 +104,18 @@ function testEmail() {
           <div class="flex flex-col gap-6 py-4">
             <div class="flex items-center gap-2">
               <USwitch
+                :model-value="!!settings.organization_enabled"
+                id="organization_enabled"
+                @update:model-value="settings.organization_enabled = $event"
+              />
+              <label for="organization_enabled" class="font-bold">Organization</label>
+            </div>
+            <small class="text-muted-color -mt-4"
+              >Customers and contacts. Off by default. Turning this off hides those menu entries; it
+              does not delete any data.</small
+            >
+            <div class="flex items-center gap-2">
+              <USwitch
                 :model-value="!!settings.optical_enabled"
                 id="optical_enabled"
                 @update:model-value="settings.optical_enabled = $event"
