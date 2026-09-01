@@ -68,7 +68,12 @@ const previewDeviceId = ref(null)
 const preview = ref(null)
 
 const tabItems = [
-  { label: 'Tree', value: 'tree', slot: 'tree' },
+  {
+    label: 'Tree',
+    value: 'tree',
+    slot: 'tree',
+    class: 'flex min-h-0 flex-1 flex-col overflow-auto lg:overflow-hidden',
+  },
   { label: 'Matrix', value: 'matrix', slot: 'matrix' },
   { label: 'Variables', value: 'variables', slot: 'variables' },
   { label: 'Service types', value: 'types', slot: 'types' },
@@ -668,15 +673,26 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 </script>
 
 <template>
-  <div class="card flex min-h-0 flex-1 flex-col">
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-3 shrink-0">
       <h4 class="m-0">Config</h4>
     </div>
-    <UTabs v-model="tab" :items="tabItems" class="min-h-0 flex-1">
+    <UTabs
+      v-model="tab"
+      :items="tabItems"
+      class="min-h-0 flex-1"
+      :ui="{
+        root: 'items-stretch',
+        list: 'shrink-0',
+        content: 'min-h-0 flex-1 overflow-auto',
+      }"
+    >
       <template #tree>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 py-3 min-h-[28rem]">
-          <div class="flex flex-col min-h-0">
-            <div class="flex flex-wrap gap-2 items-center mb-2">
+        <div
+          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(16rem,1fr)_auto] gap-4 py-3 lg:grid-cols-2 lg:grid-rows-1"
+        >
+          <div class="flex min-h-0 flex-col overflow-hidden">
+            <div class="flex flex-wrap gap-2 items-center mb-2 shrink-0">
               <UInput
                 v-model="filter"
                 icon="i-lucide-search"
@@ -701,7 +717,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 @click="treeRef?.collapseAll()"
               />
             </div>
-            <p class="text-muted-color text-sm mb-2">
+            <p class="text-muted-color text-sm mb-2 shrink-0">
               Right-click to add a folder or attach a device. Select a node to edit assignments.
             </p>
             <ConfigScopeTree
@@ -712,7 +728,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               @select="onSelect"
             />
           </div>
-          <div class="flex flex-col gap-3">
+          <div class="flex min-h-0 flex-col gap-3 overflow-auto">
             <div v-if="!selected" class="text-muted-color text-sm">Select a scope node.</div>
             <template v-else>
               <h5 class="m-0">{{ selected.title }}</h5>
