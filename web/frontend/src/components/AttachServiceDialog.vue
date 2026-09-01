@@ -30,7 +30,6 @@ const services = ref([])
 const selectedServiceId = ref(null)
 const selectedTypeName = ref(null)
 const category = ref('CN')
-const bandwidthMbps = ref(null)
 const schemaValues = ref({})
 const roleName = ref(null)
 const roleFields = ref({})
@@ -89,7 +88,6 @@ watch(open, (isOpen) => {
   selectedServiceId.value = null
   selectedTypeName.value = serviceTypes.value[0]?.name ?? null
   category.value = 'CN'
-  bandwidthMbps.value = null
   schemaValues.value = {}
   roleName.value = null
   roleFields.value = {}
@@ -184,7 +182,7 @@ function submit() {
   if (roleFieldsMissing()) return
   if (mode.value === 'existing' && !selectedServiceId.value) return
   if (mode.value === 'new') {
-    if (!selectedTypeName.value || !bandwidthMbps.value || schemaMissing()) return
+    if (!selectedTypeName.value || schemaMissing()) return
   }
 
   saving.value = true
@@ -223,7 +221,7 @@ function submit() {
   createService({
     category: category.value,
     service_type: selectedTypeName.value,
-    bandwidth_mbps: Number(bandwidthMbps.value) || 0,
+    bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
     fields,
     max_mac_addresses: Number(fields.max_mac_addresses) || 0,
   })
@@ -283,15 +281,6 @@ function submit() {
               :items="categoryOptions"
               value-key="value"
               label-key="label"
-              class="w-full"
-            />
-          </div>
-          <div>
-            <label class="block font-bold mb-2">Bandwidth (Mbps)</label>
-            <UInputNumber
-              v-model="bandwidthMbps"
-              :min="0"
-              :color="submitted && !bandwidthMbps ? 'error' : undefined"
               class="w-full"
             />
           </div>

@@ -195,6 +195,9 @@ function loadServiceById(id) {
         label: '',
       }))
       schemaValues.value = { ...data.fields }
+      if (schemaValues.value.bandwidth_mbps == null && data.bandwidth_mbps) {
+        schemaValues.value.bandwidth_mbps = data.bandwidth_mbps
+      }
       if (schemaValues.value.max_mac_addresses == null && data.max_mac_addresses) {
         schemaValues.value.max_mac_addresses = data.max_mac_addresses
       }
@@ -407,7 +410,7 @@ function saveServiceType() {
   saving.value = true
   const payload = {
     service_type: service.value.service_type ?? '',
-    bandwidth_mbps: Number(service.value.bandwidth_mbps) || 0,
+    bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
     fields: { ...schemaValues.value },
     max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
   }
@@ -451,6 +454,7 @@ function saveService() {
   const payload = {
     ...service.value,
     fields: { ...schemaValues.value },
+    bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
     max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
   }
 
@@ -657,15 +661,6 @@ function deleteServiceConfirmed() {
               value-key="value"
               label-key="label"
               placeholder="Not set"
-              class="w-full"
-            />
-
-            <label for="bandwidth_mbps" class="font-bold">Bandwidth (Mbps)</label>
-            <UInputNumber
-              id="bandwidth_mbps"
-              v-model="service.bandwidth_mbps"
-              :disabled="!canWrite"
-              :min="0"
               class="w-full"
             />
           </div>

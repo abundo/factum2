@@ -72,10 +72,12 @@ exist is a data migration, not a rename.
    encapsulation, inner/outer tag). These are validated and shown in the
    service edit dialog.
 5. **Per-service fields.** Anything shared by every endpoint (VRF name,
-   RT/RD, numeric service id, MTU). These live on `Service.Fields` as
-   `.Fields` in templates. The create wizard and service dialog render a
-   form from `schema`. A field named `max_mac_addresses` is also copied
-   to `Service.MaxMacAddresses` for older API clients.
+   RT/RD, numeric service id, MTU, bandwidth). These live on
+   `Service.Fields` as `.Fields` in templates. The create wizard and
+   service dialog render a form from `schema`. Well-known names are also
+   copied to dedicated Service columns for list views and older API
+   clients: `bandwidth_mbps` → `Service.BandwidthMbps`,
+   `max_mac_addresses` → `Service.MaxMacAddresses`.
 6. **What is not a service field.** Device/site-wide knobs (AS number,
    loopback, NTP, default MTU) belong in **config variables** on the scope
    tree, not on the service type. Templates see them as `.Vars`.
@@ -87,9 +89,9 @@ Built-in types seeded on migrate (`cfgmgmt.Seed`):
 
 | Name | Description | Seeded roles | Sync source → NetBox |
 | ---- | ----------- | ------------ | -------------------- |
-| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan` | `eline` → `evpl` |
-| `ELAN` | L2VPN multipoint | `endpoint` min=1 max=0, required `vlan`; schema `max_mac_addresses` | `elan` → `vpls` |
-| `L3VPN` | L3 multipoint | `endpoint` min=1 max=0 | `l3vpn` → `vrf` |
+| `ELINE` | L2VPN point to point | `a` and `b`, each min=1 max=1, required `vlan`; schema `bandwidth_mbps` | `eline` → `evpl` |
+| `ELAN` | L2VPN multipoint | `endpoint` min=1 max=0, required `vlan`; schema `bandwidth_mbps`, `max_mac_addresses` | `elan` → `vpls` |
+| `L3VPN` | L3 multipoint | `endpoint` min=1 max=0; schema `bandwidth_mbps` | `l3vpn` → `vrf` |
 | `POLARIX` | Internet | same as L3VPN | (none — on-device VRFs go through L3VPN) |
 
 The create wizard lists every type from this API as a capacity product
@@ -134,7 +136,9 @@ besides the seeded ELINE ones until you add them.
   say (`ELAN`, not `l2vpn-mp`).
 - The create wizard lists every type from this API as a capacity product
   (CN/CI). A new name appears there automatically. Extra create/edit
-  fields come from `schema` (for example ELAN's `max_mac_addresses`).
+  fields come from `schema` (for example `bandwidth_mbps` on every built-in
+  type, and ELAN's `max_mac_addresses`). Bandwidth is not hardcoded in the
+  wizard; add or omit `bandwidth_mbps` on the type to show or hide it.
 - **Device-sync mapping** — `sync_source` (`eline` / `elan` / `l3vpn`)
   names the parsed `DeviceConfig` collection; `netbox_type` (`evpl` /
   `vpls` / `vrf`) is what `factum2-device-sync` upserts. Leave both empty

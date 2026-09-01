@@ -72,6 +72,23 @@ func schemaHas(fields []models.FieldSchema, name string) bool {
 	return false
 }
 
+// mergeMissingSchema appends seeded fields that the stored type does not
+// already have. Operator-added extras are left in place.
+func mergeMissingSchema(existing *[]models.FieldSchema, seed []models.FieldSchema) bool {
+	if existing == nil {
+		return false
+	}
+	changed := false
+	for _, f := range seed {
+		if schemaHas(*existing, f.Name) {
+			continue
+		}
+		*existing = append(*existing, f)
+		changed = true
+	}
+	return changed
+}
+
 func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 	vlanField := models.FieldSchema{Name: "vlan", Type: models.VarTypeVLAN, Required: true, Description: "Customer VLAN / SAP tag"}
 	elineRoles := []models.EndpointRole{
@@ -84,14 +101,17 @@ func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 	l3Role := []models.EndpointRole{
 		{Name: "endpoint", Min: 1, Max: 0},
 	}
+	bandwidthField := models.FieldSchema{Name: models.SchemaFieldBandwidthMbps, Type: models.VarTypeInt, Required: true, Description: "Bandwidth (Mbps)"}
+	capacitySchema := []models.FieldSchema{bandwidthField}
 	elanSchema := []models.FieldSchema{
-		{Name: "max_mac_addresses", Type: models.VarTypeInt, Required: true, Description: "Max number of MAC addresses"},
+		bandwidthField,
+		{Name: models.SchemaFieldMaxMacAddresses, Type: models.VarTypeInt, Required: true, Description: "Max number of MAC addresses"},
 	}
 	seeds := []models.ServiceType{
-		{Name: "ELINE", Description: "L2VPN point to point", EndpointRoles: elineRoles, Builtin: true, SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL},
+		{Name: "ELINE", Description: "L2VPN point to point", Schema: capacitySchema, EndpointRoles: elineRoles, Builtin: true, SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL},
 		{Name: "ELAN", Description: "L2VPN multipoint", Schema: elanSchema, EndpointRoles: elanRole, Builtin: true, SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS},
-		{Name: "L3VPN", Description: "L3 multipoint", EndpointRoles: l3Role, Builtin: true, SyncSource: models.SyncSourceL3VPN, NetboxType: models.NetboxTypeVRF},
-		{Name: "POLARIX", Description: "Internet", EndpointRoles: l3Role, Builtin: true},
+		{Name: "L3VPN", Description: "L3 multipoint", Schema: capacitySchema, EndpointRoles: l3Role, Builtin: true, SyncSource: models.SyncSourceL3VPN, NetboxType: models.NetboxTypeVRF},
+		{Name: "POLARIX", Description: "Internet", Schema: capacitySchema, EndpointRoles: l3Role, Builtin: true},
 	}
 	var eline models.ServiceType
 	for _, s := range seeds {
@@ -114,8 +134,7 @@ func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 				existing.EndpointRoles = s.EndpointRoles
 				changed = true
 			}
-			if !schemaHas(existing.Schema, "max_mac_addresses") && schemaHas(s.Schema, "max_mac_addresses") {
-				existing.Schema = append(existing.Schema, s.Schema...)
+			if mergeMissingSchema(&existing.Schema, s.Schema) {
 				changed = true
 			}
 			if changed {

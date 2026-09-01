@@ -17,6 +17,15 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// columnFromFields prefers an explicit DTO column value, then the
+// same-named key in Fields (the service type schema). Zero means unset.
+func columnFromFields(dtoVal int, raw json.RawMessage, key string) int {
+	if dtoVal != 0 {
+		return dtoVal
+	}
+	return intField(raw, key)
+}
+
 // intField reads a JSON number stored under key in raw Fields.
 func intField(raw json.RawMessage, key string) int {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -177,14 +186,10 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 		}
 	}
 
-	maxMac := dto.MaxMacAddresses
-	if maxMac == 0 {
-		maxMac = intField(dto.Fields, "max_mac_addresses")
-	}
 	updates := map[string]any{
 		"service_type":      dto.ServiceType,
-		"bandwidth_mbps":    dto.BandwidthMbps,
-		"max_mac_addresses": maxMac,
+		"bandwidth_mbps":    columnFromFields(dto.BandwidthMbps, dto.Fields, models.SchemaFieldBandwidthMbps),
+		"max_mac_addresses": columnFromFields(dto.MaxMacAddresses, dto.Fields, models.SchemaFieldMaxMacAddresses),
 	}
 	if len(dto.Fields) > 0 && string(dto.Fields) != "null" {
 		updates["fields"] = dto.Fields
@@ -332,17 +337,13 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 			}
 		}
 
-		maxMac := dto.MaxMacAddresses
-		if maxMac == 0 {
-			maxMac = intField(dto.Fields, "max_mac_addresses")
-		}
 		created = models.Service{
 			CustomerID:      dto.CustomerID,
 			Comment:         dto.Comment,
 			ServiceID:       serviceID,
 			ServiceType:     dto.ServiceType,
-			BandwidthMbps:   dto.BandwidthMbps,
-			MaxMacAddresses: maxMac,
+			BandwidthMbps:   columnFromFields(dto.BandwidthMbps, dto.Fields, models.SchemaFieldBandwidthMbps),
+			MaxMacAddresses: columnFromFields(dto.MaxMacAddresses, dto.Fields, models.SchemaFieldMaxMacAddresses),
 			DeliveryPoint1:  dto.DeliveryPoint1,
 			DeliveryPoint2:  dto.DeliveryPoint2,
 			Product:         dto.Product,

@@ -157,6 +157,57 @@ func TestApiServiceCreate_AllowsExternalCustomerPrefixes(t *testing.T) {
 	}
 }
 
+func TestApiServiceCreate_CopiesBandwidthFromFields(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	body := map[string]any{
+		"category":     "CN",
+		"service_type": "ELINE",
+		"fields":       map[string]any{"bandwidth_mbps": 1000},
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service", body, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var created models.Service
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.BandwidthMbps != 1000 {
+		t.Errorf("BandwidthMbps = %d, want 1000 copied from fields.bandwidth_mbps", created.BandwidthMbps)
+	}
+}
+
+func TestApiServiceCreate_PrefersTopLevelBandwidthOverFields(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	body := map[string]any{
+		"category":       "CN",
+		"service_type":   "ELINE",
+		"bandwidth_mbps": 500,
+		"fields":         map[string]any{"bandwidth_mbps": 1000},
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service", body, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var created models.Service
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.BandwidthMbps != 500 {
+		t.Errorf("BandwidthMbps = %d, want 500 from top-level bandwidth_mbps", created.BandwidthMbps)
+	}
+}
+
 func TestApiServiceCreate_RejectsMissingServiceTypeForExternalCustomerPrefix(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

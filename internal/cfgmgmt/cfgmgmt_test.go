@@ -152,8 +152,24 @@ func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	if !schemaHas(elan.Schema, "max_mac_addresses") {
 		t.Errorf("ELAN schema missing max_mac_addresses: %+v", elan.Schema)
 	}
+	if !schemaHas(eline.Schema, models.SchemaFieldBandwidthMbps) {
+		t.Errorf("ELINE schema missing bandwidth_mbps: %+v", eline.Schema)
+	}
+	if !schemaHas(elan.Schema, models.SchemaFieldBandwidthMbps) {
+		t.Errorf("ELAN schema missing bandwidth_mbps: %+v", elan.Schema)
+	}
 	if err := db.Where("name = ?", "L3VPN").First(&l3).Error; err != nil {
 		t.Fatal(err)
+	}
+	if !schemaHas(l3.Schema, models.SchemaFieldBandwidthMbps) {
+		t.Errorf("L3VPN schema missing bandwidth_mbps: %+v", l3.Schema)
+	}
+	var polarix models.ServiceType
+	if err := db.Where("name = ?", "POLARIX").First(&polarix).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !schemaHas(polarix.Schema, models.SchemaFieldBandwidthMbps) {
+		t.Errorf("POLARIX schema missing bandwidth_mbps: %+v", polarix.Schema)
 	}
 	if l3.SyncSource != models.SyncSourceL3VPN || l3.NetboxType != models.NetboxTypeVRF {
 		t.Errorf("L3VPN mapping = %s/%s, want l3vpn/vrf", l3.SyncSource, l3.NetboxType)
@@ -168,6 +184,43 @@ func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	md, err := LookupPlatformPack(db, "ELINE", "sros-md")
 	if err != nil || md == nil {
 		t.Fatalf("sros-md pack: %v", err)
+	}
+}
+
+func TestSeedAddsMissingSchemaFields(t *testing.T) {
+	db := newTestDB(t)
+	var eline, elan models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	eline.Schema = nil
+	if err := db.Save(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
+		t.Fatal(err)
+	}
+	elan.Schema = []models.FieldSchema{{Name: "custom", Type: models.VarTypeString}}
+	if err := db.Save(&elan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !schemaHas(eline.Schema, models.SchemaFieldBandwidthMbps) {
+		t.Errorf("ELINE schema missing bandwidth_mbps after reseed: %+v", eline.Schema)
+	}
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !schemaHas(elan.Schema, models.SchemaFieldBandwidthMbps) || !schemaHas(elan.Schema, models.SchemaFieldMaxMacAddresses) {
+		t.Errorf("ELAN schema missing seeded fields after reseed: %+v", elan.Schema)
+	}
+	if !schemaHas(elan.Schema, "custom") {
+		t.Errorf("ELAN operator schema field was dropped: %+v", elan.Schema)
 	}
 }
 

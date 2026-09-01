@@ -140,10 +140,10 @@ type Service struct {
 	CustomerID uint   `json:"company"`
 	Comment    string `json:"comment"`
 
-	ServiceID       string `json:"service_id"`   // <category><5-digit>, e.g. CI00001 - the 2-letter prefix is the category (CI, VI, LI, ...), so it isn't stored separately
-	ServiceType     string `json:"service_type"` // ELINE, ELAN, L3VPN, POLARIX - CI/CN only, else ""
-	BandwidthMbps   int    `json:"bandwidth_mbps"`
-	MaxMacAddresses int    `json:"max_mac_addresses"` // ELAN only, else 0
+	ServiceID       string `json:"service_id"`        // <category><5-digit>, e.g. CI00001 - the 2-letter prefix is the category (CI, VI, LI, ...), so it isn't stored separately
+	ServiceType     string `json:"service_type"`      // ELINE, ELAN, L3VPN, POLARIX - CI/CN only, else ""
+	BandwidthMbps   int    `json:"bandwidth_mbps"`    // from type schema field bandwidth_mbps, else 0
+	MaxMacAddresses int    `json:"max_mac_addresses"` // from type schema field max_mac_addresses (ELAN), else 0
 
 	DeliveryPoint1  string `json:"deliverypoint1"`
 	DeliveryPoint2  string `json:"deliverypoint2"`

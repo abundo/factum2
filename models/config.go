@@ -115,6 +115,14 @@ type ConfigAssignmentDTO struct {
 	Value         json.RawMessage `json:"value"`
 }
 
+// Well-known ServiceType.Schema field names that are also copied onto
+// dedicated Service columns so list views and older API clients can read
+// them without parsing Fields.
+const (
+	SchemaFieldBandwidthMbps   = "bandwidth_mbps"
+	SchemaFieldMaxMacAddresses = "max_mac_addresses"
+)
+
 // FieldSchema is one typed field on a service type or endpoint role.
 type FieldSchema struct {
 	Name        string `json:"name"`

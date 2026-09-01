@@ -88,7 +88,6 @@ const form = ref({
   product: '',
   service: '',
   comment: '',
-  bandwidthMbps: null,
 })
 
 onMounted(() => {
@@ -131,7 +130,6 @@ function handleProductNext() {
 
 function handleCreate() {
   submittedStep2.value = true
-  if (isCapacityProduct.value && !form.value.bandwidthMbps) return
   if (isCapacityProduct.value && schemaMissingRequired()) return
 
   completing.value = true
@@ -150,7 +148,7 @@ function handleCreate() {
     service: form.value.service,
     comment: form.value.comment,
     service_type: serviceType.value,
-    bandwidth_mbps: isCapacityProduct.value ? Number(form.value.bandwidthMbps) : 0,
+    bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
     fields,
     max_mac_addresses: Number(fields.max_mac_addresses) || 0,
   }
@@ -266,19 +264,6 @@ function cancelWizard() {
       <div>
         <label class="block font-bold mb-3">Service</label>
         <UInput v-model="form.service" class="w-full" />
-      </div>
-      <div v-if="isCapacityProduct">
-        <label class="block font-bold mb-3">Bandwidth (Mbps)</label>
-        <UInputNumber
-          v-model="form.bandwidthMbps"
-          :color="submittedStep2 && !form.bandwidthMbps ? 'error' : undefined"
-          :highlight="submittedStep2 && !form.bandwidthMbps"
-          :min="0"
-          class="w-full"
-        />
-        <small v-if="submittedStep2 && !form.bandwidthMbps" class="text-red-500">
-          Bandwidth is required.
-        </small>
       </div>
       <SchemaFields
         v-if="isCapacityProduct && schemaFields.length"
