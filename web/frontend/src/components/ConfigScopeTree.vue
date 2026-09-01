@@ -18,7 +18,7 @@ function toWbNode(n) {
   const node = {
     key: n.key,
     title: n.title,
-    expanded: n.children?.length > 0,
+    expanded: false,
     type: n.type,
     ...n.data,
   }
@@ -123,6 +123,27 @@ function buildTree(source) {
   bindContextMenu()
 }
 
+function expandFirstLevel() {
+  const nodes = tree?.root?.children ?? []
+  for (const node of nodes) {
+    if (!node.expanded) node.setExpanded(true)
+  }
+}
+
+// Expand currently visible collapsed folders only — not their descendants.
+function expandOneLevel() {
+  if (!tree) return
+  const toExpand = []
+  tree.visit((node) => {
+    if (!node.isExpandable() || node.expanded) return
+    toExpand.push(node)
+    return 'skip'
+  })
+  for (const node of toExpand) {
+    node.setExpanded(true)
+  }
+}
+
 function load() {
   return getScopeTree()
     .then((rows) => {
@@ -132,6 +153,7 @@ function load() {
       }
       buildTree(source)
     })
+    .then(() => expandFirstLevel())
     .catch(() => {
       if (!tree) buildTree([])
     })
@@ -148,7 +170,7 @@ function filter(q) {
 }
 
 function expandAll() {
-  tree?.expandAll(true)
+  expandOneLevel()
 }
 
 function collapseAll() {

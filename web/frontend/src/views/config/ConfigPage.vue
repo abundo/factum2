@@ -727,7 +727,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 variant="outline"
                 color="neutral"
                 size="sm"
-                title="Expand all"
+                title="Expand one level"
                 @click="treeRef?.expandAll()"
               />
               <UButton
