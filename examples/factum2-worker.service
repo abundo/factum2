@@ -2,7 +2,7 @@
 # factum2-worker.service, start factum background worker
 #
 # Runs "factum2-worker start", which listens on worker.listen for the
-# primary to dial in over the hub transport (WebSocket) and dispatch
+# primary to dial in over the hub transport (WSS) and dispatch
 # predefined commands from worker.commands, streaming their stdout/stderr
 # back to the primary. Also serves the unix HTTP API at
 # /run/factum2-worker/api.sock (group factum). install.py groupadd -r factum

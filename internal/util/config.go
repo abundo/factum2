@@ -245,6 +245,12 @@ type ConfigWorker struct {
 	// side of the same value lives on the matching models.WorkerNode row,
 	// not in any config file.
 	Token string `boa:"configonly" yaml:"token" optional:"true"`
+	// TLSCert/TLSKey are the PEM files the hub listener serves WSS with.
+	// Required for factum2-worker start (hub RPC carries config secrets;
+	// there is no ws:// fallback). optional at boa level so show-config
+	// and run do not force them.
+	TLSCert string `boa:"configonly" yaml:"tls_cert" optional:"true"`
+	TLSKey  string `boa:"configonly" yaml:"tls_key" optional:"true"`
 	// APISocket is the unix HTTP listener for hub RPC. Empty uses
 	// DefaultHubSocket / FACTUM_WORKER_API_SOCKET; "none"/"0" is invalid
 	// for factum2-worker start (fail closed). Not a route on worker.listen.

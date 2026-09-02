@@ -86,10 +86,12 @@ func (ctrl *Controller) ApiWorkerNodeCreate(c *echo.Context) error {
 	}
 
 	node := models.WorkerNode{
-		Name:    dto.Name,
-		Address: dto.Address,
-		Token:   dto.Token,
-		Enabled: dto.Enabled,
+		Name:          dto.Name,
+		Address:       dto.Address,
+		Token:         dto.Token,
+		Enabled:       dto.Enabled,
+		TLSSkipVerify: dto.TLSSkipVerify,
+		TLSCA:         dto.TLSCA,
 	}
 	if err := ctrl.DB.Create(&node).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -115,6 +117,8 @@ func (ctrl *Controller) ApiWorkerNodeUpdate(c *echo.Context) error {
 	node.Name = dto.Name
 	node.Address = dto.Address
 	node.Enabled = dto.Enabled
+	node.TLSSkipVerify = dto.TLSSkipVerify
+	node.TLSCA = dto.TLSCA
 	// An empty token means "unchanged" (see WorkerNodeDTO.Token's doc
 	// comment) - the frontend prefills the field with the current token, so
 	// this only fires on an actual edit/regenerate, not a stale cleared field.

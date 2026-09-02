@@ -376,17 +376,20 @@ web/frontend/src/
 ## Worker hub transport
 
 - The primary (`factum2-web`) dials **out** to remote `factum2-worker` hosts
-  over WebSocket (`internal/worker/hub.go`/`hub_agent.go`), not the other
-  way round — see `AGENTS.md`'s "Worker / hub transport" section for the
-  wire protocol and why the dial direction is reversed. The admin UI's
+  over WSS (`internal/worker/hub.go`/`hub_agent.go`/`hub_tls.go`), not the
+  other way round — see `AGENTS.md`'s "Worker / hub transport" section for
+  the wire protocol and why the dial direction is reversed. The admin UI's
   "Worker nodes" page (`models.WorkerNode`) is where you register a
-  `factum2-worker start` instance's address/token so the primary can reach
-  it; sync-trigger buttons (`handle_sync.go`) and `factum2-worker run`
+  `factum2-worker start` instance's address/token/TLS CA so the primary can
+  reach it; sync-trigger buttons (`handle_sync.go`) and `factum2-worker run`
   (`handle_worker.go`'s `ApiWorkerRun`) both dispatch predefined shell
   commands (`worker.Commands` in config) through the same path and stream
   logs back — see the comment on `util.ConfigWorkerCommand` for why the
   command line is never taken from the wire directly. `web.GUI()` attaches
-  Echo with `SetAPIHandler` **before** `RemoteManager.Run`.
+  Echo with `SetAPIHandler` **before** `RemoteManager.Run`. Hub is WSS
+  only: `worker.tls_cert`/`worker.tls_key` on the agent, `wss://` dial from
+  the primary, verify against `WorkerNode.TLSCA` or the system pool
+  (`TLSSkipVerify` is lab-only). No `ws://` fallback.
 - **Hub RPC**: co-located CLIs (`FetchRemoteConfig`, `FactumClient`) HTTP
   to the worker's unix socket; the agent forwards a `request` envelope and
   the primary runs the existing Echo handler in-process (hub auth = service
@@ -415,6 +418,8 @@ large"}` without putting that body on the websocket (gorilla would close
     worker:
         listen: ":8443"
         token: "<shared secret, matches this node's WorkerNode.Token>"
+        tls_cert: /etc/factum2/hub.crt
+        tls_key: /etc/factum2/hub.key
         commands:
             librenms:
                 cmd: /path/to/factum2-librenms

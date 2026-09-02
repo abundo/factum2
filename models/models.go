@@ -87,7 +87,7 @@ type LdapRoleMappingDTO struct {
 }
 
 // WorkerNode is a remote factum2-worker host the primary dials out to over a
-// WebSocket connection (internal/worker.RemoteManager) - the reverse of a
+// WSS connection (internal/worker.RemoteManager) - the reverse of a
 // worker dialing in, so the firewall hole is a single narrow rule on the
 // worker host (source = primary) rather than any inbound rule on the
 // primary. Admin-editable list, not local YAML, since it's just "who to
@@ -96,9 +96,18 @@ type LdapRoleMappingDTO struct {
 type WorkerNode struct {
 	FactumModel
 	Name    string `gorm:"uniqueIndex;not null" json:"name"`
-	Address string `json:"address"` // host:port, dialed as ws://<Address><worker.HubPath>
+	Address string `json:"address"` // host:port, dialed as wss://<Address><worker.HubPath>
 	Token   string `json:"-"`       // shared secret sent as "Authorization: Bearer <Token>"; never serialized
 	Enabled bool   `json:"enabled"`
+	// TLSSkipVerify disables hub certificate verification for this node.
+	// The channel is still encrypted, but a MITM with any cert is accepted;
+	// prefer TLSCA. Intended for lab/self-signed certs whose SAN does not
+	// match Address.
+	TLSSkipVerify bool `json:"tls_skip_verify" gorm:"column:tls_skip_verify"`
+	// TLSCA is optional PEM used as the TLS trust root when verifying this
+	// node's hub certificate. Empty uses the system CA pool. Typically the
+	// worker's self-signed hub.crt, or an internal CA. Not a secret.
+	TLSCA string `json:"tls_ca" gorm:"column:tls_ca;type:text"`
 }
 
 type WorkerNodeDTO struct {
@@ -109,8 +118,10 @@ type WorkerNodeDTO struct {
 	// keep the existing value - handle_crud.go's Update loads the row
 	// before merging the DTO's JSON on top, so an absent key never
 	// overwrites the stored token (same pattern as UserDTO.Password).
-	Token   string `json:"token,omitempty"`
-	Enabled bool   `json:"enabled"`
+	Token         string `json:"token,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	TLSSkipVerify bool   `json:"tls_skip_verify"`
+	TLSCA         string `json:"tls_ca"`
 }
 
 // DeviceSyncAuth is one set of device-login credentials internal/device-sync

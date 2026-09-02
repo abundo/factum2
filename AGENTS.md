@@ -198,7 +198,7 @@ firewall step, not something the process unbinds.
   that needs nothing service-specific can
   fetch just this from `GET /api/common-config` (`web.ApiCommonConfig`) —
   `drivers.NewDriverName` does. A `factum2-worker start` host only needs
-  `worker.listen`/`.token`/`.commands` (all local - see "Worker / hub
+  `worker.listen`/`.token`/`.tls_cert`/`.tls_key`/`.commands` (all local - see "Worker / hub
   transport" below). `factum.url`/`.token` are Stat/Dial fallback for
   co-located CLIs and may be omitted from start-only YAML; they remain
   required for `factum2-worker run` (`POST /api/worker/run` stays on HTTPS,
@@ -449,9 +449,9 @@ only needs one narrow inbound rule scoped to the primary's IP
 (`/hub` on `worker.listen`). Once this stack is live and mixed-UID CLIs can
 open the unix socket, worker nets need no route to the primary's HTTPS
 port. The admin-editable `models.WorkerNode`
-list (Name/Address/Token/Enabled, the "Worker nodes" admin page) is "who to
-dial", not a security boundary - editing it takes effect within one
-`RemoteManager` reconcile pass (~10s), not a code change.
+list (Name/Address/Token/TLSCA/TLSSkipVerify/Enabled, the "Worker nodes"
+admin page) is "who to dial", not a security boundary - editing it takes
+effect within one `RemoteManager` reconcile pass (~10s), not a code change.
 
 **Wire protocol** (`internal/worker/hub.go`): every message is an
 `Envelope{Type, Payload}` - `hello` (agent -> primary, once per connection,
@@ -497,12 +497,16 @@ command dispatch to _that_ node for the duration of the write (up to 60s).
 Marshaled-envelope cap is 32 MiB — oversize is a small 413, not a truncated
 body and not a torn connection.
 
-**Follow-up: hub WSS** — encrypt the hub WebSocket (`ws://` → `wss://`) now
-that config secrets (NetBox tokens, LibreNMS keys, device-sync passwords,
-SMTP passwords) ride `EnvelopeResponse` in plaintext. Until that follow-up
-lands, keep `/hub` on a private path scoped to the primary's IP; do not
-treat those secrets as TLS-protected on the hub. Do not invent an
-application-level payload cipher; if we encrypt, we do WSS.
+**Hub WSS**: `/hub` is TLS-only (`wss://`). `worker.tls_cert`/`worker.tls_key`
+are required to start (`Start` loads the pair up front). The primary dials
+`wss://<WorkerNode.Address>/hub` and verifies the certificate against
+`WorkerNode.TLSCA` (PEM) if set, otherwise the system CA pool. The cert SAN
+must match the hostname or IP in Address (Go ignores CN).
+`WorkerNode.TLSSkipVerify` disables verification — still encrypted, not
+MITM-safe; prefer pasting the worker's `hub.crt` as TLSCA. There is no
+`ws://` fallback and no application-level payload cipher. Keep `/hub`
+scoped to the primary's IP as defense in depth. TLS 1.2+; ALPN is
+`http/1.1` only (WebSocket cannot run over HTTP/2).
 
 **Dispatch**: `RemoteManager.SendCommand(role, args)` fans a `command`
 envelope out to every connected node whose hello-reported `Roles` include
@@ -543,9 +547,10 @@ gone - every `worker.commands` entry is activated unconditionally, and
 "primary" behavior lives in `RemoteManager` itself rather than a
 standalone process.
 
-`worker.listen`/`worker.token` are effectively required for
-`factum2-worker start` to be useful - `Start` errors if `worker.listen` is
-unset, since the instance would otherwise have no hub transport at all.
+`worker.listen`/`worker.token`/`worker.tls_cert`/`worker.tls_key` are
+effectively required for `factum2-worker start` to be useful - `Start`
+errors if `worker.listen` is unset or the TLS pair is missing/unloadable,
+since the instance would otherwise have no hub transport at all.
 The unix API path cannot be disabled on the listener (`none`/`0` fails
 `Start`); CLIs force HTTPS with `FACTUM_WORKER_API_SOCKET=none` instead.
 `Start` also fails closed if the socket dir cannot be created at `0750`

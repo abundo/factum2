@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -105,8 +107,124 @@ class ReleaseInstallerLoadTests(unittest.TestCase):
 class InstallerVersionTests(unittest.TestCase):
     def test_current_file_parses(self) -> None:
         text = Path("install.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(install.installer_version_of(text), 9)
+        self.assertGreaterEqual(install.installer_version_of(text), 10)
         self.assertTrue(install.looks_like_installer(text))
+
+
+class AddressHostTests(unittest.TestCase):
+    def test_hostname_port(self) -> None:
+        self.assertEqual(install.address_host("dns1.example.com:8443"), "dns1.example.com")
+
+    def test_ipv4_port(self) -> None:
+        self.assertEqual(install.address_host("192.0.2.10:8443"), "192.0.2.10")
+
+    def test_ipv6_port(self) -> None:
+        self.assertEqual(install.address_host("[2001:db8::1]:8443"), "2001:db8::1")
+
+    def test_hostname_only(self) -> None:
+        self.assertEqual(install.address_host("icinga"), "icinga")
+
+
+class WorkerHostsTests(unittest.TestCase):
+    def test_skips_local_and_duplicates(self) -> None:
+        self.assertEqual(
+            install.worker_hosts(
+                [
+                    "dns1.example.com:8443",
+                    "127.0.0.1:8443",
+                    "dns1.example.com:9443",
+                    "icinga.example.com:8443",
+                    "localhost:8443",
+                ],
+                skip=["icinga.example.com"],
+            ),
+            ["dns1.example.com"],
+        )
+
+    def test_ipv6(self) -> None:
+        self.assertEqual(
+            install.worker_hosts(["[2001:db8::10]:8443"]),
+            ["2001:db8::10"],
+        )
+
+
+class SanEntryTests(unittest.TestCase):
+    def test_dns_and_ip(self) -> None:
+        self.assertEqual(
+            install.san_entries(["dns1.example.com", "192.0.2.10", "dns1.example.com"]),
+            ["DNS:dns1.example.com", "IP:192.0.2.10"],
+        )
+
+    def test_ipv6_strips_brackets(self) -> None:
+        self.assertEqual(install.san_entries(["[2001:db8::1]"]), ["IP:2001:db8::1"])
+
+
+class StoreHubCATests(unittest.TestCase):
+    def test_full_install_stores(self) -> None:
+        self.assertTrue(
+            install.should_store_hub_ca(primary_only=False, worker_err=None)
+        )
+
+    def test_primary_only_skips(self) -> None:
+        self.assertFalse(
+            install.should_store_hub_ca(primary_only=True, worker_err=None)
+        )
+
+    def test_lookup_error_skips(self) -> None:
+        self.assertFalse(
+            install.should_store_hub_ca(primary_only=False, worker_err="db down")
+        )
+
+
+class DollarQuoteTests(unittest.TestCase):
+    def test_wraps_pem(self) -> None:
+        pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        self.assertEqual(install.dollar_quote(pem), f"$hubca${pem}$hubca$")
+
+    def test_rotates_tag_when_present(self) -> None:
+        value = "has $hubca$ inside"
+        quoted = install.dollar_quote(value)
+        self.assertTrue(quoted.startswith("$hubca"))
+        self.assertNotEqual(quoted, f"$hubca${value}$hubca$")
+        self.assertIn(value, quoted)
+
+
+class HubCertTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("openssl"), "openssl not on PATH")
+    def test_ca_signs_leaf_with_san(self) -> None:
+        ca_pem, ca_key = install.generate_hub_ca(days=1)
+        cert_pem, key_pem = install.issue_hub_leaf(
+            ca_pem, ca_key, ["worker.example.com", "192.0.2.10"], days=1
+        )
+        self.assertIn(b"BEGIN CERTIFICATE", ca_pem)
+        self.assertIn(b"BEGIN CERTIFICATE", cert_pem)
+        self.assertIn(b"PRIVATE KEY", ca_key)
+        self.assertIn(b"PRIVATE KEY", key_pem)
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            (work / "ca.crt").write_bytes(ca_pem)
+            (work / "leaf.crt").write_bytes(cert_pem)
+            proc = subprocess.run(
+                [
+                    "openssl",
+                    "verify",
+                    "-CAfile",
+                    str(work / "ca.crt"),
+                    str(work / "leaf.crt"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = subprocess.run(
+                ["openssl", "x509", "-in", str(work / "leaf.crt"), "-noout", "-text"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            self.assertIn("DNS:worker.example.com", text)
+            self.assertIn("192.0.2.10", text)
 
 
 if __name__ == "__main__":

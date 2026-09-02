@@ -25,7 +25,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -294,7 +293,7 @@ type RemoteManager struct {
 	// re-enable instead of just disappearing.
 	status   map[string]NodeStatus
 	active   map[string]context.CancelFunc // running dialLoop goroutines, keyed by WorkerNode.Name
-	nodes    map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token edits
+	nodes    map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token/TLS edits
 	conns    map[string]*nodeConn          // present only once hello is received, keyed by WorkerNode.Name
 	waiters  map[string]chan LogMsg        // temporary RunAndWait registrations, keyed by CommandMsg.ID
 	running  map[string]runningJob         // in-flight sync jobs, keyed by target - see runningJob
@@ -367,11 +366,12 @@ func (m *RemoteManager) reconcile(ctx context.Context) {
 		}
 	}
 
-	// Start (or restart, on an Address/Token edit) a dial-loop for every
+	// Start (or restart, on an Address/Token/TLS edit) a dial-loop for every
 	// enabled node.
 	for name, node := range enabled {
 		if prev, running := m.nodes[name]; running {
-			if prev.Address == node.Address && prev.Token == node.Token {
+			if prev.Address == node.Address && prev.Token == node.Token &&
+				prev.TLSSkipVerify == node.TLSSkipVerify && prev.TLSCA == node.TLSCA {
 				continue // unchanged, dial-loop already running
 			}
 			if cancel, ok := m.active[name]; ok {
@@ -922,10 +922,18 @@ func (m *RemoteManager) dialLoop(nodeCtx context.Context, node models.WorkerNode
 // whether a hello was ever received on this connection, so dialLoop only
 // resets its backoff after a real connection, not a bare dial failure.
 func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerNode) (connected bool, err error) {
-	u := url.URL{Scheme: "ws", Host: node.Address, Path: HubPath}
 	header := http.Header{"Authorization": {"Bearer " + node.Token}}
 
-	conn, _, dialErr := websocket.DefaultDialer.DialContext(nodeCtx, u.String(), header)
+	dialer, dialerErr := hubDialer(node)
+	if dialerErr != nil {
+		m.setStatus(node.Name, NodeStatus{Connected: false, LastError: dialerErr.Error(), LastSeen: time.Now()})
+		return false, dialerErr
+	}
+	if node.TLSSkipVerify {
+		slog.Warn("worker hub: TLS certificate verification disabled", "node", node.Name, "address", node.Address)
+	}
+
+	conn, _, dialErr := dialer.DialContext(nodeCtx, hubWebSocketURL(node.Address), header)
 	if dialErr != nil {
 		m.setStatus(node.Name, NodeStatus{Connected: false, LastError: dialErr.Error(), LastSeen: time.Now()})
 		return false, dialErr

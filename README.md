@@ -70,7 +70,8 @@ the `curl` commands (or `export GITHUB_TOKEN=...` before running
 
 Edit `/etc/factum2/factum2.yaml`: set `db:` credentials and `web.jwtsecret`
 (`openssl rand -base64 48`). Edit `/etc/factum2/factum2-worker.yaml` for
-the local worker (`worker.listen`, `worker.token`; `factum.url`/`token` are
+the local worker (`worker.listen`, `worker.token`, `worker.tls_cert`/
+`worker.tls_key`; `factum.url`/`token` are
 Stat/Dial fallback, omit on start-only hosts). Almost all other runtime
 settings (NetBox/Lime/DNS/Icinga/LibreNMS, ...) live in the database and
 are edited from the admin UI. See
@@ -166,17 +167,17 @@ operators and to NetBox's `POST /api/netbox-webhook`.
 ```
   worker host                              management network
   ───────────                              ──────────────────
-  factum2-worker :8443 /hub  <── ws:// ───  factum2-web (dials out)
+  factum2-worker :8443 /hub  <── wss:// ──  factum2-web (dials out)
   unix /run/factum2-worker/api.sock         HTTPS :443  <── operators
   CLIs ── HTTP ────────────^               HTTPS :443  <── NetBox webhook
 ```
 
-| Path                                       | Direction                                                       | Required?                                                                                                      |
-| ------------------------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Primary → `worker.listen` `/hub` (`ws://`) | outbound from primary / inbound on worker, scoped to primary IP | Yes                                                                                                            |
-| Worker network → primary HTTPS `:443`      | worker → primary                                                | **No**, once this stack is live _and_ mixed-UID CLIs can open the socket (group `factum` + icinga/nagios user) |
-| Operator browser → primary HTTPS           | inbound on primary, management net                              | Yes                                                                                                            |
-| NetBox → `POST /api/netbox-webhook`        | inbound on primary, from NetBox                                 | Yes                                                                                                            |
+| Path                                        | Direction                                                       | Required?                                                                                                      |
+| ------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Primary → `worker.listen` `/hub` (`wss://`) | outbound from primary / inbound on worker, scoped to primary IP | Yes                                                                                                            |
+| Worker network → primary HTTPS `:443`       | worker → primary                                                | **No**, once this stack is live _and_ mixed-UID CLIs can open the socket (group `factum` + icinga/nagios user) |
+| Operator browser → primary HTTPS            | inbound on primary, management net                              | Yes                                                                                                            |
+| NetBox → `POST /api/netbox-webhook`         | inbound on primary, from NetBox                                 | Yes                                                                                                            |
 
 Closing worker-net → primary `:443` is an **operator firewall step** after
 this stack is in production; the software does not unbind the port. Do not
@@ -185,10 +186,9 @@ group `factum` below). `factum2-worker run` is not tunneled (`POST
 /api/worker/run` NDJSON) and still needs HTTPS from whatever host you run
 it on — typically a management-net host, not the worker.
 
-**Follow-up: hub WSS** — encrypt the hub WebSocket (`ws://` → `wss://`) now
-that config secrets ride it. Until that follow-up, `/hub` is plaintext;
-keep it off the public internet and scoped to the primary's IP. Do not
-treat those secrets as TLS-protected on the hub.
+`/hub` is WSS (`wss://`); config secrets on `EnvelopeResponse` are
+TLS-protected. Keep it scoped to the primary's IP as defense in depth.
+There is no `ws://` fallback.
 
 1. **Build and copy the binary.** `make factum2-worker` (or `make release`
    for every binary) builds `build/factum2-worker`; copy it to the target
@@ -217,9 +217,22 @@ treat those secrets as TLS-protected on the hub.
       `FACTUM_WORKER_API_SOCKET=none` (or `0`) in that CLI's environment
       (same as `factum.socket: none`).
     - `worker.listen` — bind address for the hub listener the primary dials
-      into, e.g. `:8443`. Only `/hub` is served here.
+      into, e.g. `:8443`. Only `/hub` is served here (WSS).
     - `worker.token` — shared secret this worker expects from the primary on
       connect; set the same value on the matching `WorkerNode.Token` in step 3.
+    - `worker.tls_cert` / `worker.tls_key` — PEM files for the hub listener.
+      Required to start. Generate a cert whose SAN matches the hostname or
+      IP in Address (Go ignores CN):
+
+      ```sh
+      sudo openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+        -keyout /etc/factum2/hub.key -out /etc/factum2/hub.crt \
+        -subj "/CN=$(hostname -f)" \
+        -addext "subjectAltName=DNS:$(hostname -f)"
+      sudo chmod 640 /etc/factum2/hub.key /etc/factum2/hub.crt
+      ```
+
+      If Address is an IP, use `IP:192.0.2.10` in the SAN instead (or as well).
     - `worker.commands` — trim the map down to only the commands this host
       should handle, with `cmd` pointing at that tool's path on this host
       (e.g. `/opt/factum2/factum2-dns`). Add `--job` to a command's `args` to
@@ -241,7 +254,9 @@ treat those secrets as TLS-protected on the hub.
 
 3. **Register the node with the primary**: admin UI → Worker nodes → Add,
    with Address set to `host:port` matching this node's `worker.listen` and
-   Token matching its `worker.token`. Takes effect within one
+   Token matching its `worker.token`. Paste `/etc/factum2/hub.crt` into
+   **TLS CA certificate** so the primary verifies this node's hub cert
+   (skip verification only in lab). Takes effect within one
    `RemoteManager` reconcile pass (~10s) — no primary restart needed.
 
 4. **Install and start the systemd unit.** Prefer re-running

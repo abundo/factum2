@@ -6,7 +6,10 @@ Two sources, one install path (binaries to /opt/factum2, systemd units to
 services, then the same binaries out to every enabled worker_nodes row).
 
 On the primary this installs factum2-web.service and factum2-worker.service;
-on each worker, factum2-worker.service. If a unit already exists and differs
+on each worker, factum2-worker.service. A hub CA is generated on the primary
+(once) at /etc/factum2/hub-ca.crt; each host gets a leaf cert at
+hub.crt/hub.key whose SAN matches the address the primary dials, and the CA
+PEM is stored in worker_nodes.tls_ca. If a unit already exists and differs
 from this release, the installer shows a diff and asks before overwriting
 (--yes overwrites without asking). Newly installed units are enabled.
 
@@ -30,6 +33,7 @@ import curses
 import difflib
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -52,6 +56,12 @@ REPO_DIR = Path(__file__).resolve().parent
 REPO_DEFAULT = "abundo/factum2"
 INSTALL_DIR_DEFAULT = "/opt/factum2"
 CONFIG_PATH_DEFAULT = "/etc/factum2/factum2.yaml"
+ETC_FACTUM2 = Path("/etc/factum2")
+HUB_CERT_PATH = ETC_FACTUM2 / "hub.crt"
+HUB_KEY_PATH = ETC_FACTUM2 / "hub.key"
+HUB_CA_CERT_PATH = ETC_FACTUM2 / "hub-ca.crt"
+HUB_CA_KEY_PATH = ETC_FACTUM2 / "hub-ca.key"
+HUB_CERT_DAYS = 3650
 POSTGRES_COMPOSE_DIR = Path("/opt/postgresql")
 POSTGRES_COMPOSE_NAMES = (
     "compose.yaml",
@@ -66,7 +76,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 9
+INSTALLER_VERSION = 10
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -806,17 +816,18 @@ def _no_psql_fallback_error(compose: Path | None) -> str:
     )
 
 
-def query_worker_addresses(
+def run_db_sql(
     config_path: Path,
+    sql: str,
     *,
     target_host: str = "localhost",
     ssh_user: str = "root",
 ) -> list[str]:
+    """Run one SQL statement using db.* from factum2.yaml. Returns text rows."""
     db = yaml_section(config_path, "db")
     missing = [k for k in ("host", "port", "user", "pass", "database") if not db.get(k)]
     if missing:
         raise InstallError(f"db.{{{', '.join(missing)}}} missing from {config_path}")
-    sql = "select address from worker_nodes where enabled = true;"
     # Prefer a TCP connection with factum2.yaml credentials so we do not need
     # host psql (and do not docker-exec into a local compose Postgres that may
     # not be the server named in the yaml). Skip when the yaml host is loopback
@@ -834,11 +845,27 @@ def query_worker_addresses(
     if is_local_host(target_host):
         proc = _psql_local(db, sql)
     else:
-        # Credentials go as argv to bash -s, not interpolated into the remote script.
-        names = " ".join(POSTGRES_COMPOSE_NAMES)
-        remote = f"""\
+        proc = _psql_remote(db, sql, target_host=target_host, ssh_user=ssh_user)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise InstallError(f"database query failed: {err}")
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _psql_remote(
+    db: dict[str, str],
+    sql: str,
+    *,
+    target_host: str,
+    ssh_user: str,
+) -> subprocess.CompletedProcess[str]:
+    # Credentials and SQL go as argv to bash -s, not interpolated into the
+    # remote script. SQL is base64 so PEM / dollar-quotes survive the hop.
+    names = " ".join(POSTGRES_COMPOSE_NAMES)
+    sql_b64 = base64.b64encode(sql.encode()).decode("ascii")
+    remote = f"""\
 set -euo pipefail
-SQL='select address from worker_nodes where enabled = true;'
+SQL=$(printf '%s' "$6" | base64 -d)
 if command -v psql >/dev/null 2>&1; then
   export PGPASSWORD="$5"
   psql -h "$1" -p "$2" -U "$3" -d "$4" -tAc "$SQL"
@@ -856,32 +883,56 @@ done
 echo "psql not found and no compose file in $dir ({names})" >&2
 exit 1
 """
-        proc = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=10",
-                f"{ssh_user}@{target_host}",
-                "bash",
-                "-s",
-                "--",
-                db["host"],
-                db["port"],
-                db["user"],
-                db["database"],
-                db["pass"],
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            input=remote,
+    return subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            f"{ssh_user}@{target_host}",
+            "bash",
+            "-s",
+            "--",
+            db["host"],
+            db["port"],
+            db["user"],
+            db["database"],
+            db["pass"],
+            sql_b64,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        input=remote,
+    )
+
+
+def query_worker_addresses(
+    config_path: Path,
+    *,
+    target_host: str = "localhost",
+    ssh_user: str = "root",
+) -> list[str]:
+    try:
+        return run_db_sql(
+            config_path,
+            "select address from worker_nodes where enabled = true;",
+            target_host=target_host,
+            ssh_user=ssh_user,
         )
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        raise InstallError(f"worker_nodes lookup failed: {err}")
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    except InstallError as exc:
+        raise InstallError(f"worker_nodes lookup failed: {exc}") from exc
+
+
+def address_host(addr: str) -> str:
+    """Host part of a worker_nodes.address (host:port or [ipv6]:port)."""
+    addr = addr.strip()
+    if not addr:
+        return ""
+    if addr.startswith("["):
+        return addr.rsplit("]", 1)[0].lstrip("[")
+    return addr.split(":", 1)[0]
 
 
 def worker_hosts(addresses: Iterable[str], skip: Iterable[str] = ()) -> list[str]:
@@ -889,8 +940,7 @@ def worker_hosts(addresses: Iterable[str], skip: Iterable[str] = ()) -> list[str
     hosts: list[str] = []
     seen: set[str] = set()
     for addr in addresses:
-        host = addr.rsplit("]", 1)[0] if addr.startswith("[") else addr.split(":", 1)[0]
-        host = host.lstrip("[")
+        host = address_host(addr)
         if not host or is_local_host(host) or host.lower() in skip_set or host in seen:
             continue
         seen.add(host)
@@ -922,6 +972,440 @@ def ssh_cmd(user: str, host: str, remote: str) -> list[str]:
         f"{user}@{host}",
         remote,
     ]
+
+
+# ---------------------------------------------------------------------------
+# hub TLS (CA on the primary, leaf cert per worker)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HubTLSMaterial:
+    ca_pem: bytes
+    leaves: dict[str, tuple[bytes, bytes]] = field(default_factory=dict)
+
+
+def dollar_quote(value: str, tag: str = "hubca") -> str:
+    """PostgreSQL dollar-quote. tag is rotated if it appears in value."""
+    if f"${tag}$" in value:
+        tag = tag + hashlib.sha256(value.encode()).hexdigest()[:8]
+    return f"${tag}${value}${tag}$"
+
+
+def san_entries(hosts: Sequence[str]) -> list[str]:
+    """OpenSSL subjectAltName entries (DNS: or IP:) for unique hosts."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in hosts:
+        host = raw.strip().strip("[]")
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        try:
+            ipaddress.ip_address(host)
+            out.append(f"IP:{host}")
+        except ValueError:
+            out.append(f"DNS:{host}")
+    return out
+
+
+def primary_san_hosts(primary_host: str, addresses: Sequence[str]) -> list[str]:
+    names = [socket.gethostname(), socket.getfqdn(), "localhost", "127.0.0.1"]
+    if primary_host and not is_local_host(primary_host):
+        names.append(primary_host)
+    for addr in addresses:
+        host = address_host(addr)
+        if host and (is_local_host(host) or host.lower() == primary_host.lower()):
+            names.append(host)
+    return names
+
+
+def _openssl_bin() -> str:
+    path = which("openssl")
+    if not path:
+        raise InstallError("openssl is required to generate hub TLS certificates")
+    return path
+
+
+def _run_openssl(args: Sequence[str], *, cwd: Path | None = None) -> None:
+    cmd = [_openssl_bin(), *args]
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=cwd)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise InstallError(f"openssl failed ({proc.returncode}): {err}")
+
+
+def generate_hub_ca(*, days: int = HUB_CERT_DAYS) -> tuple[bytes, bytes]:
+    """Return (ca_cert_pem, ca_key_pem) for a self-signed hub CA."""
+    with tempfile.TemporaryDirectory(prefix="factum2-hub-ca-") as raw:
+        work = Path(raw)
+        key_path = work / "ca.key"
+        crt_path = work / "ca.crt"
+        conf_path = work / "ca.cnf"
+        conf_path.write_text(
+            "\n".join(
+                [
+                    "[req]",
+                    "default_bits = 2048",
+                    "prompt = no",
+                    "distinguished_name = dn",
+                    "x509_extensions = v3_ca",
+                    "[dn]",
+                    "CN = factum2-hub-ca",
+                    "[v3_ca]",
+                    "basicConstraints = critical, CA:TRUE",
+                    "keyUsage = critical, keyCertSign, cRLSign",
+                    "subjectKeyIdentifier = hash",
+                    "",
+                ]
+            ),
+            encoding="ascii",
+        )
+        _run_openssl(
+            [
+                "req",
+                "-new",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-sha256",
+                "-days",
+                str(days),
+                "-nodes",
+                "-keyout",
+                str(key_path),
+                "-out",
+                str(crt_path),
+                "-config",
+                str(conf_path),
+            ]
+        )
+        return crt_path.read_bytes(), key_path.read_bytes()
+
+
+def issue_hub_leaf(
+    ca_pem: bytes,
+    ca_key_pem: bytes,
+    hosts: Sequence[str],
+    *,
+    days: int = HUB_CERT_DAYS,
+) -> tuple[bytes, bytes]:
+    """Return (cert_pem, key_pem) for a hub leaf signed by the hub CA."""
+    entries = san_entries(hosts)
+    if not entries:
+        entries = ["DNS:localhost", "IP:127.0.0.1"]
+    san = ",".join(entries)
+    with tempfile.TemporaryDirectory(prefix="factum2-hub-leaf-") as raw:
+        work = Path(raw)
+        ca_crt = work / "ca.crt"
+        ca_key = work / "ca.key"
+        key_path = work / "hub.key"
+        csr_path = work / "hub.csr"
+        crt_path = work / "hub.crt"
+        ext_path = work / "leaf.ext"
+        ca_crt.write_bytes(ca_pem)
+        ca_key.write_bytes(ca_key_pem)
+        ext_path.write_text(
+            "\n".join(
+                [
+                    "basicConstraints = CA:FALSE",
+                    "keyUsage = digitalSignature, keyEncipherment",
+                    "extendedKeyUsage = serverAuth",
+                    f"subjectAltName = {san}",
+                    "",
+                ]
+            ),
+            encoding="ascii",
+        )
+        _run_openssl(
+            [
+                "req",
+                "-new",
+                "-newkey",
+                "rsa:2048",
+                "-sha256",
+                "-nodes",
+                "-keyout",
+                str(key_path),
+                "-out",
+                str(csr_path),
+                "-subj",
+                "/CN=factum2-hub",
+            ]
+        )
+        _run_openssl(
+            [
+                "x509",
+                "-req",
+                "-in",
+                str(csr_path),
+                "-CA",
+                str(ca_crt),
+                "-CAkey",
+                str(ca_key),
+                "-CAcreateserial",
+                "-out",
+                str(crt_path),
+                "-days",
+                str(days),
+                "-sha256",
+                "-extfile",
+                str(ext_path),
+            ]
+        )
+        return crt_path.read_bytes(), key_path.read_bytes()
+
+
+def read_host_file(
+    path: Path,
+    *,
+    target_host: str,
+    ssh_user: str,
+) -> bytes | None:
+    if is_local_host(target_host):
+        if path.is_file():
+            try:
+                return path.read_bytes()
+            except OSError:
+                pass
+        proc = subprocess.run(
+            sudo_prefix() + ["cat", str(path)],
+            check=False,
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+    proc = subprocess.run(
+        ssh_cmd(ssh_user, target_host, f"cat {_shell_quote(str(path))}"),
+        check=False,
+        capture_output=True,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def write_host_file(
+    dest: Path,
+    data: bytes,
+    *,
+    mode: str,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+    owner_group: str | None = None,
+) -> None:
+    where = "this host" if is_local_host(target_host) else target_host
+    if dry_run:
+        log(f"    [dry-run] write {dest} mode {mode} on {where}")
+        return
+    fd, tmp_name = tempfile.mkstemp(prefix="factum2-tls-")
+    try:
+        os.write(fd, data)
+        os.close(fd)
+        fd = -1
+        os.chmod(tmp_name, int(mode, 8))
+        if is_local_host(target_host):
+            run(sudo_prefix() + ["mkdir", "-p", str(dest.parent)], dry_run=False)
+            run(
+                sudo_prefix() + ["install", "-m", mode, tmp_name, str(dest)],
+                dry_run=False,
+            )
+            if owner_group:
+                run(
+                    sudo_prefix() + ["chown", owner_group, str(dest)],
+                    dry_run=False,
+                    check=False,
+                )
+            return
+        run(
+            ssh_cmd(
+                ssh_user, target_host, f"mkdir -p {_shell_quote(str(dest.parent))}"
+            ),
+            dry_run=False,
+        )
+        run(
+            [
+                "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                tmp_name,
+                f"{ssh_user}@{target_host}:{dest}",
+            ],
+            dry_run=False,
+        )
+        remote = f"chmod {mode} {_shell_quote(str(dest))}"
+        if owner_group:
+            remote += (
+                f" && chown {owner_group} {_shell_quote(str(dest))} "
+                f"|| chown root:root {_shell_quote(str(dest))}"
+            )
+        run(ssh_cmd(ssh_user, target_host, remote), dry_run=False)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+
+def install_hub_ca(
+    ca_pem: bytes,
+    ca_key_pem: bytes,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    where = "this host" if is_local_host(target_host) else target_host
+    log(f"==> Installing hub CA on {where} ({HUB_CA_CERT_PATH})")
+    write_host_file(
+        HUB_CA_CERT_PATH,
+        ca_pem,
+        mode="644",
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        owner_group="root:root",
+    )
+    write_host_file(
+        HUB_CA_KEY_PATH,
+        ca_key_pem,
+        mode="600",
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        owner_group="root:root",
+    )
+
+
+def install_hub_leaf_files(
+    cert_pem: bytes,
+    key_pem: bytes,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    where = "this host" if is_local_host(target_host) else target_host
+    log(f"==> Installing hub TLS certificate on {where} ({HUB_CERT_PATH})")
+    write_host_file(
+        HUB_CERT_PATH,
+        cert_pem,
+        mode="644",
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        owner_group="root:root",
+    )
+    write_host_file(
+        HUB_KEY_PATH,
+        key_pem,
+        mode="640",
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        owner_group="root:factum",
+    )
+
+
+def load_or_create_hub_ca(
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> tuple[bytes, bytes]:
+    crt = read_host_file(HUB_CA_CERT_PATH, target_host=target_host, ssh_user=ssh_user)
+    key = read_host_file(HUB_CA_KEY_PATH, target_host=target_host, ssh_user=ssh_user)
+    if (
+        crt
+        and key
+        and b"BEGIN CERTIFICATE" in crt
+        and b"BEGIN" in key
+        and b"PRIVATE KEY" in key
+    ):
+        log(
+            "==> Using existing hub CA on "
+            + ("this host" if is_local_host(target_host) else target_host)
+        )
+        return crt, key
+    if dry_run:
+        log("==> Would generate hub CA on the primary")
+        return b"", b""
+    log("==> Generating hub CA on the primary")
+    crt, key = generate_hub_ca()
+    install_hub_ca(
+        crt, key, target_host=target_host, ssh_user=ssh_user, dry_run=False
+    )
+    return crt, key
+
+
+def prepare_hub_tls(
+    *,
+    primary_host: str,
+    workers: Sequence[str],
+    addresses: Sequence[str],
+    ssh_user: str,
+    dry_run: bool,
+) -> HubTLSMaterial:
+    """Generate (or reuse) the hub CA and issue a leaf cert per destination."""
+    ca_pem, ca_key = load_or_create_hub_ca(
+        target_host=primary_host, ssh_user=ssh_user, dry_run=dry_run
+    )
+    material = HubTLSMaterial(ca_pem=ca_pem)
+    dests: list[tuple[str, list[str]]] = [
+        (primary_host, primary_san_hosts(primary_host, addresses))
+    ]
+    for host in workers:
+        dests.append((host, [host]))
+
+    for dest, sans in dests:
+        label = "this host" if is_local_host(dest) else dest
+        entries = san_entries(sans) or ["DNS:localhost", "IP:127.0.0.1"]
+        if dry_run:
+            log(f"==> Would issue hub certificate for {label} ({', '.join(entries)})")
+            continue
+        log(f"==> Issuing hub certificate for {label} ({', '.join(entries)})")
+        material.leaves[dest] = issue_hub_leaf(ca_pem, ca_key, sans)
+    return material
+
+
+def update_worker_tls_ca(
+    config_path: Path,
+    ca_pem: bytes,
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    pem = ca_pem.decode("ascii")
+    if not pem.endswith("\n"):
+        pem += "\n"
+    quoted = dollar_quote(pem)
+    sql = (
+        f"update worker_nodes set tls_ca = {quoted} "
+        f"where enabled = true and tls_ca is distinct from {quoted};"
+    )
+    if dry_run:
+        log("==> Would store hub CA in worker_nodes.tls_ca")
+        return
+    log("==> Storing hub CA in worker_nodes.tls_ca")
+    run_db_sql(config_path, sql, target_host=target_host, ssh_user=ssh_user)
+
+
+def should_store_hub_ca(*, primary_only: bool, worker_err: str | None) -> bool:
+    """Write worker_nodes.tls_ca only when remotes are part of this run.
+
+    --primary-only leaves remote hub.crt alone, so flipping tls_ca to the
+    hub CA would break those nodes until a full install redistributes
+    leaves. Skip when worker lookup failed: the UPDATE would fail too.
+    """
+    return not primary_only and worker_err is None
 
 
 # ---------------------------------------------------------------------------
@@ -1352,6 +1836,7 @@ def install_primary(
     ssh_user: str = "root",
     assume_yes: bool = False,
     config_path: Path = CONFIG_PATH_DEFAULT,
+    hub_tls: HubTLSMaterial | None = None,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     where = "this host" if is_local_host(target_host) else target_host
@@ -1406,6 +1891,16 @@ def install_primary(
 
     log("==> Installing systemd units")
     ensure_factum_group(target_host=target_host, ssh_user=ssh_user, dry_run=dry_run)
+    if hub_tls is not None:
+        leaf = hub_tls.leaves.get(target_host)
+        if leaf is not None:
+            install_hub_leaf_files(
+                leaf[0],
+                leaf[1],
+                target_host=target_host,
+                ssh_user=ssh_user,
+                dry_run=dry_run,
+            )
     newly: list[str] = []
     for unit in PRIMARY_UNITS:
         action = install_unit(
@@ -1443,6 +1938,7 @@ def install_worker(
     dry_run: bool,
     *,
     assume_yes: bool = False,
+    hub_tls: HubTLSMaterial | None = None,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     log(f"==> Updating remote worker {host} ({len(binaries)} binaries)")
@@ -1469,6 +1965,16 @@ def install_worker(
             shutil.rmtree(staging, ignore_errors=True)
 
     ensure_factum_group(target_host=host, ssh_user=ssh_user, dry_run=dry_run)
+    if hub_tls is not None:
+        leaf = hub_tls.leaves.get(host)
+        if leaf is not None:
+            install_hub_leaf_files(
+                leaf[0],
+                leaf[1],
+                target_host=host,
+                ssh_user=ssh_user,
+                dry_run=dry_run,
+            )
     action = install_unit(
         examples_dir / WORKER_UNIT,
         WORKER_UNIT,
@@ -2311,6 +2817,7 @@ def main_source(args: argparse.Namespace) -> int:
 
     config_file, tmp_config = fetch_config(args.config, target_host, args.ssh_user)
     workers: list[str] = []
+    addresses: list[str] = []
     worker_err: str | None = None
     try:
         db = yaml_section(config_file, "db")
@@ -2329,78 +2836,103 @@ def main_source(args: argparse.Namespace) -> int:
             except InstallError as exc:
                 worker_err = str(exc)
                 log(f"!!  Could not list worker nodes: {exc}")
+
+        if workers:
+            log("==> Enabled remote workers: " + ", ".join(workers))
+        elif args.primary_only:
+            log("==> Skipping remote workers (--primary-only)")
+        elif worker_err:
+            log("==> Continuing without remote workers")
+        else:
+            log("==> Enabled remote workers: (none)")
+
+        if args.skip_build:
+            if not build_dir.is_dir() and not args.dry_run:
+                raise InstallError(f"--skip-build given but {build_dir} does not exist")
+            log(f"==> Skipping build, using {build_dir}")
+        else:
+            log("==> Building release (make release)")
+            run(["make", "release"], dry_run=args.dry_run, cwd=repo_dir)
+
+        if not args.dry_run:
+            missing = [
+                name for name in KNOWN_BINARIES if not (build_dir / name).is_file()
+            ]
+            if missing:
+                raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
+
+        if is_local_host(target_host):
+            ensure_sudo(args.dry_run)
+
+        hub_tls = prepare_hub_tls(
+            primary_host=target_host,
+            workers=workers,
+            addresses=addresses,
+            ssh_user=args.ssh_user,
+            dry_run=args.dry_run,
+        )
+        store_tls_ca = should_store_hub_ca(
+            primary_only=args.primary_only, worker_err=worker_err
+        )
+
+        if args.dry_run:
+            if store_tls_ca:
+                log("==> Would store hub CA in worker_nodes.tls_ca")
+            log(
+                f"==> Would install {version} on {target_host}, migrate the database, "
+                f"and restart {', '.join(PRIMARY_UNITS)}"
+            )
+            for host in workers:
+                log(f"==> Would update {host} and restart {WORKER_UNIT}")
+            return 0
+
+        install_primary(
+            build_dir,
+            examples_dir,
+            install_dir,
+            version,
+            dry_run=False,
+            target_host=target_host,
+            ssh_user=args.ssh_user,
+            assume_yes=args.yes,
+            config_path=args.config,
+            hub_tls=hub_tls,
+        )
+        if store_tls_ca and hub_tls.ca_pem:
+            update_worker_tls_ca(
+                config_file,
+                hub_tls.ca_pem,
+                target_host=target_host,
+                ssh_user=args.ssh_user,
+                dry_run=False,
+            )
+        failures: list[str] = []
+        for host in workers:
+            try:
+                install_worker(
+                    host,
+                    args.ssh_user,
+                    build_dir,
+                    examples_dir,
+                    install_dir,
+                    dry_run=False,
+                    assume_yes=args.yes,
+                    hub_tls=hub_tls,
+                )
+            except InstallError as exc:
+                log(f"!!  {host}: {exc}")
+                failures.append(host)
+        log("==> Done")
+        if is_local_host(target_host):
+            log(f"    primary now at {read_installed_version(install_dir)}")
+        else:
+            log(f"    primary {target_host} now at {version}")
+        if failures:
+            raise InstallError("Failed updating workers: " + ", ".join(failures))
+        return 0
     finally:
         if tmp_config is not None:
             tmp_config.unlink(missing_ok=True)
-
-    if workers:
-        log("==> Enabled remote workers: " + ", ".join(workers))
-    elif args.primary_only:
-        log("==> Skipping remote workers (--primary-only)")
-    elif worker_err:
-        log("==> Continuing without remote workers")
-    else:
-        log("==> Enabled remote workers: (none)")
-
-    if args.skip_build:
-        if not build_dir.is_dir() and not args.dry_run:
-            raise InstallError(f"--skip-build given but {build_dir} does not exist")
-        log(f"==> Skipping build, using {build_dir}")
-    else:
-        log("==> Building release (make release)")
-        run(["make", "release"], dry_run=args.dry_run, cwd=repo_dir)
-
-    if not args.dry_run:
-        missing = [name for name in KNOWN_BINARIES if not (build_dir / name).is_file()]
-        if missing:
-            raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
-
-    if is_local_host(target_host):
-        ensure_sudo(args.dry_run)
-
-    if args.dry_run:
-        log(
-            f"==> Would install {version} on {target_host}, migrate the database, "
-            f"and restart {', '.join(PRIMARY_UNITS)}"
-        )
-        for host in workers:
-            log(f"==> Would update {host} and restart {WORKER_UNIT}")
-        return 0
-
-    install_primary(
-        build_dir,
-        examples_dir,
-        install_dir,
-        version,
-        dry_run=False,
-        target_host=target_host,
-        ssh_user=args.ssh_user,
-        assume_yes=args.yes,
-        config_path=args.config,
-    )
-    failures: list[str] = []
-    for host in workers:
-        try:
-            install_worker(
-                host,
-                args.ssh_user,
-                build_dir,
-                examples_dir,
-                install_dir,
-                dry_run=False,
-                assume_yes=args.yes,
-            )
-        except InstallError as exc:
-            log(f"!!  {host}: {exc}")
-            failures.append(host)
-    log("==> Done")
-    if is_local_host(target_host):
-        log(f"    primary now at {read_installed_version(install_dir)}")
-    else:
-        log(f"    primary {target_host} now at {version}")
-    if failures:
-        raise InstallError("Failed updating workers: " + ", ".join(failures))
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2446,6 +2978,7 @@ def main_release(args: argparse.Namespace) -> int:
     ]
 
     workers: list[str] = []
+    addresses: list[str] = []
     worker_err: str | None = None
     if not args.primary_only:
         try:
@@ -2534,6 +3067,17 @@ def main_release(args: argparse.Namespace) -> int:
                 log(f"    {host} is {arch} (primary is {goarch})")
 
     if args.dry_run:
+        prepare_hub_tls(
+            primary_host="localhost",
+            workers=workers,
+            addresses=addresses,
+            ssh_user=args.ssh_user,
+            dry_run=True,
+        )
+        if should_store_hub_ca(
+            primary_only=args.primary_only, worker_err=worker_err
+        ):
+            log("==> Would store hub CA in worker_nodes.tls_ca")
         log("==> Dry run: would download " + ", ".join(sorted(archs)))
         log(
             f"==> Would run {selected.tag}'s {INSTALLER_FILENAME} to install "
@@ -2565,6 +3109,13 @@ def main_release(args: argparse.Namespace) -> int:
         pinned_rc = run_pinned_installer_if_needed(selected, primary_root, work, client)
         if pinned_rc is not None:
             return pinned_rc
+        hub_tls = prepare_hub_tls(
+            primary_host="localhost",
+            workers=workers,
+            addresses=addresses,
+            ssh_user=args.ssh_user,
+            dry_run=False,
+        )
         install_primary(
             primary_root,
             primary_root / "examples",
@@ -2573,7 +3124,18 @@ def main_release(args: argparse.Namespace) -> int:
             dry_run=False,
             assume_yes=args.yes,
             config_path=args.config,
+            hub_tls=hub_tls,
         )
+        if should_store_hub_ca(
+            primary_only=args.primary_only, worker_err=worker_err
+        ) and hub_tls.ca_pem:
+            update_worker_tls_ca(
+                args.config,
+                hub_tls.ca_pem,
+                target_host="localhost",
+                ssh_user=args.ssh_user,
+                dry_run=False,
+            )
         failures: list[str] = []
         for host in workers:
             arch = remote_archs.get(host, goarch)
@@ -2586,6 +3148,7 @@ def main_release(args: argparse.Namespace) -> int:
                     install_dir,
                     dry_run=False,
                     assume_yes=args.yes,
+                    hub_tls=hub_tls,
                 )
             except InstallError as exc:
                 log(f"!!  {host}: {exc}")

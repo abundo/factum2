@@ -27,6 +27,7 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +86,12 @@ func (w *Worker) Start(ctx context.Context) error {
 
 	if w.cfg.Listen == "" {
 		return fmt.Errorf("worker.listen must be set - factum2-worker has no transport without it")
+	}
+	if w.cfg.TLSCert == "" || w.cfg.TLSKey == "" {
+		return fmt.Errorf("worker.tls_cert and worker.tls_key must be set - hub connections carry config secrets and require WSS")
+	}
+	if _, err := tls.LoadX509KeyPair(w.cfg.TLSCert, w.cfg.TLSKey); err != nil {
+		return fmt.Errorf("worker.tls_cert/tls_key: %w", err)
 	}
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return w.runHubListener(ctx) })

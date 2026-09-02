@@ -54,7 +54,7 @@ function loadWorkerNodes() {
 }
 
 function openNew() {
-  node.value = { enabled: true }
+  node.value = { enabled: true, tls_skip_verify: false, tls_ca: '' }
   submitted.value = false
   nodeDialog.value = true
 }
@@ -65,7 +65,12 @@ function openNew() {
 // current" control. If the fetch fails, the field just stays blank, which
 // already means "leave unchanged" on save (see saveWorkerNode).
 function editWorkerNode(row) {
-  node.value = { ...row, token: '' }
+  node.value = {
+    ...row,
+    token: '',
+    tls_skip_verify: !!row.tls_skip_verify,
+    tls_ca: row.tls_ca ?? '',
+  }
   submitted.value = false
   nodeDialog.value = true
   getWorkerNodeToken(row.id)
@@ -189,7 +194,7 @@ onMounted(loadWorkerNodes)
     </UTable>
   </div>
 
-  <UModal v-model:open="nodeDialog" title="Worker Node Details" :ui="{ content: 'sm:max-w-sm' }">
+  <UModal v-model:open="nodeDialog" title="Worker Node Details" :ui="{ content: 'sm:max-w-lg' }">
     <template #body>
       <div class="flex flex-col gap-6">
         <div>
@@ -202,7 +207,9 @@ onMounted(loadWorkerNodes)
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !node.name?.trim()" class="text-red-500">Name is required.</small>
+          <small v-if="submitted && !node.name?.trim()" class="text-red-500"
+            >Name is required.</small
+          >
         </div>
         <div>
           <label for="address" class="block font-bold mb-3">Address</label>
@@ -216,6 +223,10 @@ onMounted(loadWorkerNodes)
           />
           <small v-if="submitted && !node.address?.trim()" class="text-red-500"
             >Address is required.</small
+          >
+          <small v-else class="text-muted-color"
+            >Dialed as wss://host:port/hub. The hub certificate SAN must match this hostname or
+            IP.</small
           >
         </div>
         <div>
@@ -243,6 +254,28 @@ onMounted(loadWorkerNodes)
           >
           <small v-else-if="node.id" class="text-muted-color"
             >Leave blank to keep the current token.</small
+          >
+        </div>
+        <div class="flex items-center gap-3">
+          <USwitch v-model="node.tls_skip_verify" id="tls_skip_verify" />
+          <label for="tls_skip_verify" class="font-bold">Skip TLS certificate verification</label>
+        </div>
+        <small v-if="node.tls_skip_verify" class="text-amber-600 -mt-3"
+          >Encrypted, but a MITM with any certificate is accepted. Prefer pasting the worker's
+          certificate as TLS CA instead.</small
+        >
+        <div v-if="!node.tls_skip_verify">
+          <label for="tls_ca" class="block font-bold mb-3">TLS CA certificate (PEM)</label>
+          <UTextarea
+            id="tls_ca"
+            v-model="node.tls_ca"
+            :rows="6"
+            placeholder="-----BEGIN CERTIFICATE-----"
+            class="w-full font-mono text-sm"
+          />
+          <small class="text-muted-color"
+            >Optional. Trust this CA (or the worker's self-signed hub.crt) instead of the system
+            pool. Leave empty to use system CAs.</small
           >
         </div>
         <div class="flex items-center gap-3">

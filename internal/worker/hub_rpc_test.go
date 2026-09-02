@@ -488,8 +488,11 @@ func TestStartRefusesWorldWritableDirThatCannotBeTightened(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	certFile, keyFile := writeTestHubTLS(t)
 	w := New(&util.ConfigWorker{
-		Listen: "127.0.0.1:0",
+		Listen:  "127.0.0.1:0",
+		TLSCert: certFile,
+		TLSKey:  keyFile,
 		Commands: map[string]util.ConfigWorkerCommand{
 			"x": {Cmd: "/bin/true"},
 		},
@@ -511,8 +514,11 @@ func TestStartRefusesWorldWritableDirThatCannotBeTightened(t *testing.T) {
 }
 
 func TestStartRefusesDisabledUnixSocket(t *testing.T) {
+	certFile, keyFile := writeTestHubTLS(t)
 	w := New(&util.ConfigWorker{
 		Listen:    "127.0.0.1:0",
+		TLSCert:   certFile,
+		TLSKey:    keyFile,
 		Commands:  map[string]util.ConfigWorkerCommand{"x": {Cmd: "/bin/true"}},
 		APISocket: "none",
 	})

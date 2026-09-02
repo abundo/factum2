@@ -13,9 +13,19 @@ factum:
 
 # on each worker, adjust the commands to what the worker handles
 # this token is for the primary server accessing this worker
+#
+# Hub is WSS only. install.py generates a CA on the primary and writes
+# hub.crt/hub.key here (SAN = this node's Address). Re-run the installer
+# after registering the node. Manual fallback:
+#   sudo openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+#     -keyout /etc/factum2/hub.key -out /etc/factum2/hub.crt \
+#     -subj "/CN=worker.example.com" \
+#     -addext "subjectAltName=DNS:worker.example.com"
 worker:
     listen: ":8443"
     token: <change-me>
+    tls_cert: /etc/factum2/hub.crt
+    tls_key: /etc/factum2/hub.key
     # api_socket:  (default /run/factum2-worker/api.sock; relocate via
     # FACTUM_WORKER_API_SOCKET on the worker unit AND in CLI environments —
     # do not set only worker.api_socket or only factum.socket)

@@ -48,15 +48,20 @@ func (w *Worker) runHubListener(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(HubPath, w.handleHubConn)
 
+	if w.cfg.TLSCert == "" || w.cfg.TLSKey == "" {
+		return fmt.Errorf("worker.tls_cert and worker.tls_key must be set - hub connections carry config secrets and require WSS")
+	}
+
 	srv := &http.Server{
-		Addr:    w.cfg.Listen,
-		Handler: mux,
+		Addr:      w.cfg.Listen,
+		Handler:   mux,
+		TLSConfig: hubServerTLSConfig(),
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("worker hub listener started", "listen", w.cfg.Listen)
-		errCh <- srv.ListenAndServe()
+		slog.Info("worker hub listener started", "listen", w.cfg.Listen, "tls", true)
+		errCh <- srv.ListenAndServeTLS(w.cfg.TLSCert, w.cfg.TLSKey)
 	}()
 
 	select {
