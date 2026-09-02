@@ -688,7 +688,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice) (bool, error) {
 	// call (unlike the upsert itself, which is atomic) only risks a
 	// slightly wrong count, never a duplicate row.
 	var existing models.Device
-	lookupErr := db.Select("id").Where("netbox_id = ? AND vm = ?", nb_device.NetboxID, nb_device.VM).Take(&existing).Error
+	lookupErr := db.Select("id", "optical_kind").Where("netbox_id = ? AND vm = ?", nb_device.NetboxID, nb_device.VM).Take(&existing).Error
 	if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
 		return false, lookupErr
 	}
@@ -735,7 +735,13 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice) (bool, error) {
 		return false, mapErr
 	}
 	device.OpticalKindCF = optical.NormalizeOpticalKindCF(optical.CustomFieldValue(nb_device.CustomFields, "optical_role", "optical_kind"))
-	device.OpticalKind = optical.ResolveOpticalKind(device.OpticalKindCF, device.Role, kindMaps)
+	kind := optical.ResolveOpticalKind(device.OpticalKindCF, device.Role, kindMaps)
+	if kind == "" {
+		// Driver inventory (Open ROADM) may have set OpticalKind with no
+		// NetBox CF / role map. UpdateAll would otherwise blank it.
+		kind = existing.OpticalKind
+	}
+	device.OpticalKind = kind
 
 	// Interfaces and tags are reconciled explicitly below; clear them
 	// here so the upsert does not try to auto-persist the netbox-shaped

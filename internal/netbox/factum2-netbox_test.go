@@ -11,6 +11,26 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestSyncDevicePreservesOpticalKindWithoutCF(t *testing.T) {
+	db := newImportTestDB(t)
+	id, _ := seedDeviceWithIfaces(t, db, "roadm-a", 55, nil)
+	if err := db.Model(&models.Device{}).Where("id = ?", id).Update("optical_kind", models.OpticalKindROADM).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncDevice(db, &netboxtool.NBDevice{
+		NetboxID: 55, Name: "roadm-a", Role: "router", Status: "active",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var d models.Device
+	if err := db.First(&d, id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if d.OpticalKind != models.OpticalKindROADM {
+		t.Errorf("optical_kind = %q, want preserved %q", d.OpticalKind, models.OpticalKindROADM)
+	}
+}
+
 func TestUpsertOpticalPortRole_CreatesAndPreservesFreq(t *testing.T) {
 	db := newImportTestDB(t)
 	_, ifaceIDs := seedDeviceWithIfaces(t, db, "roadm1", 1, []models.Interface{
