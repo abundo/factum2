@@ -36,7 +36,7 @@ type SyncParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-oxidized",
 		Short:   "Manage oxidized",
 		Version: buildinfo.Version,
@@ -124,5 +124,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }

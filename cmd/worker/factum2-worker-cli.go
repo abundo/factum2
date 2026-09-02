@@ -41,7 +41,7 @@ type RunParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-worker",
 		Short:   "Run factum background tasks dispatched by the primary over the hub transport",
 		Version: buildinfo.Version,
@@ -89,5 +89,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }

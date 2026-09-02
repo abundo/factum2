@@ -31,7 +31,7 @@ type SyncParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-prometheus",
 		Short:   "Manage Prometheus snmp_exporter targets",
 		Version: buildinfo.Version,
@@ -55,5 +55,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }

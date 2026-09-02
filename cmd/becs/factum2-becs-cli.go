@@ -38,7 +38,7 @@ type ParamsSync struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-becs",
 		Short:   "Manage BECS",
 		Version: buildinfo.Version,
@@ -86,5 +86,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }

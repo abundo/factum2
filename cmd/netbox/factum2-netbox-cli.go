@@ -76,7 +76,7 @@ func newNetbox(c *util.ConfigDB) (*netboxtool.NetboxClient, error) {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[struct{}]{
+	cmdbase.Run(boa.CmdT[struct{}]{
 		Use:     "factum2-netbox",
 		Short:   "Manage Netbox",
 		Version: buildinfo.Version,
@@ -156,16 +156,10 @@ func main() {
 				RunFuncE: func(p *ParamsCheck, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 					opts := netbox.CheckOptions{Update: p.Update}
-					if err := netbox.Check(&p.Config, opts, jobevent.NewConsoleReporter(os.Stdout)); err != nil {
-						// boa.Run treats a plain RunFuncE error as a
-						// programming bug and panics. A failed check is
-						// expected operational output.
-						return boa.NewUserInputError(err)
-					}
-					return nil
+					return netbox.Check(&p.Config, opts, jobevent.NewConsoleReporter(os.Stdout))
 				},
 			},
 		),
-	}.Run()
+	})
 
 }

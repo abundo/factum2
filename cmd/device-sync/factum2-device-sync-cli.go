@@ -37,7 +37,7 @@ type SyncParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[Params]{
+	cmdbase.Run(boa.CmdT[Params]{
 		Use:     "factum2-device-sync",
 		Version: buildinfo.Version,
 		Short:   "Sync device interfaces/addresses/connections with Netbox",
@@ -77,5 +77,5 @@ func main() {
 					})
 				},
 			}),
-	}.Run()
+	})
 }

@@ -75,7 +75,7 @@ func waitForJob(client *factum.FactumClient, jobID uint) (*factum.Job, error) {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2",
 		Short:   "Manage Factum",
 		Version: buildinfo.Version,
@@ -201,6 +201,6 @@ func main() {
 				),
 			},
 		),
-	}.Run()
+	})
 
 }

@@ -39,7 +39,7 @@ type NormalizeHostnamesParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[struct{}]{
+	cmdbase.Run(boa.CmdT[struct{}]{
 		Use:     "factum2-librenms",
 		Short:   "Manage Librenms",
 		Version: buildinfo.Version,
@@ -169,7 +169,7 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }
 
 // type Commands struct {

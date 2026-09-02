@@ -18,7 +18,7 @@ import (
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-web",
 		Short:   "Manager factum WEB GUI",
 		Version: buildinfo.Version,
@@ -43,5 +43,5 @@ func main() {
 					return err
 				},
 			}),
-	}.Run()
+	})
 }

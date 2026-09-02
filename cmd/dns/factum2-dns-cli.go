@@ -31,7 +31,7 @@ type SyncParams struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[Params]{
+	cmdbase.Run(boa.CmdT[Params]{
 		Use:     "factum2-dns",
 		Short:   "Manage DNS",
 		Version: buildinfo.Version,
@@ -55,5 +55,5 @@ func main() {
 					return err
 				},
 			}),
-	}.Run()
+	})
 }

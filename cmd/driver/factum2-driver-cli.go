@@ -266,7 +266,7 @@ func deviceOpticalInventoryApply() boa.CmdIfc {
 
 func main() {
 	cmdbase.SetupCLI()
-	boa.CmdT[boa.NoParams]{
+	cmdbase.Run(boa.CmdT[boa.NoParams]{
 		Use:     "factum2-driver",
 		Short:   "driver",
 		Version: buildinfo.Version,
@@ -282,5 +282,5 @@ func main() {
 			deviceOpticalInventoryApply(),
 			cmdbase.ShowConfigAgent(),
 		),
-	}.Run()
+	})
 }

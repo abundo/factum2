@@ -32,7 +32,7 @@ type ParamsRefresh struct {
 func main() {
 	cmdbase.SetupCLI()
 
-	boa.CmdT[ParamsRefresh]{
+	cmdbase.Run(boa.CmdT[ParamsRefresh]{
 		Use:     "factum2-lime",
 		Short:   "lime",
 		Version: buildinfo.Version,
@@ -58,5 +58,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }
