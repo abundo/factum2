@@ -13,6 +13,10 @@
 Description=Factum background worker
 After=network.target network-online.target
 Requires=network-online.target
+# RestartSec=10 plus a 60s/5-burst window always trips after five
+# crashes and leaves the unit failed. Disable start-rate limiting so
+# the worker keeps retrying until the fault clears.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -25,7 +29,6 @@ TimeoutStopSec=10s
 
 Restart=on-failure
 RestartSec=10
-StartLimitInterval=60
 
 [Install]
 WantedBy=multi-user.target
