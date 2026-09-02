@@ -76,18 +76,6 @@ const items = computed(() => {
         ],
       },
       {
-        label: 'Remote',
-        icon: 'i-lucide-network',
-        children: [
-          { label: 'Worker nodes', icon: 'i-lucide-server-cog', to: '/admin/worker-nodes' },
-        ],
-      },
-      {
-        label: 'Device',
-        icon: 'i-lucide-server',
-        children: [{ label: 'Device sync', icon: 'i-lucide-key-round', to: '/admin/device-sync' }],
-      },
-      {
         label: 'Settings',
         icon: 'i-lucide-settings',
         children: [
@@ -102,6 +90,8 @@ const items = computed(() => {
             icon: 'i-lucide-layout-dashboard',
             to: '/admin/settings/dashboard',
           },
+          { label: 'Worker nodes', icon: 'i-lucide-server-cog', to: '/admin/worker-nodes' },
+          { label: 'Device sync', icon: 'i-lucide-key-round', to: '/admin/device-sync' },
         ],
       },
     ])
