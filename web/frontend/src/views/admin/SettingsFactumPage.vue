@@ -4,10 +4,8 @@ import { ref } from 'vue'
 import { useSettings } from '@/composables/useSettings'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { sendTestEmail } from '@/api/settings'
-import { useAuthStore } from '@/stores/auth'
 
-const authStore = useAuthStore()
-const { settings, loading, saving, forbidden, loadError, save: saveSettings } = useSettings()
+const { settings, loading, saving, forbidden, loadError, save } = useSettings()
 
 const toast = useToast()
 const testEmailTo = ref('')
@@ -23,11 +21,6 @@ const factumTabItems = [
   { label: 'General', value: 'general', slot: 'general' },
   { label: 'Email', value: 'email', slot: 'email' },
 ]
-
-function save() {
-  saveSettings()
-  setTimeout(() => authStore.fetchCurrentUser(), 400)
-}
 
 function testEmail() {
   testingEmail.value = true

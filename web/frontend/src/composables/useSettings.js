@@ -1,6 +1,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { onMounted, reactive, ref } from 'vue'
 import { getSettings, updateSettings } from '@/api/settings'
+import { useAuthStore } from '@/stores/auth'
 
 // Shared load/save logic for the admin settings pages (Sources,
 // Destinations, Factum, Device sync) - they all read and write the same
@@ -45,6 +46,9 @@ export function useSettings() {
           description: 'Settings saved',
           duration: 3000,
         })
+        // Feature flags (optical/ipam/organization/oxidized) live on /api/me
+        // and gate the sidebar — refresh so the menu updates without a reload.
+        useAuthStore().fetchCurrentUser()
       })
       .catch((err) => {
         toast.add({

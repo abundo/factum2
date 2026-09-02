@@ -74,7 +74,7 @@ const router = createRouter({
         {
           path: '/oxidized',
           name: 'oxidized',
-          meta: { title: 'Oxidized', requiresRead: true },
+          meta: { title: 'Oxidized', requiresRead: true, requiresOxidized: true },
           component: () => import('@/views/oxidized/OxidizedBrowserPage.vue'),
         },
         {
@@ -243,6 +243,9 @@ router.beforeEach((to) => {
     return { path: '/' }
   }
   if (to.meta?.requiresOrganization && !authStore.organizationEnabled) {
+    return { path: '/' }
+  }
+  if (to.meta?.requiresOxidized && !authStore.oxidizedEnabled) {
     return { path: '/' }
   }
 })

@@ -30,7 +30,9 @@ const items = computed(() => {
         { type: 'label', label: 'Devices' },
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
-        { label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' },
+        ...(authStore.oxidizedEnabled
+          ? [{ label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' }]
+          : []),
       ],
       ...(authStore.ipamEnabled
         ? [

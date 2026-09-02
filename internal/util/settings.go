@@ -39,3 +39,14 @@ func OrganizationEnabled(db *gorm.DB) bool {
 	}
 	return s.OrganizationEnabled != nil && *s.OrganizationEnabled
 }
+
+// OxidizedEnabled reports Settings.OxidizedEnabled (nil/false = off).
+// Disabling the flag only hides the Oxidized menu and GUI browser — it does
+// not touch device backup flags or oxidized's own router.db.
+func OxidizedEnabled(db *gorm.DB) bool {
+	var s models.Settings
+	if err := db.Select("oxidized_enabled").First(&s, 1).Error; err != nil {
+		return false
+	}
+	return s.OxidizedEnabled != nil && *s.OxidizedEnabled
+}

@@ -187,6 +187,7 @@ func mePayload(db *gorm.DB, u models.User) map[string]any {
 		"optical_enabled":      optical.OpticalEnabled(db),
 		"ipam_enabled":         ipam.Enabled(db),
 		"organization_enabled": util.OrganizationEnabled(db),
+		"oxidized_enabled":     util.OxidizedEnabled(db),
 	}
 }
 

@@ -25,6 +25,7 @@ export const useAuthStore = defineStore('auth', {
     opticalEnabled: (state) => !!state.user?.optical_enabled,
     ipamEnabled: (state) => !!state.user?.ipam_enabled,
     organizationEnabled: (state) => !!state.user?.organization_enabled,
+    oxidizedEnabled: (state) => !!state.user?.oxidized_enabled,
   },
   actions: {
     async fetchCurrentUser() {

@@ -491,7 +491,7 @@ onMounted(loadDevices)
             @click="showInterfaces(row.original)"
           />
           <UButton
-            v-if="row.original.cf_backup_oxidized"
+            v-if="authStore.oxidizedEnabled && row.original.cf_backup_oxidized"
             label="Oxidized"
             size="sm"
             color="neutral"

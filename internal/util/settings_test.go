@@ -59,3 +59,34 @@ func TestOrganizationEnabled(t *testing.T) {
 		t.Fatal("false OrganizationEnabled: want disabled")
 	}
 }
+
+func TestOxidizedEnabled(t *testing.T) {
+	db := settingsTestDB(t)
+
+	if OxidizedEnabled(db) {
+		t.Fatal("missing settings row: want disabled")
+	}
+
+	if _, err := GetOrCreateSettings(db); err != nil {
+		t.Fatalf("GetOrCreateSettings: %v", err)
+	}
+	if OxidizedEnabled(db) {
+		t.Fatal("nil OxidizedEnabled: want disabled")
+	}
+
+	on := true
+	if err := db.Model(&models.Settings{}).Where("id = 1").Update("oxidized_enabled", on).Error; err != nil {
+		t.Fatalf("set true: %v", err)
+	}
+	if !OxidizedEnabled(db) {
+		t.Fatal("true OxidizedEnabled: want enabled")
+	}
+
+	off := false
+	if err := db.Model(&models.Settings{}).Where("id = 1").Update("oxidized_enabled", off).Error; err != nil {
+		t.Fatalf("set false: %v", err)
+	}
+	if OxidizedEnabled(db) {
+		t.Fatal("false OxidizedEnabled: want disabled")
+	}
+}
