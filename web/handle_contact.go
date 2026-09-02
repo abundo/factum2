@@ -110,7 +110,10 @@ func (ctrl *Controller) ApiContactByID(c *echo.Context) error {
 // handler.
 func (ctrl *Controller) ApiContactUpdate(contacts *SecureCRUDHandler[models.Contact, models.ContactDTO]) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		id := c.Param("id")
+		id, err := echo.PathParam[uint](c, "id")
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+		}
 		var existing models.Contact
 		if err := ctrl.DB.First(&existing, id).Error; err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -137,7 +140,10 @@ func (ctrl *Controller) ApiContactUpdate(contacts *SecureCRUDHandler[models.Cont
 // rows keep the sent email and have ContactID cleared so the send log is
 // not deleted with the person.
 func (ctrl *Controller) ApiContactDelete(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
 	var existing models.Contact
 	if err := ctrl.DB.First(&existing, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

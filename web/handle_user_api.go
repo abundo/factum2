@@ -56,7 +56,10 @@ func (ctrl *Controller) ApiUserList(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiUserGetOne(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var user models.User
 	if err := ctrl.DB.Preload("Roles").First(&user, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -101,7 +104,10 @@ func (ctrl *Controller) ApiUserCreate(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiUserUpdate(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var user models.User
 	if err := ctrl.DB.First(&user, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -145,7 +151,10 @@ func (ctrl *Controller) ApiUserUpdate(c *echo.Context) error {
 // last admin account can never be removed through this endpoint (there's no
 // other way to grant that role back once nobody holds it).
 func (ctrl *Controller) ApiUserDelete(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var user models.User
 	if err := ctrl.DB.Preload("Roles").First(&user, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

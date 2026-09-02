@@ -576,3 +576,54 @@ func TestConfigVariableListAndMapConstraints(t *testing.T) {
 		t.Fatalf("list keys status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestConfigVariableGet_RejectsSQLInjectionInID covers the RequireRead
+// ApiConfigVariableGet route: a viewer-role caller used to be able to
+// exfiltrate the DB via a 200-versus-404 boolean oracle on :id.
+func TestConfigVariableGet_RejectsSQLInjectionInID(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	createTestUser(t, db, "admin", "secret", true)
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/variables", map[string]any{
+		"name": "vlan", "type": "int",
+	}, nil, nil)
+	if err := ctrl.ApiConfigVariableCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.ConfigVariableDef
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	truePayload, falsePayload := booleanOraclePayloads()
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/variables/x", nil, []string{"id"}, []string{truePayload})
+	if err := ctrl.ApiConfigVariableGet(c); err != nil {
+		t.Fatal(err)
+	}
+	trueCode := rec.Code
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/variables/x", nil, []string{"id"}, []string{falsePayload})
+	if err := ctrl.ApiConfigVariableGet(c); err != nil {
+		t.Fatal(err)
+	}
+	if trueCode == http.StatusOK && rec.Code == http.StatusNotFound {
+		t.Fatalf("boolean SQL-injection oracle is open: true=%d false=%d", trueCode, rec.Code)
+	}
+	if trueCode == http.StatusOK {
+		t.Fatalf("true injection payload returned 200, want reject")
+	}
+	if trueCode != rec.Code {
+		t.Fatalf("true payload status %d != false payload status %d (boolean oracle)", trueCode, rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/variables/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiConfigVariableGet(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("numeric id status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+}

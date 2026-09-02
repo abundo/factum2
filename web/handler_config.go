@@ -115,7 +115,10 @@ func (ctrl *Controller) ApiConfigVariableList(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiConfigVariableGet(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
 	var row models.ConfigVariableDef
 	if err := ctrl.DB.First(&row, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -172,7 +175,10 @@ func (ctrl *Controller) ApiConfigVariableCreate(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiConfigVariableUpdate(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
 	var existing models.ConfigVariableDef
 	if err := ctrl.DB.First(&existing, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

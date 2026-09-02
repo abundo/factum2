@@ -130,7 +130,10 @@ func (ctrl *Controller) APIServiceList(c *echo.Context) error {
 // better to reject it upfront than have an edit mysteriously disappear.
 func (ctrl *Controller) ApiServiceUpdate(services *SecureCRUDHandler[models.Service, models.ServiceDTO]) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		id := c.Param("id")
+		id, err := echo.PathParam[uint](c, "id")
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+		}
 		var existing models.Service
 		if err := ctrl.DB.First(&existing, id).Error; err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -385,7 +388,10 @@ type ServiceDeleteRequest struct {
 // cleanup flags, so behaves exactly as before).
 func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Service, models.ServiceDTO]) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		id := c.Param("id")
+		id, err := echo.PathParam[uint](c, "id")
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+		}
 		var existing models.Service
 		if err := ctrl.DB.First(&existing, id).Error; err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

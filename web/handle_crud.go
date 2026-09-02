@@ -39,8 +39,14 @@ func (h *SecureCRUDHandler[M, Req]) GetAll(c *echo.Context) error {
 
 // 2. GET ONE: GET /api/resource/:id
 // Safety: Safe by default if your Model utilizes `json:"-"` tags on private fields.
+// The path id is parsed as uint before it reaches GORM: a non-numeric string
+// cond is treated as a raw SQL fragment (Statement.BuildCondition), so
+// First(&item, c.Param("id")) is a SQL-injection hole.
 func (h *SecureCRUDHandler[M, Req]) GetOne(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var item M
 
 	if err := h.DB.First(&item, id).Error; err != nil {
@@ -86,7 +92,10 @@ func (h *SecureCRUDHandler[M, Req]) Create(c *echo.Context) error {
 
 // 4. UPDATE: PUT /api/resource/:id
 func (h *SecureCRUDHandler[M, Req]) Update(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var item M
 
 	if err := h.DB.First(&item, id).Error; err != nil {
@@ -127,7 +136,10 @@ func (h *SecureCRUDHandler[M, Req]) Update(c *echo.Context) error {
 
 // 5. DELETE: DELETE /api/resource/:id
 func (h *SecureCRUDHandler[M, Req]) Delete(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var item M
 
 	if err := h.DB.First(&item, id).Error; err != nil {

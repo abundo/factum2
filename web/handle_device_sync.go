@@ -100,7 +100,10 @@ func (ctrl *Controller) ApiDeviceSyncAuthCreate(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiDeviceSyncAuthUpdate(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var auth models.DeviceSyncAuth
 	if err := ctrl.DB.First(&auth, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -132,7 +135,10 @@ func (ctrl *Controller) ApiDeviceSyncAuthUpdate(c *echo.Context) error {
 // carries secrets - used to prefill the admin UI's password field so its
 // own eye icon can show it, same pattern as ApiWorkerNodeToken.
 func (ctrl *Controller) ApiDeviceSyncAuthPassword(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var auth models.DeviceSyncAuth
 	if err := ctrl.DB.First(&auth, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

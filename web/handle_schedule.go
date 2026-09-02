@@ -23,8 +23,12 @@ func (ctrl *Controller) ApiScheduleList(c *echo.Context) error {
 
 // ApiScheduleGet returns one JobSchedule by ID.
 func (ctrl *Controller) ApiScheduleGet(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
+	}
 	var sched models.JobSchedule
-	if err := ctrl.DB.First(&sched, c.Param("id")).Error; err != nil {
+	if err := ctrl.DB.First(&sched, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
 		}
@@ -70,8 +74,12 @@ func (ctrl *Controller) ApiScheduleCreate(c *echo.Context) error {
 // from now (or clears it when disabled). LastRunAt/LastError/CreatedBy stay
 // as the scheduler last left them.
 func (ctrl *Controller) ApiScheduleUpdate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
+	}
 	var sched models.JobSchedule
-	if err := ctrl.DB.First(&sched, c.Param("id")).Error; err != nil {
+	if err := ctrl.DB.First(&sched, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
 		}
@@ -114,8 +122,12 @@ func (ctrl *Controller) ApiScheduleUpdate(c *echo.Context) error {
 // ApiScheduleDelete removes a JobSchedule. In-flight jobs it already
 // started keep running - the row is only the trigger, not the Job.
 func (ctrl *Controller) ApiScheduleDelete(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
+	}
 	var sched models.JobSchedule
-	if err := ctrl.DB.First(&sched, c.Param("id")).Error; err != nil {
+	if err := ctrl.DB.First(&sched, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "schedule not found"})
 		}

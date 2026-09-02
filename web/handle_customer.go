@@ -89,7 +89,10 @@ func (ctrl *Controller) ApiCustomerByID(c *echo.Context) error {
 // better to reject it upfront than have an edit mysteriously disappear.
 func (ctrl *Controller) ApiCustomerUpdate(customers *SecureCRUDHandler[models.Customer, models.CustomerDTO]) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		id := c.Param("id")
+		id, err := echo.PathParam[uint](c, "id")
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+		}
 		var existing models.Customer
 		if err := ctrl.DB.First(&existing, id).Error; err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -108,7 +111,10 @@ func (ctrl *Controller) ApiCustomerUpdate(customers *SecureCRUDHandler[models.Cu
 // are not independent records, so they're removed in the same transaction
 // rather than treated as a blocker.
 func (ctrl *Controller) ApiCustomerDelete(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
 	var existing models.Customer
 	if err := ctrl.DB.First(&existing, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

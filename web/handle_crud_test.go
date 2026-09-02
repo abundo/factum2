@@ -236,3 +236,69 @@ func TestSecureCRUDHandler_UpdateIgnoresClientSuppliedID(t *testing.T) {
 		t.Errorf("Update moved the row from id=%d to id=%d via the request body - primary key mass assignment", target.ID, updated.ID)
 	}
 }
+
+// TestSecureCRUDHandler_RejectsSQLInjectionInID covers GetOne/Update/Delete:
+// a non-numeric :id must never reach GORM as a raw WHERE fragment. Both
+// sides of the boolean oracle must fail the same way, and a numeric id
+// must still GetOne 200.
+func TestSecureCRUDHandler_RejectsSQLInjectionInID(t *testing.T) {
+	db := newTestDB(t)
+	handler := NewSecureCRUDHandler[models.Role, models.RoleDTO](db)
+	createTestUser(t, db, "admin", "secret", true)
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/roles", models.RoleDTO{Name: "operator"}, nil, nil)
+	if err := handler.Create(c); err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("seed create failed: err=%v status=%d body=%s", err, rec.Code, rec.Body.String())
+	}
+
+	truePayload, falsePayload := booleanOraclePayloads()
+	for _, payload := range []string{truePayload, falsePayload} {
+		c, rec = jsonRequest(t, http.MethodGet, "/api/roles/x", nil, []string{"id"}, []string{payload})
+		if err := handler.GetOne(c); err != nil {
+			t.Fatalf("GetOne(%q): %v", payload, err)
+		}
+		if rec.Code == http.StatusOK {
+			t.Fatalf("GetOne(%q) status = 200, SQL injection succeeded", payload)
+		}
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusBadRequest {
+			t.Fatalf("GetOne(%q) status = %d, want 400 or 404, body=%s", payload, rec.Code, rec.Body.String())
+		}
+
+		c, rec = jsonRequest(t, http.MethodPut, "/api/roles/x", models.RoleDTO{Name: "pwned"}, []string{"id"}, []string{payload})
+		if err := handler.Update(c); err != nil {
+			t.Fatalf("Update(%q): %v", payload, err)
+		}
+		if rec.Code == http.StatusOK {
+			t.Fatalf("Update(%q) status = 200, SQL injection succeeded", payload)
+		}
+
+		c, rec = jsonRequest(t, http.MethodDelete, "/api/roles/x", nil, []string{"id"}, []string{payload})
+		if err := handler.Delete(c); err != nil {
+			t.Fatalf("Delete(%q): %v", payload, err)
+		}
+		if rec.Code == http.StatusNoContent || rec.Code == http.StatusOK {
+			t.Fatalf("Delete(%q) status = %d, SQL injection succeeded", payload, rec.Code)
+		}
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/roles/x", nil, []string{"id"}, []string{truePayload})
+	if err := handler.GetOne(c); err != nil {
+		t.Fatalf("GetOne true payload: %v", err)
+	}
+	trueCode := rec.Code
+	c, rec = jsonRequest(t, http.MethodGet, "/api/roles/x", nil, []string{"id"}, []string{falsePayload})
+	if err := handler.GetOne(c); err != nil {
+		t.Fatalf("GetOne false payload: %v", err)
+	}
+	if rec.Code != trueCode {
+		t.Fatalf("boolean oracle: true payload status %d != false payload status %d", trueCode, rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/roles/1", nil, []string{"id"}, []string{"1"})
+	if err := handler.GetOne(c); err != nil {
+		t.Fatalf("GetOne numeric: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetOne numeric status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+}

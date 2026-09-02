@@ -61,7 +61,10 @@ func (ctrl *Controller) ApiWorkerStatus(c *echo.Context) error {
 // secrets - this is the one explicit, single-node reveal path, used to
 // prefill the admin UI's token field so its own eye icon can show it.
 func (ctrl *Controller) ApiWorkerNodeToken(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var node models.WorkerNode
 	if err := ctrl.DB.First(&node, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
@@ -95,7 +98,10 @@ func (ctrl *Controller) ApiWorkerNodeCreate(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiWorkerNodeUpdate(c *echo.Context) error {
-	id := c.Param("id")
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
 	var node models.WorkerNode
 	if err := ctrl.DB.First(&node, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})

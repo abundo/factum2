@@ -3,10 +3,12 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/models"
+	"github.com/labstack/echo/v5"
 )
 
 func TestScheduleCRUD(t *testing.T) {
@@ -122,5 +124,61 @@ func TestScheduleGetNotFound(t *testing.T) {
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// booleanOraclePayloads are the space-free GORM injections that turn
+// First(&row, c.Param("id")) into a 200-versus-404 boolean oracle
+// (Statement.BuildCondition treats a non-numeric string as raw SQL).
+func booleanOraclePayloads() (truePayload, falsePayload string) {
+	return "1=(SELECT(count(*))FROM(users)WHERE(substr(password_hash,1,4))=('$2a$'))",
+		"1=(SELECT(count(*))FROM(users)WHERE(substr(password_hash,1,4))=('XXXX'))"
+}
+
+// TestScheduleGet_RejectsSQLInjectionInID drives Echo v5's real router the
+// same way the original report did: a true subquery used to 200 and a false
+// one used to 404, leaking bcrypt prefixes (and anything else in the DB)
+// one character at a time. Both payloads must now be rejected with the
+// same status, and a numeric id must still 200.
+func TestScheduleGet_RejectsSQLInjectionInID(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	sched := models.JobSchedule{Name: "nightly", Target: "all", Cron: "0 2 * * *"}
+	if err := db.Create(&sched).Error; err != nil {
+		t.Fatalf("seed schedule: %v", err)
+	}
+	createTestUser(t, db, "admin", "secret", true)
+
+	e := echo.New()
+	e.GET("/api/schedules/:id", ctrl.ApiScheduleGet)
+
+	hit := func(id string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/schedules/"+id, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	truePayload, falsePayload := booleanOraclePayloads()
+	trueCode := hit(truePayload)
+	falseCode := hit(falsePayload)
+	if trueCode == http.StatusOK && falseCode == http.StatusNotFound {
+		t.Fatalf("boolean SQL-injection oracle is open: true=%d false=%d", trueCode, falseCode)
+	}
+	if trueCode == http.StatusOK {
+		t.Fatalf("true injection payload returned 200, want reject")
+	}
+	if trueCode != falseCode {
+		t.Fatalf("true payload status %d != false payload status %d (boolean oracle)", trueCode, falseCode)
+	}
+	if trueCode != http.StatusNotFound && trueCode != http.StatusBadRequest {
+		t.Fatalf("injection payload status = %d, want 400 or 404", trueCode)
+	}
+
+	numeric := strconv.FormatUint(uint64(sched.ID), 10)
+	if code := hit(numeric); code != http.StatusOK {
+		t.Fatalf("numeric id status = %d, want 200", code)
 	}
 }

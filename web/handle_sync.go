@@ -55,7 +55,7 @@ func (ctrl *Controller) ApiSyncTrigger(c *echo.Context) error {
 	task := results[0]
 	if task.Matched == 0 {
 		return c.JSON(http.StatusBadGateway, map[string]any{
-			"error": "no connected worker node handles this sync target",
+			"error":  "no connected worker node handles this sync target",
 			"target": target, "job_id": job.ID, "task_id": task.TaskID,
 		})
 	}
@@ -134,8 +134,14 @@ func (ctrl *Controller) ApiJobs(c *echo.Context) error {
 // ApiJobTaskEvents lists a single JobTask's JobTaskEvent rows in
 // chronological order - the job-history table's per-subjob drill-in view.
 func (ctrl *Controller) ApiJobTaskEvents(c *echo.Context) error {
-	jobID := c.Param("id")
-	taskID := c.Param("taskid")
+	jobID, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "job task not found"})
+	}
+	taskID, err := echo.PathParam[uint](c, "taskid")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "job task not found"})
+	}
 
 	var task models.JobTask
 	if err := ctrl.DB.Where("id = ? AND job_id = ?", taskID, jobID).First(&task).Error; err != nil {
