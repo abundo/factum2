@@ -9,9 +9,10 @@ import { getTopology } from '@/api/topology'
 
 const toast = useToast()
 
-// Default role filter, remembered per-browser (not per-user account - the
-// map has no server-side per-user settings store) so it survives reloads.
+// Role filter and basemap, remembered per-browser (not per-user account -
+// the map has no server-side per-user settings store) so they survive reloads.
 const DEFAULT_ROLES_STORAGE_KEY = 'networkMap.defaultRoles'
+const BASEMAP_STORAGE_KEY = 'networkMap.basemap'
 
 function readDefaultRoles() {
   try {
@@ -21,6 +22,35 @@ function readDefaultRoles() {
     return null
   }
 }
+
+function readBasemap() {
+  try {
+    const raw = localStorage.getItem(BASEMAP_STORAGE_KEY)
+    return raw === 'dark' || raw === 'light' ? raw : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
+const BASEMAP_STYLES = {
+  // VersaTiles Colorful on Shortbread vector tiles - OSM Carto-like
+  // (cream land, pale-yellow roads, olive parks, light-blue water), no
+  // API key. Needs outbound access to tiles.versatiles.org; swap for a
+  // self-hosted Shortbread source if the deployment network doesn't have
+  // that. OSMF's own vector.openstreetmap.org is the same schema but
+  // donation-funded with a usage policy that production apps shouldn't hit.
+  light: 'https://tiles.versatiles.org/assets/styles/colorful/style.json',
+  // CARTO Dark Matter - no API key, needs outbound access to
+  // basemaps.cartocdn.com. High contrast for the colored device dots and
+  // cyan connection arcs.
+  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+}
+
+const basemapItems = [
+  { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
+]
+const basemap = ref(readBasemap())
 
 // Vite/Rolldown doesn't statically detect maplibre-gl's internal
 // `new Worker(new URL('./maplibre-gl-worker.mjs', import.meta.url))` the
@@ -58,6 +88,9 @@ const availableRoles = computed(() =>
 
 let map = null
 let overlay = null
+// Bumped on every setStyle so a slow previous style.load can't restore
+// an older camera/overlay after the user has already picked a newer one.
+let styleGen = 0
 
 // Hovering shouldn't pop up info instantly - only once the pointer has
 // rested on the same device/cable for a bit. `pending` tracks whatever's
@@ -103,10 +136,45 @@ const STATUS_COLORS = {
   planned: [234, 179, 8],
   staged: [234, 179, 8],
 }
-const DEFAULT_COLOR = [148, 163, 184]
+
+// Overlay colors follow the basemap: light-on-dark pills for Dark Matter,
+// dark-on-white for the OSM-like light style. Device status fills stay the
+// same in both so the legend above the map doesn't have to switch.
+const OVERLAY_PALETTES = {
+  light: {
+    other: [100, 116, 139],
+    siteRing: [71, 85, 105, 220],
+    arc: [2, 132, 199, 210],
+    arcWidth: 2,
+    deviceStroke: [51, 65, 85],
+    deviceStrokeWidth: 1.5,
+    labelText: [30, 41, 59],
+    labelBg: [255, 255, 255, 230],
+    siteLabelText: [71, 85, 105],
+    siteLabelBg: [255, 255, 255, 230],
+    edgeLabelText: [3, 105, 161],
+  },
+  dark: {
+    other: [148, 163, 184],
+    siteRing: [148, 163, 184, 200],
+    arc: [56, 189, 248, 160],
+    arcWidth: 1.5,
+    deviceStroke: [15, 23, 42],
+    deviceStrokeWidth: 1,
+    labelText: [226, 232, 240],
+    labelBg: [15, 23, 42, 160],
+    siteLabelText: [148, 163, 184, 220],
+    siteLabelBg: [15, 23, 42, 130],
+    edgeLabelText: [125, 211, 252, 230],
+  },
+}
+
+function overlayPalette() {
+  return OVERLAY_PALETTES[basemap.value] ?? OVERLAY_PALETTES.light
+}
 
 function statusColor(status) {
-  return STATUS_COLORS[(status ?? '').toLowerCase()] ?? DEFAULT_COLOR
+  return STATUS_COLORS[(status ?? '').toLowerCase()] ?? overlayPalette().other
 }
 
 // Devices with no coordinates of their own inherit their site's (see
@@ -144,6 +212,7 @@ function layoutDevices(devices) {
 }
 
 function buildLayers(devices, edges, sites) {
+  const palette = overlayPalette()
   const byID = new Map(devices.map((d) => [d.id, d]))
 
   const arcs = edges
@@ -180,7 +249,7 @@ function buildLayers(devices, edges, sites) {
       filled: false,
       radiusUnits: 'pixels',
       getPosition: (d) => [d.mapLng, d.mapLat],
-      getLineColor: [148, 163, 184, 200],
+      getLineColor: palette.siteRing,
       lineWidthMinPixels: 1.5,
       getRadius: 12,
       radiusMinPixels: 10,
@@ -193,9 +262,9 @@ function buildLayers(devices, edges, sites) {
       pickable: true,
       getSourcePosition: (d) => d.source,
       getTargetPosition: (d) => d.target,
-      getSourceColor: [56, 189, 248, 160],
-      getTargetColor: [56, 189, 248, 160],
-      getWidth: 1.5,
+      getSourceColor: palette.arc,
+      getTargetColor: palette.arc,
+      getWidth: palette.arcWidth,
       getHeight: 0,
       greatCircle: true,
       onHover: (info) => handleHover('edge', info),
@@ -208,8 +277,8 @@ function buildLayers(devices, edges, sites) {
       radiusUnits: 'pixels',
       getPosition: (d) => [d.mapLng, d.mapLat],
       getFillColor: (d) => statusColor(d.status),
-      getLineColor: [15, 23, 42],
-      lineWidthMinPixels: 1,
+      getLineColor: palette.deviceStroke,
+      lineWidthMinPixels: palette.deviceStrokeWidth,
       getRadius: 6,
       radiusMinPixels: 5,
       radiusMaxPixels: 10,
@@ -223,11 +292,11 @@ function buildLayers(devices, edges, sites) {
       data: sites,
       getPosition: (d) => [d.mapLng, d.mapLat],
       getText: (d) => d.name,
-      getColor: [148, 163, 184, 220],
+      getColor: palette.siteLabelText,
       getSize: 11,
       getPixelOffset: [0, -16],
       background: true,
-      getBackgroundColor: [15, 23, 42, 130],
+      getBackgroundColor: palette.siteLabelBg,
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
     }),
@@ -236,10 +305,10 @@ function buildLayers(devices, edges, sites) {
       data: labeledArcs,
       getPosition: (d) => d.midpoint,
       getText: (d) => d.label,
-      getColor: [125, 211, 252, 230],
+      getColor: palette.edgeLabelText,
       getSize: 11,
       background: true,
-      getBackgroundColor: [15, 23, 42, 160],
+      getBackgroundColor: palette.labelBg,
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
     }),
@@ -248,11 +317,11 @@ function buildLayers(devices, edges, sites) {
       data: devices,
       getPosition: (d) => [d.mapLng, d.mapLat],
       getText: (d) => d.name,
-      getColor: [226, 232, 240],
+      getColor: palette.labelText,
       getSize: 12,
       getPixelOffset: [0, 14],
       background: true,
-      getBackgroundColor: [15, 23, 42, 160],
+      getBackgroundColor: palette.labelBg,
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
     }),
@@ -305,7 +374,7 @@ function rebuild() {
   })
   const laidOutDevices = layoutDevices(devices)
   const laidOutSites = layoutSites(rawSites.value)
-  overlay.setProps({ layers: buildLayers(laidOutDevices, rawEdges.value, laidOutSites) })
+  overlay?.setProps({ layers: buildLayers(laidOutDevices, rawEdges.value, laidOutSites) })
   return { devices: laidOutDevices, sites: laidOutSites }
 }
 
@@ -326,6 +395,32 @@ function showAllRoles() {
 function toggleOpticalOnly() {
   opticalOnly.value = !opticalOnly.value
   rebuild()
+}
+
+function applyBasemapStyle() {
+  if (!map) return
+  const gen = ++styleGen
+  const camera = {
+    center: map.getCenter(),
+    zoom: map.getZoom(),
+    pitch: map.getPitch(),
+    bearing: map.getBearing(),
+  }
+  map.setStyle(BASEMAP_STYLES[basemap.value])
+  map.once('style.load', () => {
+    if (gen !== styleGen || !map) return
+    map.jumpTo(camera)
+    rebuild()
+  })
+}
+
+function onBasemapChange() {
+  try {
+    localStorage.setItem(BASEMAP_STORAGE_KEY, basemap.value)
+  } catch {
+    // Same as saveDefaultRoles: map still switches, just won't persist.
+  }
+  applyBasemapStyle()
 }
 
 function saveDefaultRoles() {
@@ -374,16 +469,10 @@ function loadTopology() {
 onMounted(() => {
   map = new MaplibreMap({
     container: mapContainer.value,
-    // CARTO's free vector basemap - no API key required, but it does need
-    // outbound internet access to basemaps.cartocdn.com; swap for a
-    // self-hosted/vector tile source instead if the deployment network
-    // doesn't have that. Dark Matter chosen over Positron/Voyager since it
-    // gives the colored device dots and cyan connection arcs the most
-    // contrast to read against.
-    style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    style: BASEMAP_STYLES[basemap.value],
     center: [15, 58],
     zoom: 3,
-    pitch: 45,
+    pitch: 0,
     antialias: true,
   })
   map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
@@ -395,15 +484,26 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  styleGen += 1
   map?.remove()
   map = null
+  overlay = null
 })
 </script>
 
 <template>
   <div class="card flex min-h-0 flex-1 flex-col">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
-      <h4 class="m-0">Network map</h4>
+      <div class="flex flex-wrap items-center gap-4">
+        <h4 class="m-0">Network map</h4>
+        <URadioGroup
+          v-model="basemap"
+          :items="basemapItems"
+          orientation="horizontal"
+          size="sm"
+          @update:model-value="onBasemapChange"
+        />
+      </div>
       <div class="flex items-center gap-3 text-sm text-muted-color">
         <span class="flex items-center gap-1">
           <span class="size-2.5 rounded-full" style="background: rgb(34 197 94)" />Active
@@ -415,7 +515,7 @@ onBeforeUnmount(() => {
           <span class="size-2.5 rounded-full" style="background: rgb(234 179 8)" />Planned/staged
         </span>
         <span class="flex items-center gap-1">
-          <span class="size-2.5 rounded-full" style="background: rgb(148 163 184)" />Other
+          <span class="size-2.5 rounded-full" style="background: rgb(100 116 139)" />Other
         </span>
       </div>
     </div>
