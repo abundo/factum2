@@ -23,6 +23,48 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
+func TestJWTSigningKey(t *testing.T) {
+	t.Run("empty secret is an error", func(t *testing.T) {
+		key, err := jwtSigningKey("")
+		if err == nil {
+			t.Fatal("expected error for empty web.jwtsecret")
+		}
+		if key != nil {
+			t.Errorf("key = %q, want nil", key)
+		}
+	})
+
+	t.Run("configured secret is used as-is", func(t *testing.T) {
+		const secret = "a-configured-secret"
+		key, err := jwtSigningKey(secret)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(key) != secret {
+			t.Errorf("key = %q, want %q", key, secret)
+		}
+	})
+}
+
+// TestGUIRequiresJWTSecret is the issue #14 regression: APP_ENV=development
+// used to fall back to a hardcoded signing key. GUI must refuse to start
+// without web.jwtsecret in every environment, and must do so before
+// opening a database connection.
+func TestGUIRequiresJWTSecret(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	origKey := jwtKey
+	origConfig := util.Config
+	t.Cleanup(func() {
+		jwtKey = origKey
+		util.Config = origConfig
+	})
+
+	err := GUI(&GuiParams{})
+	if err == nil {
+		t.Fatal("expected GUI to refuse to start without web.jwtsecret, even in development")
+	}
+}
+
 // newTestDB returns an in-memory SQLite DB with the same schema as
 // production (via util.MigrateDatabase), so auth tests don't need a live
 // Postgres. "cache=shared" + a single open connection keeps the in-memory

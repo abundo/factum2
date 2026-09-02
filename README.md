@@ -131,9 +131,9 @@ go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0.0:8090
 ```
 
-`APP_ENV=development` allows starting without `web.jwtsecret` set (falls
-back to an insecure key) — don't use it against anything but a local/dev
-database.
+`APP_ENV=development` disables panic-recovery middleware — don't use it
+against anything but a local/dev database. `web.jwtsecret` is still
+required (see `examples/factum2.yaml`).
 
 ```sh
 go run ./cmd/web createadmin -f /etc/factum2/factum2.yaml

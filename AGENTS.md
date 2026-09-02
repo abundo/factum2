@@ -392,12 +392,13 @@ Key things that live outside the obvious per-resource `handle_*.go` files:
   run after `RequireAPIAuth`) checks `models.User.HasRole("admin")`. Routes
   under `/api/admin/*` get both middlewares at the group level in `web.go`.
   The JWT signing key (`jwtKey` in `web/auth.go`) is set once at startup
-  from `util.Config.Web.JWTSecret` (`GUI()` in `web.go`), fail-closed in
-  production (refuses to start without it) with an insecure fallback in
-  `APP_ENV=development` — set `web.jwtsecret` in config for anything but
-  local dev. The legacy server-rendered form-POST `/login` and GET `/logout`
-  routes (and the `github.com/gorilla/sessions` cookie store they used for
-  flash messages) were removed once nothing referenced them - the SPA only
+  from `util.Config.Web.JWTSecret` (`GUI()` in `web.go`) and is required
+  in every environment — `factum2-web start` refuses to start without it
+  (`APP_ENV=development` does not fall back to a hardcoded key). Set
+  `web.jwtsecret` in config. The legacy server-rendered form-POST `/login`
+  and GET `/logout` routes (and the `github.com/gorilla/sessions` cookie
+  store they used for flash messages) were removed once nothing referenced
+  them - the SPA only
   ever calls `POST /api/login`/`POST /api/logout`, which return JSON instead
   of redirecting.
 - **Service-to-service auth**: `RequireAPIAuth` also accepts

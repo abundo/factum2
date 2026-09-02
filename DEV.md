@@ -81,11 +81,10 @@ those commands get 401s.
 `--debug` / `--loglevel` control logging (`cmdbase.SetupLog`); debug level
 also enables source locations in log output.
 
-`web.jwtsecret` must be set to a random secret for anything but local dev —
-`factum2-web gui` refuses to start without it unless `APP_ENV=development`,
-in which case it falls back to a fixed insecure value and logs an error. It
-signs the API auth cookie (`web/auth.go`); anyone who knows it can forge a
-login for any user.
+`web.jwtsecret` must be set to a random secret (`openssl rand -base64 48`).
+`factum2-web start` refuses to start without it in every environment,
+including `APP_ENV=development`. It signs the API auth cookie
+(`web/auth.go`); anyone who knows it can forge a login for any user.
 
 `ldap_writeback.bind_dn` / `ldap_writeback.bind_password` are optional and
 only needed if the admin UI's "Allow password changes to be written back to
@@ -319,10 +318,9 @@ frontend rebuild doesn't need a Go rebuild):
 APP_ENV=development go run ./cmd/web start -f /etc/factum2/factum2.yaml -b 0.0.0.0:8090
 ```
 
-`APP_ENV=development` falls back to an insecure JWT signing key if
-`web.jwtsecret` isn't set in config (logging an error) and disables the
-panic-recovery middleware — don't run this mode against anything but a
-local/dev DB.
+`APP_ENV=development` disables the panic-recovery middleware — don't run
+this mode against anything but a local/dev DB. `web.jwtsecret` is still
+required.
 
 Frontend (hot-reloading Vite dev server on `:5173`, proxies `/api/*` to
 `localhost:8090` — see `web/frontend/vite.config.js`):

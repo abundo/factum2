@@ -30,6 +30,16 @@ var ldapAuthenticate = ldapauth.Authenticate
 // it forge a valid token for any user_id, including an admin.
 var jwtKey []byte
 
+// jwtSigningKey returns the HMAC key for the "token" cookie. There is no
+// default, including under APP_ENV=development: a hardcoded fallback would
+// let anyone who reads the source forge a valid token for any user.
+func jwtSigningKey(secret string) ([]byte, error) {
+	if secret == "" {
+		return nil, errors.New("missing web.jwtsecret in configuration")
+	}
+	return []byte(secret), nil
+}
+
 func GenerateJWT(userID uint) (string, error) {
 	// Create the Claims
 	claims := jwt.MapClaims{

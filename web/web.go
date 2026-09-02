@@ -55,6 +55,15 @@ func GUI(p *GuiParams) error {
 
 	devMode := os.Getenv("APP_ENV") == "development"
 
+	// jwtKey signs the API auth token (see auth.go). Always fail-closed:
+	// a hardcoded default would let anyone who reads the source forge a
+	// valid token for any user. APP_ENV=development does not relax this.
+	jwtKey, err = jwtSigningKey(util.Config.Web.JWTSecret)
+	if err != nil {
+		slog.Error(err.Error())
+		return err
+	}
+
 	DB, err = util.ConnectDatabase(&util.Config.DB)
 	if err != nil {
 		return err
@@ -72,21 +81,6 @@ func GUI(p *GuiParams) error {
 	if !devMode {
 		e.Use(middleware.Recover())
 	}
-
-	// jwtKey signs the API auth token (see auth.go). Fail-closed in
-	// production: a hardcoded default would let anyone who reads the
-	// source forge a valid token for any user.
-	jwtSecret := util.Config.Web.JWTSecret
-	if jwtSecret == "" {
-		if devMode {
-			jwtSecret = "a-very-insecure-jwt-key-replace-me" // Fallback ONLY for dev
-			slog.Error("Using insecure default JWT signing key! Please do not use in production")
-		} else {
-			slog.Error("Missing web.jwtsecret in configuration")
-			os.Exit(1)
-		}
-	}
-	jwtKey = []byte(jwtSecret)
 
 	// logHub receives a copy of every slog record emitted process-wide (see
 	// hubHandler in logstream.go) so the frontend's log window has
