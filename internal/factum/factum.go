@@ -16,6 +16,7 @@ import (
 
 	"github.com/abundo/netboxtool"
 
+	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
@@ -89,6 +90,21 @@ func (factum *FactumClient) GetServiceTypes() ([]models.ServiceType, error) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// ApplyOpticalInventory is PUT /api/optical/device/:id/inventory — persists
+// a driver's optical dump onto OpticalKind / OpticalPort / OpticalXConnect.
+func (factum *FactumClient) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {
+	body, err := json.Marshal(inv)
+	if err != nil {
+		return nil, err
+	}
+	var res optical.ApplyResult
+	path := fmt.Sprintf("/api/optical/device/%d/inventory", deviceID)
+	if err := factum.doJSON(http.MethodPut, path, body, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // GetDeviceByName returns the one device called name. web.ApiGetDeviceByName

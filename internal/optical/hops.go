@@ -84,6 +84,18 @@ func MarkStaleByInterface(db *gorm.DB, interfaceID uint) error {
 		)`, models.PathStale, interfaceID, interfaceID, interfaceID).Error
 }
 
+// MarkStaleByDevice marks paths that hop through the chassis or its ports.
+func MarkStaleByDevice(db *gorm.DB, deviceID uint) error {
+	return db.Exec(`
+		UPDATE service_paths SET status = ?
+		WHERE service_id IN (
+			SELECT DISTINCT service_id FROM service_hops
+			WHERE device_id = ? OR interface_id IN (
+				SELECT id FROM interfaces WHERE device_id = ?
+			)
+		)`, models.PathStale, deviceID, deviceID).Error
+}
+
 // MarkStaleByConnection marks paths whose hops reference the connection.
 func MarkStaleByConnection(db *gorm.DB, connectionID uint) error {
 	return db.Exec(`

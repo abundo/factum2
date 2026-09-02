@@ -320,6 +320,7 @@ func GUI(p *GuiParams) error {
 	opt.POST("/trace", ctrl.ApiOpticalTrace, ctrl.RequireRead)
 	opt.POST("/retrace-stale", ctrl.ApiOpticalRetraceStale, ctrl.RequireWrite)
 	opt.GET("/device/:id/ports", ctrl.ApiDeviceOpticalPorts, ctrl.RequireRead)
+	opt.PUT("/device/:id/inventory", ctrl.ApiOpticalDeviceInventoryPut, ctrl.RequireWrite)
 
 	maint := api.Group("/maintenance", ctrl.RequireAPIAuth, ctrl.RequireOpticalEnabled)
 	maint.GET("", ctrl.ApiMaintenanceList, ctrl.RequireRead)

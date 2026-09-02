@@ -356,6 +356,25 @@ func (ctrl *Controller) ApiOpticalRetraceStale(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
+func (ctrl *Controller) ApiOpticalDeviceInventoryPut(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
+	var inv optical.Inventory
+	if err := c.Bind(&inv); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	res, err := optical.ApplyInventory(ctrl.DB, id, inv)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
+		}
+		return c.JSON(http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, res)
+}
+
 func (ctrl *Controller) ApiDeviceOpticalPorts(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {

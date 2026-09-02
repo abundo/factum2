@@ -55,6 +55,10 @@ const (
 	XCAddDrop     = "roadm_adddrop"
 	XCExpress     = "roadm_express"
 	XCPassthrough = "passthrough"
+
+	// XCSourceOpenROADM marks xconnects written by optical inventory sync.
+	// Operator-created rows keep Source empty; sync only deletes its own.
+	XCSourceOpenROADM = "openroadm"
 )
 
 // Service path / hop kinds and statuses.
@@ -130,6 +134,7 @@ type OpticalXConnect struct {
 	InterfaceAID uint   `json:"interface_a_id" gorm:"index;not null"`
 	InterfaceBID uint   `json:"interface_b_id" gorm:"index;not null"`
 	FreqHz       uint64 `json:"freq_hz"`
+	Source       string `json:"source" gorm:"type:varchar(32);index"`
 }
 
 // ServicePath is the attached optical/fiber path for one VL/VI/LF/LI service.
