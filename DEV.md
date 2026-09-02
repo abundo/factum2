@@ -224,7 +224,9 @@ Containerlab has no image for Nokia SR OS (SR Linux is a different NOS with a
 different management model) and none for IOS-XR that runs without a lot of
 resources, so `driver_nokia_sros.go` and `driver_iosxr.go` can get the fake-
 server treatment for their CLI/SSH transports but not the container-backed
-tier.
+tier. Open ROADM is the same: unit tests parse `testdata/openroadm/*.xml`;
+live NETCONF is `driver_openroadm_integration_test.go` behind
+`FACTUM_TEST_OPENROADM_*`.
 
 ### Web integration tests (LDAP, mail, Postgres)
 

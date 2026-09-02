@@ -87,7 +87,8 @@ itnportal (`/home/anders/code/itnportal`) is the customer-facing portal for Lime
 - Reusing `Service.EndpointA/B*` as the only path representation.
 - Pushing optical config to ROADMs/transponders (no optical driver).
 - Showing VL/LF in itnportal, or notifying CN customers because their packet service “rides” a wavelength.
-- Auto-discovering xconnects from NMS/telemetry.
+- Auto-discovering xconnects from NMS/telemetry (superseded: Open ROADM
+  `GetOpticalInventory` is applied by device-sync / `optical-inventory-apply`).
 - Syncing NetBox `dcim.Module` / `ModuleBay` into Factum. Cards stay NetBox inventory; Factum v1 sees the chassis + interfaces + xconnects.
 - Rate-based muxponder admission control (no client/line bit-rate fields yet).
 - **Protection / dual path (OMSP, Y-cable, working+protect).** v1 stores one `ServicePath` per service. Maintenance on the protect fiber will not list the VL unless the operator attaches a **second** VL/VI whose hops include that protect route. See Key Decisions.

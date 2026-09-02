@@ -14,6 +14,7 @@ platform is added. Netbox platform names currently registered:
 | `ios-xr`          | Cisco IOS-XR               |
 | `sros`, `sros-md` | Nokia SR OS (same factory) |
 | `vrp`             | Huawei VRP                 |
+| `openroadm`       | Open ROADM MSA (read-only) |
 
 This file is the single place that documents _how each driver works_ and
 _how they differ from one another_. Per-driver Go files should only carry
@@ -30,17 +31,21 @@ driver's comments just to keep a comparison table up to date.
 | Cisco IOS-XR | NETCONF/OpenConfig (candidate+commit)                                 | SSH CLI                    | not supported (commit already persists)   |
 | Nokia SR OS  | NETCONF/OpenConfig read; native `nokia-conf` write (candidate+commit) | SSH CLI (MD-CLI)           | not supported (commit already persists)   |
 | Huawei VRP   | SSH CLI only                                                          | SSH CLI                    | SSH CLI `save` + `y` confirmation         |
+| Open ROADM   | NETCONF `org-openroadm-device` (read-only)                            | NETCONF YANG XML           | not supported (read-only)                 |
 
-Three of the four platforms (EOS, IOS-XR, SR OS) expose the standard
+Three of the five platforms (EOS, IOS-XR, SR OS) expose the standard
 `openconfig-interfaces`/`openconfig-platform` YANG models over NETCONF, so
 they share one filter/reply shape and one set of dial/edit helpers
-(`openconfig.go`) instead of each parsing its own XML. VRP has no
-NETCONF/JSON-RPC management API at all, so every one of its operations goes
-over plain SSH CLI - the same SSH/idle-detection transport
-(`sshRunCLI`/`sshRunCLIPipeline` in `openconfig.go`) that IOS-XR and SR OS
-fall back to for the handful of things NETCONF can't do (arbitrary CLI
-commands, CLI-text running-config, in SR OS's case also config _writes_
-outside interface descriptions - see below).
+(`openconfig.go`) instead of each parsing its own XML. Open ROADM also
+speaks NETCONF but against the native `org-openroadm-device` tree, not
+OpenConfig - it reuses `netconfDial`/`netconfGet` and has its own XML
+types (`driver_openroadm_xml.go`). VRP has no NETCONF/JSON-RPC management
+API at all, so every one of its operations goes over plain SSH CLI - the
+same SSH/idle-detection transport (`sshRunCLI`/`sshRunCLIPipeline` in
+`openconfig.go`) that IOS-XR and SR OS fall back to for the handful of
+things NETCONF can't do (arbitrary CLI commands, CLI-text running-config,
+in SR OS's case also config _writes_ outside interface descriptions - see
+below).
 
 ## Arista EOS (`driver_arista_eos.go`, `driver_arista_eos_eline.go`)
 
@@ -309,6 +314,60 @@ VRP's own comment character, `#`). VRP has no ELINE/ELAN/VRF/L3VPN parsing
   `DriverClient` for exactly this reason, so a platform without ELINE support
   never needs a stub method.
 
+## Open ROADM (`driver_openroadm.go`, `driver_openroadm_xml.go`)
+
+Open ROADM MSA devices speak NETCONF against the native
+`org-openroadm-device` YANG model (`http://org/openroadm/device`), not
+OpenConfig. This driver is **read-only**: `netconfGet` (`<get>`, so config
+and state) of the whole device tree, decoded once per driver instance and
+reused by every read method. Every write (`SetInterfaceDescription(s)`,
+`SetInterfaceVLANs`, `Exec`, `RunningConfigSave`) returns an error.
+
+Reads:
+
+- **`Version`** — `info` vendor/model/`serial-id`/`softwareVersion`/
+  `macAddress`/`openroadm-version`.
+- **`GetInterfacesStatus` / `GetDeviceConfig`** — physical
+  `circuit-packs/ports` only, named `circuit-pack-name/port-name`. Logical
+  NMC-CTP/OCH/OTSi interfaces are not invented as NetBox ports. Admin/oper
+  `inService`/`degraded` map to OpenConfig `UP`; `outOfService`/`maintenance`
+  to `DOWN`.
+- **`GetNeighbors`** — `external-link` source/dest node-id + ports, not
+  LLDP. The end whose `node-id` matches `info/node-id` is the local side.
+- **`RunningConfigGet`** — the raw `<get>` XML. `jsonformat` is ignored.
+- **`GetOpticalInventory`** — not on `DriverClient`. Callers type-assert
+  `OpticalClient` (same pattern as `ELINEApplier`). Maps:
+  - `node-type` `rdm`/`xpdr`/`ila`/`extplug` → Factum `roadm` / `wdm_shelf`
+    / `ila`
+  - degree `connection-ports`/`ots-port` → `roadm_degree`
+  - SRG `port-list` (or `roadm-external` ports on an SRG circuit-pack that
+    are not degree ports) → `roadm_adddrop`
+  - `xpdr-client`/`switch-client` → `txp_client`; `xpdr-network` /
+    `switch-network` / `xponder/xpdr-port` → `txp_line`
+  - `ila-external` / line-amplifier line ports → `fiber_port`
+  - `roadm-connections` (via supporting-port of `src-if`/`dst-if`) plus
+    xpdr `connection-map` / `odu-connection` / `eth-connections` and
+    `internal-link` → `OpticalXConnectView` (`roadm_adddrop` /
+    `roadm_express` / `tributary` / `passthrough`)
+  - center frequency in THz on NMC-CTP / OCH / OTSi augments → `FreqHz`
+    (`internal/optical.HzFromTHz`)
+
+`GetOpticalInventory` is persisted by `optical.ApplyInventory`:
+`factum2-device-sync` (after interface create) and
+`factum2-driver optical-inventory-apply` PUT `/api/optical/device/:id/inventory`.
+That writes `Device.OpticalKind`, `OpticalPort` (role + frequency), and
+driver-sourced `OpticalXConnect` rows (`source=openroadm`; operator xconnects
+are not deleted). Ports must already exist in Factum (NetBox sync/webhook)
+under matching names (`circuit-pack/port`, or a unique suffix). Physical
+degree↔degree cables are still NetBox `Connection`s — this path does not
+auto-cable. `factum2-driver optical-inventory` dumps the JSON without writing.
+
+The namespace has been stable from MSA 1.2 through current device-model
+revisions; 1.2/2.2 replies simply lack the later frequency containers.
+Coverage today is fixture-parsed (`testdata/openroadm/*.xml`) plus a live
+device test behind `FACTUM_TEST_OPENROADM_*` (`//go:build integration`).
+There is no containerlab image.
+
 ## Shared infrastructure
 
 - **`openconfig.go`** - NETCONF session/dial helpers
@@ -316,7 +375,8 @@ VRP's own comment character, `#`). VRP has no ELINE/ELAN/VRF/L3VPN parsing
   `netconfEditConfigCandidate`) and the OpenConfig XML shapes
   (`ocInterfacesFilter`/`ocInterfacesData`/`ocComponentsFilter`/...) shared
   by EOS, IOS-XR and SR OS, since `openconfig-interfaces`/`-platform` are
-  standard YANG models rather than vendor-specific ones. Also owns the SSH/
+  standard YANG models rather than vendor-specific ones. Open ROADM reuses
+  the dial/get helpers against its own XML types. Also owns the SSH/
   classic-CLI fallback transport (`sshRunCLI`, `sshRunCLIBatch`,
   `sshRunCLIPipeline`) every driver's CLI-shaped operations go through.
 - **`eapi.go`** - Arista eAPI (JSON-RPC "command-api") transport, used only

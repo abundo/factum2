@@ -48,7 +48,7 @@ section before adding tests there.
   `SAP`, not a subinterface name.
 - Frontend stack is Vue 3 + Vite + Vue Router + Pinia + **Nuxt UI** +
   Axios + Tailwind CSS 4 + MapLibre/deck.gl (not PrimeVue). Device drivers
-  also include Huawei VRP — see `internal/drivers/README-DRIVERS.md`.
+  also include Huawei VRP and Open ROADM MSA — see `internal/drivers/README-DRIVERS.md`.
 
 ## Quick commands
 
@@ -326,14 +326,20 @@ NetboxApiToken` from the primary (`GET /api/netbox-config`,
   fetched stay local / on NetBox's URL; they are not tunneled.
 
 `internal/drivers` talks to network devices directly (Arista EOS, Cisco
-IOS-XR, Nokia SR OS, Huawei VRP): NETCONF against OpenConfig models for
-interface state/config on EOS/IOS-XR/SR OS (shared plumbing in
+IOS-XR, Nokia SR OS, Huawei VRP, Open ROADM MSA): NETCONF against OpenConfig
+models for interface state/config on EOS/IOS-XR/SR OS (shared plumbing in
 `internal/drivers/openconfig.go`), plus a per-platform CLI-shaped transport
 for what NETCONF can't express (arbitrary commands, `show running-config`,
 config save). That second transport is Arista's eAPI JSON-RPC for EOS
 (`internal/drivers/eapi.go`, which also serves as EOS's fallback when its
 NETCONF agent isn't enabled - it's off by default) and SSH CLI screen-
 scraping (`sshRunCLI`) for IOS-XR, SR OS, and VRP (VRP has no NETCONF).
+Open ROADM is a read-only NETCONF driver against native
+`org-openroadm-device` YANG (`driver_openroadm.go`), not OpenConfig; optical
+inventory is a separate `OpticalClient` interface (same split as
+`ELINEApplier`). `optical.ApplyInventory` / PUT `/api/optical/device/:id/inventory`
+persists kind, ports and xconnects (device-sync and
+`factum2-driver optical-inventory-apply`).
 See `internal/drivers/README-DRIVERS.md` for the per-platform table. It has two entry points, matching
 the two hosts it runs on: `NewDriver(DriverParam)` takes everything
 pre-resolved and is what the primary's web handlers use

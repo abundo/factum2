@@ -11,12 +11,15 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"errors"
+
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 
 	cmdbase "github.com/abundo/factum2/cmd"
 	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/drivers"
+	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/netboxtool"
 )
@@ -202,6 +205,63 @@ func deviceGetConfig() boa.CmdIfc {
 	}
 }
 
+func deviceOpticalInventory() boa.CmdIfc {
+	return boa.CmdT[DeviceNameParams]{
+		Use:   "optical-inventory",
+		Short: "Get Open ROADM optical inventory (ports, xconnects)",
+		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
+			cmdbase.SetupLog(p.CommonParams)
+			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
+			if err != nil {
+				return err
+			}
+			oc, ok := dm.(drivers.OpticalClient)
+			if !ok {
+				return errors.New("optical inventory is not supported on this platform")
+			}
+			inv, err := oc.GetOpticalInventory()
+			if err != nil {
+				return err
+			}
+			util.Pprint(inv)
+			return nil
+		},
+	}
+}
+
+func deviceOpticalInventoryApply() boa.CmdIfc {
+	return boa.CmdT[DeviceNameParams]{
+		Use:   "optical-inventory-apply",
+		Short: "Read Open ROADM inventory and persist it in Factum",
+		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
+			cmdbase.SetupLog(p.CommonParams)
+			fc := factum.NewFactumClient(&p.Config.Factum)
+			device, err := fc.GetDeviceByName(p.Name)
+			if err != nil {
+				return err
+			}
+			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
+			if err != nil {
+				return err
+			}
+			oc, ok := dm.(drivers.OpticalClient)
+			if !ok {
+				return errors.New("optical inventory is not supported on this platform")
+			}
+			inv, err := oc.GetOpticalInventory()
+			if err != nil {
+				return err
+			}
+			res, err := fc.ApplyOpticalInventory(device.ID, inv.ApplyInventory())
+			if err != nil {
+				return err
+			}
+			util.Pprint(res)
+			return nil
+		},
+	}
+}
+
 // ---------------------------------------------------------------------------
 
 func main() {
@@ -218,6 +278,8 @@ func main() {
 			deviceInterfaceGetDescription(),
 			deviceSetInterfaceDescription(),
 			deviceGetConfig(),
+			deviceOpticalInventory(),
+			deviceOpticalInventoryApply(),
 			cmdbase.ShowConfigAgent(),
 		),
 	}.Run()
