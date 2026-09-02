@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import install
 
@@ -107,7 +111,7 @@ class ReleaseInstallerLoadTests(unittest.TestCase):
 class InstallerVersionTests(unittest.TestCase):
     def test_current_file_parses(self) -> None:
         text = Path("install.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(install.installer_version_of(text), 10)
+        self.assertGreaterEqual(install.installer_version_of(text), 11)
         self.assertTrue(install.looks_like_installer(text))
 
 
@@ -225,6 +229,234 @@ class HubCertTests(unittest.TestCase):
             ).stdout
             self.assertIn("DNS:worker.example.com", text)
             self.assertIn("192.0.2.10", text)
+
+
+def _installer_script(version: int = 11) -> bytes:
+    return (
+        "#!/usr/bin/env python3\n"
+        f"INSTALLER_VERSION = {version}\n"
+        "def main():\n"
+        "    return 'factum2'\n"
+    ).encode()
+
+
+def _tgz_bytes(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _write_tgz(path: Path, files: dict[str, bytes]) -> None:
+    path.write_bytes(_tgz_bytes(files))
+
+
+class _BlobClient:
+    """GithubClient stand-in: download() writes named blobs; fetch_file is banned."""
+
+    def __init__(self, blobs: dict[str, bytes]):
+        self.blobs = blobs
+        self.downloaded: list[str] = []
+
+    def fetch_file(self, path: str, ref: str | None = None) -> bytes:
+        raise AssertionError(
+            f"self-update must not use Contents API ({path} ref={ref})"
+        )
+
+    def download(
+        self, asset: install.Asset, dest: Path, progress: bool = True
+    ) -> None:
+        self.downloaded.append(asset.name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(self.blobs[asset.name])
+
+
+def _asset(name: str, blob: bytes, idn: int = 1) -> install.Asset:
+    return install.Asset(
+        name=name, size=len(blob), url=f"https://example/{name}", api_url="", id=idn
+    )
+
+
+def _release(tag: str, assets: list[install.Asset]) -> install.Release:
+    return install.Release(
+        tag=tag,
+        name=tag,
+        published_at="2026-01-01T00:00:00Z",
+        prerelease=False,
+        draft=False,
+        html_url="",
+        assets=assets,
+    )
+
+
+class InstallerBytesFromArchiveTests(unittest.TestCase):
+    def test_nested_goreleaser_dir(self) -> None:
+        payload = _installer_script(12)
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(
+                archive,
+                {
+                    "factum2_1.0.0_linux_amd64/factum2": b"\x00",
+                    "factum2_1.0.0_linux_amd64/install.py": payload,
+                },
+            )
+            self.assertEqual(install.installer_bytes_from_archive(archive), payload)
+
+    def test_flat_archive(self) -> None:
+        payload = _installer_script(12)
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(archive, {"install.py": payload, "factum2": b"\x00"})
+            self.assertEqual(install.installer_bytes_from_archive(archive), payload)
+
+    def test_prefers_shallower_member(self) -> None:
+        shallow = _installer_script(12)
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(
+                archive,
+                {
+                    "install.py": shallow,
+                    "examples/install.py": _installer_script(1),
+                },
+            )
+            self.assertEqual(install.installer_bytes_from_archive(archive), shallow)
+
+    def test_missing_file_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(archive, {"factum2": b"\x00"})
+            with self.assertRaises(install.InstallError) as ctx:
+                install.installer_bytes_from_archive(archive)
+            self.assertIn("has no install.py", str(ctx.exception))
+
+    def test_rejects_garbage(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(archive, {"install.py": b"print('nope')\n"})
+            with self.assertRaises(install.InstallError) as ctx:
+                install.installer_bytes_from_archive(archive)
+            self.assertIn("does not look like this installer", str(ctx.exception))
+
+    def test_ignores_path_traversal_member(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            archive = Path(raw) / "rel.tar.gz"
+            _write_tgz(archive, {"../install.py": _installer_script(12)})
+            with self.assertRaises(install.InstallError) as ctx:
+                install.installer_bytes_from_archive(archive)
+            self.assertIn("has no install.py", str(ctx.exception))
+
+
+class FetchVerifiedInstallerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = Path(self.tmp.name)
+        self.patcher = patch.object(install, "cache_dir", return_value=self.cache)
+        self.patcher.start()
+
+    def tearDown(self) -> None:
+        self.patcher.stop()
+        self.tmp.cleanup()
+
+    def _blobs_for(self, payload: bytes, arch: str = "amd64") -> tuple[
+        dict[str, bytes], install.Release, str, str
+    ]:
+        tgz = _tgz_bytes(
+            {
+                f"factum2_1.0.0_linux_{arch}/factum2": b"\x00",
+                f"factum2_1.0.0_linux_{arch}/install.py": payload,
+            }
+        )
+        tgz_name = f"factum2_1.0.0_linux_{arch}.tar.gz"
+        csum_name = "factum2_1.0.0_checksums.txt"
+        digest = hashlib.sha256(tgz).hexdigest()
+        csum = f"{digest}  {tgz_name}\n".encode()
+        blobs = {tgz_name: tgz, csum_name: csum}
+        rel = _release(
+            "v1.0.0",
+            [_asset(tgz_name, tgz, 1), _asset(csum_name, csum, 2)],
+        )
+        return blobs, rel, tgz_name, csum_name
+
+    def test_reads_install_py_from_checksummed_tarball(self) -> None:
+        payload = _installer_script(12)
+        blobs, rel, tgz_name, csum_name = self._blobs_for(payload)
+        client = _BlobClient(blobs)
+        got = install.fetch_verified_installer(client, rel, "amd64")
+        self.assertEqual(got, payload)
+        self.assertEqual(client.downloaded, [csum_name, tgz_name])
+
+    def test_does_not_call_contents_api(self) -> None:
+        payload = _installer_script(12)
+        blobs, rel, _, _ = self._blobs_for(payload)
+        client = _BlobClient(blobs)
+        install.fetch_verified_installer(client, rel, "amd64")
+        # _BlobClient.fetch_file raises; reaching here means it was not called.
+
+    def test_reuses_cached_archive(self) -> None:
+        payload = _installer_script(12)
+        blobs, rel, tgz_name, csum_name = self._blobs_for(payload)
+        (self.cache / tgz_name).write_bytes(blobs[tgz_name])
+        client = _BlobClient(blobs)
+        got = install.fetch_verified_installer(client, rel, "amd64")
+        self.assertEqual(got, payload)
+        self.assertEqual(client.downloaded, [csum_name])
+
+    def test_mismatch_deletes_archive_and_errors(self) -> None:
+        payload = _installer_script(12)
+        blobs, rel, tgz_name, csum_name = self._blobs_for(payload)
+        blobs[csum_name] = f"{'0' * 64}  {tgz_name}\n".encode()
+        rel.assets[1] = _asset(csum_name, blobs[csum_name], 2)
+        client = _BlobClient(blobs)
+        with self.assertRaises(install.InstallError) as ctx:
+            install.fetch_verified_installer(client, rel, "amd64")
+        self.assertIn("Checksum mismatch", str(ctx.exception))
+        self.assertFalse((self.cache / tgz_name).exists())
+
+    def test_missing_checksums_asset_errors(self) -> None:
+        payload = _installer_script(12)
+        tgz = _tgz_bytes({"install.py": payload})
+        tgz_name = "factum2_1.0.0_linux_amd64.tar.gz"
+        rel = _release("v1.0.0", [_asset(tgz_name, tgz)])
+        client = _BlobClient({tgz_name: tgz})
+        with self.assertRaises(install.InstallError) as ctx:
+            install.fetch_verified_installer(client, rel, "amd64")
+        self.assertIn("checksums.txt", str(ctx.exception))
+        self.assertEqual(client.downloaded, [])
+
+    def test_checksums_missing_archive_entry_errors(self) -> None:
+        payload = _installer_script(12)
+        tgz = _tgz_bytes({"install.py": payload})
+        tgz_name = "factum2_1.0.0_linux_amd64.tar.gz"
+        csum_name = "factum2_1.0.0_checksums.txt"
+        csum = b"deadbeef  other.tar.gz\n"
+        rel = _release(
+            "v1.0.0",
+            [_asset(tgz_name, tgz, 1), _asset(csum_name, csum, 2)],
+        )
+        client = _BlobClient({tgz_name: tgz, csum_name: csum})
+        with self.assertRaises(install.InstallError) as ctx:
+            install.fetch_verified_installer(client, rel, "amd64")
+        self.assertIn("has no SHA-256", str(ctx.exception))
+
+    def test_tarball_without_installer_errors(self) -> None:
+        tgz = _tgz_bytes({"factum2_1.0.0_linux_amd64/factum2": b"\x00"})
+        tgz_name = "factum2_1.0.0_linux_amd64.tar.gz"
+        csum_name = "factum2_1.0.0_checksums.txt"
+        digest = hashlib.sha256(tgz).hexdigest()
+        csum = f"{digest}  {tgz_name}\n".encode()
+        rel = _release(
+            "v1.0.0",
+            [_asset(tgz_name, tgz, 1), _asset(csum_name, csum, 2)],
+        )
+        client = _BlobClient({tgz_name: tgz, csum_name: csum})
+        with self.assertRaises(install.InstallError) as ctx:
+            install.fetch_verified_installer(client, rel, "amd64")
+        self.assertIn("has no install.py", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -19,7 +19,8 @@ from this release, the installer shows a diff and asks before overwriting
                                tarball, else the git tag) does the install
                                so CLI steps match those binaries. A
                                standalone copy is offered a self-update from
-                               the latest GitHub *release*, not from main.
+                               the latest GitHub *release* tarball after
+                               SHA-256 verification, not from main or git.
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
@@ -76,7 +77,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 10
+INSTALLER_VERSION = 11
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -1478,6 +1479,68 @@ def parse_checksums(text: str) -> dict[str, str]:
     return out
 
 
+def download_release_checksums(
+    client: GithubClient, release: Release
+) -> dict[str, str]:
+    """Download and parse checksums.txt. Empty if the release has no such asset."""
+    checksum_asset = release.checksums()
+    if checksum_asset is None:
+        return {}
+    cache = cache_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    csum_path = cache / checksum_asset.name
+    log(f"==> Downloading {checksum_asset.name}")
+    client.download(checksum_asset, csum_path, progress=False)
+    return parse_checksums(
+        csum_path.read_text(encoding="utf-8", errors="replace")
+    )
+
+
+def download_release_archive(
+    client: GithubClient,
+    release: Release,
+    goarch: str,
+    checksums: dict[str, str],
+    *,
+    require_checksum: bool = False,
+) -> Path:
+    """Download linux/goarch tar.gz into the cache. Verify SHA-256 when known.
+
+    require_checksum=True is for self-update: missing checksums.txt entry is
+    an error, not a skip. Binaries still install when an older release has
+    no checksums file.
+    """
+    asset = release.archive(ARCHIVE_OS, goarch)
+    if asset is None:
+        raise InstallError(
+            f"Release {release.tag} has no {ARCHIVE_OS}/{goarch} tar.gz asset"
+        )
+    expected = checksums.get(asset.name)
+    if require_checksum and not expected:
+        raise InstallError(
+            f"Release {release.tag} checksums.txt has no SHA-256 for {asset.name}"
+        )
+    cache = cache_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / asset.name
+    need = True
+    if archive.is_file() and expected and sha256_file(archive) == expected:
+        log(f"==> Using cached {asset.name}")
+        need = False
+    if need:
+        log(f"==> Downloading {asset.name} ({_fmt_bytes(asset.size)})")
+        client.download(asset, archive)
+    if expected:
+        got = sha256_file(archive)
+        if got != expected:
+            archive.unlink(missing_ok=True)
+            raise InstallError(
+                f"Checksum mismatch for {asset.name}: expected {expected}, got {got}"
+            )
+        log(f"    checksum ok ({got[:12]}…)")
+    return archive
+
+
 def extract_archive(archive: Path, dest: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
@@ -1491,6 +1554,42 @@ def extract_archive(archive: Path, dest: Path) -> Path:
     if len(subs) == 1 and _looks_like_release_root(subs[0]):
         return subs[0]
     raise InstallError(f"Could not find factum2 binaries in {archive.name}")
+
+
+def installer_bytes_from_archive(archive: Path) -> bytes:
+    """Return install.py from a release tar.gz. No network.
+
+    Accepts a top-level file or GoReleaser's wrapped directory. Rejects
+    absolute paths and `..` members. `looks_like_installer` is only a
+    sanity check; the caller must have SHA-256-verified `archive`.
+    """
+    matches: list[tarfile.TarInfo] = []
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            path = Path(member.name)
+            if path.name != INSTALLER_FILENAME:
+                continue
+            if path.is_absolute() or ".." in path.parts:
+                continue
+            matches.append(member)
+        if not matches:
+            raise InstallError(f"{archive.name} has no {INSTALLER_FILENAME}")
+        matches.sort(key=lambda m: (m.name.count("/"), m.name))
+        member = matches[0]
+        extracted = tar.extractfile(member)
+        if extracted is None:
+            raise InstallError(
+                f"{archive.name} could not extract {member.name}"
+            )
+        data = extracted.read()
+    parsed = installer_bytes_from_text(data)
+    if parsed is None:
+        raise InstallError(
+            f"{archive.name} {INSTALLER_FILENAME} does not look like this installer"
+        )
+    return parsed
 
 
 def _looks_like_release_root(path: Path) -> bool:
@@ -2014,53 +2113,19 @@ def prepare_roots(
     archs: set[str],
 ) -> tuple[Path, dict[str, Path]]:
     """Download, verify, and extract one archive per arch. Caller deletes work."""
-    checksum_asset = release.checksums()
-    checksums: dict[str, str] = {}
+    checksums = download_release_checksums(client, release)
     work = Path(tempfile.mkdtemp(prefix="factum2-rel-"))
-    cache = cache_dir()
-    cache.mkdir(parents=True, exist_ok=True)
-
-    if checksum_asset:
-        csum_path = cache / checksum_asset.name
-        log(f"==> Downloading {checksum_asset.name}")
-        client.download(checksum_asset, csum_path)
-        checksums = parse_checksums(
-            csum_path.read_text(encoding="utf-8", errors="replace")
-        )
-
     roots: dict[str, Path] = {}
     for arch in sorted(archs):
-        asset = release.archive(ARCHIVE_OS, arch)
-        if asset is None:
-            raise InstallError(
-                f"Release {release.tag} has no {ARCHIVE_OS}/{arch} tar.gz asset"
-            )
-        archive = cache / asset.name
-        need = True
-        if archive.is_file() and checksums.get(asset.name):
-            if sha256_file(archive) == checksums[asset.name]:
-                log(f"==> Using cached {asset.name}")
-                need = False
-        if need:
-            log(f"==> Downloading {asset.name} ({_fmt_bytes(asset.size)})")
-            client.download(asset, archive)
-        expected = checksums.get(asset.name)
-        if expected:
-            got = sha256_file(archive)
-            if got != expected:
-                archive.unlink(missing_ok=True)
-                raise InstallError(
-                    f"Checksum mismatch for {asset.name}: expected {expected}, got {got}"
-                )
-            log(f"    checksum ok ({got[:12]}…)")
+        archive = download_release_archive(client, release, arch, checksums)
         extract_to = work / arch
-        log(f"==> Extracting {asset.name}")
+        log(f"==> Extracting {archive.name}")
         roots[arch] = extract_archive(archive, extract_to)
         missing = [
             name for name in KNOWN_BINARIES if not (roots[arch] / name).is_file()
         ]
         if missing:
-            log(f"    warning: {asset.name} is missing {', '.join(missing)}")
+            log(f"    warning: {archive.name} is missing {', '.join(missing)}")
     return work, roots
 
 
@@ -2442,11 +2507,35 @@ def reexec_self() -> None:
     os.execve(sys.executable, [sys.executable, *sys.argv], env)
 
 
+def fetch_verified_installer(
+    client: GithubClient, release: Release, goarch: str
+) -> bytes:
+    """Return install.py from the SHA-256-verified linux/goarch tarball.
+
+    Does not use the git Contents API. Missing checksums, a checksum
+    mismatch, or a tarball without install.py are errors.
+    """
+    checksums = download_release_checksums(client, release)
+    if not checksums:
+        raise InstallError(
+            f"Release {release.tag} has no checksums.txt; "
+            f"refusing to self-update {INSTALLER_FILENAME} without a SHA-256"
+        )
+    archive = download_release_archive(
+        client, release, goarch, checksums, require_checksum=True
+    )
+    log(f"==> Reading {INSTALLER_FILENAME} from checksum-verified {archive.name}")
+    return installer_bytes_from_archive(archive)
+
+
 def maybe_self_update(args: argparse.Namespace) -> None:
     """Replace this script from the latest GitHub *release* if newer. May os.execve.
 
-    Never fetches from the default branch: unreleased main can invoke CLI
-    steps that a selected (older) tag's binaries do not have.
+    The new copy is taken from that release's linux/$arch tar.gz after the
+    same SHA-256 check used for binaries. Never fetched from the default
+    branch or the git Contents API: unreleased main can invoke CLI steps
+    that a selected (older) tag's binaries do not have, and a raw git blob
+    is not in checksums.txt.
     """
     if args.skip_self_update:
         return
@@ -2457,6 +2546,7 @@ def maybe_self_update(args: argparse.Namespace) -> None:
 
     token = github_token()
     client = GithubClient(args.repo, token)
+    goarch = local_arch()
     try:
         releases = client.list_releases(limit=args.limit)
         rel = latest_stable(releases, include_pre=args.pre)
@@ -2465,21 +2555,18 @@ def maybe_self_update(args: argparse.Namespace) -> None:
                 f"!!  No GitHub releases; cannot check for a newer {INSTALLER_FILENAME}"
             )
             return
-        remote = client.fetch_file(INSTALLER_FILENAME, ref=rel.tag)
+        remote = fetch_verified_installer(client, rel, goarch)
     except (InstallError, OSError, json.JSONDecodeError, ValueError) as exc:
-        log(f"!!  Could not check for a newer {INSTALLER_FILENAME}: {exc}")
+        msg = (
+            f"Could not fetch a checksum-verified {INSTALLER_FILENAME} "
+            f"from a GitHub release: {exc}"
+        )
+        if args.self_update:
+            raise InstallError(msg) from exc
+        log(f"!!  {msg}")
         return
 
-    try:
-        remote_text = remote.decode("utf-8")
-    except UnicodeDecodeError:
-        log(f"!!  GitHub {INSTALLER_FILENAME} is not valid UTF-8; leaving this copy")
-        return
-    if not looks_like_installer(remote_text):
-        log(
-            f"!!  GitHub {INSTALLER_FILENAME} does not look like this installer; leaving this copy"
-        )
-        return
+    remote_text = remote.decode("utf-8")
 
     local_path = Path(__file__).resolve()
     try:
@@ -2743,8 +2830,8 @@ Examples:
     p.add_argument(
         "--self-update",
         action="store_true",
-        help="replace this script from the latest GitHub release if a newer copy "
-        "exists, then exit (or continue when combined with --list / --install)",
+        help="replace this script from the latest GitHub release's checksum-verified "
+        "tarball if a newer copy exists, then exit (or continue with --list / --install)",
     )
     p.add_argument(
         "--skip-self-update",
