@@ -51,6 +51,8 @@ type NetboxAPI interface {
 
 	GetVRFByName(name string) (*netboxtool.NBVRF, error)
 	CreateVRF(name, rd, description string) (*netboxtool.NBVRF, error)
+
+	UpdateDevice(deviceID uint, changes map[string]any) error
 }
 
 // NetboxMgr wraps NetboxAPI with netboxtool's optional Cache (so repeated
@@ -167,6 +169,17 @@ func (m *NetboxMgr) UpdateInterface(device *models.Device, iface *models.Interfa
 	}
 	for field, value := range changes {
 		m.reporter.Emit(jobevent.Info, "%s: interface %s: %s -> %v", device.Name, iface.Name, field, value)
+	}
+	return nil
+}
+
+func (m *NetboxMgr) UpdateDevice(device *models.Device, changes map[string]any) error {
+	if err := m.api.UpdateDevice(device.NetboxID, changes); err != nil {
+		m.reporter.Emit(jobevent.Error, "%s: update device: %v", device.Name, err)
+		return err
+	}
+	for field, value := range changes {
+		m.reporter.Emit(jobevent.Info, "%s: %s -> %v", device.Name, field, value)
 	}
 	return nil
 }

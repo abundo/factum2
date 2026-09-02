@@ -23,6 +23,7 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
@@ -62,6 +63,8 @@ type FactumAPI interface {
 	GetDeviceByName(name string) (*models.Device, error)
 	// GetServiceTypes returns cfgmgmt service types (sync_source / netbox_type).
 	GetServiceTypes() ([]models.ServiceType, error)
+	// ApplyOpticalInventory persists a driver's optical dump on the device.
+	ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error)
 }
 
 // devicePair is a factum device (already synced from Netbox) paired with
@@ -197,6 +200,12 @@ func (ds *DeviceSync) run() error {
 	// interfacesCreate so subinterfaces/SAPs already exist in Netbox and
 	// can be terminated on. Mapping comes from cfgmgmt service types.
 	ds.forEachPair(ds.syncInventoryL2)
+
+	// Open ROADM (and any future OpticalClient): write NetBox optical CFs
+	// and persist Factum OpticalPort / OpticalXConnect. After interfaces
+	// so names exist in NetBox; Factum rows still require a prior netbox
+	// sync (or webhook) so the same names exist in Factum.
+	ds.forEachPair(ds.syncOpticalInventory)
 
 	return nil
 }
@@ -829,6 +838,88 @@ func (ds *DeviceSync) cabledToOptical(iface *models.Interface) bool {
 		}
 	}
 	return false
+}
+
+// syncOpticalInventory reads GetOpticalInventory when the driver
+// implements OpticalClient, writes optical_role custom fields on the
+// NetBox device/interfaces, and PUTs the dump to Factum so OpticalPort /
+// OpticalXConnect rows exist for the tracer.
+func (ds *DeviceSync) syncOpticalInventory(pair *devicePair) {
+	oc, ok := pair.driver.(drivers.OpticalClient)
+	if !ok {
+		return
+	}
+	inv, err := oc.GetOpticalInventory()
+	if err != nil {
+		ds.reporter.Emit(jobevent.Warning, "%s: optical inventory: %v", pair.nbDevice.Name, err)
+		return
+	}
+	apply := inv.ApplyInventory()
+	ds.writeOpticalCustomFields(pair, apply)
+
+	res, err := ds.factum.ApplyOpticalInventory(pair.nbDevice.ID, apply)
+	if err != nil {
+		ds.reporter.Emit(jobevent.Warning, "%s: apply optical inventory: %v", pair.nbDevice.Name, err)
+		return
+	}
+	ds.reporter.Emit(jobevent.Info, "%s: optical inventory kind=%s ports=%d xconnects=%d deleted=%d",
+		pair.nbDevice.Name, res.Kind, res.PortsUpserted, res.XConnectsUpserted, res.XConnectsDeleted)
+	for _, s := range res.PortsSkipped {
+		ds.reporter.Emit(jobevent.Warning, "%s: optical port skipped: %s", pair.nbDevice.Name, s)
+	}
+	for _, s := range res.XConnectsSkipped {
+		ds.reporter.Emit(jobevent.Warning, "%s: optical xconnect skipped: %s", pair.nbDevice.Name, s)
+	}
+}
+
+func (ds *DeviceSync) writeOpticalCustomFields(pair *devicePair, inv optical.Inventory) {
+	if inv.Kind != "" && pair.nbDevice.NetboxID != 0 {
+		_ = ds.nb.UpdateDevice(pair.nbDevice, map[string]any{
+			"custom_fields": map[string]any{"optical_role": inv.Kind},
+		})
+	}
+	byName := make(map[string]*models.Interface, len(pair.nbDevice.Interfaces))
+	for i := range pair.nbDevice.Interfaces {
+		iface := &pair.nbDevice.Interfaces[i]
+		byName[iface.Name] = iface
+		byName[strings.ToLower(iface.Name)] = iface
+	}
+	for _, p := range inv.Ports {
+		if p.Role == "" {
+			continue
+		}
+		iface := byName[p.Name]
+		if iface == nil {
+			iface = byName[strings.ToLower(p.Name)]
+		}
+		if iface == nil {
+			if n := strings.LastIndex(p.Name, "/"); n >= 0 && n < len(p.Name)-1 {
+				suf := p.Name[n+1:]
+				var hit *models.Interface
+				nHit := 0
+				for _, cand := range pair.nbDevice.Interfaces {
+					name := cand.Name
+					if i := strings.LastIndex(name, "/"); i >= 0 {
+						name = name[i+1:]
+					}
+					if strings.EqualFold(name, suf) {
+						c := cand
+						hit = &c
+						nHit++
+					}
+				}
+				if nHit == 1 {
+					iface = hit
+				}
+			}
+		}
+		if iface == nil || iface.NetboxID == 0 {
+			continue
+		}
+		_ = ds.nb.UpdateInterface(pair.nbDevice, iface, map[string]any{
+			"custom_fields": map[string]any{"optical_role": p.Role},
+		})
+	}
 }
 
 // ----- Vlans -----

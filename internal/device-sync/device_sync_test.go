@@ -10,6 +10,7 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
@@ -85,6 +86,8 @@ type fakeNetboxAPI struct {
 	createdVRFs []*netboxtool.NBVRF
 
 	deviceTypes map[string]*netboxtool.NetboxDeviceTypeDetail // key: "manufacturer/model"
+
+	updatedDevices []map[string]any
 }
 
 type cableTerminationUpdate struct {
@@ -144,6 +147,13 @@ func (f *fakeNetboxAPI) CreateInterfaceWithOptions(deviceID uint, name string, e
 	}
 	f.createdInterfaceExtras[name] = extra
 	return &netboxtool.NetboxInterfaceREST{ID: f.nextID, Name: name}, nil
+}
+
+func (f *fakeNetboxAPI) UpdateDevice(deviceID uint, changes map[string]any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedDevices = append(f.updatedDevices, changes)
+	return nil
 }
 
 func (f *fakeNetboxAPI) InterfaceUpdate(interfaceID int, changes map[string]any) error {
@@ -395,6 +405,7 @@ type fakeFactumAPI struct {
 
 	getDevicesCalls      int
 	getDeviceByNameCalls []string
+	appliedInventory     []optical.Inventory
 }
 
 func newFakeFactumAPI() *fakeFactumAPI {
@@ -431,6 +442,13 @@ func (f *fakeFactumAPI) GetServiceTypes() ([]models.ServiceType, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.serviceTypes, nil
+}
+
+func (f *fakeFactumAPI) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appliedInventory = append(f.appliedInventory, inv)
+	return &optical.ApplyResult{Kind: inv.Kind, PortsUpserted: len(inv.Ports), XConnectsUpserted: len(inv.XConnects)}, nil
 }
 
 // fakeDriver only implements GetNeighbors - the rest is promoted (and would
@@ -1095,6 +1113,57 @@ func TestSyncConnectionSkipsOpticalDevice(t *testing.T) {
 	ds.syncConnection(device, remote, localIf, remoteIf)
 	if len(fake.createdCables) != 0 {
 		t.Errorf("createdCables = %v, want none (optical far end)", fake.createdCables)
+	}
+}
+
+type fakeOpticalDriver struct {
+	fakeDriver
+	inv *drivers.OpticalInventory
+}
+
+func (f *fakeOpticalDriver) GetOpticalInventory() (*drivers.OpticalInventory, error) {
+	return f.inv, nil
+}
+
+func TestSyncOpticalInventoryAppliesAndWritesCFs(t *testing.T) {
+	fakeNB := newFakeNetboxAPI()
+	fakeFactum := newFakeFactumAPI()
+	ds, _ := newTestDeviceSync(fakeNB, fakeFactum, nil)
+	dev := &models.Device{
+		FactumModel: models.FactumModel{ID: 7},
+		NetboxID:    1,
+		Name:        "roadm-a",
+		Interfaces: []models.Interface{
+			{NetboxID: 10, Name: "1/0/DEG1"},
+			{NetboxID: 11, Name: "1/0/AD1"},
+		},
+	}
+	pair := &devicePair{
+		nbDevice: dev,
+		driver: &fakeOpticalDriver{inv: &drivers.OpticalInventory{
+			OpticalKind: models.OpticalKindROADM,
+			Ports: []drivers.OpticalPortView{
+				{Name: "1/0/DEG1", Role: models.PortROADMDegree},
+				{Name: "1/0/AD1", Role: models.PortROADMAddDrop},
+			},
+			XConnects: []drivers.OpticalXConnectView{
+				{Name: "xc-1", Kind: models.XCAddDrop, PortA: "1/0/AD1", PortB: "1/0/DEG1"},
+			},
+		}},
+	}
+	ds.syncOpticalInventory(pair)
+	if len(fakeFactum.appliedInventory) != 1 {
+		t.Fatalf("apply calls = %d", len(fakeFactum.appliedInventory))
+	}
+	got := fakeFactum.appliedInventory[0]
+	if got.Kind != models.OpticalKindROADM || len(got.Ports) != 2 || len(got.XConnects) != 1 {
+		t.Errorf("applied = %+v", got)
+	}
+	if len(fakeNB.updatedDevices) != 1 {
+		t.Errorf("device CF writes = %d", len(fakeNB.updatedDevices))
+	}
+	if len(fakeNB.updatedInterfaces) != 2 {
+		t.Errorf("interface CF writes = %d", len(fakeNB.updatedInterfaces))
 	}
 }
 
