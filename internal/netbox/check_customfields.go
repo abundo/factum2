@@ -43,44 +43,44 @@ func (s cfSpec) choiceSetName() string {
 func customFieldSpecs(s *models.Settings) []cfSpec {
 	device := []string{"dcim.device"}
 	specs := []cfSpec{
-		{name: "alarm_destination", objectTypes: device, typ: netboxtool.CFTypeSelect,
+		{name: "alarm_destination", objectTypes: device, typ: cfTypeSelect,
 			choicesCreateOnly: true,
 			choices: [][2]string{
 				{"notify@example.com", "notify@example.com"},
 				{"support@example.com", "support@example.com"},
 			}},
-		{name: "alarm_interfaces", objectTypes: device, typ: netboxtool.CFTypeBoolean,
+		{name: "alarm_interfaces", objectTypes: device, typ: cfTypeBoolean,
 			description: "If true, LibreNMS will generate alerts for all interfaces"},
-		{name: "alarm_timeperiod", objectTypes: device, typ: netboxtool.CFTypeSelect,
+		{name: "alarm_timeperiod", objectTypes: device, typ: cfTypeSelect,
 			choicesCreateOnly: true,
 			choices: [][2]string{
 				{"sla1 workhours 07-17", "sla1 workhours 07-17"},
 				{"sla2 extended workhours 07-22", "sla2 extended workhours 07-22"},
 				{"sla3 24x7", "sla3 24x7"},
 			}},
-		{name: "additional_name", objectTypes: device, typ: netboxtool.CFTypeText,
+		{name: "additional_name", objectTypes: device, typ: cfTypeText,
 			description: "Alias name"},
-		{name: "backup_oxidized", objectTypes: device, typ: netboxtool.CFTypeBoolean},
-		{name: "connection_method", objectTypes: device, typ: netboxtool.CFTypeSelect,
+		{name: "backup_oxidized", objectTypes: device, typ: cfTypeBoolean},
+		{name: "connection_method", objectTypes: device, typ: cfTypeSelect,
 			description: "How to connect to the device",
 			choices:     [][2]string{{"ssh", "ssh"}, {"telnet", "telnet"}}},
-		{name: "location", objectTypes: device, typ: netboxtool.CFTypeText,
+		{name: "location", objectTypes: device, typ: cfTypeText,
 			description: "Free-text describing the location of the device"},
-		{name: "monitor_icinga", objectTypes: device, typ: netboxtool.CFTypeBoolean,
+		{name: "monitor_icinga", objectTypes: device, typ: cfTypeBoolean,
 			description: "If true the device will be monitored by Icinga"},
-		{name: "monitor_librenms", objectTypes: device, typ: netboxtool.CFTypeBoolean,
+		{name: "monitor_librenms", objectTypes: device, typ: cfTypeBoolean,
 			description: "If true the device will be monitored by LibreNMS"},
-		{name: "monitor_grafana", objectTypes: device, typ: netboxtool.CFTypeBoolean,
+		{name: "monitor_grafana", objectTypes: device, typ: cfTypeBoolean,
 			description: "If true the device will be scraped by Prometheus via snmp_exporter"},
-		{name: "parents", objectTypes: device, typ: netboxtool.CFTypeText,
+		{name: "parents", objectTypes: device, typ: cfTypeText,
 			description: "Comma-separated list of parents. If all parents are down, no alarms will be generated for this device"},
-		{name: "role", objectTypes: []string{"dcim.interface"}, typ: netboxtool.CFTypeSelect},
-		{name: "orgno", objectTypes: []string{"tenancy.tenant"}, typ: netboxtool.CFTypeText,
+		{name: "role", objectTypes: []string{"dcim.interface"}, typ: cfTypeSelect},
+		{name: "orgno", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Organisationnr"},
-		{name: "source", objectTypes: []string{"tenancy.tenant"}, typ: netboxtool.CFTypeText,
+		{name: "source", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Source system", group: "sync",
 			description: "Identifies where the data comes from"},
-		{name: "source_id", objectTypes: []string{"tenancy.tenant"}, typ: netboxtool.CFTypeText,
+		{name: "source_id", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Source system ID", group: "sync",
 			description: "ID of the data in the source system"},
 	}
@@ -88,7 +88,7 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 		specs = append(specs, cfSpec{
 			name:        "becs_oid",
 			objectTypes: []string{"dcim.device", "dcim.interface", "ipam.ipaddress"},
-			typ:         netboxtool.CFTypeInteger,
+			typ:         cfTypeInteger,
 			group:       "sync",
 			description: "Identifies the element in BECS",
 		})
@@ -97,7 +97,7 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 		specs = append(specs, cfSpec{
 			name:        "librenms_id",
 			objectTypes: []string{"dcim.device", "virtualization.virtualmachine"},
-			typ:         netboxtool.CFTypeInteger,
+			typ:         cfTypeInteger,
 			group:       "sync",
 			description: "Identifies the element in LibreNMS",
 		})
@@ -107,7 +107,7 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 			name:        "optical_role",
 			aliases:     []string{"optical_kind"},
 			objectTypes: []string{"dcim.device", "dcim.interface"},
-			typ:         netboxtool.CFTypeText,
+			typ:         cfTypeText,
 			description: "On a device: chassis kind (roadm, wdm_shelf, ila, passive). On an interface: port role (txp_client, txp_line, roadm_adddrop, roadm_degree, fiber_port).",
 		})
 	}
@@ -156,10 +156,10 @@ func ensureCustomField(nb checkAPI, spec cfSpec, apply bool) (cfApplyResult, err
 }
 
 func createCustomField(nb checkAPI, spec cfSpec) (cfApplyResult, error) {
-	if spec.typ == netboxtool.CFTypeSelect && len(spec.choices) == 0 {
+	if spec.typ == cfTypeSelect && len(spec.choices) == 0 {
 		return cfApplyResult{}, fmt.Errorf("custom field %q is a selection field with operator-managed choices; create it in Netbox first", spec.name)
 	}
-	write := netboxtool.CustomFieldWrite{
+	write := CustomFieldWrite{
 		Name:        spec.name,
 		Type:        spec.typ,
 		Label:       spec.label,

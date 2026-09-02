@@ -11,7 +11,7 @@ import (
 func TestEnsureCustomField_CreatesText(t *testing.T) {
 	api := &fakeCheckAPI{}
 	res, err := ensureCustomField(api, cfSpec{
-		name: "location", typ: netboxtool.CFTypeText,
+		name: "location", typ: cfTypeText,
 		objectTypes: []string{"dcim.device"},
 		description: "where",
 	}, true)
@@ -29,7 +29,7 @@ func TestEnsureCustomField_CreatesText(t *testing.T) {
 func TestEnsureCustomField_RefusesSelectWithoutChoices(t *testing.T) {
 	api := &fakeCheckAPI{}
 	_, err := ensureCustomField(api, cfSpec{
-		name: "role", typ: netboxtool.CFTypeSelect,
+		name: "role", typ: cfTypeSelect,
 		objectTypes: []string{"dcim.interface"},
 	}, true)
 	if err == nil || !strings.Contains(err.Error(), "operator-managed") {
@@ -93,7 +93,7 @@ func TestEnsureCustomField_DoesNotTouchExistingAlarmDestinationChoices(t *testin
 func TestEnsureCustomField_CreatesSelectWithChoices(t *testing.T) {
 	api := &fakeCheckAPI{}
 	res, err := ensureCustomField(api, cfSpec{
-		name: "connection_method", typ: netboxtool.CFTypeSelect,
+		name: "connection_method", typ: cfTypeSelect,
 		objectTypes: []string{"dcim.device"},
 		choices:     [][2]string{{"ssh", "ssh"}, {"telnet", "telnet"}},
 	}, true)
@@ -113,7 +113,7 @@ func TestEnsureCustomField_TypeMismatch(t *testing.T) {
 		"becs_oid": {NetboxID: 1, Name: "becs_oid", Type: "text", ObjectTypes: []string{"dcim.device"}},
 	}}
 	_, err := ensureCustomField(api, cfSpec{
-		name: "becs_oid", typ: netboxtool.CFTypeInteger,
+		name: "becs_oid", typ: cfTypeInteger,
 		objectTypes: []string{"dcim.device"},
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "type") {
@@ -126,7 +126,7 @@ func TestEnsureCustomField_UpdatesDescriptionAndTypes(t *testing.T) {
 		"location": {NetboxID: 2, Name: "location", Type: "text", ObjectTypes: []string{"dcim.device"}},
 	}}
 	res, err := ensureCustomField(api, cfSpec{
-		name: "location", typ: netboxtool.CFTypeText,
+		name: "location", typ: cfTypeText,
 		objectTypes: []string{"dcim.device"},
 		description: "Free-text describing the location of the device",
 	}, true)
@@ -144,7 +144,7 @@ func TestEnsureCustomField_UpdatesDescriptionAndTypes(t *testing.T) {
 func TestEnsureCustomField_VerifyOnlyDoesNotCreate(t *testing.T) {
 	api := &fakeCheckAPI{}
 	_, err := ensureCustomField(api, cfSpec{
-		name: "location", typ: netboxtool.CFTypeText,
+		name: "location", typ: cfTypeText,
 		objectTypes: []string{"dcim.device"},
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "not defined") {

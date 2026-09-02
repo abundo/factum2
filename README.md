@@ -336,7 +336,9 @@ setup: a webhook whose URL is `{PublicBaseURL}/api/netbox-webhook`, enabled
 event rules covering Device / Interface / IP Address / Cable / Site
 create+update+delete,
 and reports the custom fields factum needs. Pass `--update` to create
-missing fields and patch drifted label/description/group/object types
+the factum webhook (`factum-sync` at `{PublicBaseURL}/api/netbox-webhook`)
+and its event rule when missing, patch drifted webhook HTTP settings,
+and create missing custom fields / patch drifted label/description/group/object types
 (never `required`, and never a type change: NetBox forbids that). Selection fields without a prescribed
 choice list (`role`) are reported if missing; NetBox will not accept a
 select field with no choices. Missing `alarm_destination` /
@@ -344,9 +346,10 @@ select field with no choices. Missing `alarm_destination` /
 SLA windows) and those lists are never updated if the field already
 exists. `connection_method` gets a `ssh`/`telnet` choice set.
 Integration fields (`becs_oid`, `librenms_id`, `optical_role`) are
-only created when that source/destination is enabled. The webhook
-secret is write-only in NetBox, so the check only confirms factum has one
-configured. Exits non-zero if anything required cannot be fixed.
+only created when that source/destination is enabled. Creating a webhook
+requires `PublicBaseURL` and the webhook secret in Settings; the secret
+is write-only in NetBox, so a verify-only check only confirms factum has
+one configured. Exits non-zero if anything required cannot be fixed.
 
 ## License
 

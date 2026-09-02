@@ -52,7 +52,7 @@ type ParamsSync struct {
 
 type ParamsCheck struct {
 	Params
-	Update bool `descr:"Create or update custom fields that are missing or drifted" optional:"true"`
+	Update bool `descr:"Create or update webhooks, event rules and custom fields that are missing or drifted" optional:"true"`
 }
 
 // newNetbox connects to the database to read the Netbox API URL/token from
@@ -152,7 +152,7 @@ func main() {
 
 			boa.CmdT[ParamsCheck]{
 				Use:   "check",
-				Short: "Verify Netbox webhooks, event rules and custom fields; --update creates/updates fields",
+				Short: "Verify Netbox webhooks, event rules and custom fields; --update creates/updates them",
 				RunFuncE: func(p *ParamsCheck, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 					opts := netbox.CheckOptions{Update: p.Update}

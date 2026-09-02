@@ -1,6 +1,7 @@
 package netbox
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -11,23 +12,110 @@ import (
 )
 
 type fakeCheckAPI struct {
-	hooks       []*netboxtool.NBWebhook
-	rules       []*netboxtool.NBEventRule
-	fields      map[string]*netboxtool.NBCustomField
-	sets        map[string]*netboxtool.NBChoiceSet
-	ensuredSets []string
-	created     []netboxtool.CustomFieldWrite
-	updated     []uint
-	hookErr     error
-	ruleErr     error
-	cfErr       error
+	hooks        []*NBWebhook
+	rules        []*NBEventRule
+	fields       map[string]*netboxtool.NBCustomField
+	sets         map[string]*NBChoiceSet
+	ensuredSets  []string
+	created      []CustomFieldWrite
+	updated      []uint
+	createdHooks []WebhookWrite
+	updatedHooks []uint
+	createdRules []EventRuleWrite
+	updatedRules []uint
+	hookErr      error
+	ruleErr      error
+	cfErr        error
 }
 
-func (f *fakeCheckAPI) GetWebhooks() ([]*netboxtool.NBWebhook, error) {
+func (f *fakeCheckAPI) GetWebhooks() ([]*NBWebhook, error) {
 	return f.hooks, f.hookErr
 }
-func (f *fakeCheckAPI) GetEventRules() ([]*netboxtool.NBEventRule, error) {
+func (f *fakeCheckAPI) GetEventRules() ([]*NBEventRule, error) {
 	return f.rules, f.ruleErr
+}
+func (f *fakeCheckAPI) CreateWebhook(w WebhookWrite) (*NBWebhook, error) {
+	f.createdHooks = append(f.createdHooks, w)
+	h := &NBWebhook{
+		NetboxID:        uint(200 + len(f.createdHooks)),
+		Name:            w.Name,
+		PayloadURL:      w.PayloadURL,
+		HTTPMethod:      w.HTTPMethod,
+		HTTPContentType: w.HTTPContentType,
+		BodyTemplate:    w.BodyTemplate,
+	}
+	if h.HTTPMethod == "" {
+		h.HTTPMethod = "POST"
+	}
+	if h.HTTPContentType == "" {
+		h.HTTPContentType = "application/json"
+	}
+	f.hooks = append(f.hooks, h)
+	return h, nil
+}
+func (f *fakeCheckAPI) UpdateWebhook(id uint, changes map[string]any) (*NBWebhook, error) {
+	f.updatedHooks = append(f.updatedHooks, id)
+	for _, h := range f.hooks {
+		if h.NetboxID != id {
+			continue
+		}
+		if v, ok := changes["payload_url"].(string); ok {
+			h.PayloadURL = v
+		}
+		if v, ok := changes["http_method"].(string); ok {
+			h.HTTPMethod = v
+		}
+		if v, ok := changes["http_content_type"].(string); ok {
+			h.HTTPContentType = v
+		}
+		if v, ok := changes["body_template"].(string); ok {
+			h.BodyTemplate = v
+		}
+		if v, ok := changes["name"].(string); ok {
+			h.Name = v
+		}
+		return h, nil
+	}
+	return nil, fmt.Errorf("webhook %d not found", id)
+}
+func (f *fakeCheckAPI) CreateEventRule(w EventRuleWrite) (*NBEventRule, error) {
+	f.createdRules = append(f.createdRules, w)
+	r := &NBEventRule{
+		NetboxID:       uint(300 + len(f.createdRules)),
+		Name:           w.Name,
+		Enabled:        w.Enabled,
+		ObjectTypes:    append([]string{}, w.ObjectTypes...),
+		EventTypes:     append([]string{}, w.EventTypes...),
+		ActionType:     w.ActionType,
+		ActionObjectID: w.ActionObjectID,
+	}
+	if r.ActionType == "" {
+		r.ActionType = "webhook"
+	}
+	f.rules = append(f.rules, r)
+	return r, nil
+}
+func (f *fakeCheckAPI) UpdateEventRule(id uint, changes map[string]any) (*NBEventRule, error) {
+	f.updatedRules = append(f.updatedRules, id)
+	for _, r := range f.rules {
+		if r.NetboxID != id {
+			continue
+		}
+		if v, ok := changes["object_types"].([]string); ok {
+			r.ObjectTypes = v
+		}
+		if v, ok := changes["event_types"].([]string); ok {
+			r.EventTypes = v
+		}
+		if v, ok := changes["enabled"].(bool); ok {
+			r.Enabled = v
+		}
+		if v, ok := changes["name"].(string); ok {
+			r.Name = v
+		}
+		return r, nil
+	}
+	return nil, fmt.Errorf("event rule %d not found", id)
 }
 func (f *fakeCheckAPI) GetCustomField(name string) (*netboxtool.NBCustomField, error) {
 	if f.cfErr != nil {
@@ -38,19 +126,19 @@ func (f *fakeCheckAPI) GetCustomField(name string) (*netboxtool.NBCustomField, e
 	}
 	return f.fields[name], nil
 }
-func (f *fakeCheckAPI) EnsureCustomFieldChoiceSet(name string, choices [][2]string) (*netboxtool.NBChoiceSet, error) {
+func (f *fakeCheckAPI) EnsureCustomFieldChoiceSet(name string, choices [][2]string) (*NBChoiceSet, error) {
 	f.ensuredSets = append(f.ensuredSets, name)
 	if f.sets == nil {
-		f.sets = map[string]*netboxtool.NBChoiceSet{}
+		f.sets = map[string]*NBChoiceSet{}
 	}
 	if set := f.sets[name]; set != nil {
 		return set, nil
 	}
-	set := &netboxtool.NBChoiceSet{NetboxID: uint(len(f.sets) + 1), Name: name, ExtraChoices: choices}
+	set := &NBChoiceSet{NetboxID: uint(len(f.sets) + 1), Name: name, ExtraChoices: choices}
 	f.sets[name] = set
 	return set, nil
 }
-func (f *fakeCheckAPI) CreateCustomField(w netboxtool.CustomFieldWrite) (*netboxtool.NBCustomField, error) {
+func (f *fakeCheckAPI) CreateCustomField(w CustomFieldWrite) (*netboxtool.NBCustomField, error) {
 	f.created = append(f.created, w)
 	if f.fields == nil {
 		f.fields = map[string]*netboxtool.NBCustomField{}
@@ -122,8 +210,8 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	return out
 }
 
-func factumHook() *netboxtool.NBWebhook {
-	return &netboxtool.NBWebhook{
+func factumHook() *NBWebhook {
+	return &NBWebhook{
 		NetboxID:        3,
 		Name:            "factum-sync",
 		PayloadURL:      "https://factum.example.com/api/netbox-webhook",
@@ -132,8 +220,8 @@ func factumHook() *netboxtool.NBWebhook {
 	}
 }
 
-func fullRule() *netboxtool.NBEventRule {
-	return &netboxtool.NBEventRule{
+func fullRule() *NBEventRule {
+	return &NBEventRule{
 		NetboxID:       7,
 		Name:           "factum",
 		Enabled:        true,
@@ -172,8 +260,8 @@ func TestWebhookURLMatches(t *testing.T) {
 
 func TestCheckDB_OK(t *testing.T) {
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: allDeviceCFs(),
 	}
 	err := CheckDB(api, baseSettings(), CheckOptions{}, jobevent.NewConsoleReporter(io.Discard))
@@ -194,8 +282,8 @@ func TestCheckDB_MissingDeviceDeleteEvent(t *testing.T) {
 	rule := fullRule()
 	rule.EventTypes = []string{"object_created", "object_updated"}
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{rule},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{rule},
 		fields: allDeviceCFs(),
 	}
 	err := CheckDB(api, baseSettings(), CheckOptions{}, jobevent.NewConsoleReporter(io.Discard))
@@ -211,8 +299,8 @@ func TestCheckDB_DisabledRuleIgnored(t *testing.T) {
 	rule := fullRule()
 	rule.Enabled = false
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{rule},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{rule},
 		fields: allDeviceCFs(),
 	}
 	if err := CheckDB(api, baseSettings(), CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
@@ -229,8 +317,8 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 	iface.Name = "ifaces"
 	iface.ObjectTypes = []string{"dcim.interface", "ipam.ipaddress", "dcim.cable", "dcim.site"}
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{device, iface},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{device, iface},
 		fields: allDeviceCFs(),
 	}
 	if err := CheckDB(api, baseSettings(), CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
@@ -241,8 +329,8 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 func TestCheckDB_BecsOIDOnlyWhenEnabled(t *testing.T) {
 	fields := allDeviceCFs()
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
@@ -268,8 +356,8 @@ func TestCheckDB_BecsOIDOnlyWhenEnabled(t *testing.T) {
 func TestCheckDB_LibrenmsIDOnlyWhenEnabled(t *testing.T) {
 	fields := allDeviceCFs()
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
@@ -298,8 +386,8 @@ func TestCheckDB_BecsOIDMissingObjectType(t *testing.T) {
 		ObjectTypes: []string{"dcim.device"},
 	}
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
@@ -319,8 +407,8 @@ func TestCheckDB_BecsOIDMissingObjectType(t *testing.T) {
 func TestCheckDB_OpticalRoleWhenEnabled(t *testing.T) {
 	fields := allDeviceCFs()
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
@@ -345,8 +433,8 @@ func TestCheckDB_OpticalKindAliasSatisfiesOpticalRole(t *testing.T) {
 		ObjectTypes: []string{"dcim.device", "dcim.interface"},
 	}
 	api := &fakeCheckAPI{
-		hooks:  []*netboxtool.NBWebhook{factumHook()},
-		rules:  []*netboxtool.NBEventRule{fullRule()},
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
@@ -394,4 +482,117 @@ func contains(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestCheckDB_CreatesWebhookAndEventRule(t *testing.T) {
+	api := &fakeCheckAPI{fields: allDeviceCFs()}
+	if err := CheckDB(api, baseSettings(), CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("CheckDB: %v", err)
+	}
+	if len(api.createdHooks) != 1 {
+		t.Fatalf("createdHooks = %d, want 1", len(api.createdHooks))
+	}
+	if api.createdHooks[0].PayloadURL != "https://factum.example.com/api/netbox-webhook" {
+		t.Fatalf("payload_url = %q", api.createdHooks[0].PayloadURL)
+	}
+	if api.createdHooks[0].Secret != "s" {
+		t.Fatal("secret not written on create")
+	}
+	if len(api.createdRules) != 1 {
+		t.Fatalf("createdRules = %d, want 1", len(api.createdRules))
+	}
+	if api.createdRules[0].ActionObjectID != 201 {
+		t.Fatalf("action_object_id = %d, want 201", api.createdRules[0].ActionObjectID)
+	}
+	if !contains(api.createdRules[0].EventTypes, "object_deleted") {
+		t.Fatalf("event types = %v", api.createdRules[0].EventTypes)
+	}
+}
+
+func TestCheckDB_UpdateRequiresPublicBaseURL(t *testing.T) {
+	api := &fakeCheckAPI{fields: allDeviceCFs()}
+	s := baseSettings()
+	s.PublicBaseURL = ""
+	err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard))
+	if err == nil {
+		t.Fatal("expected failure without PublicBaseURL")
+	}
+	if len(api.createdHooks) != 0 {
+		t.Fatal("must not create a webhook without PublicBaseURL")
+	}
+}
+
+func TestCheckDB_UpdatePatchesWebhookMethod(t *testing.T) {
+	h := factumHook()
+	h.HTTPMethod = "GET"
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{h},
+		rules:  []*NBEventRule{fullRule()},
+		fields: allDeviceCFs(),
+	}
+	if err := CheckDB(api, baseSettings(), CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("CheckDB: %v", err)
+	}
+	if len(api.updatedHooks) != 1 {
+		t.Fatalf("updatedHooks = %v, want [3]", api.updatedHooks)
+	}
+	if api.hooks[0].HTTPMethod != "POST" {
+		t.Fatalf("http_method = %q, want POST", api.hooks[0].HTTPMethod)
+	}
+}
+
+func TestCheckDB_UpdateAddsMissingEvents(t *testing.T) {
+	rule := fullRule()
+	rule.EventTypes = []string{"object_created", "object_updated"}
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{rule},
+		fields: allDeviceCFs(),
+	}
+	if err := CheckDB(api, baseSettings(), CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("CheckDB: %v", err)
+	}
+	if len(api.updatedRules) != 1 {
+		t.Fatalf("updatedRules = %v, want [7]", api.updatedRules)
+	}
+	if !contains(api.rules[0].EventTypes, "object_deleted") {
+		t.Fatalf("event types = %v, want object_deleted added", api.rules[0].EventTypes)
+	}
+}
+
+func TestCheckDB_CreatesEventRuleForExistingWebhook(t *testing.T) {
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{factumHook()},
+		fields: allDeviceCFs(),
+	}
+	if err := CheckDB(api, baseSettings(), CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("CheckDB: %v", err)
+	}
+	if len(api.createdRules) != 1 {
+		t.Fatalf("createdRules = %d, want 1", len(api.createdRules))
+	}
+	if api.createdRules[0].ActionObjectID != 3 {
+		t.Fatalf("action_object_id = %d, want 3", api.createdRules[0].ActionObjectID)
+	}
+}
+
+func TestCheckDB_RetargetsNamedWebhook(t *testing.T) {
+	api := &fakeCheckAPI{
+		hooks: []*NBWebhook{{
+			NetboxID:   9,
+			Name:       factumWebhookName,
+			PayloadURL: "https://old.example.com/api/netbox-webhook",
+			HTTPMethod: "POST",
+		}},
+		fields: allDeviceCFs(),
+	}
+	if err := CheckDB(api, baseSettings(), CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("CheckDB: %v", err)
+	}
+	if len(api.createdHooks) != 0 {
+		t.Fatal("should retarget the existing named webhook, not create")
+	}
+	if len(api.updatedHooks) != 1 || api.hooks[0].PayloadURL != "https://factum.example.com/api/netbox-webhook" {
+		t.Fatalf("payload_url = %q", api.hooks[0].PayloadURL)
+	}
 }
