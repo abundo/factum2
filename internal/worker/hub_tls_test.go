@@ -102,6 +102,40 @@ func TestConnectOnceWSSSkipVerify(t *testing.T) {
 	assertConnectOnceHello(t, node)
 }
 
+func TestConnectOnceWSSRejectsSANMismatch(t *testing.T) {
+	certPEM, keyPEM := generateHubTestCert(t, "wrong.example")
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := New(&util.ConfigWorker{
+		Token: "secret",
+		Commands: map[string]util.ConfigWorkerCommand{
+			"dns": {Cmd: "/bin/true"},
+		},
+	})
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(w.handleHubConn))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, NextProtos: []string{"http/1.1"}}
+	srv.StartTLS()
+	defer srv.Close()
+
+	m := NewRemoteManager(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = m.connectOnce(ctx, models.WorkerNode{
+		Name:    "n1",
+		Address: hubTestAddr(t, srv),
+		Token:   "secret",
+		TLSCA:   string(certPEM),
+	})
+	if err == nil {
+		t.Fatal("dial succeeded against cert whose SAN does not match Address")
+	}
+	if !strings.Contains(err.Error(), "tls") && !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("err = %v, want a TLS/certificate verification error", err)
+	}
+}
+
 func TestConnectOnceWSSRejectsUntrustedCert(t *testing.T) {
 	srv, _ := startHubTLSTestServer(t, "secret")
 	defer srv.Close()

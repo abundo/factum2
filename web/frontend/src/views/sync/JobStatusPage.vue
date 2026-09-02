@@ -18,6 +18,7 @@ const nodeColumns = [
   { accessorKey: 'hostname', header: 'Hostname' },
   { id: 'roles', header: 'Roles' },
   { id: 'last_seen', header: 'Last seen' },
+  { accessorKey: 'last_error', header: 'Last error' },
 ]
 
 function loadStatus() {
@@ -170,6 +171,11 @@ onMounted(() => {
         </div>
       </template>
       <template #last_seen-cell="{ row }">{{ formatLastSeen(row.original.last_seen) }}</template>
+      <template #last_error-cell="{ row }">
+        <span v-if="row.original.last_error" class="text-red-500 text-sm whitespace-pre-wrap">{{
+          row.original.last_error
+        }}</span>
+      </template>
     </UTable>
   </div>
 

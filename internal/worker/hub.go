@@ -898,7 +898,14 @@ func (m *RemoteManager) dialLoop(nodeCtx context.Context, node models.WorkerNode
 			return
 		}
 		if err != nil {
-			slog.Debug("worker hub: connection ended", "node", node.Name, "address", node.Address, "err", err)
+			if connected {
+				slog.Debug("worker hub: connection ended", "node", node.Name, "address", node.Address, "err", err)
+			} else {
+				// Dial/handshake never reached hello. The agent only sees
+				// "remote error: tls: bad certificate"; this is the x509
+				// reason (SAN mismatch, untrusted CA, CN-only cert).
+				slog.Warn("worker hub: dial failed", "node", node.Name, "address", node.Address, "err", err)
+			}
 		}
 		if connected {
 			backoff = dialBackoffMin
