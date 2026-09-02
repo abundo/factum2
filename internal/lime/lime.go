@@ -77,7 +77,7 @@ func (lime *Lime) SaveDelivery(row *models.Service) error {
 // by factum ID - same reason as SaveCustomer. NotifyMaintenance is
 // factum-owned (the operator toggle on the contacts page, including for
 // Lime-synced rows) so a resync must not reset it; new Lime persons default
-// it to true to match a manually created contact.
+// it to false so they are not mailed until an operator opts them in.
 func (lime *Lime) SaveContact(row *models.Contact) error {
 	var contact models.Contact
 	res := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).Find(&contact)
@@ -85,7 +85,7 @@ func (lime *Lime) SaveContact(row *models.Contact) error {
 		row.ID = contact.ID
 		row.NotifyMaintenance = contact.NotifyMaintenance
 	} else {
-		row.NotifyMaintenance = true
+		row.NotifyMaintenance = false
 	}
 	return lime.DB.Save(row).Error
 }

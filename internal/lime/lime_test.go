@@ -148,8 +148,8 @@ func TestSaveContactCreatesWithNotifyDefault(t *testing.T) {
 	if row.ID == 0 {
 		t.Fatal("expected assigned ID")
 	}
-	if !row.NotifyMaintenance {
-		t.Error("new Lime contact should default NotifyMaintenance true")
+	if row.NotifyMaintenance {
+		t.Error("new Lime contact should default NotifyMaintenance false")
 	}
 
 	var stored models.Contact
@@ -169,8 +169,8 @@ func TestSaveContactPreservesNotifyMaintenance(t *testing.T) {
 	if err := l.SaveContact(&row); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := db.Model(&row).Update("notify_maintenance", false).Error; err != nil {
-		t.Fatalf("operator opt-out: %v", err)
+	if err := db.Model(&row).Update("notify_maintenance", true).Error; err != nil {
+		t.Fatalf("operator opt-in: %v", err)
 	}
 
 	again := contactFromPerson(limetoolmodels.LimePerson{ID: 2, Name: "Ada Lovelace", Email: "new@example.com", Phone: "2"}, 2)
@@ -180,7 +180,7 @@ func TestSaveContactPreservesNotifyMaintenance(t *testing.T) {
 	if again.ID != row.ID {
 		t.Errorf("ID = %d, want existing %d", again.ID, row.ID)
 	}
-	if again.NotifyMaintenance {
+	if !again.NotifyMaintenance {
 		t.Error("resync reset NotifyMaintenance")
 	}
 	if again.Name != "Ada Lovelace" || again.Email != "new@example.com" || again.Phone != "2" {
