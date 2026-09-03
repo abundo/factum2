@@ -68,16 +68,6 @@ const items = computed(() => {
     groups.push([
       { type: 'label', label: 'Admin' },
       {
-        label: 'AAA',
-        icon: 'i-lucide-shield-check',
-        children: [
-          { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
-          { label: 'Roles', icon: 'i-lucide-shield', to: '/admin/roles' },
-          { label: 'Authentication', icon: 'i-lucide-key', to: '/admin/authentication' },
-          { label: 'Authorization', icon: 'i-lucide-lock', to: '/admin/authorization' },
-        ],
-      },
-      {
         label: 'Settings',
         icon: 'i-lucide-settings',
         children: [
@@ -94,6 +84,16 @@ const items = computed(() => {
           },
           { label: 'Worker nodes', icon: 'i-lucide-server-cog', to: '/admin/worker-nodes' },
           { label: 'Device sync', icon: 'i-lucide-key-round', to: '/admin/device-sync' },
+        ],
+      },
+      {
+        label: 'AAA',
+        icon: 'i-lucide-shield-check',
+        children: [
+          { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
+          { label: 'Roles', icon: 'i-lucide-shield', to: '/admin/roles' },
+          { label: 'Authentication', icon: 'i-lucide-key', to: '/admin/authentication' },
+          { label: 'Authorization', icon: 'i-lucide-lock', to: '/admin/authorization' },
         ],
       },
     ])
