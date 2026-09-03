@@ -30,6 +30,12 @@ const router = createRouter({
           component: () => import('@/views/DashboardPage.vue'),
         },
         {
+          path: '/about',
+          name: 'about',
+          meta: { title: 'About' },
+          component: () => import('@/views/AboutPage.vue'),
+        },
+        {
           path: '/tenant/customer',
           name: 'customers',
           meta: { requiresRead: true, requiresOrganization: true },

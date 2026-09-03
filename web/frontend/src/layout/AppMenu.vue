@@ -8,7 +8,7 @@ const items = computed(() => {
   const groups = [
     [
       { type: 'label', label: 'Home' },
-      { label: 'Dashboard', icon: 'i-lucide-home', to: '/' },
+      { label: 'Dashboard', icon: 'i-lucide-home', to: '/', exact: true },
     ],
   ]
 

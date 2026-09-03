@@ -7,6 +7,8 @@ defineProps({
   compact: { type: Boolean, default: false },
 })
 
+const GITHUB_URL = 'https://github.com/abundo/factum2'
+
 const { info } = useVersion()
 const copied = ref(false)
 
@@ -67,7 +69,30 @@ function copyCommit() {
         {{ shortCommit }}
       </button>
       <span v-if="displayDate">{{ displayDate }}</span>
-      <span v-if="info.go_version" class="font-mono">{{ info.go_version }}</span>
+      <div class="-ml-1.5 mt-1 flex items-center">
+        <UButton
+          icon="i-lucide-github"
+          variant="ghost"
+          color="neutral"
+          size="xs"
+          square
+          :href="GITHUB_URL"
+          target="_blank"
+          external
+          title="GitHub repository"
+          aria-label="GitHub repository"
+        />
+        <UButton
+          icon="i-lucide-info"
+          variant="ghost"
+          color="neutral"
+          size="xs"
+          square
+          to="/about"
+          title="About Factum"
+          aria-label="About Factum"
+        />
+      </div>
     </div>
   </div>
 </template>
