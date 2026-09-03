@@ -31,8 +31,9 @@ type ParamsGetElement struct {
 
 type ParamsSync struct {
 	Params
-	Name string `required:"false"`
-	Job  bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+	Name   string `required:"false"`
+	Job    bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+	DryRun bool   `descr:"Show the Netbox creates/updates/deletes BECS sync would apply, without writing to Netbox or factum" optional:"true"`
 }
 
 func main() {
@@ -82,7 +83,7 @@ func main() {
 					if p.Job {
 						reporter = jobevent.NewStdoutReporter(os.Stdout)
 					}
-					return becs.Sync(&p.Config, p.Name, reporter)
+					return becs.Sync(&p.Config, p.Name, reporter, p.DryRun)
 				},
 			},
 		),

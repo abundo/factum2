@@ -115,6 +115,7 @@ type Syncer struct {
 	created int
 	updated int
 	deleted int
+	dryRun  bool
 }
 
 func (s *Syncer) note(err error) {
@@ -180,9 +181,15 @@ func ifaceByName(d *netboxtool.NBDevice) map[string]*netboxtool.NBInterface {
 // have a non-zero becs_oid custom field against them, then runs
 // netbox.Sync so factum sees the result. If name is set, only that
 // device is created/updated/deleted (the full BECS tree is still loaded
-// — parent/opaque lookup walks it).
-func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
-	reporter.Emit(jobevent.Info, "BECS sync started")
+// — parent/opaque lookup walks it). dryRun plans the same Netbox writes
+// and reports the exact payloads, but does not apply them or run the
+// factum half.
+func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter, dryRun bool) error {
+	if dryRun {
+		reporter.Emit(jobevent.Info, "BECS sync dry-run: no writes to Netbox or factum")
+	} else {
+		reporter.Emit(jobevent.Info, "BECS sync started")
+	}
 
 	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
@@ -222,12 +229,18 @@ func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 		types:    map[string]*netboxtool.NetboxDeviceTypeDetail{},
 		nbByName: map[string]*netboxtool.NBDevice{},
 		nbByOID:  map[uint]*netboxtool.NBDevice{},
+		dryRun:   dryRun,
 	}
 	if err := s.run(name); err != nil {
 		return err
 	}
 
 	reporter.Emit(jobevent.Info, "BECS→Netbox: %d created, %d updated, %d deleted", s.created, s.updated, s.deleted)
+
+	if s.dryRun {
+		reporter.Emit(jobevent.Info, "dry-run: no changes applied")
+		return s.result()
+	}
 
 	if !s.changed {
 		return nil
@@ -288,6 +301,9 @@ func (s *Syncer) run(name string) error {
 		if oid := deviceBecsOID(d); oid != 0 {
 			s.nbByOID[oid] = d
 		}
+	}
+	if s.dryRun {
+		s.nb = newDryRunAPI(s.nb, nbDevices)
 	}
 
 	becsByOID := make(map[int]*Device, len(becsDevices))
@@ -495,7 +511,7 @@ func (s *Syncer) syncDevices(becsByOID map[int]*Device, becsByName map[string]*D
 	}
 
 	for _, d := range toDelete {
-		s.reporter.Emit(jobevent.Info, "Deleting Netbox device %s", d.Name)
+		s.emitWrite("delete Netbox device %s (id=%d)", d.Name, d.NetboxID)
 		if err := s.nb.DeleteDevice(int(d.NetboxID)); err != nil {
 			s.note(fmt.Errorf("delete device %s: %w", d.Name, err))
 			continue
@@ -519,10 +535,9 @@ func (s *Syncer) syncDevices(becsByOID map[int]*Device, becsByName map[string]*D
 	}
 
 	for _, fix := range toSetOID {
-		s.reporter.Emit(jobevent.Info, "Setting becs_oid on %s to %d", fix.device.Name, fix.oid)
-		if err := s.nb.UpdateDevice(fix.device.NetboxID, map[string]any{
-			"custom_fields": map[string]any{"becs_oid": fix.oid},
-		}); err != nil {
+		payload := map[string]any{"custom_fields": map[string]any{"becs_oid": fix.oid}}
+		s.emitWrite("update device %s: %s", fix.device.Name, formatPayload(payload))
+		if err := s.nb.UpdateDevice(fix.device.NetboxID, payload); err != nil {
 			s.note(fmt.Errorf("set becs_oid on %s: %w", fix.device.Name, err))
 			continue
 		}
@@ -572,15 +587,16 @@ func (s *Syncer) createDevice(b *Device) error {
 		cf["monitor_librenms"] = true
 	}
 
-	s.reporter.Emit(jobevent.Info, "Creating Netbox device %s", b.ShortName)
-	created, err := s.nb.CreateDevice(b.ShortName, map[string]any{
+	payload := map[string]any{
 		"site":          s.siteID,
 		"device_type":   dt.ID,
 		"role":          s.roleID,
 		"platform":      s.platformID,
 		"status":        status,
 		"custom_fields": cf,
-	})
+	}
+	s.emitWrite("create Netbox device %s: %s", b.ShortName, formatPayload(payload))
+	created, err := s.nb.CreateDevice(b.ShortName, payload)
 	if err != nil {
 		return err
 	}
@@ -590,6 +606,9 @@ func (s *Syncer) createDevice(b *Device) error {
 			d.CustomFields = map[string]any{}
 		}
 		d.CustomFields[becsOIDField] = uint(b.OID)
+		if s.dryRun {
+			d.ModelName = b.Model
+		}
 		s.remember(d)
 	}
 	s.changed = true
@@ -613,7 +632,7 @@ func (s *Syncer) saveDevice(d *netboxtool.NBDevice, update map[string]any, cf ma
 		}
 	}
 	oldName := d.Name
-	s.reporter.Emit(jobevent.Info, "Updating device %s", d.Name)
+	s.emitWrite("update device %s: %s", d.Name, formatPayload(update))
 	if err := s.nb.UpdateDevice(d.NetboxID, update); err != nil {
 		s.note(fmt.Errorf("update device %s: %w", d.Name, err))
 		return
@@ -677,7 +696,7 @@ func (s *Syncer) syncInterfaces(d *netboxtool.NBDevice, b *Device) {
 		if _, ok := b.InterfacesOID[int(oid)]; ok {
 			continue
 		}
-		s.reporter.Emit(jobevent.Info, "Netbox %s: delete interface %s", d.Name, iface.Name)
+		s.emitWrite("delete interface %s/%s (id=%d)", d.Name, iface.Name, iface.NetboxID)
 		if err := s.nb.InterfaceDelete(int(iface.NetboxID)); err != nil {
 			s.note(fmt.Errorf("delete interface %s/%s: %w", d.Name, iface.Name, err))
 			continue
@@ -705,24 +724,24 @@ func (s *Syncer) syncInterfaces(d *netboxtool.NBDevice, b *Device) {
 			continue
 		}
 		if iface, ok := byName[bIface.Name]; ok {
-			s.reporter.Emit(jobevent.Info, "Netbox %s: set becs_oid on interface %s", d.Name, bIface.Name)
-			if err := s.nb.InterfaceUpdate(int(iface.NetboxID), map[string]any{
-				"custom_fields": map[string]any{"becs_oid": bIface.OID},
-			}); err != nil {
+			payload := map[string]any{"custom_fields": map[string]any{"becs_oid": bIface.OID}}
+			s.emitWrite("update interface %s/%s: %s", d.Name, bIface.Name, formatPayload(payload))
+			if err := s.nb.InterfaceUpdate(int(iface.NetboxID), payload); err != nil {
 				s.note(fmt.Errorf("set interface becs_oid %s/%s: %w", d.Name, bIface.Name, err))
 				continue
 			}
 			created = true
 			continue
 		}
-		s.reporter.Emit(jobevent.Info, "Netbox %s: create interface %s", d.Name, bIface.Name)
-		if _, err := s.nb.CreateInterfaceWithOptions(d.NetboxID, bIface.Name, map[string]any{
+		payload := map[string]any{
 			"type":    ifaceType(dt, bIface.Name),
 			"enabled": bIface.Enabled,
 			"custom_fields": map[string]any{
 				"becs_oid": bIface.OID,
 			},
-		}); err != nil {
+		}
+		s.emitWrite("create interface %s/%s: %s", d.Name, bIface.Name, formatPayload(payload))
+		if _, err := s.nb.CreateInterfaceWithOptions(d.NetboxID, bIface.Name, payload); err != nil {
 			s.note(fmt.Errorf("create interface %s/%s: %w", d.Name, bIface.Name, err))
 			continue
 		}
@@ -780,7 +799,7 @@ func (s *Syncer) syncInterfaceSettings(d *netboxtool.NBDevice, b *Device) {
 					continue
 				}
 			}
-			s.reporter.Emit(jobevent.Info, "Updating interface %s/%s", d.Name, oldName)
+			s.emitWrite("update interface %s/%s: %s", d.Name, oldName, formatPayload(u.changes))
 			if err := s.nb.InterfaceUpdate(int(u.id), u.changes); err != nil {
 				s.note(fmt.Errorf("update interface %s/%s: %w", d.Name, oldName, err))
 			}
@@ -791,7 +810,7 @@ func (s *Syncer) syncInterfaceSettings(d *netboxtool.NBDevice, b *Device) {
 		if !progress {
 			// Cycle of renames — apply the rest anyway and let Netbox error.
 			for oldName, u := range updates {
-				s.reporter.Emit(jobevent.Info, "Updating interface %s/%s", d.Name, oldName)
+				s.emitWrite("update interface %s/%s: %s", d.Name, oldName, formatPayload(u.changes))
 				if err := s.nb.InterfaceUpdate(int(u.id), u.changes); err != nil {
 					s.note(fmt.Errorf("update interface %s/%s: %w", d.Name, oldName, err))
 				}
@@ -825,7 +844,7 @@ func (s *Syncer) syncAddressesDelete(d *netboxtool.NBDevice, b *Device) {
 		if !del {
 			continue
 		}
-		s.reporter.Emit(jobevent.Info, "Netbox %s/%s: delete address %s", d.Name, iface.Name, have.Address)
+		s.emitWrite("delete address %s/%s %s (id=%d)", d.Name, iface.Name, have.Address, have.NetboxID)
 		if err := s.nb.AddressDelete(int(have.NetboxID)); err != nil {
 			s.note(fmt.Errorf("delete address %s/%s %s: %w", d.Name, iface.Name, have.Address, err))
 			continue
@@ -861,10 +880,9 @@ func (s *Syncer) syncAddressesCreate(d *netboxtool.NBDevice, b *Device) {
 			continue
 		}
 		if have == nil {
-			s.reporter.Emit(jobevent.Info, "Netbox %s/%s: create address %s", d.Name, iface.Name, want.Address)
-			created, err := s.nb.CreateInterfaceAddress(iface.NetboxID, want.Address, map[string]any{
-				"custom_fields": map[string]any{"becs_oid": want.OID},
-			})
+			payload := map[string]any{"custom_fields": map[string]any{"becs_oid": want.OID}}
+			s.emitWrite("create address %s/%s %s: %s", d.Name, iface.Name, want.Address, formatPayload(payload))
+			created, err := s.nb.CreateInterfaceAddress(iface.NetboxID, want.Address, payload)
 			if err != nil {
 				s.note(fmt.Errorf("create address %s/%s %s: %w", d.Name, iface.Name, want.Address, err))
 				continue
@@ -874,7 +892,7 @@ func (s *Syncer) syncAddressesCreate(d *netboxtool.NBDevice, b *Device) {
 		}
 		if strings.EqualFold(iface.Name, "loopback0") && have != nil {
 			if d.PrimaryIPv4ID == 0 || d.PrimaryIPv4ID != have.NetboxID {
-				s.reporter.Emit(jobevent.Info, "Netbox %s: set primary_ip4 to %s", d.Name, have.Address)
+				s.emitWrite("set primary_ip4 on %s to %s", d.Name, have.Address)
 				deviceUpdate["primary_ip4"] = have.NetboxID
 			}
 		}

@@ -454,5 +454,193 @@ func TestJoinParents(t *testing.T) {
 	}
 }
 
+func reporterText(s *Syncer) string {
+	return strings.Join(s.reporter.(*testReporter).lines, "\n")
+}
+
+func assertContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if !strings.Contains(haystack, needle) {
+		t.Fatalf("missing %q in:\n%s", needle, haystack)
+	}
+}
+
+func assertNoWrites(t *testing.T, nb *fakeNetbox) {
+	t.Helper()
+	if len(nb.createdNames) != 0 || len(nb.deletedIDs) != 0 || len(nb.updates) != 0 ||
+		len(nb.createdIfs) != 0 || len(nb.deletedIfs) != 0 ||
+		len(nb.createdAddrs) != 0 || len(nb.deletedAddrs) != 0 {
+		t.Fatalf("dry-run wrote to netbox: created=%v deleted=%v updates=%v ifs=%v delifs=%v addrs=%v deladdrs=%v",
+			nb.createdNames, nb.deletedIDs, nb.updates, nb.createdIfs, nb.deletedIfs, nb.createdAddrs, nb.deletedAddrs)
+	}
+}
+
+func testDeviceType() *netboxtool.NetboxDeviceTypeDetail {
+	return &netboxtool.NetboxDeviceTypeDetail{
+		ID:    10,
+		Model: "ASR7348",
+		Interfaces: []netboxtool.NetboxInterfaceTemplate{
+			{Name: "loopback0", Type: "virtual"},
+			{Name: "vlan1", Type: "virtual"},
+		},
+	}
+}
+
+func TestDryRunCreateDoesNotWrite(t *testing.T) {
+	nb := &fakeNetbox{
+		deviceTypes: map[string]*netboxtool.NetboxDeviceTypeDetail{
+			"Waystream/ASR7348": testDeviceType(),
+		},
+		site:     &netboxtool.NetboxNamedRef{ID: 1, Name: "Default"},
+		role:     &netboxtool.NetboxNamedRef{ID: 2, Slug: "access-nod"},
+		platform: &netboxtool.NetboxNamedRef{ID: 3, Slug: "ibos"},
+	}
+	s := newTestSyncer(t, nb)
+	s.dryRun = true
+	if err := s.run(""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertNoWrites(t, nb)
+
+	out := reporterText(s)
+	assertContains(t, out, "dry-run: would create Netbox device test-lab2:")
+	assertContains(t, out, `"becs_oid":3641645`)
+	assertContains(t, out, `"status":"active"`)
+	assertContains(t, out, `"parents":"core1.example.com"`)
+	assertContains(t, out, "dry-run: would create interface test-lab2/loopback0:")
+	assertContains(t, out, `"becs_oid":3641698`)
+	assertContains(t, out, "dry-run: would create address test-lab2/loopback0 10.15.15.153/32:")
+	assertContains(t, out, "dry-run: would create address test-lab2/vlan1 10.0.0.9/24:")
+	assertContains(t, out, "dry-run: would set primary_ip4 on test-lab2 to 10.15.15.153/32")
+	if s.created != 1 {
+		t.Errorf("created count=%d, want 1", s.created)
+	}
+	for _, line := range s.reporter.(*testReporter).lines {
+		if strings.Contains(line, "create interface") && strings.Contains(line, "ethernet0") {
+			t.Fatalf("ethernet0 should be ignored: %s", line)
+		}
+	}
+}
+
+func TestDryRunDeleteDoesNotWrite(t *testing.T) {
+	stale := &netboxtool.NBDevice{
+		NetboxID:     7,
+		Name:         "gone",
+		CustomFields: map[string]any{"becs_oid": 999},
+	}
+	nb := &fakeNetbox{
+		devices: []*netboxtool.NBDevice{stale},
+		deviceTypes: map[string]*netboxtool.NetboxDeviceTypeDetail{
+			"Waystream/ASR7348": testDeviceType(),
+		},
+		site:     &netboxtool.NetboxNamedRef{ID: 1, Name: "Default"},
+		role:     &netboxtool.NetboxNamedRef{ID: 2, Slug: "access-nod"},
+		platform: &netboxtool.NetboxNamedRef{ID: 3, Slug: "ibos"},
+	}
+	s := newTestSyncer(t, nb)
+	s.dryRun = true
+	if err := s.run(""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertNoWrites(t, nb)
+	assertContains(t, reporterText(s), "dry-run: would delete Netbox device gone (id=7)")
+	if s.deleted != 1 {
+		t.Errorf("deleted count=%d, want 1", s.deleted)
+	}
+}
+
+func TestDryRunUpdateShowsExactPayload(t *testing.T) {
+	existing := &netboxtool.NBDevice{
+		NetboxID:           20,
+		Name:               "old-lab",
+		Enabled:            false,
+		ModelName:          "ASR7348",
+		CustomFields:       map[string]any{"becs_oid": 3641645},
+		CfParents:          "core1.example.com",
+		CfAlarmDestination: "noc",
+		CfAlarmTimeperiod:  "24x7",
+		CfConnectionMethod: "ssh",
+	}
+	nb := &fakeNetbox{
+		devices: []*netboxtool.NBDevice{existing},
+		deviceTypes: map[string]*netboxtool.NetboxDeviceTypeDetail{
+			"Waystream/ASR7348": testDeviceType(),
+		},
+		site:     &netboxtool.NetboxNamedRef{ID: 1, Name: "Default"},
+		role:     &netboxtool.NetboxNamedRef{ID: 2, Slug: "access-nod"},
+		platform: &netboxtool.NetboxNamedRef{ID: 3, Slug: "ibos"},
+	}
+	s := newTestSyncer(t, nb)
+	s.dryRun = true
+	if err := s.run(""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertNoWrites(t, nb)
+	out := reporterText(s)
+	assertContains(t, out, "dry-run: would update device old-lab:")
+	assertContains(t, out, `"name":"test-lab2"`)
+	assertContains(t, out, `"status":"active"`)
+	if strings.Contains(out, "would create Netbox device") {
+		t.Error("should update existing device, not create")
+	}
+}
+
+func TestDryRunAddressReplaceDoesNotWrite(t *testing.T) {
+	existing := &netboxtool.NBDevice{
+		NetboxID:           20,
+		Name:               "test-lab2",
+		Enabled:            true,
+		ModelName:          "ASR7348",
+		CustomFields:       map[string]any{"becs_oid": 3641645},
+		CfParents:          "core1.example.com",
+		CfAlarmDestination: "noc",
+		CfAlarmTimeperiod:  "24x7",
+		CfConnectionMethod: "ssh",
+		PrimaryIPv4ID:      50,
+		Interfaces: []netboxtool.NBInterface{
+			{
+				NetboxID:     30,
+				Name:         "loopback0",
+				Type:         "virtual",
+				Enabled:      true,
+				CustomFields: map[string]any{"becs_oid": 3641698},
+				Addresses:    []netboxtool.NBAddress{{NetboxID: 50, Address: "1.2.3.4/32"}},
+			},
+			{
+				NetboxID:     31,
+				Name:         "vlan1",
+				Type:         "virtual",
+				Enabled:      true,
+				CustomFields: map[string]any{"becs_oid": 999004},
+				Addresses:    []netboxtool.NBAddress{{NetboxID: 51, Address: "10.0.0.9/24"}},
+			},
+		},
+	}
+	nb := &fakeNetbox{
+		devices: []*netboxtool.NBDevice{existing},
+		deviceTypes: map[string]*netboxtool.NetboxDeviceTypeDetail{
+			"Waystream/ASR7348": testDeviceType(),
+		},
+		site:     &netboxtool.NetboxNamedRef{ID: 1, Name: "Default"},
+		role:     &netboxtool.NetboxNamedRef{ID: 2, Slug: "access-nod"},
+		platform: &netboxtool.NetboxNamedRef{ID: 3, Slug: "ibos"},
+	}
+	s := newTestSyncer(t, nb)
+	s.dryRun = true
+	if err := s.run(""); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	assertNoWrites(t, nb)
+	out := reporterText(s)
+	assertContains(t, out, "dry-run: would delete address test-lab2/loopback0 1.2.3.4/32 (id=50)")
+	assertContains(t, out, "dry-run: would create address test-lab2/loopback0 10.15.15.153/32:")
+}
+
+func TestFormatPayload(t *testing.T) {
+	got := formatPayload(map[string]any{"status": "active", "custom_fields": map[string]any{"becs_oid": 12}})
+	assertContains(t, got, `"status":"active"`)
+	assertContains(t, got, `"becs_oid":12`)
+}
+
 var _ jobevent.Reporter = (*testReporter)(nil)
 var _ netboxAPI = (*fakeNetbox)(nil)
