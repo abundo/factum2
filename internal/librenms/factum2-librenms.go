@@ -103,10 +103,57 @@ func NewFactumLibrenmsClient(config *util.ConfigFactum) (*FactumLibrenmsClient, 
 	// get the librenms mysql credentials - assumes this app runs on the
 	// librenms server. The credentials can be read straight out of librenms's
 	// own .env file rather than configured separately
-	// (see util.ConfigLibrenms's doc comment).
-	src_list := []string{"/opt/librenms/.env", "/opt/librenms-docker/.env"}
-	loaded := false
-	for _, src := range src_list {
+	// (see util.ConfigLibrenms's doc comment). LIBRENMS_ENV_FILE overrides
+	// the default search path (used by the compose lab on a laptop).
+	dbcfg, err := readLibrenmsDBConfig()
+	if err != nil {
+		return nil, err
+	}
+	client.DB = dbcfg
+	client.Librenms.DBConfig = client.DB
+	return client, nil
+}
+
+func librenmsEnvFileCandidates() []string {
+	if p := strings.TrimSpace(os.Getenv("LIBRENMS_ENV_FILE")); p != "" {
+		return []string{p}
+	}
+	return []string{"/opt/librenms/.env", "/opt/librenms-docker/.env"}
+}
+
+func dbConfigFromLibrenmsEnv(env map[string]string) *util.ConfigDB {
+	if database := env["MYSQL_DATABASE"]; database != "" {
+		port := env["MYSQL_PORT"]
+		if port == "" {
+			port = "3306"
+		}
+		host := env["MYSQL_HOST"]
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		return &util.ConfigDB{
+			Host:     host,
+			Database: database,
+			Port:     port,
+			User:     env["MYSQL_USER"],
+			Pass:     env["MYSQL_PASSWORD"],
+		}
+	}
+	port := env["DB_PORT"]
+	if port == "" {
+		port = "3306"
+	}
+	return &util.ConfigDB{
+		Host:     env["DB_HOST"],
+		Database: env["DB_DATABASE"],
+		Port:     port,
+		User:     env["DB_USERNAME"],
+		Pass:     env["DB_PASSWORD"],
+	}
+}
+
+func readLibrenmsDBConfig() (*util.ConfigDB, error) {
+	for _, src := range librenmsEnvFileCandidates() {
 		if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -114,49 +161,13 @@ func NewFactumLibrenmsClient(config *util.ConfigFactum) (*FactumLibrenmsClient, 
 		if err != nil {
 			return nil, err
 		}
-		loaded = true
-
-		database := env["MYSQL_DATABASE"]
-		if database != "" {
-			// running in docker
-			// MYSQL_DATABASE=librenms
-			// MYSQL_USER=librenms
-			// MYSQL_PASSWORD=<secret password>
-			port := env["MYSQL_PORT"]
-			if port == "" {
-				port = "3306"
-			}
-			client.DB = &util.ConfigDB{
-				Host:     "127.0.0.1", // assumes this app runs on the librenms server
-				Database: env["MYSQL_DATABASE"],
-				Port:     port,
-				User:     env["MYSQL_USER"],
-				Pass:     env["MYSQL_PASSWORD"],
-			}
-		} else {
-			// no docker
-			// DB_DATABASE=librenms
-			// DB_USERNAME=librenms
-			// DB_PASSWORD=<secret password>
-			port := env["DB_PORT"]
-			if port == "" {
-				port = "3306"
-			}
-			client.DB = &util.ConfigDB{
-				Host:     env["DB_HOST"],
-				Database: env["DB_DATABASE"],
-				Port:     port,
-				User:     env["DB_USERNAME"],
-				Pass:     env["DB_PASSWORD"],
-			}
+		cfg := dbConfigFromLibrenmsEnv(env)
+		if cfg.Database == "" {
+			return nil, fmt.Errorf("librenms env file %s has no MYSQL_DATABASE or DB_DATABASE", src)
 		}
-		break
+		return cfg, nil
 	}
-	if !loaded {
-		return nil, errors.New("cannot find librenms MYSQL settings")
-	}
-	client.Librenms.DBConfig = client.DB
-	return client, nil
+	return nil, errors.New("cannot find librenms MYSQL settings")
 }
 
 func (fl *FactumLibrenmsClient) RefreshLibrenmsDevices() error {

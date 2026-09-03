@@ -196,10 +196,52 @@ func state_to_str(state int) string {
 	return value
 }
 
-func (icinga *icingaClient) Reload() ([]byte, error) {
+// systemctlReload reloads icinga2 via systemd. Tests replace this so Reload
+// can exercise the API fallback without a real unit.
+var systemctlReload = func() ([]byte, error) {
 	cmd := exec.Command("systemctl", "reload", "icinga2.service")
-	output, err := cmd.CombinedOutput()
-	return output, err
+	return cmd.CombinedOutput()
+}
+
+func (icinga *icingaClient) Reload() ([]byte, error) {
+	output, err := systemctlReload()
+	if err == nil {
+		return output, nil
+	}
+	if strings.TrimSpace(icinga.c.URL) == "" {
+		return output, err
+	}
+	body, apiErr := icinga.reloadViaAPI()
+	if apiErr == nil {
+		return body, nil
+	}
+	return output, fmt.Errorf("systemctl reload icinga2: %w (%s); api reload: %v (%s)",
+		err, bytes.TrimSpace(output), apiErr, bytes.TrimSpace(body))
+}
+
+// reloadViaAPI asks a remote Icinga to restart so it re-reads conf.d (used
+// when factum2-icinga is not on the Icinga host, e.g. the compose lab).
+func (icinga *icingaClient) reloadViaAPI() ([]byte, error) {
+	url := strings.TrimRight(icinga.c.URL, "/") + "/v1/actions/restart-process"
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.SetBasicAuth(icinga.c.Username, icinga.c.Password)
+	resp, err := icingaAPIClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return body, fmt.Errorf("icinga API %s: %s: %s", url, resp.Status, string(body))
+	}
+	return body, nil
 }
 
 // Quote special characters, so Icinga does not barf on the config

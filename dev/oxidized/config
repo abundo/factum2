@@ -1,0 +1,42 @@
+---
+username: oxidized
+password: oxidized
+model: ios
+interval: 3600
+use_syslog: false
+debug: false
+threads: 4
+timeout: 20
+retries: 1
+rest: 0.0.0.0:8888
+next_adds_job: true
+extensions:
+  oxidized-web:
+    load: true
+    listen: 0.0.0.0
+    port: 8888
+pid: /home/oxidized/.config/oxidized/pid
+log: /home/oxidized/.config/oxidized/log
+input:
+  default: ssh
+  ssh:
+    secure: false
+output:
+  default: file
+  file:
+    directory: /home/oxidized/.config/oxidized/configs
+source:
+  default: csv
+  csv:
+    file: /home/oxidized/.config/oxidized/router.db
+    delimiter: !ruby/regexp /:/
+    map:
+      name: 0
+      ip: 1
+      model: 2
+model_map:
+  cisco: ios
+  juniper: junos
+  arista: eos
+  nokia: sros
+  huawei: vrp

@@ -50,6 +50,7 @@ func TestMigrateDatabaseEmptyPostgres(t *testing.T) {
 	}
 	cfg := &ConfigDB{
 		Host:     host,
+		Port:     os.Getenv("FACTUM2_TEST_PG_PORT"),
 		User:     user,
 		Pass:     pass,
 		Database: database,

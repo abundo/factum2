@@ -1,0 +1,12 @@
+object Host "{{ fqdn .Device.Name }}" {
+  import "generic-host"
+  address = "{{ ip .Device.PrimaryIPv4 }}"
+  vars.factum_comments = "{{ .Device.Comments }}"
+  vars.factum_location = "{{ .Device.CfLocation }}"
+  vars.factum_manufacturer = "{{ .Device.Manufacturer }}"
+  vars.factum_model = "{{ .Device.ModelName }}"
+  vars.factum_platform = "{{ .Device.Platform }}"
+  vars.factum_role = "{{ .Device.Role }}"
+  vars.factum_site_name = "{{ .Device.Site }}"
+{{ .Options }}
+}

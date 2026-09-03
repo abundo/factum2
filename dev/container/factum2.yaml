@@ -1,0 +1,17 @@
+---
+# In-container factum2.yaml (service DNS names, not published host ports).
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+db:
+    host: postgres
+    port: "5432"
+    user: factum2
+    pass: factum2
+    database: factum2
+
+web:
+    enabled: true
+    bind: 0.0.0.0:8091
+    jwtsecret: lab-jwt-secret-not-for-production-use-only

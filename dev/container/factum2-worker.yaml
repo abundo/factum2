@@ -1,0 +1,28 @@
+---
+# In-container worker. Commands run from the bind-mounted build/ directory.
+# factum.url is unix-socket fallback; CLIs co-located here use api.sock.
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        netbox:
+            cmd: /opt/factum2/factum2-netbox
+            args: ["sync", "--job"]
+        dns:
+            cmd: /opt/factum2/factum2-dns
+            args: ["sync", "--job"]
+        icinga:
+            cmd: /opt/factum2/factum2-icinga
+            args: ["sync", "--job"]
+        librenms:
+            cmd: /opt/factum2/factum2-librenms
+            args: ["sync", "--job"]
+        oxidized:
+            cmd: /opt/factum2/factum2-oxidized
+            args: ["sync", "--job"]

@@ -9,7 +9,7 @@ COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
-.PHONY: build test test-install frontend release install snapshot
+.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset
 
 build: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
 
@@ -61,6 +61,29 @@ test-integration-web:
 	FACTUM_TEST_SMTP_PORT=$${FACTUM_TEST_SMTP_PORT:-11025} \
 	FACTUM_TEST_MAILPIT_API=$${FACTUM_TEST_MAILPIT_API:-http://localhost:18025} \
 	go test -tags integration -count=1 -v ./web/
+
+# Laptop lab: shared Postgres + MariaDB + Redis, then NetBox / LibreNMS /
+# Icinga / Oxidized / BIND. Isolated from the live instance and testdata/itest.
+# See dev/README.md. Uses docker compose, or podman compose if FACTUM_COMPOSE
+# is set / docker is missing.
+DEV_DIR := dev
+# Core lab apps (no factum). Schema is applied before factum-web starts.
+LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga oxidized dns
+
+dev-up:
+	$(DEV_DIR)/prepare.sh
+	@test -x $(BUILD_DIR)/factum2-web || $(MAKE) build
+	@test -f web/static/vue/index.html || $(MAKE) frontend
+	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 300 $(LAB_CORE)
+	$(DEV_DIR)/seed.sh
+	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 120 factum-web factum-worker
+
+dev-down:
+	$(DEV_DIR)/compose.sh down
+
+dev-reset:
+	$(DEV_DIR)/compose.sh down -v
+	$(MAKE) dev-up
 
 factum2:
 	@mkdir -p $(BUILD_DIR)

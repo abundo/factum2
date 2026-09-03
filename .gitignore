@@ -37,6 +37,18 @@ go.work
 # Skill runtime state (skills themselves under .grok/skills are committed)
 .grok/skills/**/.state/
 
+# Compose lab runtime (seed.sh / dest-file sync). Templates and empty
+# placeholders under dev/data stay in git; generated env is local-only.
+dev/data/librenms.env
+dev/env.sh
+dev/data/oxidized/config
+dev/data/oxidized/log
+dev/data/oxidized/logs/
+dev/data/oxidized/pid
+dev/data/oxidized/configs/
+dev/data/oxidized/crashes/
+dev/certs/
+
 # Python (install.py)
 __pycache__/
 *.py[cod]

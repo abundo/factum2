@@ -1,0 +1,11 @@
+# Runtime image for lab factum-web / factum-worker. Binaries are bind-mounted
+# from the host's build/ directory (see compose.yml); this image only needs
+# glibc, CA certs, and curl for healthchecks.
+FROM docker.io/debian:bookworm-slim
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates curl tzdata \
+	&& rm -rf /var/lib/apt/lists/*
+# CWD for the non-release web binary (os.DirFS("./web/static")). Binaries
+# themselves are bind-mounted at /opt/factum2 from the host build/ directory.
+WORKDIR /var/factum
+RUN mkdir -p /var/factum/web

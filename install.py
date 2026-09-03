@@ -24,6 +24,10 @@ from this release, the installer shows a diff and asks before overwriting
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
+  ./install.py --source --compose
+                               Local compose lab: make, migrate, restart
+                               factum-web/factum-worker (build/ is bind-mounted;
+                               no /opt/factum2, no systemd).
 """
 
 from __future__ import annotations
@@ -77,7 +81,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 11
+INSTALLER_VERSION = 12
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -89,6 +93,9 @@ RELEASE_WORK_ENV = "FACTUM2_RELEASE_WORK"
 
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum2*` file so a newly added cmd/ still installs.
+COMPOSE_DIR_DEFAULT = REPO_DIR / "dev"
+COMPOSE_FACTUM_SERVICES = ("factum-web", "factum-worker")
+
 KNOWN_BINARIES = (
     "factum2",
     "factum2-becs",
@@ -2766,6 +2773,7 @@ Modes:
   (default)   GitHub release — production. TUI, --list, or --install TAG.
   --source    This source tree — development. make release, then install
               build/ (replaces install_prod.sh).
+  --compose   Local compose lab. make, then restart bind-mounted services.
 
 Environment:
   GITHUB_TOKEN / GH_TOKEN   token for private repos (else `gh auth token`)
@@ -2780,6 +2788,8 @@ Examples:
   ./install.py --source
   ./install.py --source lab-primary --dry-run
   ./install.py --source --skip-build --primary-only
+  ./install.py --compose
+  ./install.py --source --compose --skip-build
 """,
     )
     p.add_argument(
@@ -2826,6 +2836,15 @@ Examples:
         "--skip-build",
         action="store_true",
         help="with --source, use existing build/ instead of running make release",
+    )
+    p.add_argument(
+        "--compose",
+        nargs="?",
+        const=str(COMPOSE_DIR_DEFAULT),
+        metavar="DIR",
+        help="local compose lab (default: dev/): bind-mount build/, migrate, "
+        "restart factum-web and factum-worker instead of installing to "
+        "/opt/factum2. Implies --source localhost.",
     )
     p.add_argument(
         "--self-update",
@@ -2886,7 +2905,100 @@ def fetch_config(
     return tmp, tmp
 
 
+def compose_argv(compose_dir: Path) -> list[str]:
+    script = compose_dir / "compose.sh"
+    if not script.is_file():
+        raise InstallError(f"compose lab not found: {script}")
+    return [str(script)]
+
+
+def compose_service_running(compose_dir: Path, service: str) -> bool:
+    proc = subprocess.run(
+        compose_argv(compose_dir) + ["ps", "-q", service],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0 and bool((proc.stdout or "").strip())
+
+
+def install_compose_lab(
+    repo_dir: Path,
+    compose_dir: Path,
+    *,
+    skip_build: bool,
+    dry_run: bool,
+) -> int:
+    """Build into build/ and restart compose services that bind-mount it."""
+    build_dir = repo_dir / "build"
+    version = git_describe(repo_dir)
+    log(f"==> factum2  compose-lab install  version={version}")
+    log(f"    BUILD_DIR   = {build_dir}")
+    log(f"    COMPOSE_DIR = {compose_dir}")
+
+    if skip_build:
+        if not build_dir.is_dir() and not dry_run:
+            raise InstallError(f"--skip-build given but {build_dir} does not exist")
+        log(f"==> Skipping build, using {build_dir}")
+    else:
+        log("==> Building binaries (make)")
+        run(["make", "build"], dry_run=dry_run, cwd=repo_dir)
+        vue = repo_dir / "web" / "static" / "vue" / "index.html"
+        if not dry_run and not vue.is_file():
+            log("==> Building frontend")
+            run(["make", "frontend"], dry_run=dry_run, cwd=repo_dir)
+
+    if not dry_run:
+        missing = [name for name in KNOWN_BINARIES if not (build_dir / name).is_file()]
+        if missing:
+            raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
+
+    argv = compose_argv(compose_dir)
+    services = list(COMPOSE_FACTUM_SERVICES)
+    if dry_run:
+        log(
+            f"==> Would migrate, then restart {', '.join(services)} "
+            f"(binaries bind-mounted from {build_dir})"
+        )
+        return 0
+
+    if not compose_service_running(compose_dir, "postgres"):
+        raise InstallError(
+            f"compose lab is not running ({compose_dir}). Start it with: make dev-up"
+        )
+
+    if compose_service_running(compose_dir, "factum-web"):
+        log("==> Stopping factum-web for migrate")
+        run(argv + ["stop", "factum-web"], dry_run=False)
+    host_yaml = compose_dir / "factum2.yaml"
+    if not host_yaml.is_file():
+        raise InstallError(f"missing {host_yaml}")
+    log("==> Applying database migrations")
+    run(
+        [str(build_dir / "factum2-web"), "-f", str(host_yaml), "migrate"],
+        dry_run=False,
+    )
+    log(f"==> Restarting {', '.join(services)}")
+    run(argv + ["up", "-d", "--no-deps", *services], dry_run=False)
+    log("==> Done")
+    log(f"    GUI at http://127.0.0.1:8091  (binaries from {build_dir})")
+    return 0
+
+
 def main_source(args: argparse.Namespace) -> int:
+    if args.compose is not None:
+        compose_dir = Path(args.compose).expanduser()
+        if not compose_dir.is_absolute():
+            compose_dir = Path.cwd() / compose_dir
+        if not is_local_host(args.source):
+            raise InstallError("--compose is local only (do not pass a remote --source host)")
+        return install_compose_lab(
+            REPO_DIR,
+            compose_dir.resolve(),
+            skip_build=args.skip_build,
+            dry_run=args.dry_run,
+        )
+
     target_host: str = args.source
     install_dir: Path = args.install_dir
     repo_dir = REPO_DIR
@@ -3024,6 +3136,8 @@ def main_source(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
+    if args.compose is not None and args.source is None:
+        args.source = "localhost"
     if args.skip_build and args.source is None:
         raise InstallError("--skip-build requires --source")
     if args.self_update and args.skip_self_update:

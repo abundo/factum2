@@ -459,5 +459,47 @@ class FetchVerifiedInstallerTests(unittest.TestCase):
         self.assertIn("has no install.py", str(ctx.exception))
 
 
+class ComposeLabTests(unittest.TestCase):
+    def test_compose_implies_source(self) -> None:
+        args = install.parse_args(["--compose"])
+        self.assertIsNotNone(args.compose)
+        # main() fills this in; parse_args leaves source unset
+        self.assertIsNone(args.source)
+
+    def test_compose_default_dir(self) -> None:
+        args = install.parse_args(["--source", "--compose"])
+        self.assertEqual(Path(args.compose), install.COMPOSE_DIR_DEFAULT)
+
+    def test_compose_custom_dir(self) -> None:
+        args = install.parse_args(["--compose", "/tmp/lab"])
+        self.assertEqual(args.compose, "/tmp/lab")
+
+    def test_compose_argv_missing_script(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(install.InstallError) as ctx:
+                install.compose_argv(Path(raw))
+            self.assertIn("compose lab not found", str(ctx.exception))
+
+    def test_compose_argv_finds_script(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            script = Path(raw) / "compose.sh"
+            script.write_text("#!/bin/sh\n")
+            self.assertEqual(install.compose_argv(Path(raw)), [str(script)])
+
+    def test_main_compose_remote_source_errors(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--source", "other-host", "--compose"])
+        self.assertIn("local only", str(ctx.exception))
+
+    def test_main_compose_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            compose_dir = Path(raw)
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            rc = install.main(
+                ["--compose", str(compose_dir), "--skip-build", "--dry-run"]
+            )
+            self.assertEqual(rc, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

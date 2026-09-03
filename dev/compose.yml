@@ -1,0 +1,321 @@
+# Laptop lab for factum: one Postgres (factum2 + netbox), one MariaDB
+# (librenms), one Redis (netbox tasks/cache + librenms), then the apps.
+#
+# Not the live instance (port 8090 / DB factum2 on postgresql-db-1) and not
+# testdata/itest. Published on all interfaces (lab credentials). See README.md.
+#
+# Usage: ./compose.sh up -d --wait   (or make -C .. dev-up)
+name: factum-dev
+
+x-lab-restart: &lab-restart
+  restart: unless-stopped
+
+# Host build/ is bind-mounted at /opt/factum2. install.py --source --compose
+# rebuilds those binaries and restarts factum-web / factum-worker.
+x-factum: &factum
+  <<: *lab-restart
+  image: factum-dev:local
+  build:
+    context: .
+    dockerfile: Dockerfile.factum
+  working_dir: /var/factum
+  volumes:
+    - ../build:/opt/factum2:z,ro
+    - ../web/static:/var/factum/web/static:z,ro
+    - ./container/factum2.yaml:/etc/factum2/factum2.yaml:z,ro
+    - ./container/factum2-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
+    - ./certs:/etc/factum2/certs:z,ro
+    - ./data/icinga:/data/icinga:z
+    - ./data/oxidized:/data/oxidized:z
+    - ./data/dns:/data/dns:z
+    - ./container/librenms.env:/opt/librenms-docker/.env:z,ro
+    - ./container/dnsmgr2:/usr/local/bin/dnsmgr2:z,ro
+  environment:
+    APP_ENV: development
+    LIBRENMS_ENV_FILE: /opt/librenms-docker/.env
+    TZ: UTC
+
+services:
+  postgres:
+    <<: *lab-restart
+    image: docker.io/postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-factum2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factum2}
+      POSTGRES_DB: ${POSTGRES_DB:-factum2}
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:z,ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    mem_limit: 256m
+
+  mysql:
+    <<: *lab-restart
+    image: docker.io/mariadb:10.11
+    command:
+      - mysqld
+      - --innodb-file-per-table=1
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=128M
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-lab}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-librenms}
+      MARIADB_USER: ${MYSQL_USER:-librenms}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:-librenms}
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    mem_limit: 384m
+
+  redis:
+    <<: *lab-restart
+    image: docker.io/redis:7.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    mem_limit: 64m
+
+  netbox: &netbox
+    <<: *lab-restart
+    image: docker.io/netboxcommunity/netbox:${NETBOX_VERSION:-v4.3-3.3.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "18000:8080"
+    environment:
+      ALLOWED_HOSTS: "*"
+      SECRET_KEY: ${NETBOX_SECRET_KEY}
+      DB_HOST: postgres
+      DB_NAME: netbox
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox}
+      DB_WAIT_TIMEOUT: "5"
+      MAX_DB_WAIT_TIME: "180"
+      REDIS_HOST: redis
+      REDIS_DATABASE: "0"
+      REDIS_PASSWORD: ""
+      REDIS_CACHE_HOST: redis
+      REDIS_CACHE_DATABASE: "1"
+      REDIS_CACHE_PASSWORD: ""
+      SKIP_SUPERUSER: "false"
+      SUPERUSER_NAME: ${NETBOX_SUPERUSER_NAME:-admin}
+      SUPERUSER_PASSWORD: ${NETBOX_SUPERUSER_PASSWORD:-admin}
+      SUPERUSER_EMAIL: ${NETBOX_SUPERUSER_EMAIL:-admin@lab.example}
+      SUPERUSER_API_TOKEN: ${NETBOX_SUPERUSER_API_TOKEN}
+      API_TOKEN_PEPPER_1: ${NETBOX_API_TOKEN_PEPPER_1}
+      CORS_ORIGIN_ALLOW_ALL: "true"
+      GRAPHQL_ENABLED: "true"
+      WEBHOOKS_ENABLED: "true"
+      CENSUS_REPORTING_ENABLED: "false"
+      COPILOT_ENABLED: "false"
+      ISOLATED_DEPLOYMENT: "true"
+      RELEASE_CHECK_URL: ""
+      GRANIAN_WORKERS: "1"
+      GRANIAN_BACKPRESSURE: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login/ >/dev/null"]
+      start_period: 180s
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 1g
+
+  netbox-worker:
+    <<: *netbox
+    ports: []
+    command:
+      - /opt/netbox/venv/bin/python
+      - /opt/netbox/netbox/manage.py
+      - rqworker
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f rqworker >/dev/null"]
+      start_period: 30s
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    depends_on:
+      netbox:
+        condition: service_healthy
+
+  librenms:
+    <<: *lab-restart
+    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-24.11.0}
+    hostname: librenms
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "18001:8000"
+    volumes:
+      - librenms-data:/data
+    environment:
+      TZ: UTC
+      PUID: "1000"
+      PGID: "1000"
+      DB_HOST: mysql
+      DB_NAME: ${MYSQL_DATABASE:-librenms}
+      DB_USER: ${MYSQL_USER:-librenms}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-librenms}
+      DB_TIMEOUT: "120"
+      REDIS_HOST: redis
+      REDIS_DB: "2"
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      MEMORY_LIMIT: 256M
+      MAX_INPUT_VARS: "1000"
+      UPLOAD_MAX_SIZE: 8M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/login >/dev/null || wget -qO- http://localhost:8000/login >/dev/null"]
+      start_period: 180s
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 768m
+
+  librenms-dispatcher:
+    <<: *lab-restart
+    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-24.11.0}
+    hostname: librenms-dispatcher
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      librenms:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - librenms-data:/data
+    environment:
+      TZ: UTC
+      PUID: "1000"
+      PGID: "1000"
+      DB_HOST: mysql
+      DB_NAME: ${MYSQL_DATABASE:-librenms}
+      DB_USER: ${MYSQL_USER:-librenms}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-librenms}
+      DB_TIMEOUT: "120"
+      REDIS_HOST: redis
+      REDIS_DB: "2"
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      DISPATCHER_NODE_ID: dispatcher1
+      SIDECAR_DISPATCHER: "1"
+      MEMORY_LIMIT: 256M
+    mem_limit: 384m
+
+  icinga:
+    <<: *lab-restart
+    image: docker.io/icinga/icinga2:2.15
+    hostname: icinga
+    environment:
+      ICINGA_MASTER: "1"
+    ports:
+      - "15665:5665"
+    volumes:
+      - icinga-data:/data
+      - ./data/icinga:/factum:z
+    healthcheck:
+      test: ["CMD-SHELL", "icinga2 daemon -C >/dev/null"]
+      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    mem_limit: 256m
+
+  oxidized:
+    <<: *lab-restart
+    image: docker.io/oxidized/oxidized:latest
+    environment:
+      OXIDIZED_HOME: /home/oxidized/.config/oxidized
+    ports:
+      - "18888:8888"
+    volumes:
+      - ./data/oxidized:/home/oxidized/.config/oxidized:z
+    mem_limit: 256m
+
+  dns:
+    <<: *lab-restart
+    image: docker.io/internetsystemsconsortium/bind9:9.18
+    ports:
+      - "18053:53/udp"
+      - "18053:53/tcp"
+    volumes:
+      - ./dns/named.conf:/etc/bind/named.conf:z,ro
+      - ./dns/lab.example.zone:/etc/bind/lab.example.zone:z,ro
+    mem_limit: 64m
+
+  factum-web:
+    <<: *factum
+    command:
+      - /opt/factum2/factum2-web
+      - -f
+      - /etc/factum2/factum2.yaml
+      - start
+      - -b
+      - 0.0.0.0:8091
+    ports:
+      - "8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/version"]
+      start_period: 20s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 128m
+
+  factum-worker:
+    <<: *factum
+    command:
+      - /opt/factum2/factum2-worker
+      - -f
+      - /etc/factum2/factum2-worker.yaml
+      - start
+    ports:
+      - "18443:8443"
+    depends_on:
+      factum-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/factum2-worker/api.sock"]
+      start_period: 10s
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    mem_limit: 128m
+
+volumes:
+  postgres-data:
+  mysql-data:
+  librenms-data:
+  icinga-data:

@@ -17,9 +17,12 @@ import (
 // AutoMigrate as a side effect of start/sync/createadmin rewrites tables
 // while factum2-web may already be serving.
 func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
-	var dns string
-	dns = fmt.Sprintf("host=%s user=%s password=%s dbname=%s timezone=Europe/Stockholm",
-		config.Host, config.User, config.Pass, config.Database)
+	port := config.Port
+	if port == "" {
+		port = "5432"
+	}
+	dns := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s timezone=Europe/Stockholm",
+		config.Host, port, config.User, config.Pass, config.Database)
 	slog.Debug("database", "open", dns)
 	db, err := gorm.Open(postgres.Open(dns), &gorm.Config{})
 	if err != nil {

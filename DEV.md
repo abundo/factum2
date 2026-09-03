@@ -257,12 +257,38 @@ by any test, but there for a future test that wants `util.MigrateDatabase`
 against a real Postgres instead of the sqlite fakes `web/auth_test.go`
 uses).
 
-### NetBox and LibreNMS
+### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized)
+
+A laptop compose project in `dev/` brings up the upstream/downstream apps
+factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
+(librenms). LibreNMS is started without syslog-ng or snmptrapd. Factum-web
+stays on the host. See [dev/README.md](dev/README.md).
+
+```sh
+make dev-up            # docker or podman compose; first start pulls images
+./install.py --compose # rebuild build/ and restart factum-web / factum-worker
+make dev-down          # keep volumes
+make dev-reset         # wipe volumes
+```
+
+The GUI is http://127.0.0.1:8091 (`admin` / `admin`); NetBox `:18000` and
+LibreNMS `:18001` use the same user/pass. Reach them from another machine
+via this host's address. `build/` is bind-mounted into the factum
+containers; `install.py --compose` does not copy to `/opt/factum2` or
+touch systemd.
+
+Ports are published on all interfaces and chosen not to collide with the
+live `:8090` instance, the `run-factum2-web` skill (`:18090`), or
+`testdata/itest`. Lab credentials only — do not expose this on an untrusted
+network. Do not point this stack at the real `factum2` database.
+
+### NetBox and LibreNMS tests
 
 Both are REST-ish clients configured with a plain base URL
 (`netboxtool.ConfigNetbox.URL`, `util.ConfigLibrenms.URL`) - the same shape
 as the Arista eAPI client above - so the same two-tier pattern applies, and
-is the intended next step (not yet built):
+is the intended next step for **tests** (the `dev/` stack is for running the
+GUI against real apps, not a substitute for these tiers):
 
 - **Default tier**: an `httptest` fake server per package (`internal/netbox`,
   `internal/librenms`), mirroring `fakeEOS` in
@@ -272,16 +298,15 @@ is the intended next step (not yet built):
   decode a GraphQL POST body rather than match REST paths/verbs the way
   LibreNMS's or eAPI's fake can.
 - **Opt-in real-container tier**: official images
-  (`netbox-community/netbox-docker`, `librenms/librenms`) are each a
-  multi-container app in their own right (NetBox: its own Postgres+Redis;
-  LibreNMS: MySQL+Redis, and `factum2-librenms-cli` also reads LibreNMS's own
-  MySQL directly for `PortsGet`/`PortsUpdateIgnore` - see AGENTS.md's sync
-  section) - too heavy to fold into `testdata/itest` above without slowing
-  down every LDAP/mail test run. Give each its own compose file/Makefile
-  targets instead (`netbox-lab-up`/`-down`, `librenms-lab-up`/`-down`),
-  following `lab-up`/`lab-down`'s pattern for containerlab, rather than
-  vendoring the upstream projects' compose files - point at a checkout of
-  them instead.
+  (`netboxcommunity/netbox`, `librenms/librenms`) are each a multi-container
+  app in their own right (NetBox: Postgres+Redis; LibreNMS: MySQL+Redis, and
+  `factum2-librenms-cli` also reads LibreNMS's own MySQL directly for
+  `PortsGet`/`PortsUpdateIgnore` - see AGENTS.md's sync section) - too heavy
+  to fold into `testdata/itest` above without slowing down every LDAP/mail
+  test run. For interactive use, `make dev-up` (`dev/`) is the shared lab
+  (one Postgres, one MariaDB). Package-level integration tests can still
+  point at those published ports (`FACTUM_TEST_NETBOX_*` /
+  `FACTUM_TEST_LIBRENMS_*`) once those tests exist.
 
 ## Release
 
