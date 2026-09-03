@@ -68,7 +68,7 @@ test-integration-web:
 # is set / docker is missing.
 DEV_DIR := dev
 # Core lab apps (no factum). Schema is applied before factum-web starts.
-LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga oxidized dns
+LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga oxidized dns portal
 
 dev-up:
 	$(DEV_DIR)/prepare.sh

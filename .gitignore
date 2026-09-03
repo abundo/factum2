@@ -47,6 +47,7 @@ dev/data/oxidized/logs/
 dev/data/oxidized/pid
 dev/data/oxidized/configs/
 dev/data/oxidized/crashes/
+dev/data/netbox/
 dev/certs/
 
 # Python (install.py)

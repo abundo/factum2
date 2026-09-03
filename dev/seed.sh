@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent lab bootstrap: wait for compose services, overlay icinga API
-# config, migrate factum, create admin, seed Settings, LibreNMS token.
+# config, load NetBox demo data if empty, migrate factum, create admin,
+# seed Settings, LibreNMS token.
 set -euo pipefail
 
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -46,6 +47,33 @@ log "Preparing dest files"
 log "Waiting for NetBox"
 wait_http "http://127.0.0.1:18000/login/" 80
 
+log "NetBox demo data"
+DUMP="$DIR/data/netbox/netbox-demo.sql"
+if [ ! -s "$DUMP" ]; then
+	"$DIR/netbox-demo-fetch.sh"
+fi
+device_count=$(
+	"${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-factum2}" -d netbox -tAc \
+		"SELECT COUNT(*) FROM dcim_device;" 2>/dev/null || echo 0
+)
+device_count=$(printf '%s' "$device_count" | tr -d '[:space:]')
+if [ "${device_count:-0}" -gt 0 ]; then
+	log "NetBox already has $device_count devices; skipping demo dump"
+else
+	log "Loading NetBox demo dump into empty database (about a minute)"
+	"${COMPOSE[@]}" stop netbox netbox-worker
+	"${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-factum2}" -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+ WHERE datname = 'netbox' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS netbox WITH (FORCE);
+CREATE DATABASE netbox OWNER netbox;
+SQL
+	# Pipe from the host (postgres may predate the /netbox-demo mount).
+	"${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:-factum2}" -d netbox -q -v ON_ERROR_STOP=1 <"$DUMP" >/dev/null
+	"${COMPOSE[@]}" up -d --wait --wait-timeout 300 netbox netbox-worker
+	wait_http "http://127.0.0.1:18000/login/" 80
+fi
+
 log "Waiting for LibreNMS"
 wait_http "http://127.0.0.1:18001/login" 80
 
@@ -65,25 +93,20 @@ done
 	"${COMPOSE[@]}" exec -T -u root icinga sh -c 'kill -HUP $(pidof icinga2) 2>/dev/null || true'
 
 log "NetBox API token"
-token=$(
-	"${COMPOSE[@]}" exec -T netbox /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py shell --interface python <<'PY' || true
+# Demo dump has admin/admin but no API tokens; first-boot SUPERUSER_API_TOKEN
+# is skipped once that user exists. Always ensure the known lab key.
+"${COMPOSE[@]}" exec -T netbox env FACTUM_LAB_NETBOX_TOKEN="$NETBOX_TOKEN" \
+	/opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py shell --interface python <<'PY'
+import os
 from users.models import Token, User
+key = os.environ.get("FACTUM_LAB_NETBOX_TOKEN", "")
 u = User.objects.filter(username="admin").first()
-if not u:
-    print("")
-else:
-    t = Token.objects.filter(user=u).first()
-    if not t:
-        print("")
-    else:
-        key = getattr(t, "key", None)
-        print(key if key else str(t))
+if not u or not key:
+    raise SystemExit("netbox admin user or lab token missing")
+if not Token.objects.filter(key=key).exists():
+    Token.objects.create(user=u, key=key, write_enabled=True, description="factum lab")
+print(key)
 PY
-)
-token=$(printf '%s' "$token" | tr -d '\r' | tail -n 1)
-if [ -n "$token" ]; then
-	NETBOX_TOKEN=$token
-fi
 log "NetBox token: ${NETBOX_TOKEN:0:8}…"
 
 log "LibreNMS admin user + API token"
@@ -213,6 +236,7 @@ cat <<EOF
   Factum config:  $FACTUM_YAML
   Source env:     . dev/env.sh
 
+  Lab index:      http://127.0.0.1:18080
   Factum GUI:     http://127.0.0.1:8091   admin / admin
   Rebuild:        ./install.py --source --compose
   NetBox:         http://127.0.0.1:18000  admin / admin

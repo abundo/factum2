@@ -9,6 +9,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 
 | Role | App | Port |
 | --- | --- | --- |
+| Index | portal | http://127.0.0.1:18080 |
 | GUI | factum-web | http://127.0.0.1:8091 |
 | Source | NetBox | http://127.0.0.1:18000 |
 | Dest | LibreNMS (no syslog/snmptrapd) | http://127.0.0.1:18001 |
@@ -33,9 +34,14 @@ make dev-up
 
 `dev-up` builds `build/` if needed, waits for NetBox/LibreNMS/…, migrates
 factum, seeds Settings/admin/tokens, then starts factum-web and factum-worker.
+NetBox is populated from [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
+(SQL dump for this image's minor version, cached under `dev/data/netbox/`).
+First postgres volume init loads it; `seed.sh` restores if the netbox DB is
+still empty. `make dev-reset` reloads a fresh dump.
 
-Login: http://127.0.0.1:8091 — `admin` / `admin`. NetBox (`:18000`) and
-LibreNMS (`:18001`) use the same user/pass.
+Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:8091 —
+`admin` / `admin`. NetBox (`:18000`) and LibreNMS (`:18001`) use the same
+user/pass.
 
 ```sh
 ./install.py --compose              # make + migrate + restart factum services

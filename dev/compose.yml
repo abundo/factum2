@@ -1,6 +1,10 @@
 # Laptop lab for factum: one Postgres (factum2 + netbox), one MariaDB
 # (librenms), one Redis (netbox tasks/cache + librenms), then the apps.
 #
+# NetBox is loaded from netbox-community/netbox-demo-data (SQL dump matching
+# NETBOX_VERSION) on first postgres volume init; seed.sh restores if the
+# netbox DB is still empty (existing volume).
+#
 # Not the live instance (port 8090 / DB factum2 on postgresql-db-1) and not
 # testdata/itest. Published on all interfaces (lab credentials). See README.md.
 #
@@ -48,6 +52,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:z,ro
+      # SQL dump fetched by prepare.sh / netbox-demo-fetch.sh
+      - ./data/netbox:/netbox-demo:z,ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 3s
@@ -313,6 +319,22 @@ services:
       timeout: 3s
       retries: 15
     mem_limit: 128m
+
+  # Static index of published lab ports. Links rewrite to the hostname
+  # used to open this page (so they work off-box, not only 127.0.0.1).
+  portal:
+    <<: *lab-restart
+    image: docker.io/nginx:1.28-alpine
+    ports:
+      - "18080:80"
+    volumes:
+      - ./portal:/usr/share/nginx/html:z,ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 32m
 
 volumes:
   postgres-data:

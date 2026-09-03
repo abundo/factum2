@@ -271,9 +271,11 @@ make dev-down          # keep volumes
 make dev-reset         # wipe volumes
 ```
 
-The GUI is http://127.0.0.1:8091 (`admin` / `admin`); NetBox `:18000` and
-LibreNMS `:18001` use the same user/pass. Reach them from another machine
-via this host's address. `build/` is bind-mounted into the factum
+The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:8091
+(`admin` / `admin`); NetBox `:18000` and LibreNMS `:18001` use the same
+user/pass. NetBox starts with the
+[netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
+dump for the image's minor version. Reach them from another machine via this host's address. `build/` is bind-mounted into the factum
 containers; `install.py --compose` does not copy to `/opt/factum2` or
 touch systemd.
 

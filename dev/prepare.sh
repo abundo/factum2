@@ -1,9 +1,12 @@
 #!/bin/sh
-# Create dest-file dirs, hub TLS, and copy Oxidized config before compose starts.
+# Create dest-file dirs, hub TLS, copy Oxidized config, fetch NetBox demo dump
+# before compose starts (postgres/init/02-netbox-demo.sh loads it on first init).
 set -eu
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-mkdir -p "$DIR/data/icinga" "$DIR/data/oxidized" "$DIR/data/dns" "$DIR/certs"
-chmod +x "$DIR/container/dnsmgr2" "$DIR/compose.sh" "$DIR/seed.sh" "$DIR/bin/dnsmgr2" 2>/dev/null || true
+mkdir -p "$DIR/data/icinga" "$DIR/data/oxidized" "$DIR/data/dns" "$DIR/data/netbox" "$DIR/certs"
+chmod +x "$DIR/container/dnsmgr2" "$DIR/compose.sh" "$DIR/seed.sh" "$DIR/bin/dnsmgr2" \
+	"$DIR/netbox-demo-fetch.sh" "$DIR/postgres/init/02-netbox-demo.sh" 2>/dev/null || true
+"$DIR/netbox-demo-fetch.sh"
 
 if [ ! -f "$DIR/certs/hub.crt" ] || [ ! -f "$DIR/certs/hub.key" ]; then
 	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \

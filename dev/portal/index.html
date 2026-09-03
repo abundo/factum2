@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>factum-dev</title>
+  <style>
+    :root {
+      --bg: #10141a;
+      --card: #1b222c;
+      --text: #e8edf4;
+      --muted: #8b97a8;
+      --accent: #6aa6d8;
+      --border: #2c3542;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.3rem; font-weight: 650; margin: 0 0 .2rem; }
+    .sub { color: var(--muted); margin: 0 0 1.4rem; }
+    h2 {
+      font-size: .72rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 1.4rem 0 .5rem;
+    }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 0 0 .45rem;
+    }
+    a, .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+      padding: .7rem .9rem;
+      text-decoration: none;
+      color: inherit;
+    }
+    a:hover { color: var(--accent); }
+    li:has(a:hover) { border-color: var(--accent); }
+    .name { font-weight: 600; }
+    .cred { color: var(--muted); font-size: .8rem; margin-top: .12rem; }
+    .meta {
+      color: var(--muted);
+      font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>factum-dev</h1>
+    <p class="sub">Laptop lab · <span id="host">127.0.0.1</span></p>
+
+    <h2>Web</h2>
+    <ul>
+      <li>
+        <a data-scheme="http" data-port="8091" href="http://127.0.0.1:8091">
+          <span>
+            <span class="name">Factum</span>
+            <div class="cred">admin / admin</div>
+          </span>
+          <span class="meta">127.0.0.1:8091</span>
+        </a>
+      </li>
+      <li>
+        <a data-scheme="http" data-port="18000" href="http://127.0.0.1:18000">
+          <span>
+            <span class="name">NetBox</span>
+            <div class="cred">admin / admin · demo data</div>
+          </span>
+          <span class="meta">127.0.0.1:18000</span>
+        </a>
+      </li>
+      <li>
+        <a data-scheme="http" data-port="18001" href="http://127.0.0.1:18001">
+          <span>
+            <span class="name">LibreNMS</span>
+            <div class="cred">admin / admin</div>
+          </span>
+          <span class="meta">127.0.0.1:18001</span>
+        </a>
+      </li>
+      <li>
+        <a data-scheme="http" data-port="18888" href="http://127.0.0.1:18888">
+          <span class="name">Oxidized</span>
+          <span class="meta">127.0.0.1:18888</span>
+        </a>
+      </li>
+    </ul>
+
+    <h2>Other</h2>
+    <ul>
+      <li>
+        <a data-scheme="https" data-port="15665" href="https://127.0.0.1:15665">
+          <span>
+            <span class="name">Icinga 2 API</span>
+            <div class="cred">factum / factum</div>
+          </span>
+          <span class="meta">127.0.0.1:15665</span>
+        </a>
+      </li>
+      <li>
+        <div class="row">
+          <span>
+            <span class="name">Worker hub</span>
+            <div class="cred">wss /hub</div>
+          </span>
+          <span class="meta" data-port="18443">127.0.0.1:18443</span>
+        </div>
+      </li>
+      <li>
+        <div class="row">
+          <span>
+            <span class="name">BIND</span>
+            <div class="cred">lab.example</div>
+          </span>
+          <span class="meta" data-port="18053">127.0.0.1:18053</span>
+        </div>
+      </li>
+      <li>
+        <div class="row">
+          <span>
+            <span class="name">Postgres</span>
+            <div class="cred">factum2 / factum2 · DBs factum2, netbox</div>
+          </span>
+          <span class="meta" data-port="15432">127.0.0.1:15432</span>
+        </div>
+      </li>
+      <li>
+        <div class="row">
+          <span>
+            <span class="name">MariaDB</span>
+            <div class="cred">librenms / librenms</div>
+          </span>
+          <span class="meta" data-port="13306">127.0.0.1:13306</span>
+        </div>
+      </li>
+      <li>
+        <div class="row">
+          <span>
+            <span class="name">Redis</span>
+            <div class="cred">netbox 0/1, librenms 2</div>
+          </span>
+          <span class="meta" data-port="16379">127.0.0.1:16379</span>
+        </div>
+      </li>
+    </ul>
+  </main>
+  <script>
+    (function () {
+      var host = location.hostname || "127.0.0.1";
+      var shown = host.indexOf(":") >= 0 ? "[" + host + "]" : host;
+      document.getElementById("host").textContent = shown;
+      document.querySelectorAll("a[data-port]").forEach(function (a) {
+        a.href = (a.getAttribute("data-scheme") || "http") + "://" + shown + ":" + a.getAttribute("data-port");
+        var meta = a.querySelector(".meta");
+        if (meta) meta.textContent = shown + ":" + a.getAttribute("data-port");
+      });
+      document.querySelectorAll(".meta[data-port]").forEach(function (el) {
+        el.textContent = shown + ":" + el.getAttribute("data-port");
+      });
+    })();
+  </script>
+</body>
+</html>
