@@ -1,6 +1,6 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   getDevice,
   getDeviceImpact,
@@ -197,6 +197,70 @@ const xcKind = ref('tributary')
 const xcA = ref(null)
 const xcB = ref(null)
 
+// Intra-device optical xconnects (tributary, add/drop, express, passthrough)
+// only apply to classified optical chassis — not packet routers/switches.
+const isOpticalDevice = computed(() => {
+  const kind = (device.value?.optical_kind ?? '').toLowerCase()
+  return ['roadm', 'wdm_shelf', 'ila', 'passive'].includes(kind)
+})
+
+const xcKindItems = computed(() => {
+  switch ((device.value?.optical_kind ?? '').toLowerCase()) {
+    case 'roadm':
+      // Combo ROADMs may also host TXP cards, so tributary stays available.
+      return [
+        { label: 'Tributary', value: 'tributary' },
+        { label: 'Add/drop', value: 'roadm_adddrop' },
+        { label: 'Express', value: 'roadm_express' },
+      ]
+    case 'wdm_shelf':
+      return [{ label: 'Tributary', value: 'tributary' }]
+    case 'ila':
+    case 'passive':
+      return [{ label: 'Passthrough', value: 'passthrough' }]
+    default:
+      return []
+  }
+})
+
+const xcKindLabels = {
+  tributary: 'Tributary',
+  roadm_adddrop: 'Add/drop',
+  roadm_express: 'Express',
+  passthrough: 'Passthrough',
+}
+
+function defaultXcKind(opticalKind) {
+  switch ((opticalKind ?? '').toLowerCase()) {
+    case 'roadm':
+      return 'roadm_adddrop'
+    case 'ila':
+    case 'passive':
+      return 'passthrough'
+    default:
+      return 'tributary'
+  }
+}
+
+function interfaceNameById(id) {
+  return (device.value?.interfaces ?? []).find((i) => i.id === id)?.name ?? `#${id}`
+}
+
+const xcInterfaceItems = computed(() =>
+  (device.value?.interfaces ?? []).map((i) => ({ label: i.name, value: i.id })),
+)
+
+watch(xcKind, () => {
+  xcA.value = null
+  xcB.value = null
+})
+
+function resetXcForm(opticalKind) {
+  xcKind.value = defaultXcKind(opticalKind)
+  xcA.value = null
+  xcB.value = null
+}
+
 function addXConnect() {
   if (!device.value || !xcA.value || !xcB.value) return
   createXConnect({
@@ -262,6 +326,7 @@ function loadDevice(row) {
     .then((data) => {
       device.value = data
       snapshotDescriptions()
+      resetXcForm(data.optical_kind)
     })
     .catch(() => {
       deviceError.value = 'Failed to load device.'
@@ -285,15 +350,22 @@ const refreshingInterfaces = ref(false)
 const updatingInterfaces = ref(false)
 
 const interfaceSorting = ref([{ id: 'name', desc: false }])
-const interfaceColumns = [
-  { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'description', header: 'Description' },
-  { id: 'vlans', header: 'VLANs' },
-  { id: 'optical', header: 'Optical' },
-  { id: 'services', header: 'Services' },
-  { accessorKey: 'vrf', header: 'VRF' },
-  { id: 'addresses', header: 'Addresses' },
-]
+const interfaceColumns = computed(() => {
+  const cols = [
+    { accessorKey: 'name', header: 'Name' },
+    { accessorKey: 'description', header: 'Description' },
+    { id: 'vlans', header: 'VLANs' },
+  ]
+  if (authStore.opticalEnabled && isOpticalDevice.value) {
+    cols.push({ id: 'optical', header: 'Optical' })
+  }
+  cols.push(
+    { id: 'services', header: 'Services' },
+    { accessorKey: 'vrf', header: 'VRF' },
+    { id: 'addresses', header: 'Addresses' },
+  )
+  return cols
+})
 
 const serviceDialogOpen = ref(false)
 const editingServiceId = ref(null)
@@ -774,11 +846,15 @@ onMounted(loadDevices)
             <span class="whitespace-nowrap">{{ addressList(row.original) }}</span>
           </template>
         </UTable>
-        <div v-if="authStore.opticalEnabled" class="mt-4">
+        <div v-if="authStore.opticalEnabled && isOpticalDevice" class="mt-4 shrink-0">
           <div class="font-bold mb-2">Cross-connects</div>
-          <ul>
-            <li v-for="x in xconnects" :key="x.id">
-              {{ x.kind }} · {{ x.interface_a_id }} ↔ {{ x.interface_b_id }}
+          <ul v-if="xconnects.length" class="mb-2">
+            <li v-for="x in xconnects" :key="x.id" class="flex items-center gap-2">
+              <span>
+                {{ xcKindLabels[x.kind] || x.kind }} ·
+                {{ interfaceNameById(x.interface_a_id) }} ↔
+                {{ interfaceNameById(x.interface_b_id) }}
+              </span>
               <UButton
                 v-if="authStore.canWrite"
                 icon="i-lucide-trash"
@@ -789,33 +865,32 @@ onMounted(loadDevices)
               />
             </li>
           </ul>
-          <div v-if="authStore.canWrite" class="flex flex-wrap gap-2 mt-2">
-            <USelect
+          <p v-else class="text-sm text-muted-color mb-2">No cross-connects on this device.</p>
+          <div v-if="authStore.canWrite" class="flex flex-wrap gap-2 mt-2 items-center">
+            <USelectMenu
               v-model="xcKind"
-              :items="[
-                { label: 'Tributary', value: 'tributary' },
-                { label: 'Add/drop', value: 'roadm_adddrop' },
-                { label: 'Express', value: 'roadm_express' },
-                { label: 'Passthrough', value: 'passthrough' },
-              ]"
+              :items="xcKindItems"
               value-key="value"
               label-key="label"
+              class="w-48"
             />
-            <USelect
+            <USelectMenu
               v-model="xcA"
-              :items="(device.interfaces ?? []).map((i) => ({ label: i.name, value: i.id }))"
+              :items="xcInterfaceItems"
               value-key="value"
               label-key="label"
-              placeholder="A"
+              placeholder="Port A"
+              class="min-w-64 w-72"
             />
-            <USelect
+            <USelectMenu
               v-model="xcB"
-              :items="(device.interfaces ?? []).map((i) => ({ label: i.name, value: i.id }))"
+              :items="xcInterfaceItems"
               value-key="value"
               label-key="label"
-              placeholder="B"
+              placeholder="Port B"
+              class="min-w-64 w-72"
             />
-            <UButton label="Add" @click="addXConnect" />
+            <UButton label="Add" :disabled="!xcA || !xcB" @click="addXConnect" />
           </div>
         </div>
       </div>
