@@ -2,6 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { getJobs, getJobTaskEvents } from '@/api/jobs'
 import { formatDateTime, formatTime } from '@/utils/datetime'
+import { jobDuration, jobStatus } from '@/utils/job'
 
 const props = defineProps({
   job: { type: Object, default: null },
@@ -184,6 +185,16 @@ onUnmounted(stopPolling)
     :ui="{ content: 'w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh]' }"
   >
     <template #body>
+      <div v-if="liveJob" class="mb-3 flex flex-wrap items-center gap-2">
+        <UBadge
+          :label="jobStatus(liveJob).label"
+          :color="jobStatus(liveJob).color"
+          variant="subtle"
+        />
+        <span v-if="liveJob.finished_at" class="text-sm text-muted">
+          Duration {{ jobDuration(liveJob) }}
+        </span>
+      </div>
       <UTabs
         v-if="liveJob"
         :items="tabItems"

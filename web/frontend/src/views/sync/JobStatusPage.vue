@@ -4,6 +4,7 @@ import { getJobs, getWorkerStatus } from '@/api/jobs'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import JobDetailModal from './JobDetailModal.vue'
 import { formatDateTime } from '@/utils/datetime'
+import { jobDuration, jobStatus, jobTasks } from '@/utils/job'
 
 const nodes = ref([])
 const loading = ref(true)
@@ -74,10 +75,6 @@ function loadJobs() {
     })
 }
 
-function jobTasks(job) {
-  return job.tasks ?? []
-}
-
 function jobTargets(job) {
   return jobTasks(job)
     .map((task) => task.target)
@@ -90,28 +87,6 @@ function jobErrorCount(job) {
 
 function jobWarningCount(job) {
   return jobTasks(job).reduce((sum, task) => sum + (task.warning_count || 0), 0)
-}
-
-function jobStatus(job) {
-  if (!job.finished_at) {
-    return { label: 'Running', color: 'info' }
-  }
-  const failed = jobTasks(job).some((task) => task.exit_code !== 0)
-  if (failed) {
-    return { label: 'Failed', color: 'error' }
-  }
-  return { label: 'Success', color: 'success' }
-}
-
-function jobDuration(job) {
-  if (!job.finished_at) {
-    return '-'
-  }
-  const seconds = (new Date(job.finished_at) - new Date(job.started_at)) / 1000
-  if (seconds < 1) {
-    return '<1s'
-  }
-  return `${Math.round(seconds)}s`
 }
 
 const detailDialog = ref(false)
@@ -135,7 +110,13 @@ onMounted(() => {
       <UButton label="Refresh" icon="i-lucide-refresh-cw" :loading="loading" @click="loadStatus" />
     </div>
 
-    <UAlert v-if="loadError" color="error" variant="subtle" title="Failed to load worker node status." class="mb-4" />
+    <UAlert
+      v-if="loadError"
+      color="error"
+      variant="subtle"
+      title="Failed to load worker node status."
+      class="mb-4"
+    />
 
     <UTable
       v-model:sorting="nodeSorting"
@@ -182,10 +163,21 @@ onMounted(() => {
   <div class="card">
     <div class="flex items-center justify-between mb-4">
       <div class="font-semibold text-xl">Recent jobs</div>
-      <UButton label="Refresh" icon="i-lucide-refresh-cw" :loading="jobsLoading" @click="loadJobs" />
+      <UButton
+        label="Refresh"
+        icon="i-lucide-refresh-cw"
+        :loading="jobsLoading"
+        @click="loadJobs"
+      />
     </div>
 
-    <UAlert v-if="jobsLoadError" color="error" variant="subtle" title="Failed to load job history." class="mb-4" />
+    <UAlert
+      v-if="jobsLoadError"
+      color="error"
+      variant="subtle"
+      title="Failed to load job history."
+      class="mb-4"
+    />
 
     <UTable
       v-model:sorting="jobSorting"
@@ -211,7 +203,11 @@ onMounted(() => {
       <template #triggered_by-cell="{ row }">{{ row.original.triggered_by || '-' }}</template>
       <template #started-cell="{ row }">{{ formatDateTime(row.original.started_at) }}</template>
       <template #status-cell="{ row }">
-        <UBadge :label="jobStatus(row.original).label" :color="jobStatus(row.original).color" variant="subtle" />
+        <UBadge
+          :label="jobStatus(row.original).label"
+          :color="jobStatus(row.original).color"
+          variant="subtle"
+        />
       </template>
       <template #duration-cell="{ row }">{{ jobDuration(row.original) }}</template>
       <template #errors-cell="{ row }">

@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -586,13 +587,10 @@ func (m *RemoteManager) startOneTask(jobPK uint, target string) (taskID string, 
 		if createErr := m.db.Create(&task).Error; createErr != nil {
 			return "", 0, createErr
 		}
-		if updErr := m.db.Model(&task).Updates(map[string]any{
-			"finished_at": time.Now(),
-			"exit_code":   -1,
-			"err":         reserveErr.Error(),
-		}).Error; updErr != nil {
-			slog.Error("worker hub: record conflicted job task", "target", target, "err", updErr)
-		}
+		// Go through resolveTask so a conflict on the batch's last target
+		// still stamps the parent Job finished (and emits the one job-done
+		// log) instead of leaving it running forever.
+		m.resolveTask(id, -1, reserveErr.Error())
 		return id, 0, reserveErr
 	}
 
@@ -663,6 +661,7 @@ func (m *RemoteManager) StartJob(jobType, triggeredBy string, targets []string) 
 	if len(targets) == 0 {
 		now := time.Now()
 		m.db.Model(&models.Job{}).Where("id = ?", job.ID).Update("finished_at", now)
+		m.logJobFinished(job, now)
 		return job, nil, nil
 	}
 
@@ -762,7 +761,7 @@ func (m *RemoteManager) resolveTask(taskID string, exitCode int, errMsg string) 
 	}
 
 	var job models.Job
-	if err := m.db.Select("id", "expected_tasks").Where("id = ?", task.JobID).First(&job).Error; err != nil {
+	if err := m.db.Where("id = ?", task.JobID).First(&job).Error; err != nil {
 		slog.Error("worker hub: load job", "job_id", task.JobID, "err", err)
 		return
 	}
@@ -779,12 +778,66 @@ func (m *RemoteManager) resolveTask(taskID string, exitCode int, errMsg string) 
 		return
 	}
 	if remaining == 0 && total >= int64(job.ExpectedTasks) {
-		if err := m.db.Model(&models.Job{}).
+		res := m.db.Model(&models.Job{}).
 			Where("id = ? AND finished_at IS NULL", task.JobID).
-			Update("finished_at", now).Error; err != nil {
-			slog.Error("worker hub: finish job", "job_id", task.JobID, "err", err)
+			Update("finished_at", now)
+		if res.Error != nil {
+			slog.Error("worker hub: finish job", "job_id", task.JobID, "err", res.Error)
+			return
+		}
+		if res.RowsAffected == 1 {
+			m.logJobFinished(job, now)
 		}
 	}
+}
+
+// logJobFinished writes the single slog line for a completed Job - the
+// log-window counterpart of the duration the job-status details view
+// already shows from started_at/finished_at. Guarded by the parent
+// update's RowsAffected so two sibling tasks finishing at once can't
+// emit it twice.
+func (m *RemoteManager) logJobFinished(job models.Job, finishedAt time.Time) {
+	duration := finishedAt.Sub(job.StartedAt)
+	if duration < 0 {
+		duration = 0
+	}
+
+	var tasks []models.JobTask
+	if err := m.db.Where("job_id = ?", job.ID).Order("id").Find(&tasks).Error; err != nil {
+		slog.Error("worker hub: load job tasks for finish log", "job_id", job.ID, "err", err)
+	}
+
+	status := "success"
+	errorCount := 0
+	warningCount := 0
+	targets := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		targets = append(targets, t.Target)
+		errorCount += t.ErrorCount
+		warningCount += t.WarningCount
+		if t.ExitCode != 0 {
+			status = "failed"
+		}
+	}
+
+	slog.Info("job finished",
+		"job_id", job.ID,
+		"status", status,
+		"duration", formatJobDuration(duration),
+		"targets", strings.Join(targets, ","),
+		"triggered_by", job.TriggeredBy,
+		"errors", errorCount,
+		"warnings", warningCount,
+	)
+}
+
+// formatJobDuration matches the job-status table / details view: whole
+// seconds, or "<1s" for anything that rounded down to zero.
+func formatJobDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second))
 }
 
 // finishJobTask records a dispatched command's completion against its
