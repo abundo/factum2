@@ -315,6 +315,20 @@ firewall step, not something the process unbinds.
   print well-formed-but-unrelated JSON (`internal/icinga/icinga.go`
   dumping a request body) that would otherwise silently decode into a
   blank event and swallow the real line.
+- **Housekeeping**: `job_task_events` (and the parent `jobs`/`job_tasks`
+  rows) are not pruned automatically. `housekeeping` is a job target
+  (`worker.HousekeepingTarget`) that runs **in-process on the primary**
+  (`RemoteManager.createAndDispatchTask` / `runHousekeeping`) against
+  Postgres — it is not dispatched over the hub and does not need a
+  `worker.commands` entry. `internal/housekeeping.Trim` keeps the newest
+  `Settings.JobHistoryKeep` finished jobs (default 50 when unset/`< 1`,
+  matching `GET /api/jobs`) plus any unfinished jobs, and deletes older
+  finished jobs with their tasks and events, plus orphan events
+  (`job_task_id IS NULL`). It is a valid scheduler / `POST /api/sync/:target`
+  target (`worker.IsValidJobTarget`) but is **not** in `SyncTargets`, so
+  "Sync all" and schedule target `"all"` never include it. Nothing starts
+  it on its own; an operator creates a `JobSchedule` (or clicks Run on
+  the Job overview Maintenance tile).
 - `Sync()` in `internal/librenms/factum2-librenms.go` gets its Netbox client
   the same way as everything else on this page: `internal/netbox`'s
   `FetchRemoteConfig`/`RemoteClient` fetch `Settings.NetboxApiURL/

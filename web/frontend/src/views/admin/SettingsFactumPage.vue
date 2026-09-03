@@ -152,6 +152,22 @@ function testEmail() {
                 left blank, the incoming request's host is used instead.</small
               >
             </div>
+            <div>
+              <label for="job_history_keep" class="block font-bold mb-3">Job history to keep</label>
+              <UInputNumber
+                id="job_history_keep"
+                v-model="settings.job_history_keep"
+                :min="0"
+                :format-options="{ useGrouping: false }"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Newest finished jobs retained when the housekeeping task runs (and their per-line
+                events). 0 means 50, matching the job history list. Unfinished jobs are never
+                deleted. Housekeeping does not run on its own — schedule it on the Scheduler
+                page.</small
+              >
+            </div>
           </div>
         </template>
 

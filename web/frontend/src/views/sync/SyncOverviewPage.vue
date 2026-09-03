@@ -18,6 +18,8 @@ const targetInfo = {
   librenms: { label: 'LibreNMS', icon: 'i-lucide-line-chart', section: 'destination' },
   oxidized: { label: 'Oxidized', icon: 'i-lucide-save', section: 'destination' },
   prometheus: { label: 'Prometheus', icon: 'i-lucide-gauge', section: 'destination' },
+
+  housekeeping: { label: 'Housekeeping', icon: 'i-lucide-trash-2', section: 'maintenance' },
 }
 
 const targets = ref([])
@@ -66,6 +68,10 @@ const sourceTiles = computed(() => tiles.value.filter((tile) => tile.section ===
 const destinationTiles = computed(() =>
   tiles.value.filter((tile) => tile.section === 'destination'),
 )
+const maintenanceTiles = computed(() =>
+  tiles.value.filter((tile) => tile.section === 'maintenance'),
+)
+const syncableTargets = computed(() => targets.value.filter((t) => t !== 'housekeeping'))
 
 function lastTaskStatus(task) {
   if (!task) {
@@ -88,6 +94,18 @@ function lastTaskStatus(task) {
 // request.
 function isRunning(tile) {
   return !!tile.lastTask && !tile.lastTask.finished_at
+}
+
+function actionLabel(tile) {
+  if (isRunning(tile)) {
+    return 'Running…'
+  }
+  return tile.target === 'housekeeping' ? 'Run' : 'Sync'
+}
+
+function queuedDescription(target) {
+  const label = targetInfo[target]?.label ?? target
+  return target === 'housekeeping' ? `${label} has been queued.` : `${label} sync has been queued.`
 }
 
 function loadTargets() {
@@ -122,8 +140,8 @@ function sync(target) {
     .then(() => {
       toast.add({
         color: 'success',
-        title: 'Sync queued',
-        description: `${targetInfo[target]?.label ?? target} sync has been queued.`,
+        title: target === 'housekeeping' ? 'Housekeeping queued' : 'Sync queued',
+        description: queuedDescription(target),
         duration: 3000,
       })
       loadJobs()
@@ -240,7 +258,7 @@ onUnmounted(() => {
         label="Sync all"
         icon="i-lucide-refresh-cw"
         :loading="syncingAll"
-        :disabled="loading || targets.length === 0"
+        :disabled="loading || syncableTargets.length === 0"
         @click="syncAll"
       />
     </div>
@@ -252,71 +270,110 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
-      <div class="font-semibold text-lg mb-3">Sources</div>
-      <div class="grid grid-cols-12 gap-4 mb-6">
-        <div
-          v-for="tile in sourceTiles"
-          :key="tile.target"
-          class="col-span-12 sm:col-span-6 lg:col-span-4"
-        >
-          <div class="border border-default rounded-lg p-4 flex flex-col gap-2">
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <UIcon :name="tile.icon" class="size-6" />
-                <span class="font-medium">{{ tile.label }}</span>
+      <template v-if="sourceTiles.length">
+        <div class="font-semibold text-lg mb-3">Sources</div>
+        <div class="grid grid-cols-12 gap-4 mb-6">
+          <div
+            v-for="tile in sourceTiles"
+            :key="tile.target"
+            class="col-span-12 sm:col-span-6 lg:col-span-4"
+          >
+            <div class="border border-default rounded-lg p-4 flex flex-col gap-2">
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                  <UIcon :name="tile.icon" class="size-6" />
+                  <span class="font-medium">{{ tile.label }}</span>
+                </div>
+                <UButton
+                  v-if="authStore.canWrite"
+                  :label="actionLabel(tile)"
+                  icon="i-lucide-refresh-cw"
+                  :loading="syncing[tile.target] || isRunning(tile)"
+                  :disabled="isRunning(tile) || syncingAll"
+                  @click="sync(tile.target)"
+                />
               </div>
-              <UButton
-                v-if="authStore.canWrite"
-                :label="isRunning(tile) ? 'Running…' : 'Sync'"
-                icon="i-lucide-refresh-cw"
-                :loading="syncing[tile.target] || isRunning(tile)"
-                :disabled="isRunning(tile) || syncingAll"
-                @click="sync(tile.target)"
-              />
-            </div>
-            <div
-              v-if="lastTaskStatus(tile.lastTask)"
-              class="text-xs"
-              :class="lastTaskStatus(tile.lastTask).class"
-            >
-              {{ lastTaskStatus(tile.lastTask).text }}
+              <div
+                v-if="lastTaskStatus(tile.lastTask)"
+                class="text-xs"
+                :class="lastTaskStatus(tile.lastTask).class"
+              >
+                {{ lastTaskStatus(tile.lastTask).text }}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
 
-      <div class="font-semibold text-lg mb-3">Destinations</div>
-      <div class="grid grid-cols-12 gap-4">
-        <div
-          v-for="tile in destinationTiles"
-          :key="tile.target"
-          class="col-span-12 sm:col-span-6 lg:col-span-4"
-        >
-          <div class="border border-default rounded-lg p-4 flex flex-col gap-2">
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <UIcon :name="tile.icon" class="size-6" />
-                <span class="font-medium">{{ tile.label }}</span>
+      <template v-if="destinationTiles.length">
+        <div class="font-semibold text-lg mb-3">Destinations</div>
+        <div class="grid grid-cols-12 gap-4">
+          <div
+            v-for="tile in destinationTiles"
+            :key="tile.target"
+            class="col-span-12 sm:col-span-6 lg:col-span-4"
+          >
+            <div class="border border-default rounded-lg p-4 flex flex-col gap-2">
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                  <UIcon :name="tile.icon" class="size-6" />
+                  <span class="font-medium">{{ tile.label }}</span>
+                </div>
+                <UButton
+                  v-if="authStore.canWrite"
+                  :label="actionLabel(tile)"
+                  icon="i-lucide-refresh-cw"
+                  :loading="syncing[tile.target] || isRunning(tile)"
+                  :disabled="isRunning(tile) || syncingAll"
+                  @click="sync(tile.target)"
+                />
               </div>
-              <UButton
-                v-if="authStore.canWrite"
-                :label="isRunning(tile) ? 'Running…' : 'Sync'"
-                icon="i-lucide-refresh-cw"
-                :loading="syncing[tile.target] || isRunning(tile)"
-                :disabled="isRunning(tile) || syncingAll"
-                @click="sync(tile.target)"
-              />
-            </div>
-            <div
-              v-if="lastTaskStatus(tile.lastTask)"
-              class="text-xs"
-              :class="lastTaskStatus(tile.lastTask).class"
-            >
-              {{ lastTaskStatus(tile.lastTask).text }}
+              <div
+                v-if="lastTaskStatus(tile.lastTask)"
+                class="text-xs"
+                :class="lastTaskStatus(tile.lastTask).class"
+              >
+                {{ lastTaskStatus(tile.lastTask).text }}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
+
+      <template v-if="maintenanceTiles.length">
+        <div class="font-semibold text-lg mb-3 mt-6">Maintenance</div>
+        <div class="grid grid-cols-12 gap-4">
+          <div
+            v-for="tile in maintenanceTiles"
+            :key="tile.target"
+            class="col-span-12 sm:col-span-6 lg:col-span-4"
+          >
+            <div class="border border-default rounded-lg p-4 flex flex-col gap-2">
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                  <UIcon :name="tile.icon" class="size-6" />
+                  <span class="font-medium">{{ tile.label }}</span>
+                </div>
+                <UButton
+                  v-if="authStore.canWrite"
+                  :label="actionLabel(tile)"
+                  icon="i-lucide-trash-2"
+                  :loading="syncing[tile.target] || isRunning(tile)"
+                  :disabled="isRunning(tile) || syncingAll"
+                  @click="sync(tile.target)"
+                />
+              </div>
+              <div
+                v-if="lastTaskStatus(tile.lastTask)"
+                class="text-xs"
+                :class="lastTaskStatus(tile.lastTask).class"
+              >
+                {{ lastTaskStatus(tile.lastTask).text }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
 
       <div class="font-semibold text-lg mb-3 mt-6">Troubleshooting</div>
       <div class="border border-default rounded-lg p-4 flex items-center justify-between gap-4">

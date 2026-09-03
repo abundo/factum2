@@ -13,6 +13,7 @@ const authStore = useAuthStore()
 
 const targetInfo = {
   all: { label: 'All jobs' },
+  housekeeping: { label: 'Housekeeping' },
   becs: { label: 'BECS' },
   lime: { label: 'Lime' },
   netbox: { label: 'Netbox' },
@@ -268,8 +269,9 @@ onUnmounted(() => {
     </div>
 
     <p class="text-muted-color mb-4">
-      Periodic jobs that trigger one sync target, or all enabled jobs in sequence. Times are
-      Europe/Stockholm.
+      Periodic jobs that trigger one sync target, housekeeping (trims old job history in the
+      database), or all enabled syncs in sequence. Housekeeping is not part of "All jobs" and does
+      not run unless you schedule it. Times are Europe/Stockholm.
     </p>
 
     <UTable
@@ -369,7 +371,8 @@ onUnmounted(() => {
             class="w-full"
           />
           <small class="text-muted-color">
-            All jobs runs every enabled source then destination, same as Sync all.
+            All jobs runs every enabled source then destination, same as Sync all. Housekeeping is
+            not included in All jobs.
           </small>
         </div>
         <div>

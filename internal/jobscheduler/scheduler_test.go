@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/abundo/factum2/internal/util"
+	"github.com/abundo/factum2/internal/worker"
 	"github.com/abundo/factum2/models"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -53,6 +54,9 @@ func TestValidate(t *testing.T) {
 	}
 	if _, _, _, err := Validate("x", "dns", "@hourly"); err != nil {
 		t.Fatalf("descriptor should be accepted: %v", err)
+	}
+	if _, _, _, err := Validate("Nightly trim", "housekeeping", "0 3 * * *"); err != nil {
+		t.Fatalf("housekeeping should be a valid schedule target: %v", err)
 	}
 }
 
@@ -229,5 +233,35 @@ func TestResolveTargetsAllEmpty(t *testing.T) {
 	_, err := ResolveTargets(db, TargetAll)
 	if err == nil {
 		t.Fatal("expected error when no targets are enabled")
+	}
+}
+
+func TestResolveTargetsHousekeeping(t *testing.T) {
+	db := newTestDB(t)
+	got, err := ResolveTargets(db, worker.HousekeepingTarget)
+	if err != nil {
+		t.Fatalf("ResolveTargets(housekeeping): %v", err)
+	}
+	if len(got) != 1 || got[0] != worker.HousekeepingTarget {
+		t.Fatalf("got %v, want [housekeeping]", got)
+	}
+
+	enabled := true
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	settings.DnsEnabled = &enabled
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	all, err := ResolveTargets(db, TargetAll)
+	if err != nil {
+		t.Fatalf("ResolveTargets(all): %v", err)
+	}
+	for _, tname := range all {
+		if tname == worker.HousekeepingTarget {
+			t.Fatal("housekeeping must not be included in schedule target \"all\"")
+		}
 	}
 }

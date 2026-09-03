@@ -248,11 +248,12 @@ type JobTaskEvent struct {
 	At        time.Time `json:"at"`
 }
 
-// JobSchedule is one user-defined periodic trigger for a sync job, the
-// in-app replacement for a crontab entry on the primary. Target is either
-// one worker.SyncTargets name (a single-target StartJob, same as clicking
-// one tile on Job overview) or the sentinel "all" (SequencedSyncAllTargets
-// + StartJob, same as "Sync all"). Cron is a 5-field expression evaluated
+// JobSchedule is one user-defined periodic trigger for a job, the in-app
+// replacement for a crontab entry on the primary. Target is either one
+// worker.IsValidJobTarget name (a single-target StartJob, same as clicking
+// one tile on Job overview - sync targets plus "housekeeping"), or the
+// sentinel "all" (SequencedSyncAllTargets + StartJob, same as "Sync all";
+// housekeeping is not included). Cron is a 5-field expression evaluated
 // in Europe/Stockholm; NextRunAt is computed at create/update and advanced
 // by the scheduler when a run is claimed so a restart only ever catch-up
 // fires once, not once per missed tick.
@@ -329,6 +330,13 @@ type Settings struct {
 	// like the rest of its settings, since they typically run on a different
 	// host than the primary.
 	DefaultDomain string `gorm:"column:default_domain" form:"default_domain" json:"default_domain"`
+	// JobHistoryKeep is how many newest finished Jobs (and their
+	// JobTask/JobTaskEvent rows) the housekeeping target keeps. Values < 1
+	// are treated as 50 by housekeeping.Trim (the same cap GET /api/jobs
+	// lists), so an unset column cannot wipe history on the first run.
+	// Unfinished jobs are never deleted. The task does not run on its
+	// own - schedule or trigger "housekeeping" like any other job target.
+	JobHistoryKeep int `gorm:"column:job_history_keep" form:"job_history_keep" json:"job_history_keep"`
 
 	// BECS
 	BecsEapiURL  string `gorm:"column:becs_eapi_url" form:"becs_eapi_url" json:"becs_eapi_url"`

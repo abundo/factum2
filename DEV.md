@@ -408,6 +408,12 @@ large"}` without putting that body on the websocket (gorilla would close
   is delayed for the duration of the write (up to 60s). Prefer not to
   overlap a DNS `GET /api/device?include=interfaces` with `RunAndWait` on
   the same node.
+- **Job history housekeeping**: `housekeeping` is an in-process job target
+  (not a `worker.commands` entry) that trims old `jobs` / `job_tasks` /
+  `job_task_events` rows, keeping the newest `Settings.JobHistoryKeep`
+  finished jobs (default 50). It does not run by itself — create a
+  schedule on `/sync/scheduler` (or trigger it from the Job overview
+  Maintenance tile). Schema column: `factum2-web migrate`.
 - **Sync job events**: add `--job` to a `worker.commands` entry's `args` to
   have that predefined command report structured info/warning/error events
   (persisted as `models.SyncJobEvent`, visible in `/sync/status`'s job

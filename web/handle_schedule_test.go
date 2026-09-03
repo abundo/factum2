@@ -95,6 +95,31 @@ func TestScheduleCRUD(t *testing.T) {
 	}
 }
 
+func TestScheduleCreateHousekeeping(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/schedules", models.JobScheduleDTO{
+		Name:    "Nightly trim",
+		Enabled: true,
+		Target:  "housekeeping",
+		Cron:    "0 3 * * *",
+	}, nil, nil)
+	if err := ctrl.ApiScheduleCreate(c); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.JobSchedule
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Target != "housekeeping" {
+		t.Fatalf("target = %q, want housekeeping", created.Target)
+	}
+}
+
 func TestScheduleCreateRejectsInvalid(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

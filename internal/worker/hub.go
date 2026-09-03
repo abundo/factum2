@@ -519,6 +519,9 @@ func (m *RemoteManager) reserveTarget(target string) (taskID string, err error) 
 // can reference a TaskID that doesn't have a row yet. If dispatchSingle
 // matches nobody, the row is immediately finished as failed via
 // finishJobTask rather than left "started, never finished".
+//
+// Housekeeping is the exception: it has to run against the primary's
+// Postgres (that's the table it trims), so it never goes out over the hub.
 func (m *RemoteManager) createAndDispatchTask(jobPK uint, taskID, target string) (matched int, err error) {
 	task := models.JobTask{
 		JobID:     jobPK,
@@ -537,6 +540,11 @@ func (m *RemoteManager) createAndDispatchTask(jobPK uint, taskID, target string)
 		m.running[target] = cur
 	}
 	m.mu.Unlock()
+
+	if target == HousekeepingTarget {
+		go m.runHousekeeping(taskID, task.ID)
+		return 1, nil
+	}
 
 	node, matched, err := m.dispatchSingle(taskID, target, nil)
 	if err != nil {

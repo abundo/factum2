@@ -17,12 +17,16 @@ import (
 // render one button per target without hardcoding the list - filtered down
 // to those enabled in Settings (worker.EnabledSyncTargets), so a source/
 // destination an admin hasn't activated doesn't show a Sync button at all.
+// Housekeeping is always appended: it is not a Settings-gated sync and is
+// not part of "Sync all", but the overview still offers a Run button.
 func (ctrl *Controller) ApiSyncTargets(c *echo.Context) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, worker.EnabledSyncTargets(settings))
+	targets := append([]string{}, worker.EnabledSyncTargets(settings)...)
+	targets = append(targets, worker.HousekeepingTarget)
+	return c.JSON(http.StatusOK, targets)
 }
 
 // ApiSyncTrigger dispatches :target to exactly one connected worker node
@@ -40,7 +44,7 @@ func (ctrl *Controller) ApiSyncTargets(c *echo.Context) error {
 // case, but the server is the actual enforcement point.
 func (ctrl *Controller) ApiSyncTrigger(c *echo.Context) error {
 	target := c.Param("target")
-	if !worker.IsValidSyncTarget(target) {
+	if !worker.IsValidJobTarget(target) {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "unknown sync target"})
 	}
 

@@ -6,6 +6,13 @@ import (
 	"github.com/abundo/factum2/models"
 )
 
+// HousekeepingTarget is the in-process job that trims persisted job
+// history (internal/housekeeping). It is a valid StartJob / scheduler
+// target, but not a SyncTargets entry: it is never dispatched to a worker,
+// never included in "Sync all", and is not gated by a Settings enable
+// switch. Operators schedule it themselves.
+const HousekeepingTarget = "housekeeping"
+
 // SyncTargets lists the systems that can be synced from the web UI. Each
 // name doubles as the role/command name a factum2-worker instance activates
 // to handle it - each one matches a corresponding "factum2-<name> sync" CLI
@@ -27,6 +34,12 @@ var sourceSyncTargets = map[string]bool{
 
 func IsValidSyncTarget(target string) bool {
 	return slices.Contains(SyncTargets, target)
+}
+
+// IsValidJobTarget is the set StartJob / ApiSyncTrigger / the scheduler
+// will accept: every sync target, plus housekeeping.
+func IsValidJobTarget(target string) bool {
+	return target == HousekeepingTarget || IsValidSyncTarget(target)
 }
 
 // SequencedSyncAllTargets orders targets (expected to already be filtered

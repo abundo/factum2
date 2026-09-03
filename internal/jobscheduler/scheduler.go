@@ -1,6 +1,6 @@
 // Package jobscheduler runs user-defined JobSchedule rows: each due
 // schedule triggers the same StartJob path as the Job overview page
-// (one sync target, or a sequenced "sync all").
+// (one sync target, housekeeping, or a sequenced "sync all").
 package jobscheduler
 
 import (
@@ -159,7 +159,7 @@ func Validate(name, target, cronExpr string) (string, string, string, error) {
 }
 
 func IsValidTarget(target string) bool {
-	return target == TargetAll || worker.IsValidSyncTarget(target)
+	return target == TargetAll || worker.IsValidJobTarget(target)
 }
 
 // NextRun is the next activation of expr strictly after `after`, in loc.
@@ -179,12 +179,13 @@ func NextRun(expr string, after time.Time, loc *time.Location) (time.Time, error
 }
 
 // ResolveTargets turns a schedule's Target into the StartJob target list.
-// "all" uses the same enabled, sources-first order as ApiSyncTriggerAll;
-// a named target is passed through even if currently disabled, matching
-// ApiSyncTrigger (which only checks IsValidSyncTarget).
+// "all" uses the same enabled, sources-first order as ApiSyncTriggerAll
+// (housekeeping is not included); a named target is passed through even
+// if currently disabled, matching ApiSyncTrigger (which checks
+// IsValidJobTarget).
 func ResolveTargets(db *gorm.DB, target string) ([]string, error) {
 	if target != TargetAll {
-		if !worker.IsValidSyncTarget(target) {
+		if !worker.IsValidJobTarget(target) {
 			return nil, fmt.Errorf("unknown sync target %q", target)
 		}
 		return []string{target}, nil
