@@ -1,15 +1,23 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { getJobs, getWorkerStatus } from '@/api/jobs'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import JobDetailModal from './JobDetailModal.vue'
 import { formatDateTime } from '@/utils/datetime'
 import { jobDuration, jobStatus, jobTasks } from '@/utils/job'
 
+const REFRESH_INTERVAL_MS = 5000
+const AUTO_REFRESH_DURATION_MS = 60 * 60 * 1000
+
 const nodes = ref([])
 const loading = ref(true)
 const loadError = ref(false)
 const nodeSorting = ref([{ id: 'name', desc: false }])
+const autoRefresh = ref(false)
+
+let refreshTimer = null
+let stopTimer = null
+let refreshInFlight = false
 
 const nodeColumns = [
   { accessorKey: 'name', header: 'Name' },
@@ -22,18 +30,24 @@ const nodeColumns = [
   { accessorKey: 'last_error', header: 'Last error' },
 ]
 
-function loadStatus() {
-  loading.value = true
-  loadError.value = false
-  getWorkerStatus()
+function loadStatus({ showLoading = false } = {}) {
+  if (showLoading) {
+    loading.value = true
+    loadError.value = false
+  }
+  return getWorkerStatus()
     .then((data) => {
       nodes.value = data ?? []
     })
     .catch(() => {
-      loadError.value = true
+      if (showLoading) {
+        loadError.value = true
+      }
     })
     .finally(() => {
-      loading.value = false
+      if (showLoading) {
+        loading.value = false
+      }
     })
 }
 
@@ -60,19 +74,67 @@ const jobColumns = [
   { id: 'warnings', header: 'Warnings' },
 ]
 
-function loadJobs() {
-  jobsLoading.value = true
-  jobsLoadError.value = false
-  getJobs()
+function loadJobs({ showLoading = false } = {}) {
+  if (showLoading) {
+    jobsLoading.value = true
+    jobsLoadError.value = false
+  }
+  return getJobs()
     .then((data) => {
       jobs.value = data ?? []
     })
     .catch(() => {
-      jobsLoadError.value = true
+      if (showLoading) {
+        jobsLoadError.value = true
+      }
     })
     .finally(() => {
-      jobsLoading.value = false
+      if (showLoading) {
+        jobsLoading.value = false
+      }
     })
+}
+
+function loadAll({ showLoading = false } = {}) {
+  if (refreshInFlight) {
+    return Promise.resolve()
+  }
+  refreshInFlight = true
+  return Promise.all([loadStatus({ showLoading }), loadJobs({ showLoading })]).finally(() => {
+    refreshInFlight = false
+  })
+}
+
+function stopAutoRefresh() {
+  autoRefresh.value = false
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  if (stopTimer) {
+    clearTimeout(stopTimer)
+    stopTimer = null
+  }
+}
+
+function startAutoRefresh({ refreshNow = false } = {}) {
+  stopAutoRefresh()
+  autoRefresh.value = true
+  if (refreshNow) {
+    loadAll()
+  }
+  refreshTimer = setInterval(() => {
+    loadAll()
+  }, REFRESH_INTERVAL_MS)
+  stopTimer = setTimeout(stopAutoRefresh, AUTO_REFRESH_DURATION_MS)
+}
+
+function toggleAutoRefresh() {
+  if (autoRefresh.value) {
+    stopAutoRefresh()
+  } else {
+    startAutoRefresh({ refreshNow: true })
+  }
 }
 
 function jobTargets(job) {
@@ -98,8 +160,12 @@ function viewJob(job) {
 }
 
 onMounted(() => {
-  loadStatus()
-  loadJobs()
+  loadAll({ showLoading: true })
+  startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
 })
 </script>
 
@@ -107,7 +173,15 @@ onMounted(() => {
   <div class="card mb-6">
     <div class="flex items-center justify-between mb-4">
       <div class="font-semibold text-xl">Job status</div>
-      <UButton label="Refresh" icon="i-lucide-refresh-cw" :loading="loading" @click="loadStatus" />
+      <UButton
+        label="Autorefresh"
+        icon="i-lucide-refresh-cw"
+        :color="autoRefresh ? 'primary' : 'neutral'"
+        :variant="autoRefresh ? 'solid' : 'outline'"
+        :aria-pressed="autoRefresh"
+        title="Refresh every 5 seconds (stops after 1 hour)"
+        @click="toggleAutoRefresh"
+      />
     </div>
 
     <UAlert
@@ -161,15 +235,7 @@ onMounted(() => {
   </div>
 
   <div class="card">
-    <div class="flex items-center justify-between mb-4">
-      <div class="font-semibold text-xl">Recent jobs</div>
-      <UButton
-        label="Refresh"
-        icon="i-lucide-refresh-cw"
-        :loading="jobsLoading"
-        @click="loadJobs"
-      />
-    </div>
+    <div class="font-semibold text-xl mb-4">Recent jobs</div>
 
     <UAlert
       v-if="jobsLoadError"
