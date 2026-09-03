@@ -95,16 +95,28 @@ done
 log "NetBox API token"
 # Demo dump has admin/admin but no API tokens; first-boot SUPERUSER_API_TOKEN
 # is skipped once that user exists. Always ensure the known lab key.
+#
+# NetBox 4.5+ split Token.key (varchar(12), v2 lookup prefix) from
+# Token.plaintext (varchar(40), v1 secret). Passing the 40-char lab token
+# as key raises StringDataRightTruncation. netboxtool still sends
+# "Authorization: Token <plaintext>", so create a v1 token.
 "${COMPOSE[@]}" exec -T netbox env FACTUM_LAB_NETBOX_TOKEN="$NETBOX_TOKEN" \
 	/opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py shell --interface python <<'PY'
 import os
+from users.choices import TokenVersionChoices
 from users.models import Token, User
 key = os.environ.get("FACTUM_LAB_NETBOX_TOKEN", "")
 u = User.objects.filter(username="admin").first()
 if not u or not key:
     raise SystemExit("netbox admin user or lab token missing")
-if not Token.objects.filter(key=key).exists():
-    Token.objects.create(user=u, key=key, write_enabled=True, description="factum lab")
+if not Token.objects.filter(plaintext=key).exists():
+    Token.objects.create(
+        user=u,
+        token=key,
+        version=TokenVersionChoices.V1,
+        write_enabled=True,
+        description="factum lab",
+    )
 print(key)
 PY
 log "NetBox token: ${NETBOX_TOKEN:0:8}…"

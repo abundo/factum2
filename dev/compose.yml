@@ -42,7 +42,7 @@ x-factum: &factum
 services:
   postgres:
     <<: *lab-restart
-    image: docker.io/postgres:16-alpine
+    image: docker.io/postgres:18-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-factum2}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factum2}
@@ -50,7 +50,8 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # PG 18+ VOLUME is /var/lib/postgresql (PGDATA=/var/lib/postgresql/18/docker)
+      - postgres-data:/var/lib/postgresql
       - ./postgres/init:/docker-entrypoint-initdb.d:z,ro
       # SQL dump fetched by prepare.sh / netbox-demo-fetch.sh
       - ./data/netbox:/netbox-demo:z,ro
@@ -101,7 +102,7 @@ services:
 
   netbox: &netbox
     <<: *lab-restart
-    image: docker.io/netboxcommunity/netbox:${NETBOX_VERSION:-v4.3-3.3.0}
+    image: docker.io/netboxcommunity/netbox:${NETBOX_VERSION:-v4.6.10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,7 +130,7 @@ services:
       SUPERUSER_PASSWORD: ${NETBOX_SUPERUSER_PASSWORD:-admin}
       SUPERUSER_EMAIL: ${NETBOX_SUPERUSER_EMAIL:-admin@lab.example}
       SUPERUSER_API_TOKEN: ${NETBOX_SUPERUSER_API_TOKEN}
-      API_TOKEN_PEPPER_1: ${NETBOX_API_TOKEN_PEPPER_1}
+      API_TOKEN_PEPPER_1: ${NETBOX_API_TOKEN_PEPPER_1:-lab-api-token-pepper-1-not-for-production-use-change-me-50ch}
       CORS_ORIGIN_ALLOW_ALL: "true"
       GRAPHQL_ENABLED: "true"
       WEBHOOKS_ENABLED: "true"
@@ -167,7 +168,7 @@ services:
 
   librenms:
     <<: *lab-restart
-    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-24.11.0}
+    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-26.8.2}
     hostname: librenms
     cap_add:
       - NET_ADMIN
@@ -207,7 +208,7 @@ services:
 
   librenms-dispatcher:
     <<: *lab-restart
-    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-24.11.0}
+    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-26.8.2}
     hostname: librenms-dispatcher
     cap_add:
       - NET_ADMIN
@@ -239,7 +240,7 @@ services:
 
   icinga:
     <<: *lab-restart
-    image: docker.io/icinga/icinga2:2.15
+    image: docker.io/icinga/icinga2:2.16.5
     hostname: icinga
     environment:
       ICINGA_MASTER: "1"
@@ -269,7 +270,7 @@ services:
 
   dns:
     <<: *lab-restart
-    image: docker.io/internetsystemsconsortium/bind9:9.18
+    image: docker.io/internetsystemsconsortium/bind9:9.20
     ports:
       - "18053:53/udp"
       - "18053:53/tcp"

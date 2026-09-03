@@ -1,6 +1,6 @@
 #!/bin/sh
 # Download the PostgreSQL dump from netbox-community/netbox-demo-data that
-# matches this lab's NetBox image (compose.yml NETBOX_VERSION, default v4.3).
+# matches this lab's NetBox image (compose.yml NETBOX_VERSION, default v4.6.10).
 # Writes dev/data/netbox/netbox-demo.sql for postgres/init/02-netbox-demo.sh
 # and seed.sh. Idempotent: skips when the cached file matches the minor version.
 set -eu
@@ -13,9 +13,13 @@ if [ -f "$DIR/.env" ]; then
 	set +a
 fi
 
-NETBOX_VERSION=${NETBOX_VERSION:-v4.3-3.3.0}
-# docker tag v4.3-3.3.0 -> dump netbox-demo-v4.3.sql
-NETBOX_DEMO_MINOR=${NETBOX_VERSION%%-*}
+NETBOX_VERSION=${NETBOX_VERSION:-v4.6.10}
+# docker tag v4.6.10 / v4.6.10-5.0.2 / v4.6-5.0.2 -> dump netbox-demo-v4.6.sql
+ver=${NETBOX_VERSION%%-*}
+case "$ver" in
+v*.*.*) NETBOX_DEMO_MINOR=${ver%.*} ;;
+*) NETBOX_DEMO_MINOR=$ver ;;
+esac
 DUMP_DIR="$DIR/data/netbox"
 DUMP="$DUMP_DIR/netbox-demo.sql"
 STAMP="$DUMP_DIR/version"
