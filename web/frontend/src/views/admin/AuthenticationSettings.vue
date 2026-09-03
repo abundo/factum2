@@ -1,6 +1,6 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { getSettings, updateSettings } from '@/api/settings'
 import { testLdapConnection } from '@/api/ldap'
 
@@ -13,6 +13,12 @@ const testing = ref(false)
 const forbidden = ref(false)
 const loadError = ref(false)
 const showBindPassword = ref(false)
+// 'anonymous' | 'service'. Independent of the DN field so selecting
+// service-account bind with an empty DN (not yet typed) doesn't snap
+// the radio back to anonymous.
+const ldapBindMode = ref('service')
+const savedBindDN = ref('')
+const savedBindPassword = ref('')
 
 const tlsModeOptions = [
   { label: 'None', value: 'none' },
@@ -25,6 +31,38 @@ const ldapServerTypeOptions = [
   { label: 'Generic (OpenLDAP-compatible)', value: 'generic' },
 ]
 
+const ldapBindModeOptions = [
+  { label: 'Anonymous bind', value: 'anonymous' },
+  { label: 'Service account bind', value: 'service' },
+]
+
+const anonymousBind = computed(() => ldapBindMode.value === 'anonymous')
+
+// v-model for the radios. Setting ldapBindMode directly (on load) does not
+// go through this, so loading a saved service account doesn't get wiped.
+const ldapBindModeModel = computed({
+  get: () => ldapBindMode.value,
+  set(mode) {
+    if (mode === ldapBindMode.value) {
+      return
+    }
+    ldapBindMode.value = mode
+    if (mode === 'anonymous') {
+      savedBindDN.value = settings.ldap_bind_dn || ''
+      savedBindPassword.value = settings.ldap_bind_password || ''
+      settings.ldap_bind_dn = ''
+      settings.ldap_bind_password = ''
+      return
+    }
+    if (!settings.ldap_bind_dn) {
+      settings.ldap_bind_dn = savedBindDN.value
+    }
+    if (!settings.ldap_bind_password) {
+      settings.ldap_bind_password = savedBindPassword.value
+    }
+  },
+})
+
 function loadSettings() {
   loading.value = true
   forbidden.value = false
@@ -32,6 +70,9 @@ function loadSettings() {
   getSettings()
     .then((data) => {
       Object.assign(settings, data)
+      ldapBindMode.value = (data.ldap_bind_dn || '').trim() ? 'service' : 'anonymous'
+      savedBindDN.value = ''
+      savedBindPassword.value = ''
     })
     .catch((err) => {
       if (err.response?.status === 403 || err.response?.status === 401) {
@@ -45,7 +86,16 @@ function loadSettings() {
     })
 }
 
+function applyAnonymousBind() {
+  if (!anonymousBind.value) {
+    return
+  }
+  settings.ldap_bind_dn = ''
+  settings.ldap_bind_password = ''
+}
+
 function save() {
+  applyAnonymousBind()
   saving.value = true
   updateSettings(settings)
     .then((data) => {
@@ -88,6 +138,7 @@ function testDescription(data) {
 }
 
 function testConnection() {
+  applyAnonymousBind()
   testing.value = true
   testLdapConnection({
     ldap_host: settings.ldap_host,
@@ -252,17 +303,26 @@ onMounted(loadSettings)
         </div>
 
         <div>
+          <label class="block font-bold mb-3">Bind type</label>
+          <URadioGroup
+            v-model="ldapBindModeModel"
+            :items="ldapBindModeOptions"
+            orientation="horizontal"
+          />
+          <small v-if="anonymousBind" class="text-muted-color"
+            >The directory must allow anonymous search under the Base DN; Active Directory usually
+            does not.</small
+          >
+        </div>
+        <div>
           <label for="ldap_bind_dn" class="block font-bold mb-3">Service account bind DN</label>
           <UInput
             id="ldap_bind_dn"
             v-model="settings.ldap_bind_dn"
             placeholder="CN=svc-factum,OU=service accounts,DC=example,DC=com"
             class="w-full"
+            :disabled="anonymousBind"
           />
-          <small class="text-muted-color"
-            >Optional. Leave blank to bind anonymously (no service account). The directory must
-            allow anonymous search under the Base DN; Active Directory usually does not.</small
-          >
         </div>
         <div>
           <label for="ldap_bind_password" class="block font-bold mb-3"
@@ -273,6 +333,7 @@ onMounted(loadSettings)
             v-model="settings.ldap_bind_password"
             :type="showBindPassword ? 'text' : 'password'"
             class="w-full"
+            :disabled="anonymousBind"
             :ui="{ trailing: 'pe-1' }"
           >
             <template #trailing>
@@ -280,12 +341,12 @@ onMounted(loadSettings)
                 color="neutral"
                 variant="link"
                 size="sm"
+                :disabled="anonymousBind"
                 :icon="showBindPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
                 @click="showBindPassword = !showBindPassword"
               />
             </template>
           </UInput>
-          <small class="text-muted-color">Unused when the bind DN is blank.</small>
         </div>
         <div>
           <label for="ldap_base_dn" class="block font-bold mb-3">Base DN</label>
