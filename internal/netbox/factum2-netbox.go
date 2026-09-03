@@ -409,10 +409,13 @@ type tenantAPI interface {
 // tenantNameTakenError is a same-name Netbox tenant that already belongs to
 // a different live factum customer - creating another with that name would
 // violate tenancy_tenant_unique_name, and adopting it would steal the
-// tenant out from under the owner.
+// tenant out from under the owner. Tenant is the existing row so a caller
+// that only needs to *use* the tenant (ELINE L2VPN assignment) can reuse
+// it without claiming it.
 type tenantNameTakenError struct {
 	Name    string
 	OwnerID string
+	Tenant  *netboxtool.NBTenant
 }
 
 func (e *tenantNameTakenError) Error() string {
@@ -545,7 +548,7 @@ func ensureTenant(nb tenantAPI, customer models.Customer, idx *tenantIndex) (*ne
 
 	if tenant, ok := idx.byName[strings.ToLower(customer.Name)]; ok {
 		if !tenantClaimable(tenant, sourceID, idx.liveIDs) {
-			return nil, tenantUnchanged, &tenantNameTakenError{Name: customer.Name, OwnerID: tenant.CfSourceID}
+			return nil, tenantUnchanged, &tenantNameTakenError{Name: customer.Name, OwnerID: tenant.CfSourceID, Tenant: tenant}
 		}
 		if err := nb.UpdateTenant(tenant.NetboxID, map[string]any{
 			"name":          customer.Name,
@@ -635,7 +638,7 @@ func syncCustomersToNetbox(db *gorm.DB, nb tenantAPI, reporter jobevent.Reporter
 // FindOrCreateTenant returns the Netbox tenant for customer, matched via the
 // same "source"="factum"/"source_id"=<customer.ID> custom fields
 // syncCustomersToNetbox uses. Provisioning paths (currently
-// web.ApiServiceElineUpdate, when it assigns a service's L2VPN to its
+// persistELINEEndpoints, when it assigns a service's L2VPN to its
 // customer's tenant) call this directly instead of waiting for the next
 // scheduled Netbox sync, so a customer's first service still gets a tenant
 // even if Netbox sync hasn't run since the customer was created.
@@ -646,6 +649,12 @@ func syncCustomersToNetbox(db *gorm.DB, nb tenantAPI, reporter jobevent.Reporter
 // for pulling every Netbox tenant just to find one. GetTenants is only
 // consulted on a miss, to adopt an existing same-name tenant (or pick a
 // unique slug) instead of POSTing a name that already exists.
+//
+// If a same-name tenant is already claimed by a different factum customer
+// (duplicate customer rows sharing a Netbox-unique name), the existing
+// tenant is returned as-is rather than erroring: the caller only needs a
+// tenant id to hang an L2VPN on, and stealing the claim would take the
+// tenant away from its owner. Bulk customer sync still skips that case.
 func FindOrCreateTenant(nb *netboxtool.NetboxClient, customer models.Customer) (*netboxtool.NBTenant, error) {
 	return findOrCreateTenant(nb, customer)
 }
@@ -664,7 +673,16 @@ func findOrCreateTenant(nb tenantAPI, customer models.Customer) (*netboxtool.NBT
 		return nil, err
 	}
 	tenant, _, err := ensureTenant(nb, customer, newTenantIndex(tenants, nil))
-	return tenant, err
+	if err != nil {
+		var taken *tenantNameTakenError
+		if errors.As(err, &taken) && taken.Tenant != nil {
+			slog.Warn("netbox: reusing tenant already claimed by another factum customer",
+				"tenant", taken.Name, "customer_id", customer.ID, "owner_id", taken.OwnerID)
+			return taken.Tenant, nil
+		}
+		return nil, err
+	}
+	return tenant, nil
 }
 
 // syncDevice creates or updates a single device and reconciles its

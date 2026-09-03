@@ -584,15 +584,20 @@ func TestSyncInterfaces_CopiesVLANNames(t *testing.T) {
 	}
 }
 
-func TestFindOrCreateTenant_NameTaken(t *testing.T) {
-	nb := &fakeTenantAPI{tenants: []*netboxtool.NBTenant{
-		{NetboxID: 9, Name: "Acme", Slug: "acme", CfSource: "factum", CfSourceID: "1"},
-	}}
-	_, err := findOrCreateTenant(nb, models.Customer{FactumModel: models.FactumModel{ID: 5}, Name: "Acme"})
-	if err == nil {
-		t.Fatal("expected name-taken error")
+func TestFindOrCreateTenant_NameTakenReusesExisting(t *testing.T) {
+	existing := &netboxtool.NBTenant{NetboxID: 9, Name: "Acme", Slug: "acme", CfSource: "factum", CfSourceID: "1"}
+	nb := &fakeTenantAPI{tenants: []*netboxtool.NBTenant{existing}}
+	got, err := findOrCreateTenant(nb, models.Customer{FactumModel: models.FactumModel{ID: 5}, Name: "Acme"})
+	if err != nil {
+		t.Fatalf("err = %v, want reuse of existing same-name tenant", err)
 	}
-	if !isTenantConflict(err) {
-		t.Fatalf("err = %v, want tenant conflict", err)
+	if got.NetboxID != 9 {
+		t.Fatalf("got %+v, want existing tenant 9", got)
+	}
+	if nb.creates != 0 || nb.updates != 0 {
+		t.Fatalf("creates=%d updates=%d, want 0/0 (must not steal the claim)", nb.creates, nb.updates)
+	}
+	if existing.CfSourceID != "1" {
+		t.Fatalf("source_id = %s, want 1 (owner unchanged)", existing.CfSourceID)
 	}
 }
