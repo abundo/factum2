@@ -522,8 +522,8 @@ onMounted(loadDevices)
 </script>
 
 <template>
-  <div class="card">
-    <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <h4 class="m-0">Devices</h4>
       <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
     </div>
@@ -536,7 +536,8 @@ onMounted(loadDevices)
       :loading="loading"
       :empty="error ?? 'No devices found.'"
       :virtualize="{ estimateSize: 46 }"
-      class="max-h-[calc(100vh-320px)]"
+      sticky
+      class="min-h-0 flex-1"
     >
       <template
         v-for="col in columns.filter((c) => c.id !== 'actions')"
