@@ -259,6 +259,10 @@ onMounted(loadSettings)
             placeholder="CN=svc-factum,OU=service accounts,DC=example,DC=com"
             class="w-full"
           />
+          <small class="text-muted-color"
+            >Optional. Leave blank to bind anonymously (no service account). The directory must
+            allow anonymous search under the Base DN; Active Directory usually does not.</small
+          >
         </div>
         <div>
           <label for="ldap_bind_password" class="block font-bold mb-3"
@@ -281,6 +285,7 @@ onMounted(loadSettings)
               />
             </template>
           </UInput>
+          <small class="text-muted-color">Unused when the bind DN is blank.</small>
         </div>
         <div>
           <label for="ldap_base_dn" class="block font-bold mb-3">Base DN</label>

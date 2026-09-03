@@ -526,9 +526,11 @@ type Settings struct {
 	// LdapTLSMode is "none" | "starttls" | "ldaps".
 	LdapTLSMode       string `gorm:"column:ldap_tls_mode" form:"ldap_tls_mode" json:"ldap_tls_mode"`
 	LdapSkipTLSVerify *bool  `gorm:"column:ldap_skip_tls_verify" form:"ldap_skip_tls_verify" json:"ldap_skip_tls_verify"`
-	// LdapBindDN/LdapBindPassword are the service account used for the
+	// LdapBindDN/LdapBindPassword are the search identity used for the
 	// search+bind flow (see internal/ldapauth.Authenticate) - stored in
 	// plaintext like every other integration credential in this struct.
+	// Both may be blank for an anonymous bind, which requires the
+	// directory to allow anonymous search under LdapBaseDN.
 	LdapBindDN       string `gorm:"column:ldap_bind_dn" form:"ldap_bind_dn" json:"ldap_bind_dn"`
 	LdapBindPassword string `gorm:"column:ldap_bind_password" form:"ldap_bind_password" json:"ldap_bind_password"`
 	LdapBaseDN       string `gorm:"column:ldap_base_dn" form:"ldap_base_dn" json:"ldap_base_dn"`

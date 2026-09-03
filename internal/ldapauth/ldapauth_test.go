@@ -13,6 +13,26 @@ import (
 // and fills in the connection details without also typing out every
 // attribute name, ConfigFromSettings must still request the standard
 // AD/OpenLDAP attribute names rather than leaving them unrequested.
+func TestAuthenticate_EmptyPassword(t *testing.T) {
+	// Must not dial or bind: an empty password is a failed login, not an
+	// infra error. A Host of "invalid.invalid" would fail DNS if we
+	// accidentally reached connect().
+	ok, info, err := Authenticate(Config{
+		Host:         "invalid.invalid",
+		Port:         389,
+		BindDN:       "cn=svc,dc=example,dc=com",
+		BindPassword: "secret",
+		BaseDN:       "dc=example,dc=com",
+		UserFilter:   "(uid=%s)",
+	}, "alice", "")
+	if err != nil {
+		t.Fatalf("empty password returned error %v, want (false, nil, nil)", err)
+	}
+	if ok || info != nil {
+		t.Fatalf("empty password: ok=%v info=%v, want false/nil", ok, info)
+	}
+}
+
 func TestConfigFromSettings_AttributeDefaults(t *testing.T) {
 	settings := &models.Settings{}
 	cfg := ConfigFromSettings(settings)

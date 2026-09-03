@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/util"
@@ -10,10 +11,11 @@ import (
 
 // LdapTestRequest carries the (possibly-unsaved, currently-in-form) LDAP
 // connection fields for the admin "Test Connection" button. BindPassword is
-// optional: if blank, the currently-saved Settings.LdapBindPassword is used
-// instead, so the admin doesn't have to retype a secret just to test other
-// field changes - same "omit to keep existing value" pattern as
-// WorkerNodeDTO.Token/UserDTO.Password.
+// optional: if blank AND BindDN is set, the currently-saved
+// Settings.LdapBindPassword is used instead, so the admin doesn't have to
+// retype a secret just to test other field changes - same "omit to keep
+// existing value" pattern as WorkerNodeDTO.Token/UserDTO.Password. An empty
+// BindDN is an anonymous bind: do not fill in a leftover saved password.
 type LdapTestRequest struct {
 	Host          string `json:"ldap_host"`
 	Port          uint16 `json:"ldap_port"`
@@ -63,7 +65,7 @@ func (ctrl *Controller) ApiLdapTestConnection(c *echo.Context) error {
 		BindPassword:  req.BindPassword,
 		BaseDN:        req.BaseDN,
 	}
-	if cfg.BindPassword == "" {
+	if cfg.BindPassword == "" && strings.TrimSpace(cfg.BindDN) != "" {
 		cfg.BindPassword = settings.LdapBindPassword
 	}
 

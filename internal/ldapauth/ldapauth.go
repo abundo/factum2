@@ -34,7 +34,12 @@ type Config struct {
 	// ServerType is "ad" | "generic" (OpenLDAP-compatible). Server-specific
 	// behavior that can't be expressed the same way on both (e.g. how a
 	// password change is written back) branches on this.
-	ServerType   string
+	ServerType string
+	// BindDN/BindPassword are the search identity. Both may be blank:
+	// that is an anonymous bind (RFC 4513 §5.1.1). A non-empty BindDN
+	// still requires a password - go-ldap (and bindService) refuse an
+	// empty password in that case, because some servers treat it as an
+	// unauthenticated bind that succeeds without checking anything.
 	BindDN       string
 	BindPassword string
 	BaseDN       string
@@ -247,10 +252,30 @@ func TestServers(cfg Config) []ServerResult {
 	return out
 }
 
-// TestConnection dials, binds as the service account and issues a
-// zero-result-tolerant search under BaseDN - used by the admin "Test
-// Connection" button (via TestServers, one host at a time). Returns nil
-// on success.
+// bindService binds as the configured search identity. An empty BindDN is
+// an anonymous bind (RFC 4513 §5.1.1). go-ldap's Bind() refuses an empty
+// password client-side with ErrorEmptyPassword (206), so anonymous bind
+// has to go through UnauthenticatedBind("") instead. A non-empty BindDN
+// still uses Bind(), which keeps rejecting an empty password - that
+// combination is an unauthenticated bind (RFC 4513 §5.1.2) that some
+// servers accept without checking anything.
+func bindService(conn *ldap.Conn, cfg Config) error {
+	if strings.TrimSpace(cfg.BindDN) == "" {
+		if err := conn.UnauthenticatedBind(""); err != nil {
+			return fmt.Errorf("ldap: anonymous bind failed: %w", err)
+		}
+		return nil
+	}
+	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+		return fmt.Errorf("ldap: service-account bind failed: %w", err)
+	}
+	return nil
+}
+
+// TestConnection dials, binds as the search identity (anonymous when
+// BindDN is blank) and issues a zero-result-tolerant search under BaseDN
+// - used by the admin "Test Connection" button (via TestServers, one
+// host at a time). Returns nil on success.
 func TestConnection(cfg Config) error {
 	conn, err := connect(cfg)
 	if err != nil {
@@ -258,8 +283,8 @@ func TestConnection(cfg Config) error {
 	}
 	defer conn.Close()
 
-	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-		return fmt.Errorf("ldap: service-account bind failed: %w", err)
+	if err := bindService(conn, cfg); err != nil {
+		return err
 	}
 	req := ldap.NewSearchRequest(
 		cfg.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
@@ -280,10 +305,10 @@ func TestConnection(cfg Config) error {
 	return nil
 }
 
-// Authenticate performs the search+bind flow: bind as the configured service
-// account, search BaseDN with UserFilter for username, then re-bind (on a
-// fresh connection) as the single matched DN with password to verify
-// credentials.
+// Authenticate performs the search+bind flow: bind as the configured
+// search identity (anonymous when BindDN is blank), search BaseDN with
+// UserFilter for username, then re-bind (on a fresh connection) as the
+// single matched DN with password to verify credentials.
 //
 // Return contract mirrors web.AuthenticateUser's existing split:
 //   - (true, info, nil):  credentials verified, info populated.
@@ -296,14 +321,23 @@ func TestConnection(cfg Config) error {
 //     failure that isn't LDAPResultInvalidCredentials. Callers should treat
 //     this as a real error (e.g. 500), not silently show "wrong password".
 func Authenticate(cfg Config, username, password string) (bool, *UserInfo, error) {
+	// Empty password must not be sent as a bind: go-ldap rejects it
+	// client-side (ErrorEmptyPassword), and a non-empty DN with an empty
+	// password is an unauthenticated bind that some servers accept
+	// without checking credentials (RFC 4513 §5.1.2). Treat it as a
+	// failed login, same as a wrong password.
+	if password == "" {
+		return false, nil, nil
+	}
+
 	conn, err := connect(cfg)
 	if err != nil {
 		return false, nil, err
 	}
 	defer conn.Close()
 
-	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-		return false, nil, fmt.Errorf("ldap: service-account bind failed: %w", err)
+	if err := bindService(conn, cfg); err != nil {
+		return false, nil, err
 	}
 
 	filter := fmt.Sprintf(cfg.UserFilter, ldap.EscapeFilter(username))
@@ -350,7 +384,8 @@ func Authenticate(cfg Config, username, password string) (bool, *UserInfo, error
 	defer userConn.Close()
 
 	if err := userConn.Bind(entry.DN, password); err != nil {
-		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) ||
+			ldap.IsErrorWithCode(err, ldap.ErrorEmptyPassword) {
 			return false, nil, nil
 		}
 		return false, nil, fmt.Errorf("ldap: user bind failed: %w", err)
@@ -405,8 +440,8 @@ func LookupByEmail(cfg Config, email string) (*UserInfo, error) {
 	}
 	defer conn.Close()
 
-	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-		return nil, fmt.Errorf("ldap: service-account bind failed: %w", err)
+	if err := bindService(conn, cfg); err != nil {
+		return nil, err
 	}
 
 	filter := fmt.Sprintf("(%s=%s)", cfg.AttrEmail, ldap.EscapeFilter(email))
@@ -518,8 +553,8 @@ func ChangePassword(cfg Config, wb WritebackConfig, username, newPassword string
 		return err
 	}
 	defer conn.Close()
-	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-		return fmt.Errorf("ldap: service-account bind failed: %w", err)
+	if err := bindService(conn, cfg); err != nil {
+		return err
 	}
 
 	filter := fmt.Sprintf(cfg.UserFilter, ldap.EscapeFilter(username))
@@ -639,8 +674,8 @@ func rdnValue(dn string) string {
 // Browse lists the immediate children of dn (or cfg.BaseDN if dn is blank)
 // for a tree-browser UI - used so an admin setting up a group->role mapping
 // can navigate the directory and click the group they mean instead of
-// having to know/type its exact DN. Binds as the configured service account,
-// same as TestConnection/Authenticate.
+// having to know/type its exact DN. Binds as the configured search
+// identity, same as TestConnection/Authenticate.
 func Browse(cfg Config, dn string) ([]Entry, error) {
 	conn, err := connect(cfg)
 	if err != nil {
@@ -648,8 +683,8 @@ func Browse(cfg Config, dn string) ([]Entry, error) {
 	}
 	defer conn.Close()
 
-	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-		return nil, fmt.Errorf("ldap: service-account bind failed: %w", err)
+	if err := bindService(conn, cfg); err != nil {
+		return nil, err
 	}
 
 	base := strings.TrimSpace(dn)

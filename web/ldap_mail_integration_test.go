@@ -37,6 +37,7 @@ import (
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/mail"
 	"github.com/abundo/factum2/internal/util"
+	"github.com/go-ldap/ldap/v3"
 )
 
 func envOr(key, def string) string {
@@ -66,6 +67,34 @@ func skipUnlessReachable(t *testing.T, host string, port uint16) {
 		t.Skipf("%s not reachable (%v) - run `make itest-up` first, see this file's header comment", addr, err)
 	}
 	conn.Close()
+}
+
+// grantAnonymousRead relaxes osixia/openldap's default data-DIT ACL
+// (`to * ... by * none`) so anonymous search works. Bind with a blank
+// BindDN already succeeds (that's the 206 fix); without this, the
+// follow-up search returns noSuchObject and the no-service-account
+// login path can't be exercised. Uses osixia's cn=config admin
+// (password "config"), not the data-DIT admin.
+func grantAnonymousRead(t *testing.T, host string, port uint16) {
+	t.Helper()
+	addr := fmt.Sprintf("ldap://%s:%d", host, port)
+	conn, err := ldap.DialURL(addr)
+	if err != nil {
+		t.Fatalf("dial %s: %v", addr, err)
+	}
+	defer conn.Close()
+	if err := conn.Bind("cn=admin,cn=config", "config"); err != nil {
+		t.Fatalf("cn=config bind (needed to grant anonymous read): %v", err)
+	}
+	mod := ldap.NewModifyRequest("olcDatabase={1}mdb,cn=config", nil)
+	mod.Replace("olcAccess", []string{
+		`{0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break`,
+		`{1}to attrs=userPassword,shadowLastChange by self write by dn="cn=admin,dc=factum,dc=test" write by anonymous auth by * none`,
+		`{2}to * by self read by dn="cn=admin,dc=factum,dc=test" write by * read`,
+	})
+	if err := conn.Modify(mod); err != nil {
+		t.Fatalf("grant anonymous read: %v", err)
+	}
 }
 
 func testLDAPConfig() ldapauth.Config {
@@ -128,6 +157,30 @@ func TestIntegrationLDAPAuthenticateFailover(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("Authenticate via secondary: expected success, got bad credentials")
+	}
+	if info.Email != "testuser@factum.test" {
+		t.Errorf("Email = %q, want testuser@factum.test", info.Email)
+	}
+}
+
+func TestIntegrationLDAPAnonymousBind(t *testing.T) {
+	cfg := testLDAPConfig()
+	skipUnlessReachable(t, cfg.Host, cfg.Port)
+	grantAnonymousRead(t, cfg.Host, cfg.Port)
+
+	cfg.BindDN = ""
+	cfg.BindPassword = ""
+
+	if err := ldapauth.TestConnection(cfg); err != nil {
+		t.Fatalf("TestConnection with anonymous bind: %v", err)
+	}
+
+	ok, info, err := ldapauth.Authenticate(cfg, "testuser", "testpass123")
+	if err != nil {
+		t.Fatalf("Authenticate with anonymous search bind: %v", err)
+	}
+	if !ok {
+		t.Fatal("Authenticate with anonymous search bind: expected success, got bad credentials")
 	}
 	if info.Email != "testuser@factum.test" {
 		t.Errorf("Email = %q, want testuser@factum.test", info.Email)
