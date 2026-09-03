@@ -554,6 +554,36 @@ func TestFindOrCreateTenant_CreatesWhenMissing(t *testing.T) {
 	}
 }
 
+func TestSyncInterfaces_CopiesVLANNames(t *testing.T) {
+	db := newImportTestDB(t)
+	deviceID, _ := seedDeviceWithIfaces(t, db, "sw1", 7, nil)
+	err := syncInterfaces(db, deviceID, []netboxtool.NBInterface{{
+		NetboxID:     10,
+		Name:         "Ethernet1",
+		Type:         "other",
+		UntaggedVLAN: 100,
+		TaggedVLANs:  []int{200},
+		VLANNames:    map[int]string{100: "MGMT", 200: "servers"},
+		Mode:         "tagged",
+	}})
+	if err != nil {
+		t.Fatalf("syncInterfaces: %v", err)
+	}
+	var iface models.Interface
+	if err := db.Where("device_id = ? AND name = ?", deviceID, "Ethernet1").First(&iface).Error; err != nil {
+		t.Fatalf("load iface: %v", err)
+	}
+	if iface.UntaggedVLAN != 100 {
+		t.Errorf("UntaggedVLAN = %d, want 100", iface.UntaggedVLAN)
+	}
+	if got := iface.VLANNames[100]; got != "MGMT" {
+		t.Errorf("VLANNames[100] = %q, want MGMT", got)
+	}
+	if got := iface.VLANNames[200]; got != "servers" {
+		t.Errorf("VLANNames[200] = %q, want servers", got)
+	}
+}
+
 func TestFindOrCreateTenant_NameTaken(t *testing.T) {
 	nb := &fakeTenantAPI{tenants: []*netboxtool.NBTenant{
 		{NetboxID: 9, Name: "Acme", Slug: "acme", CfSource: "factum", CfSourceID: "1"},

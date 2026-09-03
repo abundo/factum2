@@ -801,6 +801,7 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 		iface.Type = nb_intf.Type
 		iface.UntaggedVLAN = nb_intf.UntaggedVLAN
 		iface.TaggedVLANs = nb_intf.TaggedVLANs
+		iface.VLANNames = nb_intf.VLANNames
 		iface.SwitchportMode = models.NetboxModeToSwitchportMode(nb_intf.Mode)
 		iface.CableID = nb_intf.CableID
 		iface.Label = nb_intf.Label

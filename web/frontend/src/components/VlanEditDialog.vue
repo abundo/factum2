@@ -1,6 +1,6 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { updateInterfaceVlans } from '@/api/devices'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
@@ -78,6 +78,58 @@ const sortedInterfaces = computed(() =>
     .filter((i) => isPhysicalInterface(i) && isSwitchport(i))
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true })),
 )
+
+// EOS: Vlan100, VRP: Vlanif100. Used as a fallback VLAN-name source when
+// Netbox names haven't been synced onto interface.vlan_names yet.
+const sviNameRe = /^(?:vlanif|vlan)(\d+)$/i
+
+const vlanNamesByVid = computed(() => {
+  const map = {}
+  for (const iface of props.interfaces ?? []) {
+    for (const [vid, name] of Object.entries(iface.vlan_names ?? {})) {
+      const trimmed = String(name ?? '').trim()
+      if (trimmed) map[Number(vid)] = trimmed
+    }
+  }
+  for (const iface of props.interfaces ?? []) {
+    const m = sviNameRe.exec(iface?.name ?? '')
+    if (!m) continue
+    const desc = (iface.description ?? '').trim()
+    if (!desc) continue
+    const vid = Number(m[1])
+    if (!map[vid]) map[vid] = desc
+  }
+  return map
+})
+
+function vlanName(vid) {
+  return vlanNamesByVid.value[vid] || ''
+}
+
+// Description is a second sticky column; its `left` must match the name
+// column's live width so the two don't overlap when names are short/long.
+const ifaceNameHeader = ref(null)
+const ifaceNameColWidth = ref('0px')
+let ifaceNameObserver = null
+
+function syncIfaceNameColWidth() {
+  const el = ifaceNameHeader.value
+  if (!el) return
+  ifaceNameColWidth.value = `${Math.ceil(el.getBoundingClientRect().width)}px`
+}
+
+watch(ifaceNameHeader, (el) => {
+  ifaceNameObserver?.disconnect()
+  ifaceNameObserver = null
+  if (!el) return
+  syncIfaceNameColWidth()
+  ifaceNameObserver = new ResizeObserver(syncIfaceNameColWidth)
+  ifaceNameObserver.observe(el)
+})
+
+onBeforeUnmount(() => {
+  ifaceNameObserver?.disconnect()
+})
 
 const hasChanges = computed(() => {
   for (const iface of sortedInterfaces.value) {
@@ -422,20 +474,37 @@ function metaFor(state) {
         </div>
 
         <div v-else class="flex-1 min-h-0 overflow-auto border border-default rounded-md">
-          <table class="border-collapse text-sm w-max min-w-full">
+          <table
+            class="border-collapse text-sm w-max min-w-full"
+            :style="{ '--vlan-iface-name-w': ifaceNameColWidth }"
+          >
             <thead class="sticky top-0 z-20 bg-default">
               <tr>
                 <th
+                  ref="ifaceNameHeader"
                   class="sticky left-0 z-30 bg-default border-b border-r border-default px-3 py-2 text-left font-semibold whitespace-nowrap"
                 >
                   Interface
                 </th>
                 <th
+                  class="sticky left-[var(--vlan-iface-name-w)] z-30 bg-default border-b border-r border-default px-3 py-2 text-left font-semibold whitespace-nowrap min-w-[12rem]"
+                >
+                  Description
+                </th>
+                <th
                   v-for="vid in vlanIds"
                   :key="vid"
-                  class="border-b border-default px-2 py-2 text-center font-semibold whitespace-nowrap min-w-[5.5rem]"
+                  class="border-b border-default px-2 py-2 text-center font-semibold min-w-[5.5rem]"
                 >
-                  {{ vid }}
+                  <div class="flex flex-col items-center leading-tight gap-0.5">
+                    <span class="whitespace-nowrap">{{ vid }}</span>
+                    <span
+                      v-if="vlanName(vid)"
+                      class="text-xs font-normal text-muted-color max-w-[8rem] truncate"
+                      :title="vlanName(vid)"
+                      >{{ vlanName(vid) }}</span
+                    >
+                  </div>
                 </th>
               </tr>
             </thead>
@@ -445,6 +514,12 @@ function metaFor(state) {
                   class="sticky left-0 z-10 bg-default group-hover:bg-elevated border-b border-r border-default px-3 py-1.5 whitespace-nowrap font-medium"
                 >
                   {{ iface.name }}
+                </td>
+                <td
+                  class="sticky left-[var(--vlan-iface-name-w)] z-10 bg-default group-hover:bg-elevated border-b border-r border-default px-3 py-1.5 text-muted-color max-w-[18rem] truncate"
+                  :title="(iface.description ?? '').trim() || undefined"
+                >
+                  {{ (iface.description ?? '').trim() }}
                 </td>
                 <td
                   v-for="vid in vlanIds"

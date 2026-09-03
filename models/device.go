@@ -89,6 +89,10 @@ type Interface struct {
 	// unset.
 	UntaggedVLAN int   `json:"untagged_vlan"`
 	TaggedVLANs  []int `json:"tagged_vlans" gorm:"serializer:json"`
+	// VLANNames maps VID -> Netbox VLAN name for this interface's untagged
+	// and tagged VLANs, copied from netboxtool.NBInterface.VLANNames on
+	// sync. Used by the VLAN matrix to label columns.
+	VLANNames map[int]string `json:"vlan_names,omitempty" gorm:"serializer:json"`
 	// SwitchportMode is "access", "trunk" or "dot1q-tunnel" (Q-in-Q), mirroring
 	// drivers.Interface.SwitchportMode - only meaningful on global-VLAN
 	// platforms (EOS, VRP), "" if not a switchport or unknown.
