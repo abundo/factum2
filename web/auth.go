@@ -30,6 +30,14 @@ var ldapAuthenticate = ldapauth.Authenticate
 // it forge a valid token for any user_id, including an admin.
 var jwtKey []byte
 
+// secureCookies gates the Secure flag on the "token" cookie. Set once at
+// startup by web.go's GUI() from APP_ENV. Off only in development, where
+// the server is normally reached over plain http://localhost and a Secure
+// cookie would never be sent back. Production is served over TLS
+// (typically terminated at a reverse proxy in front of a 127.0.0.1 bind),
+// so the flag is on there even when the Go process itself sees HTTP.
+var secureCookies bool
+
 // jwtSigningKey returns the HMAC key for the "token" cookie. There is no
 // default, including under APP_ENV=development: a hardcoded fallback would
 // let anyone who reads the source forge a valid token for any user.

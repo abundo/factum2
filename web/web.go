@@ -55,6 +55,12 @@ func GUI(p *GuiParams) error {
 
 	devMode := os.Getenv("APP_ENV") == "development"
 
+	// secureCookies gates the "token" cookie's Secure flag (see
+	// setAuthCookie/clearAuthCookie in handle_auth.go). Off only in
+	// development, where the server is normally accessed over plain
+	// http://localhost and a Secure cookie would just never get sent back.
+	secureCookies = !devMode
+
 	// jwtKey signs the API auth token (see auth.go). Always fail-closed:
 	// a hardcoded default would let anyone who reads the source forge a
 	// valid token for any user. APP_ENV=development does not relax this.

@@ -20,6 +20,7 @@ func setAuthCookie(c *echo.Context, userID uint) error {
 		Value:    tokenString,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true, // Not needed by JS: the browser attaches it automatically.
+		Secure:   secureCookies,
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	})
@@ -32,6 +33,8 @@ func clearAuthCookie(c *echo.Context) {
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HttpOnly: true,
+		Secure:   secureCookies,
+		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	})
 }

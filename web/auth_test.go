@@ -54,9 +54,11 @@ func TestGUIRequiresJWTSecret(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	origKey := jwtKey
 	origConfig := util.Config
+	origSecure := secureCookies
 	t.Cleanup(func() {
 		jwtKey = origKey
 		util.Config = origConfig
+		secureCookies = origSecure
 	})
 
 	err := GUI(&GuiParams{})
