@@ -45,7 +45,6 @@ declare module 'vue' {
     UTable: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Table.vue')['default']
     UTabs: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Tabs.vue')['default']
     UTextarea: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Textarea.vue')['default']
-    UTree: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Tree.vue')['default']
     VlanEditDialog: typeof import('./src/components/VlanEditDialog.vue')['default']
   }
 }

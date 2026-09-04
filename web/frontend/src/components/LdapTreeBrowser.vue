@@ -1,91 +1,137 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { Wunderbaum } from 'wunderbaum'
 import { browseLdap } from '@/api/ldap'
+import 'wunderbaum/dist/wunderbaum.css'
+import '@/assets/wunderbaum-theme.css'
 
 // Dialog that lets an admin navigate the configured LDAP/AD directory tree
 // and pick a group DN, instead of having to know/type it exactly. Generic
 // over any dn-shaped field - callers just listen for @select and assign the
 // emitted DN wherever it belongs, so this can be reused anywhere else a DN
 // needs picking, not just the group -> role mapping dialog.
-const props = defineProps({
+defineProps({
   visible: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:visible', 'select'])
 
-const items = ref([])
-const loading = ref(false)
+const el = ref(null)
 const error = ref(null)
-const expandedKeys = ref([])
-// UTree's v-model holds the whole selected node object (as passed via
-// TreeItem's `:value="item"`), not just its `.value` DN string.
-const selectedNode = ref(null)
+const selected = ref(null)
+let tree
 
-// UTree infers whether a node is expandable from `children.length`, so an
-// unloaded-but-expandable container gets a disabled placeholder child - it's
-// swapped out for the real children once loadChildrenFor() resolves.
-function toNode(entry) {
-  const node = {
-    value: entry.dn,
-    label: entry.name || entry.dn,
-    icon: entry.is_group ? 'i-lucide-users' : 'i-lucide-network',
-    isGroup: entry.is_group,
+function toWbNode(entry) {
+  return {
+    key: entry.dn,
+    title: entry.name || entry.dn,
+    lazy: !entry.is_group,
+    type: entry.is_group ? 'group' : 'container',
+    is_group: !!entry.is_group,
   }
-  if (!entry.is_group) {
-    node.childrenLoaded = false
-    node.children = [{ value: `${entry.dn}::placeholder`, label: 'Loading…', disabled: true }]
-  }
-  return node
 }
 
-function findNode(nodes, value) {
-  for (const node of nodes) {
-    if (node.value === value) return node
-    if (node.children) {
-      const found = findNode(node.children, value)
-      if (found) return found
+function selectedPayload(node) {
+  if (!node) return null
+  return {
+    key: node.key,
+    title: node.title,
+    ...node.data,
+  }
+}
+
+function kindLabel(kind) {
+  switch (kind) {
+    case 'group':
+      return 'Group'
+    case 'container':
+      return 'Container'
+    default:
+      return kind || ''
+  }
+}
+
+function renderCell(e) {
+  for (const col of Object.values(e.renderColInfosById ?? {})) {
+    const data = e.node.data ?? {}
+    if (col.id === 'kind') {
+      col.elem.textContent = kindLabel(data.kind || e.node.type)
     }
   }
-  return null
 }
 
-function loadChildrenFor(node) {
-  if (!node || node.childrenLoaded) return
-  browseLdap(node.value)
-    .then((entries) => {
-      node.children = entries.map(toNode)
-      node.childrenLoaded = true
-    })
-    .catch(() => {
-      node.children = []
-      node.childrenLoaded = true
-    })
+function destroyTree() {
+  if (tree) {
+    // destroy() does `element.outerHTML = element.outerHTML`, which
+    // replaces the DOM node and leaves Vue's ref pointing at a detached
+    // element. Only disconnect here; the host is v-if'd with the modal.
+    tree.resizeObserver?.disconnect()
+    tree = null
+  }
+}
+
+function buildTree(source) {
+  if (!el.value) return
+  tree = new Wunderbaum({
+    element: el.value,
+    id: 'ldap-browse',
+    header: true,
+    debugLevel: 0,
+    rowHeightPx: 28,
+    navigationModeOption: 'row',
+    iconMap: {
+      ...Wunderbaum.iconMaps?.bootstrap,
+      expanderExpanded: '<i class="wb-expander">−</i>',
+      expanderCollapsed: '<i class="wb-expander">+</i>',
+      expanderLazy: '<i class="wb-expander">+</i>',
+    },
+    source,
+    columns: [
+      { id: '*', title: 'Name', width: '320px' },
+      { id: 'kind', title: 'Kind', width: '*' },
+    ],
+    types: {
+      group: { icon: false },
+      container: { icon: false },
+    },
+    lazyLoad: (e) => browseLdap(e.node.key).then((rows) => (rows ?? []).map(toWbNode)),
+    render: renderCell,
+    activate: (e) => {
+      selected.value = selectedPayload(e.node)
+    },
+    dblclick: (e) => {
+      if (e.node.data?.is_group) {
+        selectAndClose(e.node)
+        return false
+      }
+    },
+  })
 }
 
 function loadRoot() {
-  loading.value = true
   error.value = null
-  items.value = []
+  selected.value = null
+  const host = el.value
   browseLdap('')
     .then((entries) => {
-      items.value = entries.map(toNode)
+      if (el.value !== host) return
+      buildTree((entries ?? []).map(toWbNode))
     })
     .catch((err) => {
+      if (el.value !== host) return
       error.value = err.response?.data?.error ?? 'Failed to browse the directory.'
-    })
-    .finally(() => {
-      loading.value = false
+      buildTree([])
     })
 }
 
 function selectAndClose(node) {
-  if (!node.isGroup) return
-  emit('select', node.value)
+  if (!node?.data?.is_group) return
+  emit('select', node.key)
   close()
 }
 
 function confirmSelect() {
-  if (!selectedNode.value?.isGroup) return
-  emit('select', selectedNode.value.value)
+  if (!selected.value?.is_group) return
+  emit('select', selected.value.key)
   close()
 }
 
@@ -93,53 +139,42 @@ function close() {
   emit('update:visible', false)
 }
 
-watch(expandedKeys, (keys, oldKeys) => {
-  const previouslyExpanded = new Set(oldKeys ?? [])
-  for (const key of keys) {
-    if (!previouslyExpanded.has(key)) {
-      loadChildrenFor(findNode(items.value, key))
-    }
-  }
-})
-
+// Host is v-if'd with the modal. flush: 'post' so we run after the template
+// ref is bound (default 'pre' misses that mount).
 watch(
-  () => props.visible,
-  (visible) => {
-    if (visible) {
-      selectedNode.value = null
-      expandedKeys.value = []
-      loadRoot()
-    }
+  el,
+  (host) => {
+    if (host) loadRoot()
+    else destroyTree()
   },
+  { flush: 'post' },
 )
+
+onBeforeUnmount(destroyTree)
 </script>
 
 <template>
   <UModal
     :open="visible"
     title="Browse directory"
-    :ui="{ content: 'sm:max-w-xl' }"
+    :ui="{ content: 'sm:max-w-2xl' }"
     @update:open="(v) => emit('update:visible', v)"
   >
     <template #body>
       <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
-      <UTree
-        v-model="selectedNode"
-        v-model:expanded="expandedKeys"
-        :items="items"
-        :get-key="(item) => item.value"
-        :loading="loading"
-        class="max-h-80 overflow-y-auto"
-      >
-        <template #item-label="{ item }">
-          <span @dblclick="selectAndClose(item)">{{ item.label }}</span>
-        </template>
-      </UTree>
+      <div v-if="visible" class="h-80">
+        <div ref="el" class="ipam-tree" />
+      </div>
     </template>
 
     <template #footer>
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
-      <UButton label="Select" icon="i-lucide-check" :disabled="!selectedNode?.isGroup" @click="confirmSelect" />
+      <UButton
+        label="Select"
+        icon="i-lucide-check"
+        :disabled="!selected?.is_group"
+        @click="confirmSelect"
+      />
     </template>
   </UModal>
 </template>
