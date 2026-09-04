@@ -40,10 +40,14 @@ go.work
 # MkDocs local build
 site/
 
-# Compose lab runtime (seed.sh / dest-file sync). Templates and empty
-# placeholders under dev/data stay in git; generated env is local-only.
+# Compose lab runtime (seed.sh / dest-file sync). prepare.sh creates dest
+# files if missing; do not track them — the first sync rewrites them.
 dev/data/librenms.env
 dev/env.sh
+dev/data/dns/records
+dev/data/icinga/hosts.conf
+dev/data/icinga/users.conf
+dev/data/oxidized/router.db
 dev/data/oxidized/config
 dev/data/oxidized/log
 dev/data/oxidized/logs/

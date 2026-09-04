@@ -64,7 +64,8 @@ Sync CLIs run inside `factum-worker` (Job overview, or):
 
 Dest files are `/data/...` inside the worker, bind-mounted from `dev/data/`.
 
-Oxidized exits if `router.db` has no nodes, so the lab ships a dummy
-`lab-dummy:127.0.0.1:ios` line. `factum2-oxidized sync` replaces that file.
+Oxidized exits if `router.db` has no nodes, so `prepare.sh` writes a dummy
+`lab-dummy:127.0.0.1:ios` line when the file is missing. `factum2-oxidized
+sync` replaces that file. Dest files under `dev/data/` are gitignored.
 
 Lab passwords are in `dev/.env` and are not for any other use.
