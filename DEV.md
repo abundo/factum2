@@ -144,7 +144,8 @@ for snmp_exporter (filtered by enabled/`CfMonitorGrafana`/
 make            # all Go binaries except the web-release variant, into build/
 make factum2-web # just the web binary (frontend NOT embedded, served from disk)
 make frontend   # npm ci && npm run build in web/frontend -> web/static/vue
-make release    # all binaries + factum2-web-release (frontend embedded via go:embed)
+make sbom       # write docs/generated/sbom.md (Go modules + GUI npm); used by release
+make release    # all binaries + factum2-web-release (frontend + SBOM embedded)
 make snapshot   # GoReleaser snapshot into dist/ (does not publish)
 make install    # release build + install to /opt/factum2 (no restart)
 ```
@@ -351,7 +352,15 @@ GUI against real apps, not a substitute for these tiers):
 Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
 `CGO_ENABLED=0`; `factum2-web` with `-tags release` so the Vue SPA is
 embedded) and published to GitHub when a `v*` tag is pushed
-(`.github/workflows/release.yml`). Tests must pass first.
+(`.github/workflows/release.yml`). Tests must pass first. The same
+release compile stamps a software bill of materials into the GUI
+Documentation page (`/doc/sbom`): `go list -m all` plus npm packages
+from `web/frontend/package-lock.json` (`make sbom` /
+`internal/sbom/gensbom`, overlaid by `docs/sbom_release.go`). Development
+builds (`go run`, `make factum2-web`) serve the placeholder in
+`docs/user/sbom.md`. A raw `go build -tags release` without generating
+`docs/generated/sbom.md` first still compiles, but keeps that
+placeholder.
 
     git tag -a v0.1.0 -m "v0.1.0"
     git push origin v0.1.0

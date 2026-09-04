@@ -95,6 +95,11 @@ function copyCommit() {
         </a>
       </dd>
 
+      <dt class="text-muted">SBOM</dt>
+      <dd>
+        <RouterLink to="/doc/sbom" class="hover:underline">Software bill of materials</RouterLink>
+      </dd>
+
       <dt class="text-muted">Source</dt>
       <dd>
         <UButton

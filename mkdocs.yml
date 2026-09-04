@@ -50,6 +50,7 @@ nav:
       - Config: user/config.md
       - Jobs: user/jobs.md
       - Admin settings: user/settings.md
+      - Software bill of materials: user/sbom.md
   - Install:
       - Production: install/index.md
       - Reverse proxy: install/reverse-proxy.md
@@ -59,6 +60,8 @@ exclude_docs: |
   *.go
   cfgmgmt-service-design.md
   wdm-roadm-optical-model.md
+  generated/**
+  generated/sbom.md
 
 extra:
   social:

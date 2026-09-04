@@ -17,6 +17,7 @@ release always shows the docs that shipped with that binary.
 - [Config](user/config.md)
 - [Jobs](user/jobs.md)
 - [Admin settings](user/settings.md)
+- [Software bill of materials](user/sbom.md)
 
 ## Install
 

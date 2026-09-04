@@ -9,6 +9,8 @@ before:
     hooks:
         - npm --prefix web/frontend ci
         - npm --prefix web/frontend run build
+        # Inventory is //go:embed'd into factum2-web (`docs/sbom_release.go`).
+        - go run ./internal/sbom/gensbom -o docs/generated/sbom.md
 
 builds:
     - id: factum2

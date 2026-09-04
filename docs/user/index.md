@@ -43,3 +43,4 @@ change settings, users, and workers.
 - [Config](config.md)
 - [Jobs](jobs.md)
 - [Admin settings](settings.md)
+- [Software bill of materials](sbom.md)

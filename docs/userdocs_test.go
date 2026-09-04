@@ -38,6 +38,9 @@ func TestList(t *testing.T) {
 	if !seen["index"] {
 		t.Error("List missing index")
 	}
+	if !seen["sbom"] {
+		t.Error("List missing sbom")
+	}
 }
 
 func TestGetIndex(t *testing.T) {
@@ -62,6 +65,48 @@ func TestGetRejectsTraversal(t *testing.T) {
 		if !errors.Is(err, ErrInvalidSlug) {
 			t.Errorf("Get(%q) err = %v, want ErrInvalidSlug", slug, err)
 		}
+	}
+}
+
+func TestGetSBOMStub(t *testing.T) {
+	if releaseMarkdown != "" {
+		t.Skip("release overlay is active")
+	}
+	p, err := Get("sbom")
+	if err != nil {
+		t.Fatalf("Get(sbom): %v", err)
+	}
+	if p.Title != "Software bill of materials" {
+		t.Errorf("title = %q", p.Title)
+	}
+	if !strings.Contains(p.Markdown, "This page is the placeholder") {
+		t.Errorf("stub markdown missing placeholder note: %q", p.Markdown[:min(120, len(p.Markdown))])
+	}
+	if strings.Contains(p.Markdown, "factum-sbom: generated") {
+		t.Error("dev Get(sbom) served a generated inventory")
+	}
+}
+
+func TestGetSBOMReleaseOverlay(t *testing.T) {
+	orig := releaseMarkdown
+	releaseMarkdown = "<!-- factum-sbom: generated -->\n\n# Software bill of materials\n\n| Module | Version |\n| --- | --- |\n| example.com/foo | v1.0.0 |\n"
+	t.Cleanup(func() { releaseMarkdown = orig })
+
+	p, err := Get("sbom")
+	if err != nil {
+		t.Fatalf("Get(sbom): %v", err)
+	}
+	if p.Title != "Software bill of materials" {
+		t.Errorf("title = %q, overlay should keep stub title", p.Title)
+	}
+	if strings.Contains(p.Markdown, "factum-sbom: generated") {
+		t.Error("generated marker leaked into markdown")
+	}
+	if !strings.Contains(p.Markdown, "example.com/foo") {
+		t.Errorf("overlay missing inventory: %q", p.Markdown)
+	}
+	if strings.Contains(p.Markdown, "This page is the placeholder") {
+		t.Error("overlay left stub body in place")
 	}
 }
 

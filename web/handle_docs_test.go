@@ -24,17 +24,23 @@ func TestApiDocsList(t *testing.T) {
 	if len(pages) == 0 {
 		t.Fatal("empty catalog")
 	}
-	found := false
+	foundIndex, foundSBOM := false, false
 	for _, p := range pages {
-		if p.Slug == "index" {
-			found = true
+		switch p.Slug {
+		case "index":
+			foundIndex = true
+		case "sbom":
+			foundSBOM = true
 		}
 		if p.Markdown != "" {
 			t.Errorf("list included markdown for %q", p.Slug)
 		}
 	}
-	if !found {
+	if !foundIndex {
 		t.Error("list missing index")
+	}
+	if !foundSBOM {
+		t.Error("list missing sbom")
 	}
 }
 

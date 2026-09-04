@@ -9,7 +9,7 @@ COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
-.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs
+.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs sbom
 
 build: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
 
@@ -137,12 +137,24 @@ factum2-worker:
 frontend:
 	cd web/frontend && npm ci && npm run build
 
+# Operator-facing SBOM markdown, overlaid onto docs/user/sbom.md in a
+# -tags release factum2-web binary. The placeholder at
+# docs/generated/sbom.md is restored afterwards so `make release` does not
+# leave a dirty tree; GoReleaser's before hook generates in a throwaway
+# workspace and does not restore.
+sbom:
+	go run ./internal/sbom/gensbom -o docs/generated/sbom.md -version "$(VERSION)" -commit "$(COMMIT)" -date "$(DATE)"
+
 # Self-contained release binary: static/, templates/ and the built frontend
 # (web/static/vue, are embedded into the binary via go:embed , so it needs no web/ directory
-# alongside it at runtime.
+# alongside it at runtime. Also stamps the SBOM into the embedded docs.
 factum2-web-release: frontend
 	@mkdir -p $(BUILD_DIR)
-	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go
+	@go run ./internal/sbom/gensbom -o docs/generated/sbom.md -version "$(VERSION)" -commit "$(COMMIT)" -date "$(DATE)"
+	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go; \
+	status=$$?; \
+	git checkout -- docs/generated/sbom.md >/dev/null 2>&1 || true; \
+	exit $$status
 
 release: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web-release factum2-worker
 

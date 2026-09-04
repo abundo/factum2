@@ -1,7 +1,8 @@
 // Package docs embeds operator-facing Markdown from docs/user/ so the
 // running factum2-web binary can serve the same pages as GitHub Pages.
 // Install and design notes stay on disk for the public site / git; they
-// are not embedded.
+// are not embedded. A -tags release build overlays docs/generated/sbom.md
+// onto the sbom page when that file was produced by `make sbom`.
 package docs
 
 import (
@@ -78,7 +79,7 @@ func Get(slug string) (Page, error) {
 		}
 		return Page{}, err
 	}
-	return parsePage(slug, raw), nil
+	return overlaySBOM(parsePage(slug, raw)), nil
 }
 
 func validSlug(slug string) bool {
