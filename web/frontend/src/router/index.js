@@ -201,10 +201,10 @@ const router = createRouter({
           component: () => import('@/views/admin/AuthorizationSettings.vue'),
         },
         {
-          path: '/doc',
+          path: '/doc/:slug?',
           name: 'documentation',
           meta: { title: 'Documentation' },
-          component: () => import('@/views/PlaceholderPage.vue'),
+          component: () => import('@/views/docs/DocsPage.vue'),
         },
         {
           // Alias for the old server-rendered home page.

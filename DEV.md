@@ -5,6 +5,11 @@ several CLI binaries plus a web GUI. The web GUI's frontend is a Vue 3 SPA
 that's either served from disk (dev) or embedded into the `factum2-web`
 binary (release build).
 
+Operator Markdown lives in `docs/user/` (GUI `/doc`, via `docs.List` /
+`docs.Get`) and `docs/install/` (GitHub Pages only). `DEV.md` and
+`AGENTS.md` stay developer-only. Preview the public site with
+`pip install -r requirements-docs.txt && mkdocs serve` (`mkdocs.yml`).
+
 ## Prerequisites
 
 - Go 1.25+

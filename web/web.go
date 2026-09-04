@@ -154,6 +154,12 @@ func GUI(p *GuiParams) error {
 	// (git tag / commit / date / Go version) are not sensitive.
 	api.GET("/version", ctrl.ApiVersion)
 
+	// Operator Markdown from docs/user/ (same files GitHub Pages publishes).
+	// Any logged-in user, including those with no role — /doc is help, not
+	// an inventory view.
+	api.GET("/docs", ctrl.ApiDocsList, ctrl.RequireAPIAuth)
+	api.GET("/docs/:slug", ctrl.ApiDocsGet, ctrl.RequireAPIAuth)
+
 	// ----- API customers -----
 	customers_ := NewSecureCRUDHandler[models.Customer, models.CustomerDTO](DB)
 	api.GET("/customer/:id", ctrl.ApiCustomerByID, ctrl.RequireAPIAuth, ctrl.RequireRead)

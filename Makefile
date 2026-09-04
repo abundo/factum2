@@ -9,7 +9,7 @@ COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
-.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset
+.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs
 
 build: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
 
@@ -21,6 +21,11 @@ test:
 
 test-install:
 	python3 -m unittest install_test.py
+
+# Operator docs (docs/user + docs/install) → site/. Needs mkdocs-material
+# (pip install -r requirements-docs.txt). Same files the GUI embeds.
+docs:
+	mkdocs build --strict
 
 # Device-driver tests against the containerlab lab (see LAB_TOPOLOGY's header
 # for the cEOS image it needs). Build-tagged, so plain `make test` never runs

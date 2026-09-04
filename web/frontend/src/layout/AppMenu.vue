@@ -64,6 +64,11 @@ const items = computed(() => {
     )
   }
 
+  groups.push([
+    { type: 'label', label: 'Help' },
+    { label: 'Documentation', icon: 'i-lucide-book-open', to: '/doc' },
+  ])
+
   if (authStore.isAdmin) {
     groups.push([
       { type: 'label', label: 'Admin' },

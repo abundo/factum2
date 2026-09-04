@@ -78,6 +78,13 @@ const userMenuItems = computed(() => [
         @click="toggleLogPanel"
       />
       <UButton
+        icon="i-lucide-book-open"
+        variant="ghost"
+        color="neutral"
+        title="Documentation"
+        to="/doc"
+      />
+      <UButton
         :icon="layoutState.darkTheme ? 'i-lucide-moon' : 'i-lucide-sun'"
         variant="ghost"
         color="neutral"

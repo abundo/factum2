@@ -8,8 +8,10 @@ _into_ factum's Postgres DB, while DNS, Icinga and LibreNMS are synced
 _from_ factum. It's a Go monorepo producing several CLI binaries (`cmd/*`)
 plus a web GUI (`factum2-web`) with a Vue 3 SPA frontend (`web/frontend`).
 
-See [DEV.md](DEV.md) for full setup/build/run details (config file shape,
-Makefile targets, dev workflow, binaries list) and [AGENTS.md](AGENTS.md)
+Operator documentation is in the GUI at **Documentation** (`/doc`) and on
+[GitHub Pages](https://abundo.github.io/factum2/). Those pages share the
+Markdown in `docs/user/` (install guides in `docs/install/`). See
+[DEV.md](DEV.md) for setup/build/run details and [AGENTS.md](AGENTS.md)
 for architecture notes. To add a capacity service type (roles, platform
 packs, CLI templates), see
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).

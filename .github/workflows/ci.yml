@@ -54,6 +54,27 @@ jobs:
             - name: Build
               run: make
 
+    docs:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: factum2
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+              with:
+                  path: factum2
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+
+            - name: Build docs
+              run: |
+                  pip install -r requirements-docs.txt
+                  mkdocs build --strict
+
     goreleaser:
         runs-on: ubuntu-latest
         steps:
