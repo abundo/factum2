@@ -81,7 +81,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 12
+INSTALLER_VERSION = 13
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -1548,12 +1548,34 @@ def download_release_archive(
     return archive
 
 
+def _assert_tar_member_safe(member: tarfile.TarInfo, dest: Path) -> None:
+    """Refuse members that could write outside dest (CVE-2007-4559)."""
+    if member.issym() or member.islnk():
+        raise InstallError(
+            f"Refusing link in archive: {member.name!r} -> {member.linkname!r}"
+        )
+    if not (member.isfile() or member.isdir()):
+        raise InstallError(f"Refusing special file in archive: {member.name!r}")
+    name = member.name
+    path = Path(name)
+    if path.is_absolute() or os.path.isabs(name) or ".." in path.parts:
+        raise InstallError(f"Unsafe path in archive: {name!r}")
+    dest_abs = str(dest.resolve())
+    target = os.path.normpath(os.path.join(dest_abs, name))
+    if os.path.commonpath([target, dest_abs]) != dest_abs:
+        raise InstallError(f"Unsafe path in archive: {name!r}")
+
+
 def extract_archive(archive: Path, dest: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
+    dest_abs = dest.resolve()
     with tarfile.open(archive, "r:gz") as tar:
-        try:
+        for member in tar.getmembers():
+            _assert_tar_member_safe(member, dest_abs)
+        # filter="data" is Python 3.12+; members were already checked above.
+        if getattr(tarfile, "data_filter", None) is not None:
             tar.extractall(dest, filter="data")
-        except TypeError:
+        else:
             tar.extractall(dest)
     if _looks_like_release_root(dest):
         return dest

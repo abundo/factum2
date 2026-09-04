@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -250,6 +251,18 @@ def _tgz_bytes(files: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
+def _tgz_from_infos(entries: list[tuple[tarfile.TarInfo, bytes | None]]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for info, payload in entries:
+            if payload is None:
+                tar.addfile(info)
+            else:
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
+
+
 def _write_tgz(path: Path, files: dict[str, bytes]) -> None:
     path.write_bytes(_tgz_bytes(files))
 
@@ -349,6 +362,120 @@ class InstallerBytesFromArchiveTests(unittest.TestCase):
             with self.assertRaises(install.InstallError) as ctx:
                 install.installer_bytes_from_archive(archive)
             self.assertIn("has no install.py", str(ctx.exception))
+
+
+class ExtractArchiveTests(unittest.TestCase):
+    def test_flat_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            _write_tgz(archive, {"factum2": b"\x00", "install.py": b"x"})
+            root = install.extract_archive(archive, dest)
+            self.assertEqual(root, dest)
+            self.assertTrue((dest / "factum2").is_file())
+
+    def test_nested_goreleaser_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            _write_tgz(
+                archive,
+                {"factum2_1.0.0_linux_amd64/factum2": b"\x00"},
+            )
+            root = install.extract_archive(archive, dest)
+            self.assertEqual(root, dest / "factum2_1.0.0_linux_amd64")
+            self.assertTrue((root / "factum2").is_file())
+
+    def test_missing_binaries_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            _write_tgz(archive, {"README.md": b"hi"})
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Could not find factum2 binaries", str(ctx.exception))
+
+    def test_rejects_parent_path(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            outside = base / "pwned"
+            info = tarfile.TarInfo(name="../pwned")
+            archive.write_bytes(_tgz_from_infos([(info, b"evil")]))
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Unsafe path", str(ctx.exception))
+            self.assertFalse(outside.exists())
+            self.assertFalse(dest.exists() and any(dest.iterdir()))
+
+    def test_rejects_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            outside = base / "abs_pwned"
+            info = tarfile.TarInfo(name=str(outside))
+            archive.write_bytes(_tgz_from_infos([(info, b"evil")]))
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Unsafe path", str(ctx.exception))
+            self.assertFalse(outside.exists())
+
+    def test_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            info = tarfile.TarInfo(name="link")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../pwned"
+            archive.write_bytes(_tgz_from_infos([(info, None)]))
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Refusing link", str(ctx.exception))
+            self.assertFalse((base / "pwned").exists())
+
+    def test_rejects_hardlink(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            info = tarfile.TarInfo(name="hlink")
+            info.type = tarfile.LNKTYPE
+            info.linkname = "../pwned"
+            archive.write_bytes(_tgz_from_infos([(info, None)]))
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Refusing link", str(ctx.exception))
+
+    def test_rejects_fifo(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "rel.tar.gz"
+            dest = base / "dest"
+            info = tarfile.TarInfo(name="pipe")
+            info.type = tarfile.FIFOTYPE
+            archive.write_bytes(_tgz_from_infos([(info, None)]))
+            with self.assertRaises(install.InstallError) as ctx:
+                install.extract_archive(archive, dest)
+            self.assertIn("Refusing special file", str(ctx.exception))
+
+    def test_parent_path_without_data_filter(self) -> None:
+        with patch.object(tarfile, "data_filter", None), warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            self.test_rejects_parent_path()
+            self.test_rejects_absolute_path()
+            self.test_rejects_symlink()
+
+    def test_extracts_without_data_filter(self) -> None:
+        with patch.object(tarfile, "data_filter", None), warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            self.test_flat_root()
+            self.test_nested_goreleaser_dir()
 
 
 class FetchVerifiedInstallerTests(unittest.TestCase):
