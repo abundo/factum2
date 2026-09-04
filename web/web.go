@@ -253,6 +253,9 @@ func GUI(p *GuiParams) error {
 	api.POST("/device/:id/interfaces/update", ctrl.ApiDeviceInterfacesUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/device/:id/interfaces/vlans", ctrl.ApiDeviceInterfacesUpdateVlans, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/topology", ctrl.ApiGetTopology, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/topology/devices", ctrl.ApiGetTopologyDevices, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/topology/geocode", ctrl.ApiTopologyGeocode, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/topology/devices/:id/location", ctrl.ApiTopologyDeviceLocation, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	ipamg := api.Group("/ipam", ctrl.RequireAPIAuth, ctrl.RequireIpamEnabled)
 	ipamg.GET("/namespaces", ctrl.ApiIpamNamespaceList, ctrl.RequireRead)

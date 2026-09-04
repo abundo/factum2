@@ -4,10 +4,18 @@ import { ArcLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import { Map as MaplibreMap, NavigationControl, setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useToast } from '@nuxt/ui/composables'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getTopology } from '@/api/topology'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  assignDeviceLocation,
+  getTopology,
+  getTopologyDevices,
+  reverseGeocode,
+} from '@/api/topology'
+import { useAuthStore } from '@/stores/auth'
+import SiteAssignPanel from './SiteAssignPanel.vue'
 
 const toast = useToast()
+const authStore = useAuthStore()
 
 // Role filter and basemap, remembered per-browser (not per-user account -
 // the map has no server-side per-user settings store) so they survive reloads.
@@ -70,6 +78,17 @@ const loading = ref(true)
 const error = ref(null)
 const selected = ref(null)
 const hoverInfo = ref(null)
+
+const assignMode = ref(false)
+const allDevices = ref([])
+const allDevicesLoading = ref(false)
+const assignSelected = ref(null)
+const pickingCoords = ref(false)
+const pickedCoords = ref(null)
+const pickedAddress = ref('')
+const pickedAddressLoading = ref(false)
+const assignSaving = ref(false)
+let geocodeGen = 0
 
 // Raw API response, kept around unfiltered so toggling a role filter never
 // needs to re-fetch - only rebuild() below, which re-derives the laid-out
@@ -279,11 +298,16 @@ function buildLayers(devices, edges, sites) {
       getFillColor: (d) => statusColor(d.status),
       getLineColor: palette.deviceStroke,
       lineWidthMinPixels: palette.deviceStrokeWidth,
-      getRadius: 6,
+      getRadius: (d) => (highlightedDeviceId() === d.id ? 9 : 6),
       radiusMinPixels: 5,
-      radiusMaxPixels: 10,
+      radiusMaxPixels: 12,
+      getLineWidth: (d) => (highlightedDeviceId() === d.id ? 2.5 : palette.deviceStrokeWidth),
       onClick: ({ object }) => {
         selected.value = object ?? null
+        if (assignMode.value && object) {
+          const full = allDevices.value.find((d) => d.id === object.id) ?? object
+          selectAssignDevice(full, { fromMap: true })
+        }
       },
       onHover: (info) => handleHover('device', info),
     }),
@@ -325,7 +349,30 @@ function buildLayers(devices, edges, sites) {
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
     }),
+    ...(pickedCoords.value
+      ? [
+          new ScatterplotLayer({
+            id: 'pick-pin',
+            data: [pickedCoords.value],
+            pickable: false,
+            stroked: true,
+            filled: true,
+            radiusUnits: 'pixels',
+            getPosition: (d) => [d.lng, d.lat],
+            getFillColor: [249, 115, 22],
+            getLineColor: [154, 52, 18],
+            lineWidthMinPixels: 1.5,
+            getRadius: 8,
+            radiusMinPixels: 7,
+            radiusMaxPixels: 12,
+          }),
+        ]
+      : []),
   ]
+}
+
+function highlightedDeviceId() {
+  return assignSelected.value?.id ?? selected.value?.id ?? null
 }
 
 // Sites have their own already-resolved coordinates (no fan-out needed the
@@ -466,6 +513,162 @@ function loadTopology() {
     })
 }
 
+function loadAllDevices() {
+  allDevicesLoading.value = true
+  return getTopologyDevices()
+    .then((data) => {
+      allDevices.value = data.devices ?? []
+      if (assignSelected.value) {
+        assignSelected.value =
+          allDevices.value.find((d) => d.id === assignSelected.value.id) ?? assignSelected.value
+      }
+    })
+    .catch(() => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: 'Failed to load devices for site assignment.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      allDevicesLoading.value = false
+    })
+}
+
+function panTo(lat, lng) {
+  if (!map || lat == null || lng == null) return
+  map.flyTo({
+    center: [lng, lat],
+    zoom: Math.max(map.getZoom(), 10),
+    duration: 800,
+  })
+}
+
+function setPicking(on) {
+  pickingCoords.value = on
+  if (map) {
+    map.getCanvas().style.cursor = on ? 'crosshair' : ''
+  }
+}
+
+function hasMappableCoords(d) {
+  return d?.latitude != null && d?.longitude != null
+}
+
+function clearPickedAddress() {
+  geocodeGen += 1
+  pickedAddress.value = ''
+  pickedAddressLoading.value = false
+}
+
+function lookupPickedAddress(lat, lng) {
+  const gen = ++geocodeGen
+  pickedAddress.value = ''
+  pickedAddressLoading.value = true
+  reverseGeocode(lat, lng)
+    .then((data) => {
+      if (gen !== geocodeGen) return
+      pickedAddress.value = data?.address ?? ''
+    })
+    .catch(() => {
+      if (gen !== geocodeGen) return
+      pickedAddress.value = ''
+    })
+    .finally(() => {
+      if (gen === geocodeGen) pickedAddressLoading.value = false
+    })
+}
+
+function selectAssignDevice(device, { fromMap = false } = {}) {
+  assignSelected.value = device
+  selected.value = fromMap ? selected.value : null
+  clearPickedAddress()
+  pickedCoords.value = hasMappableCoords(device)
+    ? { lat: device.latitude, lng: device.longitude }
+    : null
+  if (hasMappableCoords(device)) {
+    panTo(device.latitude, device.longitude)
+    setPicking(false)
+  } else {
+    setPicking(authStore.canWrite)
+  }
+  rebuild()
+}
+
+function toggleAssignMode() {
+  assignMode.value = !assignMode.value
+  if (assignMode.value) {
+    loadAllDevices()
+  } else {
+    setPicking(false)
+    pickedCoords.value = null
+    clearPickedAddress()
+    assignSelected.value = null
+    rebuild()
+  }
+  nextTick(() => map?.resize())
+}
+
+function onUseSite(site) {
+  clearPickedAddress()
+  pickedCoords.value = { lat: site.latitude, lng: site.longitude }
+  setPicking(false)
+  panTo(site.latitude, site.longitude)
+  rebuild()
+}
+
+function onAssign({ site_name, latitude, longitude, physical_address }) {
+  const device = assignSelected.value
+  if (!device) return
+  assignSaving.value = true
+  const body = { site_name, latitude, longitude }
+  if (physical_address) body.physical_address = physical_address
+  assignDeviceLocation(device.id, body)
+    .then((data) => {
+      toast.add({
+        color: 'success',
+        title: 'Assigned',
+        description: `${device.name} → ${data.site?.name ?? site_name} in NetBox.`,
+        duration: 4000,
+      })
+      if (data.device) {
+        allDevices.value = allDevices.value.map((d) => (d.id === data.device.id ? data.device : d))
+        assignSelected.value = data.device
+      }
+      if (data.site) {
+        const rest = rawSites.value.filter(
+          (s) => s.id !== data.site.id && s.name !== data.site.name,
+        )
+        rawSites.value = [...rest, data.site]
+      }
+      pickedCoords.value = { lat: latitude, lng: longitude }
+      setPicking(false)
+      return getTopology().then((topo) => {
+        rawDevices.value = topo.devices ?? []
+        rawEdges.value = topo.edges ?? []
+        rawSites.value = topo.sites ?? []
+        rebuild()
+        panTo(latitude, longitude)
+      })
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Could not assign site',
+        description: err.response?.data?.error ?? err.message ?? 'Request failed.',
+        duration: 5000,
+      })
+    })
+    .finally(() => {
+      assignSaving.value = false
+    })
+}
+
+watch([assignSelected, pickedCoords], () => {
+  if (overlay) rebuild()
+})
+
 onMounted(() => {
   map = new MaplibreMap({
     container: mapContainer.value,
@@ -479,6 +682,13 @@ onMounted(() => {
 
   overlay = new MapboxOverlay({ layers: [] })
   map.addControl(overlay)
+
+  map.on('click', (e) => {
+    if (!pickingCoords.value) return
+    pickedCoords.value = { lat: e.lngLat.lat, lng: e.lngLat.lng }
+    lookupPickedAddress(e.lngLat.lat, e.lngLat.lng)
+    rebuild()
+  })
 
   map.on('load', loadTopology)
 })
@@ -503,6 +713,14 @@ onBeforeUnmount(() => {
           size="sm"
           @update:model-value="onBasemapChange"
         />
+        <UButton
+          label="Assign sites"
+          size="xs"
+          color="primary"
+          icon="i-lucide-map-pin"
+          :variant="assignMode ? 'solid' : 'outline'"
+          @click="toggleAssignMode"
+        />
       </div>
       <div class="flex items-center gap-3 text-sm text-muted-color">
         <span class="flex items-center gap-1">
@@ -522,8 +740,9 @@ onBeforeUnmount(() => {
 
     <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-4 shrink-0" />
 
-    <div v-if="availableRoles.length" class="flex flex-wrap gap-2 items-center mb-4 shrink-0">
+    <div class="flex flex-wrap gap-2 items-center mb-4 shrink-0">
       <UButton
+        v-if="availableRoles.length"
         label="All"
         size="xs"
         color="primary"
@@ -531,6 +750,7 @@ onBeforeUnmount(() => {
         @click="showAllRoles"
       />
       <UButton
+        v-if="availableRoles.length"
         label="Optical only"
         size="xs"
         color="primary"
@@ -547,6 +767,7 @@ onBeforeUnmount(() => {
         @click="toggleRole(role)"
       />
       <UButton
+        v-if="availableRoles.length"
         label="Save as default"
         icon="i-lucide-save"
         size="xs"
@@ -557,8 +778,29 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default">
-      <!--
+    <div class="flex min-h-0 flex-1 gap-3">
+      <SiteAssignPanel
+        v-if="assignMode"
+        :devices="allDevices"
+        :sites="rawSites"
+        :selected-id="assignSelected?.id ?? null"
+        :can-write="authStore.canWrite"
+        :picking="pickingCoords"
+        :picked="pickedCoords"
+        :address="pickedAddress"
+        :address-loading="pickedAddressLoading"
+        :saving="assignSaving"
+        :loading="allDevicesLoading"
+        @select="selectAssignDevice"
+        @update:picking="setPicking"
+        @use-site="onUseSite"
+        @assign="onAssign"
+      />
+      <div
+        class="relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default"
+        :class="pickingCoords ? 'cursor-crosshair ring-2 ring-primary' : ''"
+      >
+        <!--
         w-full h-full, not absolute inset-0: maplibre-gl.css sets
         `.maplibregl-map { position: relative }` on this exact element
         (the class it adds to the container it's given), which wins the
@@ -568,61 +810,73 @@ onBeforeUnmount(() => {
         it would under `absolute`). Percentage sizing off the parent's
         explicit height sidesteps the conflict instead of fighting it.
       -->
-      <div ref="mapContainer" class="w-full h-full" />
+        <div ref="mapContainer" class="w-full h-full" />
 
-      <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-default/60">
-        <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
-      </div>
-
-      <div
-        v-if="selected"
-        class="absolute top-3 left-3 z-10 w-64 rounded-lg border border-default bg-default p-3 shadow-lg"
-      >
-        <div class="flex items-start justify-between gap-2 mb-2">
-          <div class="font-medium">{{ selected.name }}</div>
-          <UButton
-            icon="i-lucide-x"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="selected = null"
-          />
+        <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-default/60">
+          <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
         </div>
-        <div class="text-sm text-muted-color space-y-1">
-          <div>Site: {{ selected.site || '-' }}</div>
-          <div>Role: {{ selected.role || '-' }}</div>
-          <div>Status: {{ selected.status || '-' }}</div>
-        </div>
-      </div>
 
-      <div
-        v-if="hoverInfo"
-        class="absolute z-20 max-w-64 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-lg pointer-events-none"
-        :style="{ left: `${hoverInfo.x + 12}px`, top: `${hoverInfo.y + 12}px` }"
-      >
-        <template v-if="hoverInfo.kind === 'device'">
-          <div class="font-medium">{{ hoverInfo.object.name }}</div>
-          <div class="text-muted-color">
-            {{ hoverInfo.object.site || '-' }} · {{ hoverInfo.object.role || '-' }} ·
-            {{ hoverInfo.object.status || '-' }}
+        <div
+          v-if="pickingCoords"
+          class="absolute top-3 left-3 z-10 rounded-lg border border-default bg-default px-3 py-2 text-sm shadow-lg"
+        >
+          Click the map to set latitude and longitude.
+        </div>
+
+        <div
+          v-if="selected && !assignMode"
+          class="absolute top-3 left-3 z-10 w-64 rounded-lg border border-default bg-default p-3 shadow-lg"
+        >
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="font-medium">{{ selected.name }}</div>
+            <UButton
+              icon="i-lucide-x"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              @click="selected = null"
+            />
           </div>
-        </template>
-        <template v-else-if="hoverInfo.kind === 'site'">
-          <div class="font-medium">{{ hoverInfo.object.name }}</div>
-        </template>
-        <template v-else>
-          <div class="font-medium">
-            {{ hoverInfo.object.deviceAName
-            }}<span v-if="hoverInfo.object.interface_a"> ({{ hoverInfo.object.interface_a }})</span>
+          <div class="text-sm text-muted-color space-y-1">
+            <div>Site: {{ selected.site || '-' }}</div>
+            <div>Role: {{ selected.role || '-' }}</div>
+            <div>Status: {{ selected.status || '-' }}</div>
           </div>
-          <div class="text-muted-color">
-            {{ hoverInfo.object.deviceBName
-            }}<span v-if="hoverInfo.object.interface_b"> ({{ hoverInfo.object.interface_b }})</span>
-          </div>
-          <div v-if="hoverInfo.object.label" class="text-muted-color">
-            Label: {{ hoverInfo.object.label }}
-          </div>
-        </template>
+        </div>
+
+        <div
+          v-if="hoverInfo"
+          class="absolute z-20 max-w-64 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-lg pointer-events-none"
+          :style="{ left: `${hoverInfo.x + 12}px`, top: `${hoverInfo.y + 12}px` }"
+        >
+          <template v-if="hoverInfo.kind === 'device'">
+            <div class="font-medium">{{ hoverInfo.object.name }}</div>
+            <div class="text-muted-color">
+              {{ hoverInfo.object.site || '-' }} · {{ hoverInfo.object.role || '-' }} ·
+              {{ hoverInfo.object.status || '-' }}
+            </div>
+          </template>
+          <template v-else-if="hoverInfo.kind === 'site'">
+            <div class="font-medium">{{ hoverInfo.object.name }}</div>
+          </template>
+          <template v-else>
+            <div class="font-medium">
+              {{ hoverInfo.object.deviceAName
+              }}<span v-if="hoverInfo.object.interface_a">
+                ({{ hoverInfo.object.interface_a }})</span
+              >
+            </div>
+            <div class="text-muted-color">
+              {{ hoverInfo.object.deviceBName
+              }}<span v-if="hoverInfo.object.interface_b">
+                ({{ hoverInfo.object.interface_b }})</span
+              >
+            </div>
+            <div v-if="hoverInfo.object.label" class="text-muted-color">
+              Label: {{ hoverInfo.object.label }}
+            </div>
+          </template>
+        </div>
       </div>
     </div>
   </div>
