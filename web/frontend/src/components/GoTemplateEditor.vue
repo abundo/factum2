@@ -105,7 +105,7 @@ function insertBuiltin(name) {
         <div class="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Functions</div>
         <button
           v-for="item in functions"
-          :key="item.name"
+          :key="`${item.name}:${item.args || ''}:${item.insert || ''}`"
           type="button"
           class="block w-full rounded px-1.5 py-1 text-left hover:bg-elevated"
           @click="insertItem(item)"
@@ -122,7 +122,7 @@ function insertBuiltin(name) {
         <div class="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Variables</div>
         <button
           v-for="item in variables"
-          :key="item.name"
+          :key="`${item.name}:${item.insert || ''}`"
           type="button"
           class="block w-full rounded px-1.5 py-1 text-left hover:bg-elevated"
           @click="insertItem(item)"

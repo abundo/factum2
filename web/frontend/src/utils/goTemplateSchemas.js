@@ -103,3 +103,202 @@ export const icingaDependencyTemplateSchema = {
   variables: [],
   functions: [],
 }
+
+const cfgmgmtDeviceVars = [
+  { name: '.Device.Name', type: 'string', description: 'Factum device name' },
+  { name: '.Device.Platform', type: 'string', description: 'NOS platform (eos, sros, ios-xr, …)' },
+  { name: '.Device.Site', type: 'string', description: 'Site name' },
+  { name: '.Device.Role', type: 'string', description: 'Device role' },
+  { name: '.Device.ModelName', type: 'string', description: 'Device model' },
+  { name: '.Device.Manufacturer', type: 'string', description: 'Hardware manufacturer' },
+  { name: '.Device.Status', type: 'string', description: 'NetBox / factum status' },
+  {
+    name: '.Device.PrimaryIPv4',
+    type: 'string',
+    description: 'Primary IPv4 as CIDR (e.g. 10.0.0.1/24)',
+  },
+  { name: '.Device.PrimaryIPv6', type: 'string', description: 'Primary IPv6 as CIDR, if set' },
+]
+
+const cfgmgmtFunctions = [
+  {
+    name: 'join',
+    args: 'sep list',
+    insert: '{{ join "," .Interface.Addresses }}',
+    description: 'Join strings (strings.Join)',
+  },
+  {
+    name: 'include',
+    args: '"macro-name"',
+    insert: '{{ include "macro-name" }}',
+    description: 'Body of a ConfigMacro. Nested at most 8 deep. Same data as the caller.',
+  },
+  {
+    name: 'eq',
+    args: 'a b',
+    insert: '{{ if eq .X .Y }}{{ end }}',
+    description: 'Equality via fmt.Sprint, so 1 and "1" compare equal',
+  },
+  {
+    name: 'ne',
+    args: 'a b',
+    insert: '{{ if ne .X .Y }}{{ end }}',
+    description: 'Inequality via fmt.Sprint',
+  },
+]
+
+const cfgmgmtVarsNote = {
+  name: '.Vars',
+  type: 'map',
+  insert: '{{ index .Vars "name" }}',
+  description: 'Resolved config variables. Use {{index .Vars "name"}}, not .Vars.name.',
+}
+
+export const cfgmgmtPackSchema = {
+  notes:
+    'Rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. ELINE-only fields (.Remote, .PeerLocal*, .SDPID, .StaleSubinterfaces) are zero on other types. Teardown goes in {{define "cleanup"}} or the cleanup field.',
+  functions: cfgmgmtFunctions,
+  variables: [
+    { name: '.Name', type: 'string', description: 'Service.ServiceID (e.g. CN00012)' },
+    {
+      name: '.Description',
+      type: 'string',
+      description: 'Service.Comment (ELINE: "ID=<ServiceID> <customer>")',
+    },
+    {
+      name: '.ServiceNumericID',
+      type: 'int',
+      description: 'Service.PseudowireID, else Fields["service_numeric_id"]',
+    },
+    {
+      name: '.Fields',
+      type: 'map',
+      description: 'Service.Fields (per-service schema values). Access as .Fields.name.',
+    },
+    { name: '.Endpoint.Role', type: 'string', description: "This termination's role" },
+    { name: '.Endpoint.DeviceID', type: 'uint', description: "This termination's device id" },
+    {
+      name: '.Endpoint.InterfaceID',
+      type: 'uint',
+      description: "This termination's interface id",
+    },
+    {
+      name: '.Endpoint.Fields',
+      type: 'map',
+      description: "This termination's fields. Access as .Endpoint.Fields.name.",
+    },
+    cfgmgmtVarsNote,
+    { name: '.Device', type: 'DCIMDevice', description: 'Read-only inventory for this endpoint' },
+    ...cfgmgmtDeviceVars,
+    { name: '.Interface', type: 'DCIMInterface', description: 'Read-only interface inventory' },
+    { name: '.Interface.Name', type: 'string', description: 'Interface name' },
+    { name: '.Interface.Description', type: 'string', description: 'Interface description' },
+    { name: '.Interface.Enabled', type: 'bool', description: 'Whether the interface is enabled' },
+    { name: '.Interface.Type', type: 'string', description: 'Interface type' },
+    { name: '.LocalIface', type: 'string', description: 'Interface.Name' },
+    {
+      name: '.LocalVLAN',
+      type: 'int',
+      description: 'Endpoint.Fields["vlan"], else 0. Name the VLAN field vlan to populate this.',
+    },
+    { name: '.Role', type: 'string', description: 'Same as Endpoint.Role' },
+    {
+      name: '.PeerLocalIface',
+      type: 'string',
+      description: 'ELINE: other endpoint on the same device',
+    },
+    { name: '.PeerLocalVLAN', type: 'int', description: 'ELINE: VLAN of the same-device peer' },
+    {
+      name: '.Remote',
+      type: '*ELINERemote',
+      description: 'ELINE: other endpoint on a different device. Guard with {{if .Remote}}.',
+    },
+    { name: '.Remote.NeighborIP', type: 'string', description: 'ELINE: peer loopback address' },
+    { name: '.Remote.PseudowireID', type: 'int', description: 'ELINE: Service.PseudowireID' },
+    { name: '.Remote.MTU', type: 'int', description: 'ELINE: pseudowire MTU' },
+    { name: '.Remote.ControlWord', type: 'bool', description: 'ELINE: control-word flag' },
+    { name: '.Remote.DeviceName', type: 'string', description: 'ELINE: peer device name' },
+    { name: '.Remote.RemoteIface', type: 'string', description: 'ELINE: peer interface name' },
+    { name: '.Remote.RemoteVLAN', type: 'int', description: 'ELINE: peer VLAN' },
+    {
+      name: '.SDPID',
+      type: 'int',
+      description: 'ELINE: SR OS shared SDP id from neighbor last octet',
+    },
+    {
+      name: '.StaleSubinterfaces',
+      type: '[]ELINEStale',
+      insert: '{{ range .StaleSubinterfaces }}\nno interface {{ .Iface }}.{{ .VLAN }}\n{{ end }}',
+      description: 'ELINE leftover subinterfaces from a previous apply (.Iface, .VLAN)',
+    },
+  ],
+}
+
+export const cfgmgmtMacroSchema = {
+  notes:
+    'Inserted with {{include "name"}} from a pack or baseline template. Same data as the caller (packs pass GenericRenderData; baseline templates pass .Name / .Device / .Vars). Nested at most 8 deep.',
+  functions: cfgmgmtFunctions,
+  variables: cfgmgmtPackSchema.variables,
+}
+
+export const cfgmgmtBaselineSchema = {
+  notes:
+    'Golden/baseline CLI for a device. Rendered with .Name, .Device, and .Vars. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
+  functions: cfgmgmtFunctions,
+  variables: [
+    { name: '.Name', type: 'string', description: 'Device name' },
+    { name: '.Device', type: 'DCIMDevice', description: 'Read-only inventory for this device' },
+    ...cfgmgmtDeviceVars,
+    cfgmgmtVarsNote,
+  ],
+}
+
+export function withCfgmgmtContext(
+  schema,
+  { macros = [], variables = [], serviceType = null } = {},
+) {
+  const functions = [...(schema.functions ?? [])]
+  const seenMacro = new Set()
+  for (const macro of macros) {
+    if (!macro?.name || seenMacro.has(macro.name)) continue
+    seenMacro.add(macro.name)
+    functions.push({
+      name: 'include',
+      args: JSON.stringify(macro.name),
+      insert: `{{ include ${JSON.stringify(macro.name)} }}`,
+      description: `Insert ConfigMacro ${macro.name}`,
+    })
+  }
+
+  const vars = [...(schema.variables ?? [])]
+  for (const variable of variables) {
+    if (!variable?.name) continue
+    vars.push({
+      name: `index .Vars ${JSON.stringify(variable.name)}`,
+      type: variable.type || '',
+      insert: `{{ index .Vars ${JSON.stringify(variable.name)} }}`,
+      description: variable.description || `Config variable ${variable.name}`,
+    })
+  }
+  for (const field of serviceType?.schema ?? []) {
+    if (!field?.name) continue
+    vars.push({
+      name: `.Fields.${field.name}`,
+      type: field.type || '',
+      description: field.description || `Service field ${field.name}`,
+    })
+  }
+  const seenEndpointField = new Set()
+  for (const role of serviceType?.endpoint_roles ?? []) {
+    for (const field of role.fields ?? []) {
+      if (!field?.name || seenEndpointField.has(field.name)) continue
+      seenEndpointField.add(field.name)
+      vars.push({
+        name: `.Endpoint.Fields.${field.name}`,
+        type: field.type || '',
+        description: `${role.name}: ${field.description || field.name}`,
+      })
+    }
+  }
+  return { ...schema, functions, variables: vars }
+}

@@ -33,7 +33,14 @@ import {
 } from '@/api/config'
 import { getDevices } from '@/api/devices'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
+import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import { useAuthStore } from '@/stores/auth'
+import {
+  cfgmgmtBaselineSchema,
+  cfgmgmtMacroSchema,
+  cfgmgmtPackSchema,
+  withCfgmgmtContext,
+} from '@/utils/goTemplateSchemas'
 
 defineOptions({ name: 'ConfigPage' })
 
@@ -66,6 +73,13 @@ const macros = ref([])
 const templates = ref([])
 const previewDeviceId = ref(null)
 const preview = ref(null)
+const packTmplTab = ref('apply')
+const packApplyPlaceholder =
+  'Go text/template. {{define "cleanup"}} … {{end}} or use the cleanup tab.'
+const packCleanupPlaceholder =
+  'Optional teardown. If empty, a {{define "cleanup"}} in apply is used.'
+const macroBodyPlaceholder = 'Go text/template. Inserted with {{include "name"}}.'
+const baselineBodyPlaceholder = 'Go text/template. Rendered with .Name, .Device, and .Vars.'
 
 const tabItems = [
   {
@@ -121,6 +135,28 @@ const netboxTypeOptions = [
 const deviceOptions = computed(() => devices.value.map((d) => ({ label: d.name, value: d.id })))
 const varOptions = computed(() => variables.value.map((v) => ({ label: v.name, value: v.name })))
 const typeOptions = computed(() => serviceTypes.value.map((t) => ({ label: t.name, value: t.id })))
+
+const packSchema = computed(() => {
+  const typeId = optionValue(form.value?.service_type_id)
+  const serviceType = serviceTypes.value.find((t) => t.id === typeId) ?? null
+  return withCfgmgmtContext(cfgmgmtPackSchema, {
+    macros: macros.value,
+    variables: variables.value,
+    serviceType,
+  })
+})
+const macroSchema = computed(() =>
+  withCfgmgmtContext(cfgmgmtMacroSchema, {
+    macros: macros.value,
+    variables: variables.value,
+  }),
+)
+const baselineSchema = computed(() =>
+  withCfgmgmtContext(cfgmgmtBaselineSchema, {
+    macros: macros.value,
+    variables: variables.value,
+  }),
+)
 
 const constraintsPlaceholder = computed(() => {
   switch (optionValue(form.value?.type)) {
@@ -577,6 +613,7 @@ function openPack(row) {
         apply_template: '',
         cleanup_template: '',
       }
+  packTmplTab.value = 'apply'
   dialog.value = 'pack'
 }
 
@@ -1342,8 +1379,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     :open="dialog === 'pack'"
     title="Platform pack"
     :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
-      body: 'flex-1 min-h-0 overflow-hidden',
+      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
+      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
+      footer: 'bg-default',
+      header: 'bg-default',
     }"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1375,28 +1414,40 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             <UInput v-model="form.payload_kind" placeholder="cli" class="w-full" />
           </div>
         </div>
-        <div class="flex min-h-0 flex-[2] flex-col">
-          <label class="mb-2 block shrink-0 font-bold">Apply template</label>
-          <UTextarea
-            v-model="form.apply_template"
-            :rows="12"
-            class="min-h-0 w-full flex-1 font-mono text-sm"
-            :ui="{
-              root: 'flex min-h-0 w-full flex-1 items-stretch',
-              base: 'h-full min-h-0 resize-none',
-            }"
+        <div class="flex shrink-0 gap-1">
+          <UButton
+            :key="`pack-apply-${packTmplTab}`"
+            size="sm"
+            :variant="packTmplTab === 'apply' ? 'solid' : 'outline'"
+            :color="packTmplTab === 'apply' ? 'primary' : 'neutral'"
+            label="Apply template"
+            @click="packTmplTab = 'apply'"
+          />
+          <UButton
+            :key="`pack-cleanup-${packTmplTab}`"
+            size="sm"
+            :variant="packTmplTab === 'cleanup' ? 'solid' : 'outline'"
+            :color="packTmplTab === 'cleanup' ? 'primary' : 'neutral'"
+            label="Cleanup template"
+            @click="packTmplTab = 'cleanup'"
           />
         </div>
         <div class="flex min-h-0 flex-1 flex-col">
-          <label class="mb-2 block shrink-0 font-bold">Cleanup template (optional)</label>
-          <UTextarea
+          <GoTemplateEditor
+            v-if="dialog === 'pack' && packTmplTab === 'apply'"
+            v-model="form.apply_template"
+            class="h-full min-h-0"
+            :schema="packSchema"
+            :placeholder="packApplyPlaceholder"
+            @apply="savePack"
+          />
+          <GoTemplateEditor
+            v-if="dialog === 'pack' && packTmplTab === 'cleanup'"
             v-model="form.cleanup_template"
-            :rows="6"
-            class="min-h-0 w-full flex-1 font-mono text-sm"
-            :ui="{
-              root: 'flex min-h-0 w-full flex-1 items-stretch',
-              base: 'h-full min-h-0 resize-none',
-            }"
+            class="h-full min-h-0"
+            :schema="packSchema"
+            :placeholder="packCleanupPlaceholder"
+            @apply="savePack"
           />
         </div>
       </div>
@@ -1411,8 +1462,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     :open="dialog === 'macro'"
     title="Macro"
     :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
-      body: 'flex-1 min-h-0 overflow-hidden',
+      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
+      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
+      footer: 'bg-default',
+      header: 'bg-default',
     }"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1423,15 +1476,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           <UInput v-model="form.name" class="w-full" />
         </div>
         <div class="flex min-h-0 flex-1 flex-col">
-          <label class="mb-2 block shrink-0 font-bold">Body</label>
-          <UTextarea
+          <GoTemplateEditor
+            v-if="dialog === 'macro'"
             v-model="form.body"
-            :rows="20"
-            class="min-h-0 w-full flex-1 font-mono text-sm"
-            :ui="{
-              root: 'flex min-h-0 w-full flex-1 items-stretch',
-              base: 'h-full min-h-0 resize-none',
-            }"
+            class="h-full min-h-0"
+            :schema="macroSchema"
+            :placeholder="macroBodyPlaceholder"
+            @apply="saveMacro"
           />
         </div>
       </div>
@@ -1446,8 +1497,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     :open="dialog === 'template'"
     title="Baseline template"
     :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
-      body: 'flex-1 min-h-0 overflow-hidden',
+      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
+      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
+      footer: 'bg-default',
+      header: 'bg-default',
     }"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1467,15 +1520,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           <label class="flex items-center gap-2"><USwitch v-model="form.enabled" /> Enabled</label>
         </div>
         <div class="flex min-h-0 flex-1 flex-col">
-          <label class="mb-2 block shrink-0 font-bold">Body</label>
-          <UTextarea
+          <GoTemplateEditor
+            v-if="dialog === 'template'"
             v-model="form.body"
-            :rows="20"
-            class="min-h-0 w-full flex-1 font-mono text-sm"
-            :ui="{
-              root: 'flex min-h-0 w-full flex-1 items-stretch',
-              base: 'h-full min-h-0 resize-none',
-            }"
+            class="h-full min-h-0"
+            :schema="baselineSchema"
+            :placeholder="baselineBodyPlaceholder"
+            @apply="saveTemplate"
           />
         </div>
       </div>
