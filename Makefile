@@ -77,7 +77,7 @@ LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatch
 
 dev-up:
 	$(DEV_DIR)/prepare.sh
-	@test -x $(BUILD_DIR)/factum2-web || $(MAKE) build
+	@test -x $(BUILD_DIR)/factum2-web -a -x $(BUILD_DIR)/factum2-netbox || $(MAKE) build
 	@test -f web/static/vue/index.html || $(MAKE) frontend
 	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 300 $(LAB_CORE)
 	$(DEV_DIR)/seed.sh

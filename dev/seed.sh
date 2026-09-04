@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent lab bootstrap: wait for compose services, overlay icinga API
 # config, load NetBox demo data if empty, migrate factum, create admin,
-# seed Settings, LibreNMS token.
+# seed Settings, LibreNMS token, NetBox webhook and custom fields.
 set -euo pipefail
 
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -19,6 +19,9 @@ ADMIN_USER="${FACTUM_ADMIN_USER:-admin}"
 ADMIN_PASS="${FACTUM_ADMIN_PASSWORD:-admin}"
 LIBRENMS_TOKEN="0123456789abcdef0123456789abcdef"
 NETBOX_TOKEN="${NETBOX_SUPERUSER_API_TOKEN:-0123456789abcdef0123456789abcdef01234567}"
+# NetBox posts webhooks to this origin from inside the compose network.
+PUBLIC_BASE_URL="${FACTUM_PUBLIC_BASE_URL:-http://factum-web:8091}"
+NETBOX_WEBHOOK_SECRET="${NETBOX_WEBHOOK_SECRET:-lab-netbox-webhook-secret}"
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -171,11 +174,12 @@ log "Seeding Settings"
 SQL_FILE=$(mktemp)
 python3 - "$SQL_FILE" "$NETBOX_TOKEN" "$LIBRENMS_TOKEN" "${FACTUM_API_TOKEN}" \
 	"/data/dns/records" "/data/icinga/hosts.conf" "/data/icinga/users.conf" \
-	"/data/oxidized/router.db" "$DIR/templates/icinga-host.tmpl" "$DIR/templates/icinga-user.tmpl" <<'PY'
+	"/data/oxidized/router.db" "$DIR/templates/icinga-host.tmpl" "$DIR/templates/icinga-user.tmpl" \
+	"$NETBOX_WEBHOOK_SECRET" "$PUBLIC_BASE_URL" <<'PY'
 import sys
 from pathlib import Path
 
-out, netbox_token, librenms_token, factum_token, dns_file, icinga_hosts, icinga_users, ox_file, host_tmpl_path, user_tmpl_path = sys.argv[1:]
+out, netbox_token, librenms_token, factum_token, dns_file, icinga_hosts, icinga_users, ox_file, host_tmpl_path, user_tmpl_path, webhook_secret, public_base = sys.argv[1:]
 
 def lit(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
@@ -193,6 +197,8 @@ UPDATE settings SET
   netbox_enabled = true,
   netbox_api_url = 'http://netbox:8080',
   netbox_api_token = {lit(netbox_token)},
+  netbox_webhook_secret = {lit(webhook_secret)},
+  public_base_url = {lit(public_base)},
   dns_enabled = true,
   dns_dest_file = {lit(dns_file)},
   icinga_enabled = true,
@@ -233,6 +239,22 @@ UPDATE worker_nodes SET
   tls_skip_verify = true
 WHERE name = 'lab';
 SQL
+
+log "NetBox webhook and custom fields"
+# Settings.netbox_api_url is the compose DNS name, so this must run on the
+# compose network. factum-web is not a service yet (Makefile starts it after
+# seed); compose run --no-deps is a one-shot with the same bind mounts.
+if [ ! -x "$REPO_ROOT/build/factum2-netbox" ]; then
+	echo "missing $REPO_ROOT/build/factum2-netbox (make build)" >&2
+	exit 1
+fi
+# check --update creates the factum-sync webhook, event rules, and custom
+# fields. The interface "role" select cannot be created without operator
+# choices; that one problem is expected on a fresh demo dump.
+if ! "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint /opt/factum2/factum2-netbox factum-web \
+	check --update -f /etc/factum2/factum2.yaml; then
+	log "NetBox check reported problems (interface custom field 'role' needs operator-defined choices)"
+fi
 
 cat >"$DIR/env.sh" <<EOF
 # shellcheck disable=SC2148

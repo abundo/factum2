@@ -33,7 +33,8 @@ make dev-up
 ```
 
 `dev-up` builds `build/` if needed, waits for NetBox/LibreNMS/…, migrates
-factum, seeds Settings/admin/tokens, then starts factum-web and factum-worker.
+factum, seeds Settings/admin/tokens, registers the NetBox webhook and custom
+fields (`factum2-netbox check --update`), then starts factum-web and factum-worker.
 NetBox is populated from [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
 (SQL dump for this image's minor version, cached under `dev/data/netbox/`).
 First postgres volume init loads it; `seed.sh` restores if the netbox DB is
