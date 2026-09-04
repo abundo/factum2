@@ -271,7 +271,7 @@ cat <<EOF
   Source env:     . dev/env.sh
 
   Lab index:      http://127.0.0.1:18080
-  Factum GUI:     http://127.0.0.1:8091   admin / admin
+  Factum GUI:     http://127.0.0.1:18091   admin / admin
   Rebuild:        ./install.py --source --compose
   NetBox:         http://127.0.0.1:18000  admin / admin
   LibreNMS:       http://127.0.0.1:18001  admin / admin

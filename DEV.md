@@ -276,7 +276,7 @@ make dev-down          # keep volumes
 make dev-reset         # wipe volumes
 ```
 
-The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:8091
+The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
 (`admin` / `admin`); NetBox `:18000` and LibreNMS `:18001` use the same
 user/pass. NetBox starts with the
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)

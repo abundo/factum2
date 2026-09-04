@@ -2,7 +2,7 @@
 # Generated for the compose lab. Ports avoid the live instance (:8090) and
 # the run-factum2-web skill (:18090). Credentials match dev/.env.
 factum:
-    url: http://127.0.0.1:8091
+    url: http://127.0.0.1:18091
     token: lab-factum-api-token-not-for-production
 
 db:
