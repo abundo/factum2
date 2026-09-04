@@ -161,6 +161,37 @@ To push a build onto the primary and every enabled worker node (replaces
 ./install.py --source --dry-run
 ```
 
+`--source` (and a production `/etc/factum2/install.py` run on the primary)
+then SSHs to every enabled `worker_nodes` row from **this** machine — the
+host part of `address` (`host:port` or `[ipv6]:port`; loopback is skipped).
+`--primary-only` skips that hop. SSH is `ssh -o BatchMode=yes -o
+ConnectTimeout=10` as `--ssh-user` / `$SSH_USER` (default `root`).
+BatchMode never prompts, so each of those hosts needs key-based login
+already working. Remote commands run as that user with no `sudo`, so it
+must be able to write `/opt/factum2`, `/etc/factum2`, and
+`/etc/systemd/system`, and to run `groupadd` / `systemctl` — `root` in
+practice. A remote `--source HOST` needs the same login on the primary
+as well.
+
+On this machine (the host that runs `install.py`):
+
+```sh
+# once: ed25519 key (skip if you already have one)
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+
+# each worker (and the primary, if you pass --source HOST)
+ssh-copy-id -i ~/.ssh/id_ed25519.pub root@worker-host
+# accept the host key on first connect; BatchMode fails if it is unknown
+ssh -o BatchMode=yes -o ConnectTimeout=10 root@worker-host true
+```
+
+If the private key has a passphrase, load it first (`ssh-add`); BatchMode
+cannot prompt for it. On the worker, `sshd` must allow key login as root
+(`PermitRootLogin prohibit-password` and `PubkeyAuthentication yes` in
+`sshd_config`, then reload `ssh`/`sshd`). When the installer runs on the
+primary itself (production GitHub-release path below), the deploy key
+lives there instead of on a developer workstation.
+
 On a production primary with no source tree, put the installer in
 `/etc/factum2` and pick a published GitHub release (see [README.md §
 Quickstart](README.md#production-github-release)):
