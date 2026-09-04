@@ -1,0 +1,19 @@
+# Terminate TLS for factum2-web. Certificates are already on disk;
+# Caddy does not obtain them.
+#
+# Copy to /etc/caddy/Caddyfile (or import from there) and reload:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Keep factum2-web bound to loopback (examples/factum2.yaml uses
+# 127.0.0.1:8091). Do not proxy the worker hub (/hub) through this site;
+# that listener is on worker.listen (WSS), not factum2-web.
+#
+# The certificate file must include intermediates (Let's Encrypt
+# fullchain.pem is that bundle). The caddy user must be able to read
+# the private key.
+
+factum.example.com {
+	tls /etc/ssl/certs/factum.example.com.crt /etc/ssl/private/factum.example.com.key
+	reverse_proxy 127.0.0.1:8091
+}

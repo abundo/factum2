@@ -46,10 +46,11 @@ If the repo is private, add `-H "Authorization: Bearer $GITHUB_TOKEN"` to
 the `curl` commands.
 
 Edit `/etc/factum2/factum2.yaml`: set `db:` credentials and `web.jwtsecret`
-(`openssl rand -base64 48`). Edit `/etc/factum2/factum2-worker.yaml` for
-the local worker (`worker.listen`, `worker.token`, `worker.tls_cert` /
-`worker.tls_key`). Almost all other runtime settings live in the database
-and are edited from Admin in the GUI.
+(`openssl rand -base64 48`). Keep `web.bind` on loopback; TLS is
+terminated at a reverse proxy ([Reverse proxy](reverse-proxy.md)). Edit
+`/etc/factum2/factum2-worker.yaml` for the local worker (`worker.listen`,
+`worker.token`, `worker.tls_cert` / `worker.tls_key`). Almost all other
+runtime settings live in the database and are edited from Admin in the GUI.
 
 ## 3. Select a release
 
@@ -72,11 +73,15 @@ running, applies schema migrations, then installs systemd units:
 sudo /opt/factum2/factum2-web createadmin -f /etc/factum2/factum2.yaml
 ```
 
-Log in at the address in `web.bind`. Operator documentation is in the GUI
+The process listens on `web.bind` (loopback in the example config).
+Production access is through a reverse proxy that terminates TLS — see
+[Reverse proxy](reverse-proxy.md). Operator documentation is in the GUI
 at **Documentation** (`/doc`).
 
 ## Next
 
+- [Reverse proxy](reverse-proxy.md) — Caddy (or Traefik / Apache) in front
+  of `factum2-web`
 - [Worker nodes](workers.md) — DNS, Icinga, LibreNMS, Oxidized, Prometheus
   hosts
 - [Admin settings](../user/settings.md) — NetBox, Lime, destinations, JWT

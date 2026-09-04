@@ -71,10 +71,12 @@ the `curl` commands (or `export GITHUB_TOKEN=...` before running
 `install.py`).
 
 Edit `/etc/factum2/factum2.yaml`: set `db:` credentials and `web.jwtsecret`
-(`openssl rand -base64 48`). Edit `/etc/factum2/factum2-worker.yaml` for
-the local worker (`worker.listen`, `worker.token`, `worker.tls_cert`/
-`worker.tls_key`; `factum.url`/`token` are
-Stat/Dial fallback, omit on start-only hosts). Almost all other runtime
+(`openssl rand -base64 48`). Keep `web.bind` on loopback; TLS is
+terminated at a reverse proxy
+([docs/install/reverse-proxy.md](docs/install/reverse-proxy.md)). Edit
+`/etc/factum2/factum2-worker.yaml` for the local worker (`worker.listen`,
+`worker.token`, `worker.tls_cert`/`worker.tls_key`; `factum.url`/`token`
+are Stat/Dial fallback, omit on start-only hosts). Almost all other runtime
 settings (NetBox/Lime/DNS/Icinga/LibreNMS, ...) live in the database and
 are edited from the admin UI. See
 [DEV.md § Configuration](DEV.md#configuration) for the full YAML key
@@ -111,8 +113,11 @@ diff and asks before overwriting (`--yes` overwrites without asking).
 sudo /opt/factum2/factum2-web createadmin -f /etc/factum2/factum2.yaml
 ```
 
-Then log in at the address in `web.bind` (the example config uses
-`http://127.0.0.1:8091`).
+The process listens on `web.bind` (the example config uses
+`127.0.0.1:8091`). Production is meant to sit behind a reverse proxy that
+terminates TLS (Caddy, Traefik, or Apache) — see
+[docs/install/reverse-proxy.md](docs/install/reverse-proxy.md). An example
+Caddyfile is in `examples/Caddyfile`.
 
 ### From source (development)
 
@@ -163,8 +168,10 @@ Co-located CLIs (`factum2-dns`, `factum2-icinga`, `factum2-librenms`,
 `factum2-icinga-notifications`) reach the primary's REST handlers through
 that hub connection, via a localhost-only unix socket
 (`/run/factum2-worker/api.sock`). Worker networks then do **not** need a
-route to the primary's HTTPS port. The primary still serves HTTPS to
-operators and to NetBox's `POST /api/netbox-webhook`.
+route to the primary's HTTPS port. The primary host still serves HTTPS to
+operators and to NetBox's `POST /api/netbox-webhook`, via a reverse proxy
+in front of `factum2-web`
+([docs/install/reverse-proxy.md](docs/install/reverse-proxy.md)).
 
 ```
   worker host                              management network

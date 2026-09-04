@@ -21,6 +21,7 @@ release always shows the docs that shipped with that binary.
 ## Install
 
 - [Production install](install/index.md)
+- [Reverse proxy](install/reverse-proxy.md)
 - [Worker nodes](install/workers.md)
 
 Developer setup and architecture notes stay in the repository:

@@ -52,6 +52,7 @@ nav:
       - Admin settings: user/settings.md
   - Install:
       - Production: install/index.md
+      - Reverse proxy: install/reverse-proxy.md
       - Worker nodes: install/workers.md
 
 exclude_docs: |

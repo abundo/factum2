@@ -7,8 +7,9 @@ rule scoped to the primary's IP (`/hub` on `worker.listen`).
 
 Co-located CLIs reach Factum's REST API through that hub via a unix
 socket (`/run/factum2-worker/api.sock`). Worker networks then do not need
-a route to the primary's HTTPS port. The primary still serves HTTPS to
-operators and to NetBox's webhook.
+a route to the primary's HTTPS port. The primary host still serves HTTPS
+to operators and to NetBox's webhook, via a
+[reverse proxy](reverse-proxy.md) in front of `factum2-web`.
 
 ```
   worker host                              management network
