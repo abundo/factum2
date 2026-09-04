@@ -81,7 +81,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 13
+INSTALLER_VERSION = 14
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -772,7 +772,10 @@ def _psql_via_compose(
     compose: Path, db: dict[str, str], sql: str
 ) -> subprocess.CompletedProcess[str]:
     # Connects to Postgres inside the compose `db` service, so this fails if
-    # the server in factum2.yaml is a different host.
+    # the server in factum2.yaml is a different host. `-e PGPASSWORD` (no
+    # value) copies from this process's env so the password is not in argv.
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db["pass"]
     return subprocess.run(
         [
             "docker",
@@ -782,7 +785,7 @@ def _psql_via_compose(
             "exec",
             "-T",
             "-e",
-            f"PGPASSWORD={db['pass']}",
+            "PGPASSWORD",
             "db",
             "psql",
             "-U",
@@ -795,6 +798,7 @@ def _psql_via_compose(
         check=False,
         capture_output=True,
         text=True,
+        env=env,
         timeout=30,
     )
 
@@ -860,6 +864,11 @@ def run_db_sql(
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
+def _b64_ascii(value: str) -> str:
+    """Shell-safe base64 (no quotes or newlines) for embedding in a script."""
+    return base64.b64encode(value.encode()).decode("ascii")
+
+
 def _psql_remote(
     db: dict[str, str],
     sql: str,
@@ -867,24 +876,29 @@ def _psql_remote(
     target_host: str,
     ssh_user: str,
 ) -> subprocess.CompletedProcess[str]:
-    # Credentials and SQL go as argv to bash -s, not interpolated into the
-    # remote script. SQL is base64 so PEM / dollar-quotes survive the hop.
+    # Credentials and SQL are base64-embedded in the stdin script, not ssh
+    # argv: a password in argv is visible to `ps` on the remote host.
+    # Base64 keeps quotes, dollars, and PEM out of the shell parser.
     names = " ".join(POSTGRES_COMPOSE_NAMES)
-    sql_b64 = base64.b64encode(sql.encode()).decode("ascii")
     remote = f"""\
 set -euo pipefail
-SQL=$(printf '%s' "$6" | base64 -d)
+PGHOST=$(printf '%s' '{_b64_ascii(db["host"])}' | base64 -d)
+PGPORT=$(printf '%s' '{_b64_ascii(db["port"])}' | base64 -d)
+PGUSER=$(printf '%s' '{_b64_ascii(db["user"])}' | base64 -d)
+PGDATABASE=$(printf '%s' '{_b64_ascii(db["database"])}' | base64 -d)
+PGPASSWORD=$(printf '%s' '{_b64_ascii(db["pass"])}' | base64 -d)
+SQL=$(printf '%s' '{_b64_ascii(sql)}' | base64 -d)
+export PGPASSWORD
 if command -v psql >/dev/null 2>&1; then
-  export PGPASSWORD="$5"
-  psql -h "$1" -p "$2" -U "$3" -d "$4" -tAc "$SQL"
+  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "$SQL"
   exit 0
 fi
 dir={POSTGRES_COMPOSE_DIR}
 for name in {names}; do
   f="$dir/$name"
   if [ -f "$f" ]; then
-    docker compose -f "$f" exec -T -e PGPASSWORD="$5" db \\
-      psql -U "$3" -d "$4" -tAc "$SQL"
+    docker compose -f "$f" exec -T -e PGPASSWORD db \\
+      psql -U "$PGUSER" -d "$PGDATABASE" -tAc "$SQL"
     exit 0
   fi
 done
@@ -901,13 +915,6 @@ exit 1
             f"{ssh_user}@{target_host}",
             "bash",
             "-s",
-            "--",
-            db["host"],
-            db["port"],
-            db["user"],
-            db["database"],
-            db["pass"],
-            sql_b64,
         ],
         check=False,
         capture_output=True,

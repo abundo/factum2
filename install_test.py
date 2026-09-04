@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
+import re
 import shutil
 import subprocess
 import tarfile
@@ -179,6 +181,78 @@ class StoreHubCATests(unittest.TestCase):
         self.assertFalse(
             install.should_store_hub_ca(primary_only=False, worker_err="db down")
         )
+
+
+class PsqlPasswordArgvTests(unittest.TestCase):
+    """DB password must not appear in subprocess argv (visible to `ps`)."""
+
+    _DB = {
+        "host": "127.0.0.1",
+        "port": "5432",
+        "user": "factum2",
+        "pass": "s3cr$et; rm -rf / && echo 'pwned'",
+        "database": "factum2",
+    }
+
+    def test_remote_password_not_in_ssh_argv(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install._psql_remote(
+                self._DB,
+                "select 1;",
+                target_host="primary.example",
+                ssh_user="root",
+            )
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        self.assertEqual(cmd[-2:], ["bash", "-s"])
+        self.assertNotIn("--", cmd)
+        joined = " ".join(str(part) for part in cmd)
+        self.assertNotIn(self._DB["pass"], joined)
+
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict)
+        script = kwargs["input"]
+        assert isinstance(script, str)
+        self.assertNotIn(self._DB["pass"], script)
+        self.assertIn("-e PGPASSWORD db", script)
+        self.assertNotIn("-e PGPASSWORD=", script)
+        blobs = re.findall(r"printf '%s' '([A-Za-z0-9+/=]+)'", script)
+        decoded = [base64.b64decode(b).decode() for b in blobs]
+        self.assertIn(self._DB["pass"], decoded)
+        self.assertIn("select 1;", decoded)
+
+    def test_compose_password_not_in_docker_argv(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install._psql_via_compose(Path("/opt/postgresql/compose.yaml"), self._DB, "select 1;")
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        joined = " ".join(str(part) for part in cmd)
+        self.assertNotIn(self._DB["pass"], joined)
+        self.assertIn("-e", cmd)
+        self.assertIn("PGPASSWORD", cmd)
+        self.assertNotIn(f"PGPASSWORD={self._DB['pass']}", cmd)
+
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict)
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        self.assertEqual(env["PGPASSWORD"], self._DB["pass"])
 
 
 class DollarQuoteTests(unittest.TestCase):
