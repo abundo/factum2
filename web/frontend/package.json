@@ -15,9 +15,16 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.3",
+    "@codemirror/view": "^6.43.11",
     "@deck.gl/core": "^9.3.9",
     "@deck.gl/layers": "^9.3.9",
     "@deck.gl/mapbox": "^9.3.9",
+    "@lezer/highlight": "^1.2.3",
     "@nuxt/ui": "^4.10.0",
     "axios": "^1.18.1",
     "dompurify": "^3.4.14",

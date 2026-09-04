@@ -15,6 +15,8 @@ declare module 'vue' {
     BuildInfo: typeof import('./src/components/BuildInfo.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
+    GoTemplateEditor: typeof import('./src/components/GoTemplateEditor.vue')['default']
+    GoTemplateField: typeof import('./src/components/GoTemplateField.vue')['default']
     IpamPrefixTree: typeof import('./src/components/IpamPrefixTree.vue')['default']
     LdapTreeBrowser: typeof import('./src/components/LdapTreeBrowser.vue')['default']
     OxidizedNodeDialog: typeof import('./src/components/OxidizedNodeDialog.vue')['default']

@@ -1,6 +1,13 @@
 <script setup>
+import { ref } from 'vue'
 import { useSettings } from '@/composables/useSettings'
+import GoTemplateField from '@/components/GoTemplateField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
+import {
+  icingaDependencyTemplateSchema,
+  icingaHostTemplateSchema,
+  icingaUserTemplateSchema,
+} from '@/utils/goTemplateSchemas'
 
 const { settings, loading, saving, forbidden, loadError, save } = useSettings()
 
@@ -20,6 +27,7 @@ const snmpVersionOptions = [
   { label: 'v3', value: 'v3' },
 ]
 
+const destinationTab = ref('dns')
 const destinationTabItems = [
   { label: 'DNS', value: 'dns', slot: 'dns' },
   { label: 'Icinga', value: 'icinga', slot: 'icinga' },
@@ -57,7 +65,7 @@ const destinationTabItems = [
 
     <template v-else>
       <div class="font-semibold text-lg mb-3">Destinations</div>
-      <UTabs :items="destinationTabItems" default-value="dns">
+      <UTabs v-model="destinationTab" :items="destinationTabItems">
         <template #dns>
           <div class="flex flex-col gap-6 py-4">
             <div class="flex items-center gap-2">
@@ -141,37 +149,29 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
-            <div>
-              <label for="icinga_host_template" class="block font-bold mb-3">Host template</label>
-              <UTextarea
-                id="icinga_host_template"
-                v-model="settings.icinga_host_template"
-                :rows="4"
-                placeholder="Go template, executed with .Device and .Options"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="icinga_dependency_template" class="block font-bold mb-3"
-                >Dependency template</label
-              >
-              <UTextarea
-                id="icinga_dependency_template"
-                v-model="settings.icinga_dependency_template"
-                :rows="4"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="icinga_user_template" class="block font-bold mb-3">User template</label>
-              <UTextarea
-                id="icinga_user_template"
-                v-model="settings.icinga_user_template"
-                :rows="4"
-                placeholder="Go template, executed with .Username, .DisplayName and .Email"
-                class="w-full"
-              />
-            </div>
+            <GoTemplateField
+              id="icinga_host_template"
+              v-model="settings.icinga_host_template"
+              label="Host template"
+              :rows="6"
+              placeholder="Go template, executed with .Device and .Options"
+              :schema="icingaHostTemplateSchema"
+            />
+            <GoTemplateField
+              id="icinga_dependency_template"
+              v-model="settings.icinga_dependency_template"
+              label="Dependency template"
+              :rows="6"
+              :schema="icingaDependencyTemplateSchema"
+            />
+            <GoTemplateField
+              id="icinga_user_template"
+              v-model="settings.icinga_user_template"
+              label="User template"
+              :rows="6"
+              placeholder="Go template, executed with .Username, .DisplayName and .Email"
+              :schema="icingaUserTemplateSchema"
+            />
           </div>
         </template>
 
@@ -317,8 +317,7 @@ const destinationTabItems = [
                 as
                 <span class="font-mono">name:ip:model</span>
                 per line (FQDN, primary IPv4, platform). Oxidized's CSV source must map
-                <span class="font-mono">name: 0</span>,
-                <span class="font-mono">ip: 1</span>,
+                <span class="font-mono">name: 0</span>, <span class="font-mono">ip: 1</span>,
                 <span class="font-mono">model: 2</span>
                 — the previous two-column
                 <span class="font-mono">name:model</span>
