@@ -4,6 +4,7 @@ import { useSettings } from '@/composables/useSettings'
 import GoTemplateField from '@/components/GoTemplateField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import {
+  icingaDefaultNotificationSchema,
   icingaDependencyTemplateSchema,
   icingaHostTemplateSchema,
   icingaUserTemplateSchema,
@@ -137,18 +138,14 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
-            <div>
-              <label for="icinga_default_notification" class="block font-bold mb-3"
-                >Default notification</label
-              >
-              <UTextarea
-                id="icinga_default_notification"
-                v-model="settings.icinga_default_notification"
-                :rows="2"
-                placeholder="Config line(s) applied when a device has no alarm destination set"
-                class="w-full"
-              />
-            </div>
+            <GoTemplateField
+              id="icinga_default_notification"
+              v-model="settings.icinga_default_notification"
+              label="Default notification"
+              :rows="4"
+              placeholder="Go template; inserted into the host object when a device has no alarm destination"
+              :schema="icingaDefaultNotificationSchema"
+            />
             <GoTemplateField
               id="icinga_host_template"
               v-model="settings.icinga_host_template"

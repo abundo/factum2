@@ -98,8 +98,9 @@ func isIgnoredDevice(name, ignoreDevices string) bool {
 }
 
 // hostTemplateFuncs are the custom functions available inside
-// Settings.IcingaHostTemplate. defaultDomain is Settings.DefaultDomain,
-// used by "fqdn" to qualify bare device names.
+// Settings.IcingaHostTemplate and Settings.IcingaDefaultNotification.
+// defaultDomain is Settings.DefaultDomain, used by "fqdn" to qualify
+// bare device names.
 func hostTemplateFuncs(defaultDomain string) template.FuncMap {
 	return template.FuncMap{
 		// ip strips the "/prefixlen" suffix from a CIDR address (e.g.
@@ -136,9 +137,17 @@ type hostTemplateData struct {
 // internal/librenms hit the same gap and skipped parent sync for the same
 // reason, see factum2-librenms.go.
 func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter jobevent.Reporter) (bool, error) {
-	hostTmpl, err := template.New("host").Funcs(hostTemplateFuncs(fic.IcingaConfig.DefaultDomain)).Parse(fic.IcingaConfig.HostTemplate)
+	funcs := hostTemplateFuncs(fic.IcingaConfig.DefaultDomain)
+	hostTmpl, err := template.New("host").Funcs(funcs).Parse(fic.IcingaConfig.HostTemplate)
 	if err != nil {
 		return false, fmt.Errorf("parsing icinga host template: %w", err)
+	}
+	var notifyTmpl *template.Template
+	if fic.IcingaConfig.DefaultNotification != "" {
+		notifyTmpl, err = template.New("notify").Funcs(funcs).Parse(fic.IcingaConfig.DefaultNotification)
+		if err != nil {
+			return false, fmt.Errorf("parsing icinga default notification template: %w", err)
+		}
 	}
 
 	tmpFile := fic.IcingaConfig.HostsFile + ".tmp"
@@ -161,12 +170,21 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 			continue
 		}
 
+		device.Comments = quote(device.Comments) // uglyqq
+
 		var options []string
 		if device.CfAlarmDestination != "" {
 			options = append(options, fmt.Sprintf("  vars.factum_alarm_destination = [ \"%s\" ]", quote(device.CfAlarmDestination)))
 			fic.Users[device.CfAlarmDestination] = true
-		} else if fic.IcingaConfig.DefaultNotification != "" {
-			options = append(options, fic.IcingaConfig.DefaultNotification)
+		} else if notifyTmpl != nil {
+			var buf bytes.Buffer
+			if err := notifyTmpl.Execute(&buf, hostTemplateData{Device: device}); err != nil {
+				f.Close()
+				return false, fmt.Errorf("rendering icinga default notification for %q: %w", device.Name, err)
+			}
+			if line := strings.TrimRight(buf.String(), "\n"); line != "" {
+				options = append(options, line)
+			}
 		}
 		if device.CfAlarmTimeperiod != "" {
 			options = append(options, fmt.Sprintf("  vars.factum_alarm_timeperiod = \"%s\"", quote(device.CfAlarmTimeperiod)))
@@ -174,8 +192,6 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 		if device.CfBackupOxidized {
 			options = append(options, "  vars.pe_backup_oxidized = true")
 		}
-
-		device.Comments = quote(device.Comments) // uglyqq
 
 		data := hostTemplateData{
 			Device:  device,

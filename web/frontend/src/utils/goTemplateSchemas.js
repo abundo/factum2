@@ -32,6 +32,22 @@ const deviceVars = [
   },
 ]
 
+const icingaDeviceFunctions = [
+  {
+    name: 'ip',
+    args: 'cidr',
+    insert: '{{ ip .Device.PrimaryIPv4 }}',
+    description: 'Strip /prefixlen from a CIDR address (PrimaryIPv4 / PrimaryIPv6)',
+  },
+  {
+    name: 'fqdn',
+    args: 'name',
+    insert: '{{ fqdn .Device.Name }}',
+    description:
+      'Append Settings.DefaultDomain if name has no dot; Icinga host objects must be FQDNs',
+  },
+]
+
 export const icingaHostTemplateSchema = {
   notes:
     'Rendered once per Icinga-monitored device that is enabled, has a primary IPv4, and is not on the ignore list. Output is Icinga 2 DSL. Names are Go struct fields (PascalCase), not JSON keys.',
@@ -46,24 +62,24 @@ export const icingaHostTemplateSchema = {
       name: '.Options',
       type: 'string',
       description:
-        'Pre-built Icinga vars lines (alarm destination, timeperiod, oxidized). Insert as a raw block, not inside quotes.',
+        'Pre-built Icinga vars lines (alarm destination, default notification, timeperiod, oxidized). Insert as a raw block, not inside quotes.',
     },
   ],
-  functions: [
+  functions: icingaDeviceFunctions,
+}
+
+export const icingaDefaultNotificationSchema = {
+  notes:
+    'Rendered for each Icinga-monitored device that has no alarm destination. Output is Icinga 2 DSL lines inserted into the host object via .Options (typically vars.pe_*). Literal lines with no {{ }} still work. Names are Go struct fields (PascalCase), not JSON keys.',
+  variables: [
     {
-      name: 'ip',
-      args: 'cidr',
-      insert: '{{ ip .Device.PrimaryIPv4 }}',
-      description: 'Strip /prefixlen from a CIDR address (PrimaryIPv4 / PrimaryIPv6)',
+      name: '.Device',
+      type: 'Device',
+      description: 'The factum device that has no CfAlarmDestination',
     },
-    {
-      name: 'fqdn',
-      args: 'name',
-      insert: '{{ fqdn .Device.Name }}',
-      description:
-        'Append Settings.DefaultDomain if name has no dot; Icinga host objects must be FQDNs',
-    },
+    ...deviceVars,
   ],
+  functions: icingaDeviceFunctions,
 }
 
 export const icingaUserTemplateSchema = {
