@@ -15,8 +15,21 @@ Operator Markdown lives in `docs/user/` (GUI `/doc`, via `docs.List` /
 - Go 1.25+
 - Node.js `^22.18.0` or `>=24.12.0` (see `web/frontend/package.json`)
 - PostgreSQL (app data, via GORM)
-- A sibling checkout of [limetool](https://github.com/abundo/limetool) at
-  `../limetool` (`go.mod` replace-points there)
+
+[limetool](https://github.com/abundo/limetool) and
+[netboxtool](https://github.com/abundo/netboxtool) are ordinary tagged
+modules (`go.mod` / `go.sum`). A clone builds without sibling checkouts.
+
+To edit a library and factum together, use a Go workspace (gitignored):
+
+```sh
+go work init . ../limetool ../netboxtool
+```
+
+That overrides module resolution on your machine only. CI and releases
+keep using the tagged versions. Pin a new library release with
+`go get github.com/abundo/netboxtool@v1.2.1` (or the matching limetool
+tag) and commit the `go.mod` / `go.sum` bump.
 
 ## Database setup
 
@@ -225,9 +238,7 @@ make test            # go test ./... - no device, no database, no network
 
 GitHub Actions runs `go vet`, `make test`, `make`, and a GoReleaser snapshot
 on every push to `main` and on pull requests
-(`.github/workflows/ci.yml`). The workflow checks out
-`github.com/abundo/limetool` as a sibling of the factum2 checkout because
-`go.mod` replace-points at `../limetool`.
+(`.github/workflows/ci.yml`).
 
 Device drivers (`internal/drivers`) are tested at two levels. The default
 tests run against `fakeEOS` (`driver_arista_eos_test.go`), an `httptest` TLS

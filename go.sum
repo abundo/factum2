@@ -4,8 +4,10 @@ github.com/Azure/go-ntlmssp v0.1.1 h1:l+FM/EEMb0U9QZE7mKNEDw5Mu3mFiaa2GKOoTSsNDP
 github.com/Azure/go-ntlmssp v0.1.1/go.mod h1:NYqdhxd/8aAct/s4qSYZEerdPuH1liG2/X9DiVTbhpk=
 github.com/GiGurra/boa v1.0.28 h1:zKmT7I8n/SKRSKt/GTeT62iCqpEEq91erNHINR0oHT0=
 github.com/GiGurra/boa v1.0.28/go.mod h1:surNBGhsyV1UugARWs4zBJ+JFLS1ASQbCuL2LXCwQLE=
-github.com/abundo/netboxtool v1.1.0 h1:Hfe47a1/+Ot7j8zhSqdDiX06+dpWN0m7vAsWggjyEEg=
-github.com/abundo/netboxtool v1.1.0/go.mod h1:tR9Q8oUHDJZFjeHBTIIHDjSk2p0KV0ZNhiLeX1WOZuY=
+github.com/abundo/limetool v1.1.0 h1:JVb0CWkkFc0xNmsxwl+uZCNGBnJ8/qLFjVkz6QkOh1I=
+github.com/abundo/limetool v1.1.0/go.mod h1:ZsDXHR+7UjZahj7j/0ygf7z7+W+sNVdRcgssNmvwH8o=
+github.com/abundo/netboxtool v1.2.0 h1:BzH7eHjbNJt6N4CLFD2S14FAoUFuTkajTd4S5N5KJ14=
+github.com/abundo/netboxtool v1.2.0/go.mod h1:tR9Q8oUHDJZFjeHBTIIHDjSk2p0KV0ZNhiLeX1WOZuY=
 github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e h1:4dAU9FXIyQktpoUAgOJK3OTFc/xug0PCXYCqU0FgDKI=
 github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
 github.com/carlmjohnson/be v0.25.2 h1:EPTT7qCF5xJjcgrV5yX/muP5HTqSJR2VOjO6O4l9cYE=

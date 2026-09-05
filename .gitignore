@@ -31,8 +31,9 @@ pkg/
 # vendor/
 
 
-# Go workspace file
+# Go workspace file (local library development; see DEV.md)
 go.work
+go.work.sum
 
 # Skill runtime state (skills themselves under .grok/skills are committed)
 .grok/skills/**/.state/

@@ -2,14 +2,10 @@ module github.com/abundo/factum2
 
 go 1.25.0
 
-replace github.com/abundo/limetool => ../limetool
-
-replace github.com/abundo/netboxtool => ../netboxtool
-
 require (
 	github.com/GiGurra/boa v1.0.28
-	github.com/abundo/limetool v1.0.0
-	github.com/abundo/netboxtool v1.1.0
+	github.com/abundo/limetool v1.1.0
+	github.com/abundo/netboxtool v1.2.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/go-sql-driver/mysql v1.10.0

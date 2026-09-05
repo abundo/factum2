@@ -12,7 +12,7 @@ func TestParseGoListJSON(t *testing.T) {
 {"Path":"github.com/abundo/factum2","Main":true}
 {"Path":"github.com/labstack/echo/v5","Version":"v5.3.1"}
 {"Path":"golang.org/x/sys","Version":"v0.1.0","Indirect":true}
-{"Path":"github.com/abundo/limetool","Version":"v1.0.0","Replace":{"Path":"../limetool"}}
+{"Path":"example.com/replaced","Version":"v1.0.0","Replace":{"Path":"../replaced"}}
 `
 	mods, err := ParseGoListJSON(strings.NewReader(input))
 	if err != nil {
@@ -31,9 +31,9 @@ func TestParseGoListJSON(t *testing.T) {
 	if !byPath["golang.org/x/sys"].Indirect {
 		t.Error("sys not marked indirect")
 	}
-	limetool := byPath["github.com/abundo/limetool"]
-	if limetool.ReplacePath != "../limetool" {
-		t.Errorf("limetool replace = %q", limetool.ReplacePath)
+	replaced := byPath["example.com/replaced"]
+	if replaced.ReplacePath != "../replaced" {
+		t.Errorf("replaced replace = %q", replaced.ReplacePath)
 	}
 }
 
@@ -164,8 +164,11 @@ func TestGenerateFromThisRepo(t *testing.T) {
 	if !strings.Contains(md, "github.com/abundo/limetool") {
 		t.Fatal("missing limetool")
 	}
-	if !strings.Contains(md, "replaced by") {
-		t.Fatal("missing replace annotation")
+	if !strings.Contains(md, "github.com/abundo/netboxtool") {
+		t.Fatal("missing netboxtool")
+	}
+	if strings.Contains(md, "replaced by") {
+		t.Fatal("unexpected replace annotation")
 	}
 	if !strings.Contains(md, "| vue |") {
 		t.Fatal("missing vue npm package")
