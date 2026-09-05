@@ -18,25 +18,29 @@ import (
 // devices with resolved coordinates (see models.Device.Latitude/Longitude)
 // are ever included - the map has nowhere to place the rest.
 type TopologyDeviceDTO struct {
-	ID          uint    `json:"id"`
-	Name        string  `json:"name"`
-	Site        string  `json:"site"`
-	Role        string  `json:"role"`
-	Status      string  `json:"status"`
-	OpticalKind string  `json:"optical_kind"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
+	ID           uint    `json:"id"`
+	Name         string  `json:"name"`
+	Site         string  `json:"site"`
+	Role         string  `json:"role"`
+	Status       string  `json:"status"`
+	Manufacturer string  `json:"manufacturer"`
+	ModelName    string  `json:"model_name"`
+	OpticalKind  string  `json:"optical_kind"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
 }
 
 // TopologyEdgeDTO is one Connection (Netbox cable) between two devices
 // already present in the same response's Devices list.
 type TopologyEdgeDTO struct {
-	ID         uint   `json:"id"`
-	DeviceAID  uint   `json:"device_a_id"`
-	InterfaceA string `json:"interface_a"`
-	DeviceBID  uint   `json:"device_b_id"`
-	InterfaceB string `json:"interface_b"`
-	Label      string `json:"label"`
+	ID                    uint   `json:"id"`
+	DeviceAID             uint   `json:"device_a_id"`
+	InterfaceA            string `json:"interface_a"`
+	InterfaceADescription string `json:"interface_a_description"`
+	DeviceBID             uint   `json:"device_b_id"`
+	InterfaceB            string `json:"interface_b"`
+	InterfaceBDescription string `json:"interface_b_description"`
+	Label                 string `json:"label"`
 }
 
 // TopologySiteDTO is a Netbox site plotted on the map independently of any
@@ -109,14 +113,16 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 	for _, d := range devices {
 		onMap[d.ID] = true
 		out.Devices = append(out.Devices, TopologyDeviceDTO{
-			ID:          d.ID,
-			Name:        d.Name,
-			Site:        d.Site,
-			Role:        d.Role,
-			Status:      d.Status,
-			OpticalKind: d.OpticalKind,
-			Latitude:    *d.Latitude,
-			Longitude:   *d.Longitude,
+			ID:           d.ID,
+			Name:         d.Name,
+			Site:         d.Site,
+			Role:         d.Role,
+			Status:       d.Status,
+			Manufacturer: d.Manufacturer,
+			ModelName:    d.ModelName,
+			OpticalKind:  d.OpticalKind,
+			Latitude:     *d.Latitude,
+			Longitude:    *d.Longitude,
 		})
 	}
 
@@ -133,9 +139,12 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 	if err != nil {
 		return nil, err
 	}
-	nameByID := make(map[uint]string, len(interfaces))
+	type ifaceInfo struct {
+		Name, Description string
+	}
+	ifaceByID := make(map[uint]ifaceInfo, len(interfaces))
 	for _, i := range interfaces {
-		nameByID[i.ID] = i.Name
+		ifaceByID[i.ID] = ifaceInfo{Name: i.Name, Description: i.Description}
 	}
 
 	out.Edges = make([]TopologyEdgeDTO, 0, len(connections))
@@ -143,13 +152,17 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 		if !onMap[c.DeviceAID] || !onMap[c.DeviceBID] {
 			continue
 		}
+		a := ifaceByID[c.InterfaceAID]
+		b := ifaceByID[c.InterfaceBID]
 		out.Edges = append(out.Edges, TopologyEdgeDTO{
-			ID:         c.ID,
-			DeviceAID:  c.DeviceAID,
-			InterfaceA: nameByID[c.InterfaceAID],
-			DeviceBID:  c.DeviceBID,
-			InterfaceB: nameByID[c.InterfaceBID],
-			Label:      c.Label,
+			ID:                    c.ID,
+			DeviceAID:             c.DeviceAID,
+			InterfaceA:            a.Name,
+			InterfaceADescription: a.Description,
+			DeviceBID:             c.DeviceBID,
+			InterfaceB:            b.Name,
+			InterfaceBDescription: b.Description,
+			Label:                 c.Label,
 		})
 	}
 

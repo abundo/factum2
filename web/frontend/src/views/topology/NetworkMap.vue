@@ -74,6 +74,7 @@ const basemap = ref(readBasemap())
 setWorkerUrl('/maplibre-gl-worker.mjs')
 
 const mapContainer = ref(null)
+const mapWrap = ref(null)
 const loading = ref(true)
 const error = ref(null)
 const selected = ref(null)
@@ -119,6 +120,11 @@ let styleGen = 0
 // the one in-flight "reveal" callback; a hover onto a *different* object
 // cancels it and restarts the wait instead of letting a stale one fire.
 const HOVER_DELAY_MS = 400
+const EDGE_HOVER_DELAY_MS = 200
+// Extra pixels around the pointer so thin connection arcs are hittable
+// without drawing them that wide. Pair with the invisible hit ArcLayer.
+const PICKING_RADIUS_PX = 10
+const CONNECTION_HIT_WIDTH_PX = 16
 let hoverTimer = null
 let pending = null
 
@@ -141,11 +147,38 @@ function handleHover(kind, { object, x, y }) {
 
   if (hoverTimer) clearTimeout(hoverTimer)
   hoverInfo.value = null
-  hoverTimer = setTimeout(() => {
-    hoverInfo.value = pending
-    hoverTimer = null
-  }, HOVER_DELAY_MS)
+  hoverTimer = setTimeout(
+    () => {
+      hoverInfo.value = pending
+      hoverTimer = null
+    },
+    kind === 'edge' ? EDGE_HOVER_DELAY_MS : HOVER_DELAY_MS,
+  )
 }
+
+function siteLabel(site) {
+  if (!site || site === 'Default') return 'No site'
+  return site
+}
+
+function hardwareLabel(d) {
+  return [d?.manufacturer, d?.model_name].filter((s) => !!(s && String(s).trim())).join(' · ')
+}
+
+const hoverPos = computed(() => {
+  if (!hoverInfo.value) return null
+  const w = mapWrap.value?.clientWidth ?? 0
+  const h = mapWrap.value?.clientHeight ?? 0
+  const x = hoverInfo.value.x
+  const y = hoverInfo.value.y
+  const flipX = w > 0 && x > w * 0.62
+  const flipY = h > 0 && y > h * 0.72
+  return {
+    left: `${flipX ? x - 12 : x + 12}px`,
+    top: `${flipY ? y - 12 : y + 12}px`,
+    transform: `translate(${flipX ? '-100%' : '0'}, ${flipY ? '-100%' : '0'})`,
+  }
+})
 
 const STATUS_COLORS = {
   active: [34, 197, 94],
@@ -249,6 +282,8 @@ function buildLayers(devices, edges, sites) {
             midpoint: [(a.mapLng + b.mapLng) / 2, (a.mapLat + b.mapLat) / 2],
             deviceAName: a.name,
             deviceBName: b.name,
+            deviceASite: a.site,
+            deviceBSite: b.site,
           }
         : null
     })
@@ -275,10 +310,27 @@ function buildLayers(devices, edges, sites) {
       radiusMaxPixels: 16,
       onHover: (info) => handleHover('site', info),
     }),
+    // Wide, nearly-invisible pick target: the painted arc is 1.5–2px, which
+    // is too thin to rest a pointer on. The visual layer drawn on top is
+    // not pickable so it doesn't steal hits from this one.
+    new ArcLayer({
+      id: 'connections-hit',
+      data: arcs,
+      pickable: true,
+      getSourcePosition: (d) => d.source,
+      getTargetPosition: (d) => d.target,
+      getSourceColor: [0, 0, 0, 1],
+      getTargetColor: [0, 0, 0, 1],
+      getWidth: CONNECTION_HIT_WIDTH_PX,
+      widthMinPixels: CONNECTION_HIT_WIDTH_PX,
+      getHeight: 0,
+      greatCircle: true,
+      onHover: (info) => handleHover('edge', info),
+    }),
     new ArcLayer({
       id: 'connections',
       data: arcs,
-      pickable: true,
+      pickable: false,
       getSourcePosition: (d) => d.source,
       getTargetPosition: (d) => d.target,
       getSourceColor: palette.arc,
@@ -286,7 +338,6 @@ function buildLayers(devices, edges, sites) {
       getWidth: palette.arcWidth,
       getHeight: 0,
       greatCircle: true,
-      onHover: (info) => handleHover('edge', info),
     }),
     new ScatterplotLayer({
       id: 'devices',
@@ -327,6 +378,7 @@ function buildLayers(devices, edges, sites) {
     new TextLayer({
       id: 'edge-labels',
       data: labeledArcs,
+      pickable: true,
       getPosition: (d) => d.midpoint,
       getText: (d) => d.label,
       getColor: palette.edgeLabelText,
@@ -335,6 +387,7 @@ function buildLayers(devices, edges, sites) {
       getBackgroundColor: palette.labelBg,
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
+      onHover: (info) => handleHover('edge', info),
     }),
     new TextLayer({
       id: 'device-labels',
@@ -683,7 +736,7 @@ onMounted(() => {
   })
   map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
 
-  overlay = new MapboxOverlay({ layers: [] })
+  overlay = new MapboxOverlay({ layers: [], pickingRadius: PICKING_RADIUS_PX })
   map.addControl(overlay)
 
   map.on('click', (e) => {
@@ -800,6 +853,7 @@ onBeforeUnmount(() => {
         @assign="onAssign"
       />
       <div
+        ref="mapWrap"
         class="relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default"
         :class="pickingCoords ? 'cursor-crosshair ring-2 ring-primary' : ''"
       >
@@ -841,6 +895,7 @@ onBeforeUnmount(() => {
             />
           </div>
           <div class="text-sm text-muted-color space-y-1">
+            <div v-if="hardwareLabel(selected)">{{ hardwareLabel(selected) }}</div>
             <div>Site: {{ selected.site || '-' }}</div>
             <div>Role: {{ selected.role || '-' }}</div>
             <div>Status: {{ selected.status || '-' }}</div>
@@ -849,11 +904,14 @@ onBeforeUnmount(() => {
 
         <div
           v-if="hoverInfo"
-          class="absolute z-20 max-w-64 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-lg pointer-events-none"
-          :style="{ left: `${hoverInfo.x + 12}px`, top: `${hoverInfo.y + 12}px` }"
+          class="absolute z-20 w-max max-w-80 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-lg pointer-events-none"
+          :style="hoverPos"
         >
           <template v-if="hoverInfo.kind === 'device'">
             <div class="font-medium">{{ hoverInfo.object.name }}</div>
+            <div v-if="hardwareLabel(hoverInfo.object)" class="text-muted-color">
+              {{ hardwareLabel(hoverInfo.object) }}
+            </div>
             <div class="text-muted-color">
               {{ hoverInfo.object.site || '-' }} · {{ hoverInfo.object.role || '-' }} ·
               {{ hoverInfo.object.status || '-' }}
@@ -863,20 +921,46 @@ onBeforeUnmount(() => {
             <div class="font-medium">{{ hoverInfo.object.name }}</div>
           </template>
           <template v-else>
-            <div class="font-medium">
-              {{ hoverInfo.object.deviceAName
-              }}<span v-if="hoverInfo.object.interface_a">
-                ({{ hoverInfo.object.interface_a }})</span
-              >
-            </div>
-            <div class="text-muted-color">
-              {{ hoverInfo.object.deviceBName
-              }}<span v-if="hoverInfo.object.interface_b">
-                ({{ hoverInfo.object.interface_b }})</span
-              >
-            </div>
-            <div v-if="hoverInfo.object.label" class="text-muted-color">
-              Label: {{ hoverInfo.object.label }}
+            <div class="space-y-1.5">
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-color">
+                  A
+                </div>
+                <div class="font-medium">{{ hoverInfo.object.deviceAName }}</div>
+                <div class="text-muted-color">
+                  {{ siteLabel(hoverInfo.object.deviceASite) }}
+                  <template v-if="hoverInfo.object.interface_a">
+                    · {{ hoverInfo.object.interface_a }}
+                  </template>
+                </div>
+                <div
+                  v-if="hoverInfo.object.interface_a_description"
+                  class="text-muted-color whitespace-pre-wrap"
+                >
+                  {{ hoverInfo.object.interface_a_description }}
+                </div>
+              </div>
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-color">
+                  B
+                </div>
+                <div class="font-medium">{{ hoverInfo.object.deviceBName }}</div>
+                <div class="text-muted-color">
+                  {{ siteLabel(hoverInfo.object.deviceBSite) }}
+                  <template v-if="hoverInfo.object.interface_b">
+                    · {{ hoverInfo.object.interface_b }}
+                  </template>
+                </div>
+                <div
+                  v-if="hoverInfo.object.interface_b_description"
+                  class="text-muted-color whitespace-pre-wrap"
+                >
+                  {{ hoverInfo.object.interface_b_description }}
+                </div>
+              </div>
+              <div v-if="hoverInfo.object.label" class="text-muted-color">
+                {{ hoverInfo.object.label }}
+              </div>
             </div>
           </template>
         </div>

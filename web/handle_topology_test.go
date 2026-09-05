@@ -18,6 +18,7 @@ func TestApiGetTopology_OmitsUnlocatedDevices(t *testing.T) {
 	db := newTestDB(t)
 	placed := models.Device{
 		Name: "rtr1", NetboxID: 1, Site: "STO",
+		Manufacturer: "Nokia", ModelName: "7750 SR-1",
 		Latitude: ptrFloat(59.3), Longitude: ptrFloat(18.0),
 	}
 	unplaced := models.Device{Name: "rtr2", NetboxID: 2}
@@ -46,8 +47,69 @@ func TestApiGetTopology_OmitsUnlocatedDevices(t *testing.T) {
 	if len(body.Devices) != 1 || body.Devices[0].Name != "rtr1" {
 		t.Errorf("devices = %+v, want [rtr1]", body.Devices)
 	}
+	if body.Devices[0].Manufacturer != "Nokia" || body.Devices[0].ModelName != "7750 SR-1" {
+		t.Errorf("hardware = %q %q", body.Devices[0].Manufacturer, body.Devices[0].ModelName)
+	}
 	if len(body.Sites) != 1 || body.Sites[0].Name != "STO" {
 		t.Errorf("sites = %+v", body.Sites)
+	}
+}
+
+func TestApiGetTopology_EdgesIncludeInterfaceDescription(t *testing.T) {
+	db := newTestDB(t)
+	a := models.Device{
+		Name: "rtr-a", NetboxID: 1, Site: "GBG",
+		Latitude: ptrFloat(57.7), Longitude: ptrFloat(11.9),
+	}
+	b := models.Device{
+		Name: "rtr-b", NetboxID: 2, Site: "STO",
+		Latitude: ptrFloat(59.3), Longitude: ptrFloat(18.0),
+	}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: a.ID, NetboxID: 10, Name: "et-0/0/1", Description: "to Stockholm"}
+	ifb := models.Interface{DeviceID: b.ID, NetboxID: 11, Name: "et-0/0/2", Description: "to Gothenburg"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+	conn := models.Connection{
+		NetboxID: 20, DeviceAID: a.ID, InterfaceAID: ifa.ID,
+		DeviceBID: b.ID, InterfaceBID: ifb.ID, Label: "FO-1",
+	}
+	if err := db.Create(&conn).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/topology", nil, nil, nil)
+	if err := (&Controller{DB: db}).ApiGetTopology(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologyDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Edges) != 1 {
+		t.Fatalf("edges = %+v, want 1", body.Edges)
+	}
+	e := body.Edges[0]
+	if e.InterfaceA != "et-0/0/1" || e.InterfaceADescription != "to Stockholm" {
+		t.Errorf("A = %q %q", e.InterfaceA, e.InterfaceADescription)
+	}
+	if e.InterfaceB != "et-0/0/2" || e.InterfaceBDescription != "to Gothenburg" {
+		t.Errorf("B = %q %q", e.InterfaceB, e.InterfaceBDescription)
+	}
+	if e.Label != "FO-1" {
+		t.Errorf("label = %q", e.Label)
 	}
 }
 
