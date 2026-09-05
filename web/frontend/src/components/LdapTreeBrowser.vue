@@ -157,14 +157,19 @@ onBeforeUnmount(destroyTree)
   <UModal
     :open="visible"
     title="Browse directory"
-    :ui="{ content: 'sm:max-w-2xl' }"
+    :ui="{
+      overlay: 'z-[80]',
+      content:
+        'z-[80] w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh] sm:max-w-none flex flex-col bg-default',
+      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
+      header: 'bg-default',
+      footer: 'bg-default',
+    }"
     @update:open="(v) => emit('update:visible', v)"
   >
     <template #body>
-      <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
-      <div v-if="visible" class="h-80">
-        <div ref="el" class="ipam-tree" />
-      </div>
+      <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3 shrink-0" />
+      <div v-if="visible" ref="el" class="ipam-tree min-h-0 flex-1" />
     </template>
 
     <template #footer>
