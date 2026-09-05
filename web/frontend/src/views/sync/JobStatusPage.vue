@@ -105,8 +105,7 @@ function loadAll({ showLoading = false } = {}) {
   })
 }
 
-function stopAutoRefresh() {
-  autoRefresh.value = false
+function clearRefreshTimers() {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
@@ -117,8 +116,13 @@ function stopAutoRefresh() {
   }
 }
 
+function stopAutoRefresh() {
+  autoRefresh.value = false
+  clearRefreshTimers()
+}
+
 function startAutoRefresh({ refreshNow = false } = {}) {
-  stopAutoRefresh()
+  clearRefreshTimers()
   autoRefresh.value = true
   if (refreshNow) {
     loadAll()
@@ -129,11 +133,11 @@ function startAutoRefresh({ refreshNow = false } = {}) {
   stopTimer = setTimeout(stopAutoRefresh, AUTO_REFRESH_DURATION_MS)
 }
 
-function toggleAutoRefresh() {
-  if (autoRefresh.value) {
-    stopAutoRefresh()
-  } else {
+function setAutoRefresh(on) {
+  if (on) {
     startAutoRefresh({ refreshNow: true })
+  } else {
+    stopAutoRefresh()
   }
 }
 
@@ -171,17 +175,20 @@ onUnmounted(() => {
 
 <template>
   <div class="card mb-6">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
       <div class="font-semibold text-xl">Job status</div>
-      <UButton
-        label="Autorefresh"
-        icon="i-lucide-refresh-cw"
-        :color="autoRefresh ? 'primary' : 'neutral'"
-        :variant="autoRefresh ? 'solid' : 'outline'"
-        :aria-pressed="autoRefresh"
+      <div
+        class="flex items-center gap-2 shrink-0 whitespace-nowrap"
         title="Refresh every 5 seconds (stops after 1 hour)"
-        @click="toggleAutoRefresh"
-      />
+      >
+        <USwitch
+          id="auto-refresh"
+          :model-value="autoRefresh"
+          @update:model-value="setAutoRefresh"
+        />
+        <label for="auto-refresh" class="cursor-pointer select-none">Auto-refresh</label>
+        <span v-if="autoRefresh" class="text-sm text-muted-color">every 5s</span>
+      </div>
     </div>
 
     <UAlert
