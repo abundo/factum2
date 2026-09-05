@@ -55,9 +55,9 @@ type TopologyDTO struct {
 	Sites   []TopologySiteDTO   `json:"sites"`
 }
 
-// TopologyDeviceListDTO is one device for the map's site-assignment panel.
-// Unlike TopologyDeviceDTO it includes devices with no coordinates, so the
-// operator can find unplaced devices and give them a site.
+// TopologyDeviceListDTO is one device for the map's location-assignment
+// panel. Unlike TopologyDeviceDTO it includes devices with no coordinates,
+// so the operator can find unplaced devices and pin them.
 type TopologyDeviceListDTO struct {
 	ID        uint     `json:"id"`
 	Name      string   `json:"name"`
@@ -84,7 +84,7 @@ type topologyLocationRequest struct {
 
 type TopologyLocationResponse struct {
 	Device TopologyDeviceListDTO `json:"device"`
-	Site   TopologySiteDTO       `json:"site"`
+	Site   *TopologySiteDTO      `json:"site,omitempty"`
 }
 
 // fetchTopology loads every device with resolved GPS coordinates, the
@@ -202,10 +202,10 @@ func topologySiteDTO(s models.Site) TopologySiteDTO {
 }
 
 // ApiGetTopologyDevices returns every physical device (placed or not) for
-// the map's site-assignment panel. Virtual machines are omitted: they have
-// no coordinates of their own, only the host they run on does. The main
-// /topology payload still omits unlocated devices because the map has
-// nowhere to plot them.
+// the map's location-assignment panel. Virtual machines are omitted: they
+// have no coordinates of their own, only the host they run on does. The
+// main /topology payload still omits unlocated devices because the map
+// has nowhere to plot them.
 func (ctrl *Controller) ApiGetTopologyDevices(c *echo.Context) error {
 	devices, err := gorm.G[models.Device](ctrl.DB).Order("Name").Find(c.Request().Context())
 	if err != nil {
@@ -221,8 +221,9 @@ func (ctrl *Controller) ApiGetTopologyDevices(c *echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// ApiTopologyDeviceLocation creates or updates a Netbox site (with GPS if
-// provided / needed) and assigns the device to it.
+// ApiTopologyDeviceLocation writes GPS to Netbox: onto the named site
+// (creating it if needed) when site_name is set, or onto the device
+// itself when site_name is empty.
 func (ctrl *Controller) ApiTopologyDeviceLocation(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -265,10 +266,12 @@ func (ctrl *Controller) ApiTopologyDeviceLocation(c *echo.Context) error {
 		}
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, TopologyLocationResponse{
-		Device: topologyDeviceListDTO(got.Device),
-		Site:   topologySiteDTO(got.Site),
-	})
+	resp := TopologyLocationResponse{Device: topologyDeviceListDTO(got.Device)}
+	if got.Site != nil {
+		s := topologySiteDTO(*got.Site)
+		resp.Site = &s
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 type TopologyGeocodeDTO struct {
@@ -276,9 +279,10 @@ type TopologyGeocodeDTO struct {
 }
 
 // ApiTopologyGeocode reverse-geocodes a map click into a physical address
-// (OSM Nominatim) so the assign-sites panel can show it and POST it onto
-// the Netbox site. Missing / failed lookups return an empty address, not
-// an error — the coordinates are still usable on their own.
+// (OSM Nominatim) so the assign-locations panel can show it and, when a
+// site is being written, POST it onto the Netbox site. Missing / failed
+// lookups return an empty address, not an error — the coordinates are
+// still usable on their own.
 func (ctrl *Controller) ApiTopologyGeocode(c *echo.Context) error {
 	lat, err := strconv.ParseFloat(c.QueryParam("lat"), 64)
 	if err != nil {

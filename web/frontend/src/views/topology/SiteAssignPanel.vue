@@ -100,7 +100,6 @@ const effectiveCoords = computed(() => {
 const canSubmit = computed(() => {
   if (!props.canWrite || !selected.value || props.saving) return false
   if (!selected.value.netbox_id) return false
-  if (!siteName.value.trim()) return false
   return !!effectiveCoords.value
 })
 
@@ -127,11 +126,12 @@ function submit() {
   if (!canSubmit.value) return
   const coords = effectiveCoords.value
   const payload = {
-    site_name: siteName.value.trim(),
     latitude: coords.lat,
     longitude: coords.lng,
   }
-  if (props.address?.trim()) payload.physical_address = props.address.trim()
+  const name = siteName.value.trim()
+  if (name) payload.site_name = name
+  if (name && props.address?.trim()) payload.physical_address = props.address.trim()
   emit('assign', payload)
 }
 </script>
@@ -139,7 +139,7 @@ function submit() {
 <template>
   <div class="flex w-80 shrink-0 flex-col min-h-0 rounded-lg border border-default bg-default">
     <div class="p-3 border-b border-default space-y-2 shrink-0">
-      <div class="font-medium">Assign sites</div>
+      <div class="font-medium">Assign locations</div>
       <UInput v-model="search" icon="i-lucide-search" placeholder="Search devices..." size="sm" />
       <label class="flex items-center gap-2 text-sm text-muted-color">
         <UCheckbox v-model="missingSiteOnly" />
@@ -198,21 +198,27 @@ function submit() {
       </div>
 
       <div v-if="!selected.netbox_id" class="text-sm text-muted-color">
-        This device is not synced from NetBox, so it cannot be assigned a site here.
+        This device is not synced from NetBox, so its location cannot be set here.
       </div>
 
       <template v-else>
         <div v-if="!hasSite(selected)" class="text-sm">
-          This device has no site. Create one or pick an existing site, then click the map to set
-          coordinates.
+          Click the map to set coordinates. A site is optional — skip it when this is the only
+          device at the location.
         </div>
         <div v-else-if="!formatCoord(selected.latitude, selected.longitude)" class="text-sm">
-          Site {{ selected.site }} has no coordinates. Click the map to set them.
+          Site {{ selected.site }} has no coordinates. Click the map to set them, or clear the site
+          name to pin only this device.
         </div>
 
         <div>
-          <label class="block text-xs font-medium mb-1">Site</label>
-          <UInput v-model="siteName" placeholder="Site name" size="sm" :disabled="!canWrite" />
+          <label class="block text-xs font-medium mb-1">Site (optional)</label>
+          <UInput
+            v-model="siteName"
+            placeholder="Leave blank to pin this device only"
+            size="sm"
+            :disabled="!canWrite"
+          />
         </div>
 
         <div v-if="siteItems.length">
@@ -268,7 +274,7 @@ function submit() {
       </template>
     </div>
     <div v-else class="p-3 border-t border-default text-sm text-muted-color shrink-0">
-      Select a device to pan the map and assign a site.
+      Select a device to pan the map and set its location.
     </div>
   </div>
 </template>

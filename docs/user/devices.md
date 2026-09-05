@@ -30,6 +30,12 @@ remembered for the browser session. They are not stored in Factum.
 synced from NetBox). Use it to see how devices connect, not to edit
 cabling — change cables in NetBox and sync.
 
+**Assign locations** pins a device on the map and writes the coordinates
+back to NetBox. A site is optional: leave it blank to set GPS on that
+device only (typical for a lone chassis). Fill in a site when several
+devices share the same place — Factum creates or updates the NetBox site
+and assigns the device to it.
+
 ## Oxidized
 
 When Oxidized is enabled under Admin → Settings → Destinations, an

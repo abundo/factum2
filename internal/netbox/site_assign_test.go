@@ -177,7 +177,7 @@ func TestAssignDeviceLocation_CreateSite(t *testing.T) {
 	if fake.patchedDev[42]["site"] != float64(10) {
 		t.Errorf("device site patch = %v, want 10", fake.patchedDev[42]["site"])
 	}
-	if got.Site.Name != "Stockholm" || got.Site.NetboxID != 10 {
+	if got.Site == nil || got.Site.Name != "Stockholm" || got.Site.NetboxID != 10 {
 		t.Errorf("site = %+v", got.Site)
 	}
 	if got.Device.Site != "Stockholm" || got.Device.SiteID != 10 {
@@ -240,8 +240,8 @@ func TestAssignDeviceLocation_ExistingSite(t *testing.T) {
 	if fake.patchedDev[42]["site"] != float64(4) {
 		t.Errorf("device site patch = %v", fake.patchedDev[42])
 	}
-	if got.Site.NetboxID != 4 || got.Device.SiteID != 4 {
-		t.Errorf("site/device ids = %d / %d", got.Site.NetboxID, got.Device.SiteID)
+	if got.Site == nil || got.Site.NetboxID != 4 || got.Device.SiteID != 4 {
+		t.Errorf("site/device ids = %v / %d", got.Site, got.Device.SiteID)
 	}
 }
 
@@ -268,8 +268,8 @@ func TestAssignDeviceLocation_SetCoordsOnExistingSite(t *testing.T) {
 	if fake.patchedSite[4]["latitude"] != 59.4 {
 		t.Errorf("site patch = %v", fake.patchedSite[4])
 	}
-	if got.Site.Latitude != 59.4 {
-		t.Errorf("local site lat = %v", got.Site.Latitude)
+	if got.Site == nil || got.Site.Latitude != 59.4 {
+		t.Errorf("local site lat = %v", got.Site)
 	}
 	var sibling models.Device
 	if err := db.First(&sibling, sib.ID).Error; err != nil {
@@ -277,6 +277,88 @@ func TestAssignDeviceLocation_SetCoordsOnExistingSite(t *testing.T) {
 	}
 	if sibling.Latitude == nil || *sibling.Latitude != 59.4 {
 		t.Errorf("sibling lat = %v, want inherited 59.4", sibling.Latitude)
+	}
+}
+
+func TestAssignDeviceLocation_DeviceCoordsOnly(t *testing.T) {
+	db := newImportTestDB(t)
+	dev := models.Device{Name: "rtr1", NetboxID: 42, CfSource: "netbox"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSiteNetbox()
+	got, err := AssignDeviceLocation(db, fake.client(t), dev, AssignLocationInput{
+		Latitude:  ptr(59.3),
+		Longitude: ptr(18.0),
+	})
+	if err != nil {
+		t.Fatalf("AssignDeviceLocation: %v", err)
+	}
+	if len(fake.created) != 0 {
+		t.Fatalf("created sites = %d, want 0", len(fake.created))
+	}
+	if _, ok := fake.patchedDev[42]["site"]; ok {
+		t.Errorf("device site patch = %v, want none", fake.patchedDev[42])
+	}
+	if fake.patchedDev[42]["latitude"] != 59.3 || fake.patchedDev[42]["longitude"] != 18.0 {
+		t.Errorf("device coord patch = %v", fake.patchedDev[42])
+	}
+	if got.Site != nil {
+		t.Errorf("site = %+v, want nil", got.Site)
+	}
+	if got.Device.Site != "" || got.Device.SiteID != 0 {
+		t.Errorf("device site = %q / %d, want unchanged empty", got.Device.Site, got.Device.SiteID)
+	}
+	if got.Device.Latitude == nil || *got.Device.Latitude != 59.3 {
+		t.Errorf("device lat = %v", got.Device.Latitude)
+	}
+}
+
+func TestAssignDeviceLocation_DeviceCoordsKeepsExistingSite(t *testing.T) {
+	db := newImportTestDB(t)
+	dev := models.Device{Name: "rtr1", NetboxID: 42, Site: "STO", SiteID: 4, CfSource: "netbox"}
+	sib := models.Device{Name: "sw1", NetboxID: 43, Site: "STO", SiteID: 4, CfSource: "netbox"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&sib).Error; err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSiteNetbox()
+	got, err := AssignDeviceLocation(db, fake.client(t), dev, AssignLocationInput{
+		Latitude:  ptr(59.4),
+		Longitude: ptr(18.1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.created) != 0 {
+		t.Errorf("created sites = %d, want 0", len(fake.created))
+	}
+	if _, ok := fake.patchedDev[42]["site"]; ok {
+		t.Errorf("device site patch = %v, want none", fake.patchedDev[42])
+	}
+	if got.Device.Site != "STO" || got.Device.SiteID != 4 {
+		t.Errorf("device site = %q / %d, want STO / 4", got.Device.Site, got.Device.SiteID)
+	}
+	var sibling models.Device
+	if err := db.First(&sibling, sib.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sibling.Latitude != nil {
+		t.Errorf("sibling lat = %v, want unchanged nil (device-only pin)", sibling.Latitude)
+	}
+}
+
+func TestAssignDeviceLocation_DeviceCoordsRequireBoth(t *testing.T) {
+	db := newImportTestDB(t)
+	dev := models.Device{Name: "rtr1", NetboxID: 42}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := AssignDeviceLocation(db, newFakeSiteNetbox().client(t), dev, AssignLocationInput{})
+	if !errors.Is(err, ErrInvalidLocation) {
+		t.Fatalf("err = %v, want ErrInvalidLocation", err)
 	}
 }
 

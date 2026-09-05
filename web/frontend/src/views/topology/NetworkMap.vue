@@ -622,21 +622,24 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
   const device = assignSelected.value
   if (!device) return
   assignSaving.value = true
-  const body = { site_name, latitude, longitude }
+  const body = { latitude, longitude }
+  if (site_name) body.site_name = site_name
   if (physical_address) body.physical_address = physical_address
   assignDeviceLocation(device.id, body)
     .then((data) => {
       toast.add({
         color: 'success',
         title: 'Assigned',
-        description: `${device.name} → ${data.site?.name ?? site_name} in NetBox.`,
+        description: site_name
+          ? `${device.name} → ${data.site?.name ?? site_name} in NetBox.`
+          : `Coordinates saved on ${device.name} in NetBox.`,
         duration: 4000,
       })
       if (data.device) {
         allDevices.value = allDevices.value.map((d) => (d.id === data.device.id ? data.device : d))
         assignSelected.value = data.device
       }
-      if (data.site) {
+      if (data.site?.id) {
         const rest = rawSites.value.filter(
           (s) => s.id !== data.site.id && s.name !== data.site.name,
         )
@@ -655,7 +658,7 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
     .catch((err) => {
       toast.add({
         color: 'error',
-        title: 'Could not assign site',
+        title: 'Could not save location',
         description: err.response?.data?.error ?? err.message ?? 'Request failed.',
         duration: 5000,
       })
@@ -714,7 +717,7 @@ onBeforeUnmount(() => {
           @update:model-value="onBasemapChange"
         />
         <UButton
-          label="Assign sites"
+          label="Assign locations"
           size="xs"
           color="primary"
           icon="i-lucide-map-pin"

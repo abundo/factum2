@@ -136,11 +136,69 @@ func TestApiTopologyDeviceLocation_CreatesSite(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Device.Site != "Stockholm" || body.Site.Name != "Stockholm" {
+	if body.Device.Site != "Stockholm" || body.Site == nil || body.Site.Name != "Stockholm" {
 		t.Errorf("device/site = %+v / %+v", body.Device, body.Site)
 	}
 	if body.Device.Latitude == nil || *body.Device.Latitude != 59.3 {
 		t.Errorf("lat = %v", body.Device.Latitude)
+	}
+}
+
+func TestApiTopologyDeviceLocation_DeviceCoords(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "rtr1", NetboxID: 42, CfSource: "netbox"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var patched map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/dcim/devices/"):
+			_ = json.NewDecoder(r.Body).Decode(&patched)
+			_, _ = w.Write([]byte(`{"id":42}`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotImplemented)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.NetboxApiURL = srv.URL
+	settings.NetboxApiToken = "t"
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/devices/x/location", topologyLocationRequest{
+		Latitude:  ptrFloat(59.3),
+		Longitude: ptrFloat(18.0),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(dev.ID), 10)})
+	if err := (&Controller{DB: db}).ApiTopologyDeviceLocation(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologyLocationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Site != nil {
+		t.Errorf("site = %+v, want omitted", body.Site)
+	}
+	if body.Device.Latitude == nil || *body.Device.Latitude != 59.3 {
+		t.Errorf("lat = %v", body.Device.Latitude)
+	}
+	if patched["latitude"] != 59.3 || patched["longitude"] != 18.0 {
+		t.Errorf("netbox patch = %v", patched)
+	}
+	if _, ok := patched["site"]; ok {
+		t.Errorf("netbox patch included site: %v", patched)
 	}
 }
 

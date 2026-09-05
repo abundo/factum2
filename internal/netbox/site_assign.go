@@ -14,10 +14,13 @@ import (
 // site name, device not in Netbox) rather than a Netbox/DB failure.
 var ErrInvalidLocation = errors.New("invalid location")
 
-// AssignLocationInput is the GUI's "put this device at this site" request.
-// Latitude/Longitude are required when creating a site or when the named
-// site has no coordinates yet; omitted they keep an already-plotted site's
-// position.
+// AssignLocationInput is the GUI's "put this device here" request.
+// SiteName is optional: empty writes GPS onto the device itself (one
+// chassis, no site to share). When set, a Netbox site is created/updated
+// and the device is assigned to it. Latitude/Longitude are required when
+// creating a site, when the named site has no coordinates yet, or when
+// pinning the device with no site; omitted they keep an already-plotted
+// site's position.
 type AssignLocationInput struct {
 	SiteName        string
 	Latitude        *float64
@@ -25,25 +28,25 @@ type AssignLocationInput struct {
 	PhysicalAddress string
 }
 
-// AssignLocationResult is the local Device and Site after a successful
-// Netbox write and factum mirror.
+// AssignLocationResult is the local Device (and Site, when a site was
+// assigned) after a successful Netbox write and factum mirror.
 type AssignLocationResult struct {
 	Device models.Device
-	Site   models.Site
+	Site   *models.Site
 }
 
 func invalidLocation(msg string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidLocation, msg)
 }
 
-// AssignDeviceLocation creates or updates a Netbox site (name + optional
-// GPS), assigns the device to it, and mirrors both into factum. Coordinates
-// live on the site; the device inherits them the same way netbox sync does.
+// AssignDeviceLocation writes GPS to Netbox and mirrors it into factum.
+// With a site name it creates/updates that site, assigns the device, and
+// the device inherits the site's coordinates the same way netbox sync
+// does. With no site name it PATCHes latitude/longitude on the device
+// itself and leaves its site alone — for a lone chassis a site is
+// overhead.
 func AssignDeviceLocation(db *gorm.DB, nb *netboxtool.NetboxClient, device models.Device, in AssignLocationInput) (*AssignLocationResult, error) {
 	name := strings.TrimSpace(in.SiteName)
-	if name == "" {
-		return nil, invalidLocation("site name is required")
-	}
 	if strings.EqualFold(name, "Default") {
 		return nil, invalidLocation("Default is a Netbox placeholder and cannot be used as a site")
 	}
@@ -55,6 +58,9 @@ func AssignDeviceLocation(db *gorm.DB, nb *netboxtool.NetboxClient, device model
 	}
 	if err := validateCoords(in.Latitude, in.Longitude); err != nil {
 		return nil, err
+	}
+	if name == "" {
+		return assignDeviceCoordinates(db, nb, device, in)
 	}
 
 	siteID, siteName, lat, lng, err := ensureNetboxSite(nb, name, in.Latitude, in.Longitude, strings.TrimSpace(in.PhysicalAddress))
@@ -112,7 +118,31 @@ func AssignDeviceLocation(db *gorm.DB, nb *netboxtool.NetboxClient, device model
 	if err := db.Where("netbox_id = ?", siteID).First(&outSite).Error; err != nil {
 		return nil, err
 	}
-	return &AssignLocationResult{Device: outDevice, Site: outSite}, nil
+	return &AssignLocationResult{Device: outDevice, Site: &outSite}, nil
+}
+
+func assignDeviceCoordinates(db *gorm.DB, nb *netboxtool.NetboxClient, device models.Device, in AssignLocationInput) (*AssignLocationResult, error) {
+	if in.Latitude == nil || in.Longitude == nil {
+		return nil, invalidLocation("latitude and longitude are required")
+	}
+	lat, lng := *in.Latitude, *in.Longitude
+	if err := nb.UpdateDevice(device.NetboxID, map[string]any{
+		"latitude":  lat,
+		"longitude": lng,
+	}); err != nil {
+		return nil, err
+	}
+	if err := db.Model(&models.Device{}).Where("id = ?", device.ID).Updates(map[string]any{
+		"latitude":  lat,
+		"longitude": lng,
+	}).Error; err != nil {
+		return nil, err
+	}
+	var outDevice models.Device
+	if err := db.First(&outDevice, device.ID).Error; err != nil {
+		return nil, err
+	}
+	return &AssignLocationResult{Device: outDevice}, nil
 }
 
 func validateCoords(lat, lng *float64) error {
