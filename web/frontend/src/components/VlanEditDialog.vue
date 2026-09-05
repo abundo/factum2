@@ -57,25 +57,34 @@ const originalPayload = ref(new Map())
 const saving = ref(false)
 const addVlanInput = ref(null)
 
-// Same split as DeviceInterfacePicker / isPhysicalInterfaceType - VLAN
-// switchport config only applies to real ports (Ethernet/...), not
-// virtual SVIs/subinterfaces or LAGs.
-function isPhysicalInterface(iface) {
-  const t = iface?.type ?? ''
-  return t !== '' && t !== 'virtual' && t !== 'lag'
-}
-
 // L3 ports use "no switchport" on EOS/VRP - empty SwitchportMode means not
-// a switchport, so they have no traditional VLAN membership to edit.
+// a switchport. Used to ignore stale VLAN membership when rendering cells
+// and collecting columns, not to hide the row: an empty-mode Ethernet can
+// still have VLANs assigned here (that write converts it to a switchport).
 function isSwitchport(iface) {
   const mode = (iface?.switchport_mode ?? '').toLowerCase()
   return mode === 'access' || mode === 'trunk' || mode === 'dot1q-tunnel'
 }
 
-// Matrix rows: physical ports currently in switchport mode only.
+// SVIs, loopbacks, and other logical interfaces cannot take switchport
+// VLAN membership. Names match EOS VlanN / VRP VlanifN plus the usual
+// L3-only constructs; a dotted name is a subinterface.
+const vlanIneligibleNameRe = /^(?:vlanif|vlan|loopback|management|mgmt|tunnel|vxlan|null)\d*$/i
+
+function canConfigureVlans(iface) {
+  const t = (iface?.type ?? '').toLowerCase()
+  if (t === '' || t === 'virtual') return false
+  const name = iface?.name ?? ''
+  if (name.includes('.')) return false
+  return !vlanIneligibleNameRe.test(name)
+}
+
+// Matrix rows: every port that can take switchport VLAN config (physical
+// Ethernet, LAG/port-channel, …), including currently-L3/"no switchport"
+// ports so VLANs can be assigned. Virtual SVIs stay out.
 const sortedInterfaces = computed(() =>
   [...(props.interfaces ?? [])]
-    .filter((i) => isPhysicalInterface(i) && isSwitchport(i))
+    .filter((i) => canConfigureVlans(i))
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true })),
 )
 
@@ -155,6 +164,9 @@ function sameIntList(a, b) {
 }
 
 function cellState(iface, vid) {
+  // L3/"no switchport" has no traditional VLAN membership - ignore stale
+  // untagged/tagged values still sitting on the record (same as DeviceList).
+  if (!isSwitchport(iface)) return 'excluded'
   if (iface.switchport_mode === 'dot1q-tunnel' && iface.untagged_vlan === vid) return 'qinq'
   if (iface.untagged_vlan === vid) return 'untagged'
   if ((iface.tagged_vlans ?? []).includes(vid)) return 'tagged'
@@ -176,7 +188,6 @@ function collectVlanIds(ifaces) {
 }
 
 function snapshotFromInterfaces() {
-  // Same filter as the matrix rows - physical switchports only.
   const ifaces = sortedInterfaces.value
   const vids = collectVlanIds(ifaces)
   vlanIds.value = vids
@@ -189,11 +200,22 @@ function snapshotFromInterfaces() {
       row[vid] = cellState(iface, vid)
     }
     next[iface.id] = row
-    originals.set(iface.id, {
-      switchport_mode: iface.switchport_mode || '',
-      untagged_vlan: iface.untagged_vlan || 0,
-      tagged_vlans: [...(iface.tagged_vlans ?? [])],
-    })
+    // Empty-mode ports are treated as having no VLAN membership even if
+    // stale untagged/tagged values remain on the record, so the row isn't
+    // dirty until the user actually assigns a VLAN.
+    if (isSwitchport(iface)) {
+      originals.set(iface.id, {
+        switchport_mode: iface.switchport_mode || '',
+        untagged_vlan: iface.untagged_vlan || 0,
+        tagged_vlans: [...(iface.tagged_vlans ?? [])],
+      })
+    } else {
+      originals.set(iface.id, {
+        switchport_mode: '',
+        untagged_vlan: 0,
+        tagged_vlans: [],
+      })
+    }
   }
   matrix.value = next
   originalPayload.value = originals
@@ -465,12 +487,12 @@ function metaFor(state) {
         </div>
 
         <div v-if="sortedInterfaces.length === 0" class="text-sm text-muted-color p-4">
-          No physical switchport interfaces on this device. L3 ports (no switchport) and virtual
-          interfaces are not listed here.
+          No interfaces on this device that can have VLANs configured. Virtual SVIs and
+          subinterfaces are not listed here.
         </div>
 
         <div v-else-if="vlanIds.length === 0" class="text-sm text-muted-color p-4">
-          No VLANs assigned on switchport interfaces yet. Use “Add VLAN column” to start editing.
+          No VLANs assigned yet. Use “Add VLAN column” to start editing.
         </div>
 
         <div v-else class="flex-1 min-h-0 overflow-auto border border-default rounded-md">
