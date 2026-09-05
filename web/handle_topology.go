@@ -59,16 +59,18 @@ type TopologyDTO struct {
 // panel. Unlike TopologyDeviceDTO it includes devices with no coordinates,
 // so the operator can find unplaced devices and pin them.
 type TopologyDeviceListDTO struct {
-	ID        uint     `json:"id"`
-	Name      string   `json:"name"`
-	Site      string   `json:"site"`
-	SiteID    uint     `json:"site_id"`
-	Role      string   `json:"role"`
-	Status    string   `json:"status"`
-	NetboxID  uint     `json:"netbox_id"`
-	VM        bool     `json:"vm"`
-	Latitude  *float64 `json:"latitude"`
-	Longitude *float64 `json:"longitude"`
+	ID           uint     `json:"id"`
+	Name         string   `json:"name"`
+	Site         string   `json:"site"`
+	SiteID       uint     `json:"site_id"`
+	Role         string   `json:"role"`
+	Status       string   `json:"status"`
+	Manufacturer string   `json:"manufacturer"`
+	ModelName    string   `json:"model_name"`
+	NetboxID     uint     `json:"netbox_id"`
+	VM           bool     `json:"vm"`
+	Latitude     *float64 `json:"latitude"`
+	Longitude    *float64 `json:"longitude"`
 }
 
 type TopologyDevicesDTO struct {
@@ -179,16 +181,18 @@ func (ctrl *Controller) ApiGetTopology(c *echo.Context) error {
 
 func topologyDeviceListDTO(d models.Device) TopologyDeviceListDTO {
 	return TopologyDeviceListDTO{
-		ID:        d.ID,
-		Name:      d.Name,
-		Site:      d.Site,
-		SiteID:    d.SiteID,
-		Role:      d.Role,
-		Status:    d.Status,
-		NetboxID:  d.NetboxID,
-		VM:        d.VM,
-		Latitude:  d.Latitude,
-		Longitude: d.Longitude,
+		ID:           d.ID,
+		Name:         d.Name,
+		Site:         d.Site,
+		SiteID:       d.SiteID,
+		Role:         d.Role,
+		Status:       d.Status,
+		Manufacturer: d.Manufacturer,
+		ModelName:    d.ModelName,
+		NetboxID:     d.NetboxID,
+		VM:           d.VM,
+		Latitude:     d.Latitude,
+		Longitude:    d.Longitude,
 	}
 }
 

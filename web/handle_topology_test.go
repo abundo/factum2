@@ -55,11 +55,12 @@ func TestApiGetTopologyDevices_IncludesUnlocated(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.Create(&models.Device{
 		Name: "rtr1", NetboxID: 1, Site: "STO",
+		Manufacturer: "Nokia", ModelName: "7750 SR-1",
 		Latitude: ptrFloat(59.3), Longitude: ptrFloat(18.0),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.Device{Name: "rtr2", NetboxID: 2}).Error; err != nil {
+	if err := db.Create(&models.Device{Name: "rtr2", NetboxID: 2, Manufacturer: "Arista"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.Device{Name: "vm1", NetboxID: 3, VM: true}).Error; err != nil {
@@ -82,6 +83,12 @@ func TestApiGetTopologyDevices_IncludesUnlocated(t *testing.T) {
 	}
 	if body.Devices[0].Name != "rtr1" || body.Devices[1].Name != "rtr2" {
 		t.Errorf("order = %q %q", body.Devices[0].Name, body.Devices[1].Name)
+	}
+	if body.Devices[0].Manufacturer != "Nokia" || body.Devices[0].ModelName != "7750 SR-1" {
+		t.Errorf("rtr1 hardware = %q %q", body.Devices[0].Manufacturer, body.Devices[0].ModelName)
+	}
+	if body.Devices[1].Manufacturer != "Arista" || body.Devices[1].ModelName != "" {
+		t.Errorf("rtr2 hardware = %q %q", body.Devices[1].Manufacturer, body.Devices[1].ModelName)
 	}
 	if body.Devices[1].Latitude != nil {
 		t.Errorf("unlocated lat = %v, want nil", body.Devices[1].Latitude)

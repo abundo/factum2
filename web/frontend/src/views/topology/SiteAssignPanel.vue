@@ -32,13 +32,19 @@ function formatCoord(lat, lng) {
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`
 }
 
+function hardwareLabel(d) {
+  return [d?.manufacturer, d?.model_name].filter((s) => !!(s && String(s).trim())).join(' · ')
+}
+
 const filteredDevices = computed(() => {
   const q = search.value.trim().toLowerCase()
   return props.devices.filter((d) => {
     if (d.vm) return false
     if (missingSiteOnly.value && hasSite(d)) return false
     if (!q) return true
-    return (d.name || '').toLowerCase().includes(q) || (d.site || '').toLowerCase().includes(q)
+    return [d.name, d.site, d.manufacturer, d.model_name].some((s) =>
+      (s || '').toLowerCase().includes(q),
+    )
   })
 })
 
@@ -156,12 +162,22 @@ function submit() {
       </div>
       <template v-for="group in groupedDevices" :key="group.name">
         <div
-          class="px-3 py-1.5 text-xs font-medium bg-elevated border-b border-default flex items-center justify-between gap-2"
+          class="sticky top-0 z-10 px-3 py-2 text-sm font-semibold bg-muted border-y border-default flex items-center justify-between gap-2"
+          :data-site-group="group.name"
         >
-          <span class="truncate" :class="group.unassigned ? 'text-warning' : 'text-muted-color'">
+          <span
+            class="truncate flex items-center gap-1.5 min-w-0"
+            :class="group.unassigned ? 'text-warning' : ''"
+          >
+            <UIcon
+              :name="group.unassigned ? 'i-lucide-map-pin-off' : 'i-lucide-map-pin'"
+              class="size-3.5 shrink-0"
+            />
             {{ group.name }}
           </span>
-          <span class="text-muted-color font-normal shrink-0">{{ group.devices.length }}</span>
+          <span class="text-xs font-medium text-muted-color shrink-0 tabular-nums">{{
+            group.devices.length
+          }}</span>
         </div>
         <button
           v-for="d in group.devices"
@@ -173,6 +189,9 @@ function submit() {
           @click="emit('select', d)"
         >
           <div class="font-medium truncate">{{ d.name }}</div>
+          <div v-if="hardwareLabel(d)" class="text-xs text-muted-color truncate">
+            {{ hardwareLabel(d) }}
+          </div>
           <div class="text-xs text-muted-color truncate">
             <template v-if="formatCoord(d.latitude, d.longitude)">
               {{ formatCoord(d.latitude, d.longitude) }}
@@ -192,6 +211,9 @@ function submit() {
     <div v-if="selected" class="p-3 border-t border-default space-y-3 shrink-0">
       <div>
         <div class="font-medium">{{ selected.name }}</div>
+        <div v-if="hardwareLabel(selected)" class="text-xs text-muted-color">
+          {{ hardwareLabel(selected) }}
+        </div>
         <div class="text-xs text-muted-color">
           {{ selected.role || 'Unassigned' }} · {{ selected.status || '—' }}
         </div>
