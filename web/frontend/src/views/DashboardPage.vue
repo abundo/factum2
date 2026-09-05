@@ -23,10 +23,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="grid grid-cols-12 gap-8">
+  <div class="grid grid-cols-12 gap-4">
     <div class="col-span-12">
       <div class="card">
-        <div class="font-semibold text-xl mb-4">Dashboard</div>
+        <div class="font-semibold text-xl mb-2">Dashboard</div>
         <p class="text-muted-color">Welcome to Factum.</p>
       </div>
     </div>
@@ -36,18 +36,18 @@ onMounted(() => {
       class="col-span-12 md:col-span-6 xl:col-span-4"
     >
       <div class="card">
-        <div class="font-semibold text-lg mb-4">{{ group.name }}</div>
-        <div class="flex flex-col gap-1">
+        <div class="font-semibold text-lg mb-2">{{ group.name }}</div>
+        <div class="flex flex-col">
           <a
             v-for="l in group.items"
             :key="l.id"
             :href="l.url"
             :target="l.open_in_new_tab ? '_blank' : '_self'"
             rel="noopener noreferrer"
-            class="flex items-center gap-3 p-2 rounded-lg hover:bg-elevated transition-colors"
+            class="flex items-center gap-2 py-1 px-1.5 -mx-1.5 rounded-md hover:bg-elevated transition-colors"
           >
-            <img v-if="l.icon" :src="l.icon" class="size-15 rounded object-contain shrink-0" />
-            <UIcon v-else name="i-lucide-link" class="size-15 text-muted-color shrink-0" />
+            <img v-if="l.icon" :src="l.icon" class="size-10 rounded object-contain shrink-0" />
+            <UIcon v-else name="i-lucide-link" class="size-10 text-muted-color shrink-0" />
             <span class="truncate">{{ l.name }}</span>
           </a>
         </div>
