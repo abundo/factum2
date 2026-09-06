@@ -3,17 +3,13 @@ import { useToast } from '@nuxt/ui/composables'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   createMacro,
-  createPlatformPack,
   createScope,
   createServiceType,
-  createTemplate,
   createVariable,
   deleteAssignment,
   deleteMacro,
-  deletePlatformPack,
   deleteScope,
   deleteServiceType,
-  deleteTemplate,
   deleteVariable,
   detachScope,
   moveScope,
@@ -21,16 +17,12 @@ import {
   listAssignments,
   listScopes,
   listMacros,
-  listPlatformPacks,
   listServiceTypes,
-  listTemplates,
   listVariables,
   renderConfig,
   resolveInterface,
   updateMacro,
-  updatePlatformPack,
   updateServiceType,
-  updateTemplate,
   updateVariable,
   upsertAssignment,
 } from '@/api/config'
@@ -41,12 +33,7 @@ import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import { useAuthStore } from '@/stores/auth'
-import {
-  cfgmgmtBaselineSchema,
-  cfgmgmtMacroSchema,
-  cfgmgmtPackSchema,
-  withCfgmgmtContext,
-} from '@/utils/goTemplateSchemas'
+import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 
 defineOptions({ name: 'ConfigPage' })
 
@@ -56,6 +43,8 @@ const treeRef = ref(null)
 const filter = ref('')
 const saving = ref(false)
 const tab = ref('tree')
+const catalogOpen = ref(false)
+const catalogTab = ref('variables')
 const selected = ref(null)
 const reloadKey = ref(0)
 
@@ -78,19 +67,10 @@ const resolved = ref([])
 const matrixVar = ref(null)
 const matrixRows = ref([])
 const serviceTypes = ref([])
-const packs = ref([])
-const packTypeId = ref(null)
 const macros = ref([])
-const templates = ref([])
 const previewDeviceId = ref(null)
 const preview = ref(null)
-const packTmplTab = ref('apply')
-const packApplyPlaceholder =
-  'Go text/template. {{define "cleanup"}} … {{end}} or use the cleanup tab.'
-const packCleanupPlaceholder =
-  'Optional teardown. If empty, a {{define "cleanup"}} in apply is used.'
 const macroBodyPlaceholder = 'Go text/template. Inserted with {{include "name"}}.'
-const baselineBodyPlaceholder = 'Go text/template. Rendered with .Name, .Device, and .Vars.'
 
 const tabItems = [
   {
@@ -100,12 +80,11 @@ const tabItems = [
     class: 'flex min-h-0 flex-1 flex-col overflow-auto lg:overflow-hidden',
   },
   { label: 'Matrix', value: 'matrix', slot: 'matrix' },
+]
+const catalogTabItems = [
   { label: 'Variables', value: 'variables', slot: 'variables' },
   { label: 'Service types', value: 'types', slot: 'types' },
-  { label: 'Platform packs', value: 'packs', slot: 'packs' },
   { label: 'Macros', value: 'macros', slot: 'macros' },
-  { label: 'Templates', value: 'templates', slot: 'templates' },
-  { label: 'Preview', value: 'preview', slot: 'preview' },
 ]
 
 const varTypeOptions = [
@@ -157,33 +136,28 @@ const capacityTypeOptions = computed(() =>
   serviceTypes.value.map((t) => ({ label: t.name, value: t.name })),
 )
 const varOptions = computed(() => variables.value.map((v) => ({ label: v.name, value: v.name })))
-const typeOptions = computed(() => serviceTypes.value.map((t) => ({ label: t.name, value: t.id })))
 const categoryOptions = [
   { label: 'CN', value: 'CN' },
   { label: 'CI', value: 'CI' },
 ]
+const orgKindTitles = { folder: 'Folder', site: 'Site', location: 'Location' }
 
-const packSchema = computed(() => {
-  const typeId = optionValue(form.value?.service_type_id)
-  const serviceType = serviceTypes.value.find((t) => t.id === typeId) ?? null
-  return withCfgmgmtContext(cfgmgmtPackSchema, {
-    macros: macros.value,
-    variables: variables.value,
-    serviceType,
-  })
-})
 const macroSchema = computed(() =>
   withCfgmgmtContext(cfgmgmtMacroSchema, {
     macros: macros.value,
     variables: variables.value,
   }),
 )
-const baselineSchema = computed(() =>
-  withCfgmgmtContext(cfgmgmtBaselineSchema, {
-    macros: macros.value,
-    variables: variables.value,
-  }),
-)
+const assignDef = computed(() => {
+  const id = optionValue(form.value?.variable_def_id)
+  return variables.value.find((v) => v.id === id) ?? null
+})
+const assignEnumOptions = computed(() => {
+  const en = assignDef.value?.constraints?.enum
+  if (!Array.isArray(en)) return []
+  return en.map((v) => ({ label: String(v), value: v }))
+})
+const matrixStart = computed(() => nearestMatrixNode(selected.value) || selected.value)
 
 const constraintsPlaceholder = computed(() => {
   switch (optionValue(form.value?.type)) {
@@ -227,6 +201,16 @@ function isOrgKind(kind) {
   return kind === 'folder' || kind === 'site' || kind === 'location'
 }
 
+function isReservedFolder(node) {
+  if (!node || node.kind !== 'folder') return false
+  if (node.title === 'global' && !node.parent_id) return true
+  return node.title === '_catalog' || node.title === '_services'
+}
+
+function canAddParameter(kind) {
+  return isOrgKind(kind) || kind === 'device' || kind === 'interface' || kind === 'service'
+}
+
 function itemsFor(node) {
   const write = authStore.canWrite
   if (!write) {
@@ -246,14 +230,21 @@ function itemsFor(node) {
   ]
   if (isOrgKind(node.kind)) {
     items.push({ id: 'sep' }, { id: 'add-folder', label: 'Add child folder' })
+    items.push({ id: 'add-site', label: 'Add site' })
+    items.push({ id: 'add-location', label: 'Add location' })
     items.push({ id: 'attach-device', label: 'Attach device' })
+    items.push({ id: 'add-parameter', label: 'Add parameter object' })
     items.push({ id: 'add-cli', label: 'Add CLI object' })
     items.push({ id: 'create-service', label: 'Create service' })
     items.push({ id: 'attach-service', label: 'Attach existing service' })
   }
   if (node.kind === 'device' || node.kind === 'interface') {
-    items.push({ id: 'sep-cli' }, { id: 'add-cli', label: 'Add CLI object' })
+    items.push({ id: 'sep-cli' }, { id: 'add-parameter', label: 'Add parameter object' })
+    items.push({ id: 'add-cli', label: 'Add CLI object' })
     items.push({ id: 'create-service', label: 'Create service' })
+  }
+  if (node.kind === 'service') {
+    items.push({ id: 'sep-param' }, { id: 'add-parameter', label: 'Add parameter object' })
   }
   if (node.kind === 'device') {
     items.push({ id: 'attach-service', label: 'Attach existing service' })
@@ -266,7 +257,7 @@ function itemsFor(node) {
   } else if (
     node.kind !== 'interface' &&
     node.kind !== 'service_endpoint' &&
-    (node.kind !== 'folder' || node.title !== 'global' || node.parent_id)
+    !isReservedFolder(node)
   ) {
     items.push({ id: 'sep2' }, { id: 'del', label: 'Delete', danger: true })
   }
@@ -382,9 +373,15 @@ async function runMenu(id) {
     treeRef.value?.collapseNode(node?.key)
     return
   }
-  if (id === 'add-folder') {
-    form.value = { parent_id: node?.id, name: '', kind: 'folder' }
+  if (id === 'add-folder' || id === 'add-site' || id === 'add-location') {
+    const kind = id === 'add-site' ? 'site' : id === 'add-location' ? 'location' : 'folder'
+    form.value = { parent_id: node?.id, name: '', kind }
     dialog.value = 'folder'
+    return
+  }
+  if (id === 'add-parameter' && canAddParameter(node?.kind)) {
+    form.value = { parent_id: node?.id, name: '', kind: 'parameter' }
+    dialog.value = 'parameter'
     return
   }
   if (id === 'attach-device') {
@@ -658,7 +655,18 @@ function saveDialog() {
     req = createScope({
       parent_id: form.value.parent_id,
       name,
-      kind: 'folder',
+      kind: form.value.kind || 'folder',
+    })
+  } else if (dialog.value === 'parameter') {
+    const name = (form.value.name ?? '').trim()
+    if (!name) {
+      saving.value = false
+      return
+    }
+    req = createScope({
+      parent_id: form.value.parent_id,
+      name,
+      kind: 'parameter',
     })
   } else if (dialog.value === 'device') {
     if (!attachDeviceId.value) {
@@ -735,10 +743,24 @@ function saveDialog() {
     return
   }
   req
-    .then(() => {
+    .then((node) => {
       dialog.value = null
       reloadKey.value += 1
       loadScopesIndex()
+      if (node?.id && (node.kind === 'parameter' || node.kind === 'cli')) {
+        selected.value = {
+          key: String(node.id),
+          id: node.id,
+          title: node.name,
+          kind: node.kind,
+          platform: node.platform,
+          payload_kind: node.payload_kind,
+          service_type_id: node.service_type_id,
+          enabled: node.enabled,
+          payload: node.payload,
+        }
+        loadNodeDetails(selected.value)
+      }
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Request failed.') }),
@@ -771,9 +793,7 @@ function performDelete() {
   }
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
   if (c.kind === 'type') req = deleteServiceType(c.id).then(loadTypes)
-  if (c.kind === 'pack') req = deletePlatformPack(c.id).then(loadPacks)
   if (c.kind === 'macro') req = deleteMacro(c.id).then(loadMacros)
-  if (c.kind === 'template') req = deleteTemplate(c.id).then(loadTemplates)
   if (c.kind === 'assignment')
     req = deleteAssignment(c.id).then(() => loadNodeDetails(selected.value))
   if (!req) {
@@ -819,14 +839,8 @@ async function loadVariables() {
 async function loadTypes() {
   serviceTypes.value = await listServiceTypes().catch(() => [])
 }
-async function loadPacks() {
-  packs.value = await listPlatformPacks(packTypeId.value).catch(() => [])
-}
 async function loadMacros() {
   macros.value = await listMacros().catch(() => [])
-}
-async function loadTemplates() {
-  templates.value = await listTemplates().catch(() => [])
 }
 
 function optionValue(v) {
@@ -940,31 +954,65 @@ function saveVariable() {
 }
 
 function openAssign(row) {
+  const def = variables.value.find((v) => v.id === row?.variable_def_id)
+  const val = row?.value
   form.value = row?.variable_def_id
     ? {
         id: row.id,
         variable_def_id: row.variable_def_id,
-        value_text: row.value == null ? '' : JSON.stringify(row.value),
+        value_text:
+          val == null || typeof val === 'string' ? (val ?? '') : JSON.stringify(val, null, 2),
+        value_bool: !!val,
+        value_number: typeof val === 'number' ? val : val == null || val === '' ? null : Number(val),
       }
-    : { variable_def_id: null, value_text: '' }
+    : { variable_def_id: null, value_text: '', value_bool: false, value_number: null }
+  if (def) form.value.variable_def_id = def.id
   dialog.value = 'assign'
 }
 
+function assignmentValue(def) {
+  const type = def?.type
+  if (type === 'bool') return !!form.value.value_bool
+  if (type === 'int' || type === 'vlan') {
+    const n = form.value.value_number
+    return n === null || n === undefined || n === '' ? null : Number(n)
+  }
+  const raw = optionValue(form.value.value_text)
+  if (type === 'list' || type === 'map') {
+    const s = (raw ?? '').toString().trim()
+    if (!s) return null
+    return JSON.parse(s)
+  }
+  if (raw === null || raw === undefined) return null
+  if (typeof raw === 'string') {
+    const s = raw.trim()
+    return s === '' ? null : s
+  }
+  return raw
+}
+
 function saveAssign() {
-  if (!selected.value?.id || !form.value.variable_def_id) return
+  const defId = optionValue(form.value.variable_def_id)
+  const scopeId = selected.value?.id
+  if (!scopeId || !defId) return
+  const def = variables.value.find((v) => v.id === defId)
   saving.value = true
   let value
   try {
-    const raw = (form.value.value_text ?? '').trim()
-    value = raw === '' ? null : JSON.parse(raw)
+    value = assignmentValue(def)
   } catch {
-    value = form.value.value_text
+    saving.value = false
+    toast.add({
+      color: 'error',
+      title: 'Error',
+      description: 'Value must be valid JSON for this type.',
+    })
+    return
   }
   const payload = {
-    variable_def_id: form.value.variable_def_id,
-    scope_id: selected.value.id,
+    variable_def_id: defId,
+    scope_id: scopeId,
   }
-  const def = variables.value.find((v) => v.id === form.value.variable_def_id)
   const secret = !!(def && (def.secret || def.type === 'secret'))
   if (!(secret && value === '***')) {
     payload.value = value
@@ -983,7 +1031,7 @@ function saveAssign() {
 }
 
 function loadMatrix() {
-  const start = nearestMatrixNode(selected.value) || selected.value
+  const start = matrixStart.value
   if (!start?.id || !matrixVar.value) {
     matrixRows.value = []
     return
@@ -1053,45 +1101,6 @@ function saveType() {
     })
 }
 
-function openPack(row) {
-  form.value = row
-    ? { ...row }
-    : {
-        service_type_id: packTypeId.value,
-        platform: 'eos',
-        payload_kind: 'cli',
-        apply_template: '',
-        cleanup_template: '',
-      }
-  packTmplTab.value = 'apply'
-  dialog.value = 'pack'
-}
-
-function savePack() {
-  saving.value = true
-  const payload = {
-    service_type_id: form.value.service_type_id,
-    platform: form.value.platform,
-    payload_kind: form.value.payload_kind || 'cli',
-    apply_template: form.value.apply_template ?? '',
-    cleanup_template: form.value.cleanup_template ?? '',
-  }
-  const req = form.value.id
-    ? updatePlatformPack(form.value.id, payload)
-    : createPlatformPack(payload)
-  req
-    .then(() => {
-      dialog.value = null
-      return loadPacks()
-    })
-    .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
-    )
-    .finally(() => {
-      saving.value = false
-    })
-}
-
 function openMacro(row) {
   form.value = row ? { ...row } : { name: '', body: '' }
   dialog.value = 'macro'
@@ -1105,44 +1114,6 @@ function saveMacro() {
     .then(() => {
       dialog.value = null
       return loadMacros()
-    })
-    .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
-    )
-    .finally(() => {
-      saving.value = false
-    })
-}
-
-function openTemplate(row) {
-  form.value = row
-    ? { ...row }
-    : {
-        name: '',
-        platform: '',
-        payload_kind: 'cli',
-        body: '',
-        enabled: true,
-        scope_id: selected.value?.id,
-      }
-  dialog.value = 'template'
-}
-
-function saveTemplate() {
-  saving.value = true
-  const payload = {
-    name: form.value.name,
-    platform: form.value.platform ?? '',
-    payload_kind: form.value.payload_kind || 'cli',
-    body: form.value.body ?? '',
-    enabled: form.value.enabled !== false,
-    scope_id: form.value.scope_id || null,
-  }
-  const req = form.value.id ? updateTemplate(form.value.id, payload) : createTemplate(payload)
-  req
-    .then(() => {
-      dialog.value = null
-      return loadTemplates()
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
@@ -1193,9 +1164,7 @@ onMounted(() => {
   document.addEventListener('click', onDocClick)
   loadVariables()
   loadTypes()
-  loadPacks()
   loadMacros()
-  loadTemplates()
   loadScopesIndex()
   getDevices()
     .then((d) => {
@@ -1210,6 +1179,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-3 shrink-0">
       <h4 class="m-0">Config</h4>
+      <UButton
+        icon="i-lucide-library"
+        variant="outline"
+        color="neutral"
+        label="Catalog"
+        @click="catalogOpen = true"
+      />
     </div>
     <UTabs
       v-model="tab"
@@ -1223,9 +1199,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     >
       <template #tree>
         <div
-          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(16rem,1fr)_auto] gap-4 py-3 lg:grid-cols-2 lg:grid-rows-1"
+          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(16rem,1fr)_auto_auto] gap-4 py-3 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)_auto] xl:grid-cols-3 xl:grid-rows-1"
         >
-          <div class="flex min-h-0 flex-col overflow-hidden">
+          <div class="flex min-h-0 flex-col overflow-hidden lg:row-span-2 xl:row-span-1">
             <div class="flex flex-wrap gap-2 items-center mb-2 shrink-0">
               <UInput
                 v-model="filter"
@@ -1252,8 +1228,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               />
             </div>
             <p class="text-muted-color text-sm mb-2 shrink-0">
-              Right-click to add a folder, attach a device, add a CLI object, or create/attach a
-              service. Select a node to inspect it.
+              The tree is the editor: add parameter objects, CLI objects, and services from the
+              context menu. Catalogs (variables, types, macros) live under Catalog.
             </p>
             <ConfigScopeTree
               ref="treeRef"
@@ -1280,13 +1256,53 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             @delete-assignment="onDeleteAssignment"
             @saved="onInspectorSaved"
           />
+          <div
+            class="flex min-h-0 flex-col gap-3 overflow-auto border-t border-default pt-3 lg:col-start-2 lg:border-t-0 lg:pt-0 xl:col-start-3"
+          >
+            <h5 class="m-0">Preview</h5>
+            <p class="text-muted-color text-sm m-0">
+              Desired CLI for a device (baseline CLI objects + terminating services). Does not
+              contact the device.
+            </p>
+            <div class="flex flex-wrap gap-2 items-end">
+              <div>
+                <label class="block font-bold mb-1">Device</label>
+                <USelectMenu
+                  v-model="previewDeviceId"
+                  :items="deviceOptions"
+                  value-key="value"
+                  label-key="label"
+                  placeholder="Device"
+                  class="w-64"
+                />
+              </div>
+              <UButton label="Render" :disabled="!previewDeviceId" @click="runPreview" />
+            </div>
+            <div v-if="preview" class="flex flex-col gap-3">
+              <div
+                v-for="(src, i) in preview.sources ?? []"
+                :key="i"
+                class="border border-default rounded p-3"
+              >
+                <div class="font-medium mb-2">
+                  {{ src.source }} <span class="text-muted-color">{{ src.kind }}</span>
+                </div>
+                <div v-if="src.error" class="text-red-500 text-sm">{{ src.error }}</div>
+                <pre v-else class="text-sm overflow-auto max-h-80">{{
+                  (src.commands ?? []).join('\n')
+                }}</pre>
+              </div>
+            </div>
+          </div>
         </div>
       </template>
 
       <template #matrix>
         <div class="flex flex-col gap-3 py-3">
           <p class="text-muted-color text-sm">
-            Select a tree node first, then a variable. Rows are interfaces under that node.
+            Select a tree node first, then a variable. Rows are interfaces under that folder or
+            device (or the nearest such ancestor if you selected a parameter, CLI object, or
+            service). Source is the parameter object when the winning assignment lives there.
           </p>
           <div class="flex flex-wrap gap-2 items-end">
             <div>
@@ -1300,7 +1316,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 class="w-56"
               />
             </div>
-            <UButton label="Load" :disabled="!selected?.id || !matrixVar" @click="loadMatrix" />
+            <UButton label="Load" :disabled="!matrixStart?.id || !matrixVar" @click="loadMatrix" />
           </div>
           <UTable
             :data="matrixRows"
@@ -1318,286 +1334,171 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           </UTable>
         </div>
       </template>
-
-      <template #variables>
-        <div class="flex flex-col gap-3 py-3">
-          <div class="flex justify-end">
-            <UButton
-              v-if="authStore.canWrite"
-              icon="i-lucide-plus"
-              label="New"
-              @click="openVar(null)"
-            />
-          </div>
-          <UTable
-            :data="variables"
-            :columns="[
-              { accessorKey: 'name', header: 'Name' },
-              { accessorKey: 'type', header: 'Type' },
-              { accessorKey: 'required', header: 'Required' },
-              { accessorKey: 'secret', header: 'Secret' },
-              { accessorKey: 'description', header: 'Description' },
-              { id: 'actions', header: '' },
-            ]"
-            empty="No variables."
-          >
-            <template #required-cell="{ row }">{{ row.original.required ? 'yes' : '' }}</template>
-            <template #secret-cell="{ row }">{{ row.original.secret ? 'yes' : '' }}</template>
-            <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="openVar(row.original)"
-                />
-                <UButton
-                  v-if="authStore.canWrite"
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="
-                    confirm = { kind: 'variable', id: row.original.id, label: row.original.name }
-                  "
-                />
-              </div>
-            </template>
-          </UTable>
-        </div>
-      </template>
-
-      <template #types>
-        <div class="flex flex-col gap-3 py-3">
-          <div class="flex justify-end">
-            <UButton
-              v-if="authStore.canWrite"
-              icon="i-lucide-plus"
-              label="New"
-              @click="openType(null)"
-            />
-          </div>
-          <UTable
-            :data="serviceTypes"
-            :columns="[
-              { accessorKey: 'name', header: 'Name' },
-              { accessorKey: 'description', header: 'Description' },
-              { accessorKey: 'sync_source', header: 'Sync source' },
-              { accessorKey: 'netbox_type', header: 'NetBox type' },
-              { accessorKey: 'builtin', header: 'Builtin' },
-              { id: 'actions', header: '' },
-            ]"
-            empty="No service types."
-          >
-            <template #builtin-cell="{ row }">{{ row.original.builtin ? 'yes' : '' }}</template>
-            <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="openType(row.original)"
-                />
-                <UButton
-                  v-if="authStore.canWrite && !row.original.builtin"
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="confirm = { kind: 'type', id: row.original.id, label: row.original.name }"
-                />
-              </div>
-            </template>
-          </UTable>
-        </div>
-      </template>
-
-      <template #packs>
-        <div class="flex flex-col gap-3 py-3">
-          <div class="flex flex-wrap gap-2 items-end justify-between">
-            <div>
-              <label class="block font-bold mb-1">Service type</label>
-              <USelectMenu
-                v-model="packTypeId"
-                :items="[{ label: 'All', value: null }, ...typeOptions]"
-                value-key="value"
-                label-key="label"
-                class="w-56"
-                @update:model-value="loadPacks"
-              />
-            </div>
-            <UButton
-              v-if="authStore.canWrite"
-              icon="i-lucide-plus"
-              label="New"
-              @click="openPack(null)"
-            />
-          </div>
-          <UTable
-            :data="packs"
-            :columns="[
-              { accessorKey: 'platform', header: 'Platform' },
-              { accessorKey: 'payload_kind', header: 'Payload' },
-              { accessorKey: 'service_type_id', header: 'Type ID' },
-              { id: 'actions', header: '' },
-            ]"
-            empty="No packs."
-          >
-            <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="openPack(row.original)"
-                />
-                <UButton
-                  v-if="authStore.canWrite"
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="
-                    confirm = { kind: 'pack', id: row.original.id, label: row.original.platform }
-                  "
-                />
-              </div>
-            </template>
-          </UTable>
-        </div>
-      </template>
-
-      <template #macros>
-        <div class="flex flex-col gap-3 py-3">
-          <div class="flex justify-end">
-            <UButton
-              v-if="authStore.canWrite"
-              icon="i-lucide-plus"
-              label="New"
-              @click="openMacro(null)"
-            />
-          </div>
-          <UTable
-            :data="macros"
-            :columns="[
-              { accessorKey: 'name', header: 'Name' },
-              { id: 'actions', header: '' },
-            ]"
-            empty="No macros."
-          >
-            <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="openMacro(row.original)"
-                />
-                <UButton
-                  v-if="authStore.canWrite"
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="
-                    confirm = { kind: 'macro', id: row.original.id, label: row.original.name }
-                  "
-                />
-              </div>
-            </template>
-          </UTable>
-        </div>
-      </template>
-
-      <template #templates>
-        <div class="flex flex-col gap-3 py-3">
-          <div class="flex justify-end">
-            <UButton
-              v-if="authStore.canWrite"
-              icon="i-lucide-plus"
-              label="New"
-              @click="openTemplate(null)"
-            />
-          </div>
-          <UTable
-            :data="templates"
-            :columns="[
-              { accessorKey: 'name', header: 'Name' },
-              { accessorKey: 'platform', header: 'Platform' },
-              { accessorKey: 'enabled', header: 'Enabled' },
-              { id: 'actions', header: '' },
-            ]"
-            empty="No baseline templates."
-          >
-            <template #enabled-cell="{ row }">{{ row.original.enabled ? 'yes' : '' }}</template>
-            <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="openTemplate(row.original)"
-                />
-                <UButton
-                  v-if="authStore.canWrite"
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="
-                    confirm = { kind: 'template', id: row.original.id, label: row.original.name }
-                  "
-                />
-              </div>
-            </template>
-          </UTable>
-        </div>
-      </template>
-
-      <template #preview>
-        <div class="flex flex-col gap-3 py-3">
-          <p class="text-muted-color text-sm">
-            Render desired configuration for a device (baseline templates + terminating services).
-            Does not contact the device.
-          </p>
-          <div class="flex flex-wrap gap-2 items-end">
-            <div>
-              <label class="block font-bold mb-1">Device</label>
-              <USelectMenu
-                v-model="previewDeviceId"
-                :items="deviceOptions"
-                value-key="value"
-                label-key="label"
-                placeholder="Device"
-                class="w-64"
-              />
-            </div>
-            <UButton label="Render" :disabled="!previewDeviceId" @click="runPreview" />
-          </div>
-          <div v-if="preview" class="flex flex-col gap-3">
-            <div
-              v-for="(src, i) in preview.sources ?? []"
-              :key="i"
-              class="border border-default rounded p-3"
-            >
-              <div class="font-medium mb-2">
-                {{ src.source }} <span class="text-muted-color">{{ src.kind }}</span>
-              </div>
-              <div v-if="src.error" class="text-red-500 text-sm">{{ src.error }}</div>
-              <pre v-else class="text-sm overflow-auto max-h-80">{{
-                (src.commands ?? []).join('\n')
-              }}</pre>
-            </div>
-          </div>
-        </div>
-      </template>
     </UTabs>
   </div>
+
+  <USlideover
+    v-model:open="catalogOpen"
+    title="Catalog"
+    :ui="{ content: 'max-w-3xl w-full' }"
+  >
+    <template #body>
+      <p class="text-muted-color text-sm m-0 mb-3">
+        Definitions used by the tree — not tree nodes themselves.
+      </p>
+      <UTabs v-model="catalogTab" :items="catalogTabItems">
+        <template #variables>
+          <div class="flex flex-col gap-3 py-3">
+            <p class="text-muted-color text-sm m-0">
+              Typed knobs. Assign values on a parameter object in the tree.
+            </p>
+            <div class="flex justify-end">
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                label="New"
+                @click="openVar(null)"
+              />
+            </div>
+            <UTable
+              :data="variables"
+              :columns="[
+                { accessorKey: 'name', header: 'Name' },
+                { accessorKey: 'type', header: 'Type' },
+                { accessorKey: 'required', header: 'Required' },
+                { accessorKey: 'secret', header: 'Secret' },
+                { accessorKey: 'description', header: 'Description' },
+                { id: 'actions', header: '' },
+              ]"
+              empty="No variables."
+            >
+              <template #required-cell="{ row }">{{ row.original.required ? 'yes' : '' }}</template>
+              <template #secret-cell="{ row }">{{ row.original.secret ? 'yes' : '' }}</template>
+              <template #actions-cell="{ row }">
+                <div class="flex gap-1">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    @click="openVar(row.original)"
+                  />
+                  <UButton
+                    v-if="authStore.canWrite"
+                    icon="i-lucide-trash-2"
+                    variant="outline"
+                    color="error"
+                    size="sm"
+                    @click="
+                      confirm = { kind: 'variable', id: row.original.id, label: row.original.name }
+                    "
+                  />
+                </div>
+              </template>
+            </UTable>
+          </div>
+        </template>
+        <template #types>
+          <div class="flex flex-col gap-3 py-3">
+            <p class="text-muted-color text-sm m-0">
+              Vendor-agnostic classes (ELINE, ELAN, …). CLI for a type lives under
+              <code>_catalog/cli</code> in the tree.
+            </p>
+            <div class="flex justify-end">
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                label="New"
+                @click="openType(null)"
+              />
+            </div>
+            <UTable
+              :data="serviceTypes"
+              :columns="[
+                { accessorKey: 'name', header: 'Name' },
+                { accessorKey: 'description', header: 'Description' },
+                { accessorKey: 'sync_source', header: 'Sync source' },
+                { accessorKey: 'netbox_type', header: 'NetBox type' },
+                { accessorKey: 'builtin', header: 'Builtin' },
+                { id: 'actions', header: '' },
+              ]"
+              empty="No service types."
+            >
+              <template #builtin-cell="{ row }">{{ row.original.builtin ? 'yes' : '' }}</template>
+              <template #actions-cell="{ row }">
+                <div class="flex gap-1">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    @click="openType(row.original)"
+                  />
+                  <UButton
+                    v-if="authStore.canWrite && !row.original.builtin"
+                    icon="i-lucide-trash-2"
+                    variant="outline"
+                    color="error"
+                    size="sm"
+                    @click="
+                      confirm = { kind: 'type', id: row.original.id, label: row.original.name }
+                    "
+                  />
+                </div>
+              </template>
+            </UTable>
+          </div>
+        </template>
+        <template #macros>
+          <div class="flex flex-col gap-3 py-3">
+            <p class="text-muted-color text-sm m-0">
+              Reusable snippets inserted with
+              <code v-pre>{{ include "name" }}</code>
+              from a CLI feature.
+            </p>
+            <div class="flex justify-end">
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                label="New"
+                @click="openMacro(null)"
+              />
+            </div>
+            <UTable
+              :data="macros"
+              :columns="[
+                { accessorKey: 'name', header: 'Name' },
+                { id: 'actions', header: '' },
+              ]"
+              empty="No macros."
+            >
+              <template #actions-cell="{ row }">
+                <div class="flex gap-1">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    @click="openMacro(row.original)"
+                  />
+                  <UButton
+                    v-if="authStore.canWrite"
+                    icon="i-lucide-trash-2"
+                    variant="outline"
+                    color="error"
+                    size="sm"
+                    @click="
+                      confirm = { kind: 'macro', id: row.original.id, label: row.original.name }
+                    "
+                  />
+                </div>
+              </template>
+            </UTable>
+          </div>
+        </template>
+      </UTabs>
+    </template>
+  </USlideover>
 
   <div
     v-if="menu.open && menuItems.length"
@@ -1613,10 +1514,32 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </template>
   </div>
 
-  <UModal :open="dialog === 'folder'" title="Folder" @update:open="(v) => !v && (dialog = null)">
+  <UModal
+    :open="dialog === 'folder'"
+    :title="orgKindTitles[form.kind] || 'Folder'"
+    @update:open="(v) => !v && (dialog = null)"
+  >
     <template #body>
       <label class="block font-bold mb-2">Name</label>
       <UInput v-model="form.name" autofocus />
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal
+    :open="dialog === 'parameter'"
+    title="Parameter object"
+    @update:open="(v) => !v && (dialog = null)"
+  >
+    <template #body>
+      <label class="block font-bold mb-2">Name</label>
+      <UInput v-model="form.name" autofocus placeholder="parameters" />
+      <p class="text-muted-color text-sm mt-2 m-0">
+        Assignments on this node apply to its parent and that parent's descendants.
+      </p>
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
@@ -1760,9 +1683,42 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             class="w-full"
           />
         </div>
-        <div>
+        <div v-if="assignDef?.type === 'bool'">
+          <label class="flex items-center gap-2"
+            ><USwitch v-model="form.value_bool" /> Value</label
+          >
+        </div>
+        <div v-else-if="assignDef?.type === 'int' || assignDef?.type === 'vlan'">
+          <label class="block font-bold mb-2">Value</label>
+          <UInputNumber v-model="form.value_number" class="w-full" />
+        </div>
+        <div v-else-if="assignDef?.type === 'enum' && assignEnumOptions.length">
+          <label class="block font-bold mb-2">Value</label>
+          <USelectMenu
+            v-model="form.value_text"
+            :items="assignEnumOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </div>
+        <div v-else-if="assignDef?.type === 'list' || assignDef?.type === 'map'">
           <label class="block font-bold mb-2">Value (JSON)</label>
-          <UInput v-model="form.value_text" placeholder='"text", 100, true' />
+          <UTextarea
+            v-model="form.value_text"
+            :rows="4"
+            class="w-full font-mono text-sm"
+            :placeholder="assignDef?.type === 'list' ? '[1, 2]' : '{&quot;key&quot;:1}'"
+          />
+        </div>
+        <div v-else>
+          <label class="block font-bold mb-2">Value</label>
+          <UInput
+            v-model="form.value_text"
+            :placeholder="
+              assignDef?.secret || assignDef?.type === 'secret' ? 'unchanged if ***' : 'value'
+            "
+          />
         </div>
       </div>
     </template>
@@ -1882,89 +1838,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   </UModal>
 
   <UModal
-    :open="dialog === 'pack'"
-    title="Platform pack"
-    :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
-      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
-      footer: 'bg-default',
-      header: 'bg-default',
-    }"
-    @update:open="(v) => !v && (dialog = null)"
-  >
-    <template #body>
-      <div class="flex h-full min-h-0 flex-col gap-3">
-        <div class="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-3">
-          <div>
-            <label class="mb-2 block font-bold">Service type</label>
-            <USelectMenu
-              v-model="form.service_type_id"
-              :items="typeOptions"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-          </div>
-          <div>
-            <label class="mb-2 block font-bold">Platform</label>
-            <USelectMenu
-              v-model="form.platform"
-              :items="platformOptions"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-          </div>
-          <div>
-            <label class="mb-2 block font-bold">Payload kind</label>
-            <UInput v-model="form.payload_kind" placeholder="cli" class="w-full" />
-          </div>
-        </div>
-        <div class="flex shrink-0 gap-1">
-          <UButton
-            :key="`pack-apply-${packTmplTab}`"
-            size="sm"
-            :variant="packTmplTab === 'apply' ? 'solid' : 'outline'"
-            :color="packTmplTab === 'apply' ? 'primary' : 'neutral'"
-            label="Apply template"
-            @click="packTmplTab = 'apply'"
-          />
-          <UButton
-            :key="`pack-cleanup-${packTmplTab}`"
-            size="sm"
-            :variant="packTmplTab === 'cleanup' ? 'solid' : 'outline'"
-            :color="packTmplTab === 'cleanup' ? 'primary' : 'neutral'"
-            label="Cleanup template"
-            @click="packTmplTab = 'cleanup'"
-          />
-        </div>
-        <div class="flex min-h-0 flex-1 flex-col">
-          <GoTemplateEditor
-            v-if="dialog === 'pack' && packTmplTab === 'apply'"
-            v-model="form.apply_template"
-            class="h-full min-h-0"
-            :schema="packSchema"
-            :placeholder="packApplyPlaceholder"
-            @apply="savePack"
-          />
-          <GoTemplateEditor
-            v-if="dialog === 'pack' && packTmplTab === 'cleanup'"
-            v-model="form.cleanup_template"
-            class="h-full min-h-0"
-            :schema="packSchema"
-            :placeholder="packCleanupPlaceholder"
-            @apply="savePack"
-          />
-        </div>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="savePack" />
-    </template>
-  </UModal>
-
-  <UModal
     :open="dialog === 'macro'"
     title="Macro"
     :ui="{
@@ -1996,50 +1869,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveMacro" />
-    </template>
-  </UModal>
-
-  <UModal
-    :open="dialog === 'template'"
-    title="Baseline template"
-    :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
-      body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
-      footer: 'bg-default',
-      header: 'bg-default',
-    }"
-    @update:open="(v) => !v && (dialog = null)"
-  >
-    <template #body>
-      <div class="flex h-full min-h-0 flex-col gap-3">
-        <div class="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label class="mb-2 block font-bold">Name</label>
-            <UInput v-model="form.name" class="w-full" />
-          </div>
-          <div>
-            <label class="mb-2 block font-bold">Platform (empty = all)</label>
-            <UInput v-model="form.platform" class="w-full" />
-          </div>
-        </div>
-        <div class="shrink-0">
-          <label class="flex items-center gap-2"><USwitch v-model="form.enabled" /> Enabled</label>
-        </div>
-        <div class="flex min-h-0 flex-1 flex-col">
-          <GoTemplateEditor
-            v-if="dialog === 'template'"
-            v-model="form.body"
-            class="h-full min-h-0"
-            :schema="baselineSchema"
-            :placeholder="baselineBodyPlaceholder"
-            @apply="saveTemplate"
-          />
-        </div>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveTemplate" />
     </template>
   </UModal>
 
