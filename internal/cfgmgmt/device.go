@@ -392,13 +392,40 @@ func elineDescription(serviceID, customer string) string {
 }
 
 func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps []models.ServiceEndpoint) []RenderedSource {
-	pack, err := LookupPlatformPack(db, svc.ServiceType, device.Platform)
-	if err != nil || pack == nil {
+	cli, err := LookupCLIObject(db, svc.ServiceType, device.Platform)
+	if err != nil {
+		cli = nil
+	}
+	var pack *models.PlatformPack
+	if cli == nil {
+		pack, err = LookupPlatformPack(db, svc.ServiceType, device.Platform)
+		if err != nil {
+			pack = nil
+		}
+	}
+	if cli == nil && pack == nil {
 		return []RenderedSource{{
 			Source: "service:" + svc.ServiceID, Kind: "service",
 			Platform: NormalizePlatform(device.Platform),
-			Error:    "no platform pack for " + svc.ServiceType + "/" + device.Platform,
+			Error:    "no CLI object for " + svc.ServiceType + "/" + device.Platform,
 		}}
+	}
+	platform := NormalizePlatform(device.Platform)
+	payloadKind := models.PayloadKindCLI
+	if cli != nil {
+		if cli.Platform != "" {
+			platform = cli.Platform
+		}
+		if cli.PayloadKind != "" {
+			payloadKind = cli.PayloadKind
+		}
+	} else {
+		if pack.Platform != "" {
+			platform = pack.Platform
+		}
+		if pack.PayloadKind != "" {
+			payloadKind = pack.PayloadKind
+		}
 	}
 	var out []RenderedSource
 	cleanupDone := false
@@ -414,20 +441,29 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
 			continue
 		}
-		body, err := RenderPackApplyBody(db, pack, data)
-		cmds := body
-		if err == nil && !cleanupDone {
-			cl, clErr := RenderPackCleanupIfPresent(db, pack, data)
-			if clErr != nil {
-				err = clErr
-			} else {
-				cmds = append(cl, body...)
+		var cmds []string
+		if cli != nil {
+			cmds, err = renderCLIObject(db, cli, data, !cleanupDone)
+			if err == nil {
 				cleanupDone = true
+			}
+		} else {
+			body, bodyErr := RenderPackApplyBody(db, pack, data)
+			err = bodyErr
+			cmds = body
+			if err == nil && !cleanupDone {
+				cl, clErr := RenderPackCleanupIfPresent(db, pack, data)
+				if clErr != nil {
+					err = clErr
+				} else {
+					cmds = append(cl, body...)
+					cleanupDone = true
+				}
 			}
 		}
 		src := RenderedSource{
 			Source: "service:" + svc.ServiceID + ":" + ep.Role + ":" + strconv.FormatUint(uint64(ep.ID), 10),
-			Kind:   "service", Platform: pack.Platform, PayloadKind: pack.PayloadKind, Commands: cmds,
+			Kind:   "service", Platform: platform, PayloadKind: payloadKind, Commands: cmds,
 		}
 		if err != nil {
 			src.Error = err.Error()
