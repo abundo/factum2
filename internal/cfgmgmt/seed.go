@@ -18,7 +18,8 @@ func packChecksum(body string) string {
 // Seed creates the global root scope, reserved _catalog/_services folders,
 // built-in service types, and ELINE platform packs when they are missing.
 // Operator-edited packs are left alone; checksum-matching rows are
-// refreshed from the embed files.
+// refreshed from the embed files. Assignments on non-parameter scopes are
+// copied onto a reserved parameters child and the originals are deleted.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
@@ -36,12 +37,15 @@ func Seed(db *gorm.DB) error {
 	if err := copyAssignmentsOntoParameterChildren(db); err != nil {
 		return err
 	}
+	if err := moveAssignmentsOntoParameterChildren(db); err != nil {
+		return err
+	}
 	return ensureScopeUniqueIndexes(db)
 }
 
 // copyAssignmentsOntoParameterChildren copies assignments on non-parameter
-// scopes onto a reserved kind=parameter child named "parameters", leaving
-// the originals.
+// scopes onto a reserved kind=parameter child named "parameters". Originals
+// are deleted by moveAssignmentsOntoParameterChildren immediately after.
 func copyAssignmentsOntoParameterChildren(db *gorm.DB) error {
 	var scopeIDs []uint
 	if err := db.Model(&models.ConfigAssignment{}).Distinct("scope_id").Pluck("scope_id", &scopeIDs).Error; err != nil {
@@ -83,6 +87,58 @@ func copyAssignmentsOntoParameterChildren(db *gorm.DB) error {
 				Value:         a.Value,
 			}
 			if err := db.Create(&cp).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// moveAssignmentsOntoParameterChildren deletes original assignment rows on
+// non-parameter scopes that already have a matching copy on the reserved
+// parameters child. Copied rows stay. Rolling back this binary without a
+// DB restore loses assignment values on old resolveDefAt (which only
+// reads the walked organizational scope). PUT still remaps folder/device/
+// interface writes onto the child until the tree-first GUI PR.
+func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
+	var scopeIDs []uint
+	if err := db.Model(&models.ConfigAssignment{}).Distinct("scope_id").Pluck("scope_id", &scopeIDs).Error; err != nil {
+		return err
+	}
+	if len(scopeIDs) == 0 {
+		return nil
+	}
+	var scopes []models.ConfigScope
+	if err := db.Where("id IN ?", scopeIDs).Find(&scopes).Error; err != nil {
+		return err
+	}
+	for i := range scopes {
+		s := &scopes[i]
+		if s.Kind == models.ConfigScopeKindParameter {
+			continue
+		}
+		child, err := findParametersChild(db, s.ID)
+		if err != nil {
+			return err
+		}
+		if child == nil {
+			continue
+		}
+		var rows []models.ConfigAssignment
+		if err := db.Where("scope_id = ?", s.ID).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, a := range rows {
+			var n int64
+			if err := db.Model(&models.ConfigAssignment{}).
+				Where("variable_def_id = ? AND scope_id = ?", a.VariableDefID, child.ID).
+				Count(&n).Error; err != nil {
+				return err
+			}
+			if n == 0 {
+				continue
+			}
+			if err := db.Where("id = ?", a.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
 				return err
 			}
 		}

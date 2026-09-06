@@ -959,6 +959,10 @@ func existingSecretAssignment(db *gorm.DB, def *models.ConfigVariableDef, scope 
 	return nil, nil
 }
 
+// dualWriteScopeIDs remaps a folder/device/interface (or the reserved
+// parameters child) onto that child as the primary write target. also is
+// the organizational original, written only if the row still exists —
+// MOVE deleted those originals.
 func dualWriteScopeIDs(db *gorm.DB, scope *models.ConfigScope) (primary uint, also *uint, err error) {
 	if isOrganizationalScope(scope) {
 		child, err := ensureParametersChild(db, scope.ID)
@@ -1020,8 +1024,16 @@ func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.C
 		}
 		out = row
 		if alsoID != nil && *alsoID != primaryID {
-			if _, err := upsertAssignmentAt(tx, defID, *alsoID, value); err != nil {
+			// MOVE deleted originals; do not recreate them. A leftover
+			// original (pre-migrate row) is still updated if present.
+			existing, err := assignmentAt(tx, defID, *alsoID)
+			if err != nil {
 				return err
+			}
+			if existing != nil {
+				if _, err := upsertAssignmentAt(tx, defID, *alsoID, value); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -1034,8 +1046,8 @@ func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.C
 
 func ListAssignments(db *gorm.DB, scopeID uint) ([]models.ConfigAssignment, error) {
 	if scopeID == 0 {
-		// Every assignment row, including COPY duplicates. Callers that
-		// want one winner per variable pass a non-zero scope_id.
+		// Every assignment row. Callers that want one winner per
+		// variable pass a non-zero scope_id.
 		var rows []models.ConfigAssignment
 		if err := db.Find(&rows).Error; err != nil {
 			return nil, err

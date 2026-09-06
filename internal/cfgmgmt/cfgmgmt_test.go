@@ -354,30 +354,38 @@ func TestResolveWalkAndFirstMatch(t *testing.T) {
 	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
 	mustCreate(t, db, &def)
 
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: deviceScope.ID, Value: jsonRaw(t, 9000)})
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: ifaceScope.ID, Value: jsonRaw(t, 9100)})
+	if _, err := UpsertAssignment(db, def.ID, folder.ID, jsonRaw(t, 1500)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, deviceScope.ID, jsonRaw(t, 9000)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, ifaceScope.ID, jsonRaw(t, 9100)); err != nil {
+		t.Fatal(err)
+	}
+	ifaceChild := mustParametersChild(t, db, ifaceScope.ID)
+	deviceChild := mustParametersChild(t, db, deviceScope.ID)
 
 	v, src, err := Resolve(db, iface.ID, "mtu")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if src == nil || src.ID != ifaceScope.ID {
-		t.Fatalf("source = %+v, want interface scope", src)
+	if src == nil || src.ID != ifaceChild.ID {
+		t.Fatalf("source = %+v, want interface parameters child", src)
 	}
 	if n, _ := asInt(v); n != 9100 {
 		t.Errorf("value = %v, want 9100", v)
 	}
 
-	if err := db.Delete(&models.ConfigAssignment{}, "scope_id = ?", ifaceScope.ID).Error; err != nil {
+	if err := db.Delete(&models.ConfigAssignment{}, "scope_id = ?", ifaceChild.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	v, src, err = Resolve(db, iface.ID, "mtu")
 	if err != nil {
 		t.Fatalf("resolve device: %v", err)
 	}
-	if src == nil || src.ID != deviceScope.ID {
-		t.Fatalf("source = %+v, want device", src)
+	if src == nil || src.ID != deviceChild.ID {
+		t.Fatalf("source = %+v, want device parameters child", src)
 	}
 	if n, _ := asInt(v); n != 9000 {
 		t.Errorf("value = %v, want 9000 (interface assignment hidden)", v)
@@ -400,14 +408,17 @@ func TestResolveDeviceOnlyWhenNoInterfaceNode(t *testing.T) {
 
 	def := models.ConfigVariableDef{Name: "asn", Type: models.VarTypeInt, DefaultValue: jsonRaw(t, 1)}
 	mustCreate(t, db, &def)
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: deviceScope.ID, Value: jsonRaw(t, 65000)})
+	if _, err := UpsertAssignment(db, def.ID, deviceScope.ID, jsonRaw(t, 65000)); err != nil {
+		t.Fatal(err)
+	}
+	deviceChild := mustParametersChild(t, db, deviceScope.ID)
 
 	v, src, err := Resolve(db, ifc.ID, "asn")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if src == nil || src.ID != deviceScope.ID {
-		t.Fatalf("source = %+v, want device scope", src)
+	if src == nil || src.ID != deviceChild.ID {
+		t.Fatalf("source = %+v, want device parameters child", src)
 	}
 	if n, _ := asInt(v); n != 65000 {
 		t.Errorf("value = %v", v)
@@ -824,7 +835,9 @@ func TestRenderDeviceIncludesGlobalTemplate(t *testing.T) {
 	mustCreate(t, db, &dev)
 	def := models.ConfigVariableDef{Name: "color", Type: models.VarTypeString}
 	mustCreate(t, db, &def)
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: root.ID, Value: jsonRaw(t, "blue")})
+	if _, err := UpsertAssignment(db, def.ID, root.ID, jsonRaw(t, "blue")); err != nil {
+		t.Fatal(err)
+	}
 	tmpl := models.ConfigTemplate{
 		Name:     "banner",
 		Platform: "eos",
@@ -929,7 +942,11 @@ func TestRequiredNullIsMissing(t *testing.T) {
 	}
 	opt := models.ConfigVariableDef{Name: "opt", Type: models.VarTypeString, Required: true}
 	mustCreate(t, db, &opt)
-	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: opt.ID, ScopeID: ifaceScope.ID, Value: []byte("null")})
+	child, err := ensureParametersChild(db, ifaceScope.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: opt.ID, ScopeID: child.ID, Value: []byte("null")})
 	if _, _, err := Resolve(db, iface.ID, "opt"); err == nil {
 		t.Fatal("expected required error for JSON null assignment")
 	}
@@ -1057,6 +1074,15 @@ func TestWalkParentsDepthError(t *testing.T) {
 	}
 }
 
+func mustParametersChild(t *testing.T, db *gorm.DB, parentID uint) *models.ConfigScope {
+	t.Helper()
+	child, err := findParametersChild(db, parentID)
+	if err != nil || child == nil {
+		t.Fatalf("parameters child of %d: %v %#v", parentID, err, child)
+	}
+	return child
+}
+
 func assignmentAtScope(t *testing.T, db *gorm.DB, defID, scopeID uint) *models.ConfigAssignment {
 	t.Helper()
 	var a models.ConfigAssignment
@@ -1083,36 +1109,37 @@ func intValue(t *testing.T, raw json.RawMessage) int64 {
 	return n
 }
 
-func TestCopyAssignmentsThenListWinning(t *testing.T) {
+func TestMoveAssignmentsThenListWinning(t *testing.T) {
 	db := newTestDB(t)
-	_, folder, _, _, _ := seedTree(t, db)
+	_, folder, deviceScope, ifaceScope, _ := seedTree(t, db)
 	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
 	mustCreate(t, db, &def)
 	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: deviceScope.ID, Value: jsonRaw(t, 9000)})
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: ifaceScope.ID, Value: jsonRaw(t, 9100)})
 	if err := Seed(db); err != nil {
 		t.Fatal(err)
 	}
 	if err := Seed(db); err != nil {
 		t.Fatal(err)
 	}
-	child, err := findParametersChild(db, folder.ID)
-	if err != nil || child == nil {
-		t.Fatalf("parameters child: %v %#v", err, child)
+	for _, s := range []models.ConfigScope{folder, deviceScope, ifaceScope} {
+		if assignmentAtScope(t, db, def.ID, s.ID) != nil {
+			t.Fatalf("original assignment still on %s scope %d", s.Kind, s.ID)
+		}
+		child := mustParametersChild(t, db, s.ID)
+		cp := assignmentAtScope(t, db, def.ID, child.ID)
+		if cp == nil {
+			t.Fatalf("missing child copy on %s parameters child", s.Kind)
+		}
 	}
-	orig := assignmentAtScope(t, db, def.ID, folder.ID)
-	cp := assignmentAtScope(t, db, def.ID, child.ID)
-	if orig == nil || cp == nil {
-		t.Fatal("COPY should leave original and insert child copy")
-	}
-	if intValue(t, orig.Value) != 1500 || intValue(t, cp.Value) != 1500 {
-		t.Fatalf("values orig=%s copy=%s", orig.Value, cp.Value)
-	}
+	child := mustParametersChild(t, db, folder.ID)
 	var n int64
 	if err := db.Model(&models.ConfigAssignment{}).Where("variable_def_id = ?", def.ID).Count(&n).Error; err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("assignment count = %d, want 2 (COPY is idempotent)", n)
+	if n != 3 {
+		t.Fatalf("assignment count = %d, want 3 (one per parameters child; MOVE is idempotent)", n)
 	}
 	rows, err := ListAssignments(db, folder.ID)
 	if err != nil {
@@ -1124,9 +1151,19 @@ func TestCopyAssignmentsThenListWinning(t *testing.T) {
 	if rows[0].ScopeID != child.ID {
 		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
 	}
+	v, src, err := resolveDefAt(db, &def, &folder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != child.ID {
+		t.Fatalf("resolve source = %+v, want child %d", src, child.ID)
+	}
+	if n, _ := asInt(v); n != 1500 {
+		t.Errorf("resolve value = %v, want 1500", v)
+	}
 }
 
-func TestUpsertFolderDualWriteAndResolve(t *testing.T) {
+func TestUpsertFolderRemapsToChildAndResolve(t *testing.T) {
 	db := newTestDB(t)
 	_, folder, _, _, _ := seedTree(t, db)
 	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
@@ -1139,10 +1176,7 @@ func TestUpsertFolderDualWriteAndResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := findParametersChild(db, folder.ID)
-	if err != nil || child == nil {
-		t.Fatal(err)
-	}
+	child := mustParametersChild(t, db, folder.ID)
 	if row.ScopeID != child.ID {
 		t.Fatalf("PUT folder returned scope %d, want child %d", row.ScopeID, child.ID)
 	}
@@ -1156,13 +1190,12 @@ func TestUpsertFolderDualWriteAndResolve(t *testing.T) {
 	if n, _ := asInt(v); n != 9100 {
 		t.Errorf("resolve value = %v, want 9100", v)
 	}
-	orig := assignmentAtScope(t, db, def.ID, folder.ID)
-	if orig == nil || intValue(t, orig.Value) != 9100 {
-		t.Fatalf("original not dual-written: %+v", orig)
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("PUT folder recreated an original on the folder")
 	}
 }
 
-func TestUpsertReservedParametersChildUpdatesOriginal(t *testing.T) {
+func TestUpsertReservedParametersChildDoesNotRecreateOriginal(t *testing.T) {
 	db := newTestDB(t)
 	_, folder, _, _, _ := seedTree(t, db)
 	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
@@ -1171,18 +1204,14 @@ func TestUpsertReservedParametersChildUpdatesOriginal(t *testing.T) {
 	if err := Seed(db); err != nil {
 		t.Fatal(err)
 	}
-	child, err := findParametersChild(db, folder.ID)
-	if err != nil || child == nil {
-		t.Fatal(err)
-	}
+	child := mustParametersChild(t, db, folder.ID)
 	if _, err := UpsertAssignment(db, def.ID, child.ID, jsonRaw(t, 9200)); err != nil {
 		t.Fatal(err)
 	}
-	orig := assignmentAtScope(t, db, def.ID, folder.ID)
-	cp := assignmentAtScope(t, db, def.ID, child.ID)
-	if orig == nil || intValue(t, orig.Value) != 9200 {
-		t.Fatalf("original = %+v, want 9200", orig)
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("PUT to reserved child recreated an original")
 	}
+	cp := assignmentAtScope(t, db, def.ID, child.ID)
 	if cp == nil || intValue(t, cp.Value) != 9200 {
 		t.Fatalf("child = %+v, want 9200", cp)
 	}
@@ -1239,19 +1268,18 @@ func TestUpsertSecretUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp := assignmentAtScope(t, db, def.ID, child.ID)
-	orig := assignmentAtScope(t, db, def.ID, folder.ID)
-	if cp == nil || orig == nil {
-		t.Fatal("expected both rows")
+	if cp == nil {
+		t.Fatal("expected child row")
 	}
-	var cv, ov any
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("secret PUT recreated an original")
+	}
+	var cv any
 	if err := json.Unmarshal(cp.Value, &cv); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(orig.Value, &ov); err != nil {
-		t.Fatal(err)
-	}
-	if cv != "s3cret" || ov != "s3cret" {
-		t.Fatalf("stored child=%#v orig=%#v, want s3cret (*** must not persist)", cv, ov)
+	if cv != "s3cret" {
+		t.Fatalf("stored child=%#v, want s3cret (*** must not persist)", cv)
 	}
 }
 
@@ -1358,35 +1386,18 @@ func TestResolvePrefersParameterChild(t *testing.T) {
 	}
 }
 
-func TestDeleteOriginalAssignmentAlsoDeletesChild(t *testing.T) {
+func TestResolveIgnoresOrganizationalAssignment(t *testing.T) {
 	db := newTestDB(t)
 	_, folder, _, _, _ := seedTree(t, db)
 	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
 	mustCreate(t, db, &def)
 	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	orig := assignmentAtScope(t, db, def.ID, folder.ID)
-	if orig == nil {
-		t.Fatal("missing original")
-	}
-	if err := DeleteAssignment(db, orig.ID); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := ListAssignments(db, folder.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("GET folder after deleting original = %d, want 0", len(rows))
-	}
 	v, src, err := resolveDefAt(db, &def, &folder, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v != nil || src != nil {
-		t.Fatalf("resolve after delete original value=%v source=%+v", v, src)
+		t.Fatalf("leftover folder assignment value=%v source=%+v, want ignored", v, src)
 	}
 }
 
@@ -1462,19 +1473,16 @@ func TestResolveParameterObjectFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src == nil || src.ID != folder.ID {
-		t.Fatalf("ios-xr source = %+v, want original folder", src)
-	}
-	if n, _ := asInt(v); n != 1500 {
-		t.Errorf("ios-xr value = %v, want 1500", v)
+	if v != nil || src != nil {
+		t.Fatalf("ios-xr source = %+v value=%v, want no organizational fallback", src, v)
 	}
 
 	v, src, err = resolveDefAt(db, &def, &folder, "sros-md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src == nil || src.ID != folder.ID {
-		t.Fatalf("sros-md vs eos-only source = %+v, want folder", src)
+	if v != nil || src != nil {
+		t.Fatalf("sros-md vs eos-only source = %+v, want no organizational fallback", src)
 	}
 
 	srosChild := models.ConfigScope{
@@ -1504,11 +1512,8 @@ func TestResolveParameterObjectFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src == nil || src.ID != folder.ID {
-		t.Fatalf("disabled child source = %+v, want original", src)
-	}
-	if n, _ := asInt(v); n != 1500 {
-		t.Errorf("disabled child value = %v, want 1500", v)
+	if v != nil || src != nil {
+		t.Fatalf("disabled child source = %+v, want no organizational fallback", src)
 	}
 
 	other := models.ConfigScope{
