@@ -167,20 +167,18 @@ func MigrateDatabase(db *gorm.DB) error {
 		return err
 	}
 
-	// Refuse DROP of leftover pack/template rows that were never copied
-	// onto a CLI object. Seed does not read those tables; an unmigrated
-	// row would be lost. Run the previous migrate first.
+	// Seed copies leftover platform_packs / config_templates onto CLI
+	// objects (and creates ELINE translators from embed). Refuse DROP if
+	// any leftover row still has no twin — those would be lost.
+	if err := cfgmgmt.Seed(db); err != nil {
+		return err
+	}
 	if err := cfgmgmt.AssertPacksHaveCLITwins(db); err != nil {
 		return err
 	}
 	if err := cfgmgmt.AssertTemplatesHaveCLITwins(db); err != nil {
 		return err
 	}
-
-	if err := cfgmgmt.Seed(db); err != nil {
-		return err
-	}
-
 	if err := cfgmgmt.DropPackAndTemplateTables(db); err != nil {
 		return err
 	}

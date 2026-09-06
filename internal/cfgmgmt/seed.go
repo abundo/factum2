@@ -20,11 +20,13 @@ func packChecksum(body string) string {
 
 // Seed creates the global root scope, reserved _catalog/_services folders,
 // built-in service types, and ELINE translation CLI objects when they are
-// missing. Operator-edited CLI objects are left alone; checksum-matching
-// rows are refreshed from the embed files under
-// internal/drivers/templates. Assignments on non-parameter scopes are
-// copied onto a reserved parameters child and the originals are deleted.
-// Typed CN/CI services without a tree node are placed under _services.
+// missing. Leftover platform_packs / config_templates rows (from before
+// those tables were dropped) are copied onto CLI objects first so operator
+// edits survive; checksum-matching ELINE rows are then refreshed from the
+// embed files under internal/drivers/templates. Assignments on
+// non-parameter scopes are copied onto a reserved parameters child and the
+// originals are deleted. Typed CN/CI services without a tree node are
+// placed under _services.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
@@ -34,6 +36,12 @@ func Seed(db *gorm.DB) error {
 	}
 	eline, err := seedServiceTypes(db)
 	if err != nil {
+		return err
+	}
+	if err := migrateLeftoverPacksToCLI(db); err != nil {
+		return err
+	}
+	if err := migrateLeftoverTemplatesToCLI(db); err != nil {
 		return err
 	}
 	if err := seedELINECLI(db, eline.ID); err != nil {

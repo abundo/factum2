@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func newTestDB(t *testing.T) *gorm.DB {
+func newSchemaDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -44,6 +44,12 @@ func newTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	return db
+}
+
+func newTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db := newSchemaDB(t)
 	if err := Seed(db); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -2291,7 +2297,7 @@ func TestRenderGenericErrorsWhenELINECLIDeleted(t *testing.T) {
 	mustCreate(t, db, &dev)
 	svc := models.Service{ServiceID: "CN00571", ServiceType: "ELINE", PseudowireID: 1000571}
 	mustCreate(t, db, &svc)
-	out := renderGenericForDevice(db, &svc, &dev, nil)
+	out := renderGenericForDevice(db, &svc, &dev, nil, nil)
 	want := MissingCLIObjectMessage("ELINE", "eos")
 	if len(out) != 1 || out[0].Error != want {
 		t.Fatalf("sources = %+v, want %q", out, want)
@@ -2363,7 +2369,7 @@ func TestRenderGenericSurfacesLookupError(t *testing.T) {
 	mustCreate(t, db, &dev)
 	svc := models.Service{ServiceID: "CN00999", ServiceType: "NO-SUCH-TYPE"}
 	mustCreate(t, db, &svc)
-	out := renderGenericForDevice(db, &svc, &dev, nil)
+	out := renderGenericForDevice(db, &svc, &dev, nil, nil)
 	if len(out) != 1 || !strings.Contains(out[0].Error, `unknown service type "NO-SUCH-TYPE"`) {
 		t.Fatalf("sources = %+v, want lookup error", out)
 	}
@@ -2375,7 +2381,7 @@ func TestRenderGenericMissingTranslator(t *testing.T) {
 	mustCreate(t, db, &dev)
 	svc := models.Service{ServiceID: "CN00998", ServiceType: "ELAN"}
 	mustCreate(t, db, &svc)
-	out := renderGenericForDevice(db, &svc, &dev, nil)
+	out := renderGenericForDevice(db, &svc, &dev, nil, nil)
 	want := MissingCLIObjectMessage("ELAN", "eos")
 	if len(out) != 1 || out[0].Error != want {
 		t.Fatalf("sources = %+v, want %q", out, want)
@@ -2433,9 +2439,13 @@ func cliChild(t *testing.T, db *gorm.DB, parentID uint, name string) models.Conf
 }
 
 type leftoverPackRow struct {
-	ID            uint `gorm:"primaryKey"`
-	ServiceTypeID uint
-	Platform      string
+	ID              uint `gorm:"primaryKey"`
+	ServiceTypeID   uint
+	Platform        string
+	PayloadKind     string
+	ApplyTemplate   string
+	CleanupTemplate string
+	SeedChecksum    string
 }
 
 func (leftoverPackRow) TableName() string { return "platform_packs" }
@@ -2487,10 +2497,13 @@ func TestDropPacksWhenTwinsExist(t *testing.T) {
 }
 
 type leftoverTemplateRow struct {
-	ID       uint `gorm:"primaryKey"`
-	Name     string
-	Platform string
-	ScopeID  *uint
+	ID          uint `gorm:"primaryKey"`
+	Name        string
+	Platform    string
+	PayloadKind string
+	Body        string
+	ScopeID     *uint
+	Enabled     bool
 }
 
 func (leftoverTemplateRow) TableName() string { return "config_templates" }
@@ -2540,6 +2553,83 @@ func TestDropTemplatesWhenTwinsExist(t *testing.T) {
 	}
 	if db.Migrator().HasTable("config_templates") {
 		t.Fatal("config_templates still present after drop")
+	}
+}
+
+func TestSeedCopiesLeftoverCustomPack(t *testing.T) {
+	db := newSchemaDB(t)
+	createLeftoverPackTable(t, db)
+	elan := models.ServiceType{Name: "ELAN", Builtin: true}
+	mustCreate(t, db, &elan)
+	mustCreate(t, db, &leftoverPackRow{
+		ServiceTypeID: elan.ID, Platform: "eos", PayloadKind: models.PayloadKindCLI,
+		ApplyTemplate: "elan-apply {{.Name}}", CleanupTemplate: "elan-cleanup",
+		SeedChecksum: "operator-edit",
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := LookupCLIObject(db, "ELAN", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	if feats[0].AddCommands != "elan-apply {{.Name}}" || feats[0].RemoveCommands != "elan-cleanup" {
+		t.Fatalf("copied feature = %+v", feats[0])
+	}
+}
+
+func TestSeedCopiesEditedLeftoverELINEPackWithoutEmbedRefresh(t *testing.T) {
+	db := newSchemaDB(t)
+	createLeftoverPackTable(t, db)
+	eline := models.ServiceType{Name: "ELINE", Builtin: true}
+	mustCreate(t, db, &eline)
+	mustCreate(t, db, &leftoverPackRow{
+		ServiceTypeID: eline.ID, Platform: "eos", PayloadKind: models.PayloadKindCLI,
+		ApplyTemplate: "edited-add {{.Name}}", SeedChecksum: "not-the-body-hash",
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	if feats[0].AddCommands != "edited-add {{.Name}}" {
+		t.Errorf("edited leftover pack overwritten from embed: %q", feats[0].AddCommands)
+	}
+}
+
+func TestSeedCopiesLeftoverTemplate(t *testing.T) {
+	db := newSchemaDB(t)
+	createLeftoverTemplateTable(t, db)
+	mustCreate(t, db, &leftoverTemplateRow{
+		Name: "banner", Platform: "eos", Body: "banner motd x", Enabled: true,
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	twins, err := findBaselineCLITwins(db, "banner", root.ID, "eos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(twins) != 1 {
+		t.Fatalf("twins = %+v", twins)
+	}
+	feats, err := ListCLIFeatures(db, twins[0].ID)
+	if err != nil || len(feats) != 1 || feats[0].Name != "body" || feats[0].AddCommands != "banner motd x" {
+		t.Fatalf("feature = %+v err=%v", feats, err)
 	}
 }
 
