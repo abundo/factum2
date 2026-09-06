@@ -83,7 +83,7 @@ func (ctrl *Controller) ApiConfigScopeUpdate(c *echo.Context) error {
 	row := models.ConfigScope{
 		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
 		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder,
+		SortOrder: dto.SortOrder, Payload: dto.Payload, Enabled: dto.Enabled,
 	}
 	updated, err := cfgmgmt.UpdateScope(ctrl.DB, id, &row)
 	if err != nil {
@@ -246,7 +246,11 @@ func (ctrl *Controller) ApiConfigAssignmentUpsert(c *echo.Context) error {
 	if err != nil {
 		return configWriteError(c, err)
 	}
-	return c.JSON(http.StatusOK, row)
+	rows := []models.ConfigAssignment{*row}
+	if err := cfgmgmt.RedactAssignmentSecrets(ctrl.DB, rows); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, rows[0])
 }
 
 func (ctrl *Controller) ApiConfigAssignmentDelete(c *echo.Context) error {
