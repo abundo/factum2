@@ -249,6 +249,7 @@ func GUI(p *GuiParams) error {
 	// its own path segment count, so the two never collide.
 	api.GET("/device/name/:name", ctrl.ApiGetDeviceByName, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device", ctrl.ApiGetDevices, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/connections", ctrl.ApiGetConnections, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/device/:id/interfaces/refresh", ctrl.ApiDeviceInterfacesRefresh, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/device/:id/interfaces/update", ctrl.ApiDeviceInterfacesUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/device/:id/interfaces/vlans", ctrl.ApiDeviceInterfacesUpdateVlans, ctrl.RequireAPIAuth, ctrl.RequireWrite)

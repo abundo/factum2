@@ -99,6 +99,7 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.ServicePath{},
 		&models.ServiceHop{},
 		&models.MaintenanceWindow{},
+		&models.MaintenanceResource{},
 		&models.MaintenanceNotification{},
 		&models.CustomerContact{},
 
@@ -137,6 +138,10 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.ServiceEndpoint{},
 	)
 	if err != nil {
+		return err
+	}
+
+	if err := backfillMaintenanceResources(db); err != nil {
 		return err
 	}
 
@@ -261,6 +266,7 @@ func dedupeInterfaces(db *gorm.DB) error {
 			{"connections", `UPDATE connections SET interface_a_id = d.keep_id FROM interface_dupes d WHERE connections.interface_a_id = d.lose_id`},
 			{"connections", `UPDATE connections SET interface_b_id = d.keep_id FROM interface_dupes d WHERE connections.interface_b_id = d.lose_id`},
 			{"maintenance_windows", `UPDATE maintenance_windows SET resource_id = d.keep_id FROM interface_dupes d WHERE maintenance_windows.resource_type = 'interface' AND maintenance_windows.resource_id = d.lose_id`},
+			{"maintenance_resources", `UPDATE maintenance_resources SET resource_id = d.keep_id FROM interface_dupes d WHERE maintenance_resources.resource_type = 'interface' AND maintenance_resources.resource_id = d.lose_id`},
 			{"interfaces", `DELETE FROM interfaces i USING interface_dupes d WHERE i.id = d.lose_id`},
 		} {
 			if r.table != "interfaces" && !tx.Migrator().HasTable(r.table) {
@@ -272,4 +278,38 @@ func dedupeInterfaces(db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+// backfillMaintenanceResources copies the denormalized ResourceType/ResourceID
+// on each window into maintenance_resources so multi-resource windows and
+// pre-join rows share one lookup path. A no-op once every window has at least
+// one matching join row.
+func backfillMaintenanceResources(db *gorm.DB) error {
+	var windows []models.MaintenanceWindow
+	if err := db.Find(&windows).Error; err != nil {
+		return err
+	}
+	for _, w := range windows {
+		if w.ResourceType == "" || w.ResourceID == 0 {
+			continue
+		}
+		var n int64
+		if err := db.Model(&models.MaintenanceResource{}).
+			Where("window_id = ? AND resource_type = ? AND resource_id = ?", w.ID, w.ResourceType, w.ResourceID).
+			Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		row := models.MaintenanceResource{
+			WindowID:     w.ID,
+			ResourceType: w.ResourceType,
+			ResourceID:   w.ResourceID,
+		}
+		if err := db.Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -119,8 +119,14 @@ func DeviceDownImpact(db *gorm.DB, deviceID uint) (DeviceImpact, error) {
 	return out, nil
 }
 
-// ResourceImpact lists VL/VI/LF/LI services whose hops touch the resource.
+// ResourceImpact lists VL/VI/LF/LI services whose hops touch the resource,
+// or the service itself when the resource is a wavelength/fiber service.
 func ResourceImpact(db *gorm.DB, resourceType string, resourceID uint) ([]ImpactRow, error) {
+	switch resourceType {
+	case models.MaintResourceWavelength, models.MaintResourceFiber:
+		return serviceResourceImpact(db, resourceID)
+	}
+
 	q := db.Model(&models.ServiceHop{})
 	switch resourceType {
 	case models.MaintResourceConnection:
@@ -151,6 +157,39 @@ func ResourceImpact(db *gorm.DB, resourceType string, resourceID uint) ([]Impact
 	if err := db.Where("id IN ?", ids).Find(&svcs).Error; err != nil {
 		return nil, err
 	}
+	return impactRowsFromServices(db, svcs, "optical_hop"), nil
+}
+
+// ResourcesImpact unions ResourceImpact across every attached resource,
+// de-duplicated by services.id.
+func ResourcesImpact(db *gorm.DB, resources []models.MaintenanceResource) ([]ImpactRow, error) {
+	seen := map[uint]bool{}
+	out := []ImpactRow{}
+	for _, r := range resources {
+		rows, err := ResourceImpact(db, r.ResourceType, r.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if seen[row.ServiceID] {
+				continue
+			}
+			seen[row.ServiceID] = true
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func serviceResourceImpact(db *gorm.DB, serviceID uint) ([]ImpactRow, error) {
+	var s models.Service
+	if err := db.First(&s, serviceID).Error; err != nil {
+		return []ImpactRow{}, nil
+	}
+	return impactRowsFromServices(db, []models.Service{s}, "service"), nil
+}
+
+func impactRowsFromServices(db *gorm.DB, svcs []models.Service, source string) []ImpactRow {
 	var out []ImpactRow
 	for _, s := range svcs {
 		cat := models.CategoryFromServiceID(s.ServiceID)
@@ -178,8 +217,8 @@ func ResourceImpact(db *gorm.DB, resourceType string, resourceID uint) ([]Impact
 			Category:   cat,
 			CustomerID: s.CustomerID,
 			Customer:   name,
-			Source:     "optical_hop",
+			Source:     source,
 		})
 	}
-	return out, nil
+	return out
 }

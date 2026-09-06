@@ -12,12 +12,16 @@ import (
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
+	"gorm.io/gorm"
 )
 
 func (ctrl *Controller) ApiMaintenanceList(c *echo.Context) error {
 	var rows []models.MaintenanceWindow
-	if err := ctrl.DB.Order("starts_at desc").Find(&rows).Error; err != nil {
+	if err := ctrl.DB.Preload("Resources").Order("starts_at desc").Find(&rows).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	for i := range rows {
+		rows[i].Resources = windowResources(rows[i])
 	}
 	return c.JSON(http.StatusOK, rows)
 }
@@ -28,43 +32,188 @@ func (ctrl *Controller) ApiMaintenanceGet(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 	var w models.MaintenanceWindow
-	if err := ctrl.DB.First(&w, id).Error; err != nil {
+	if err := ctrl.DB.Preload("Resources").First(&w, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
-	impact, _ := optical.ResourceImpact(ctrl.DB, w.ResourceType, w.ResourceID)
+	resources := windowResources(w)
+	w.Resources = resources
+	impact, _ := optical.ResourcesImpact(ctrl.DB, resources)
 	var notes []models.MaintenanceNotification
 	_ = ctrl.DB.Where("window_id = ?", w.ID).Find(&notes).Error
-	return c.JSON(http.StatusOK, map[string]any{"window": w, "impact": impact, "notifications": notes})
+	return c.JSON(http.StatusOK, map[string]any{
+		"window":        w,
+		"resources":     ctrl.labeledResources(resources),
+		"impact":        impact,
+		"notifications": notes,
+	})
+}
+
+type maintenanceResourceIn struct {
+	ResourceType string `json:"resource_type"`
+	ResourceID   uint   `json:"resource_id"`
+}
+
+type maintenanceCreateRequest struct {
+	Title        string                  `json:"title"`
+	Description  string                  `json:"description"`
+	ResourceType string                  `json:"resource_type"`
+	ResourceID   uint                    `json:"resource_id"`
+	Resources    []maintenanceResourceIn `json:"resources"`
+	StartsAt     time.Time               `json:"starts_at"`
+	EndsAt       time.Time               `json:"ends_at"`
+	Status       string                  `json:"status"`
+}
+
+type maintenanceResourceView struct {
+	ResourceType string `json:"resource_type"`
+	ResourceID   uint   `json:"resource_id"`
+	Label        string `json:"label"`
 }
 
 func (ctrl *Controller) ApiMaintenanceCreate(c *echo.Context) error {
-	var w models.MaintenanceWindow
-	if err := c.Bind(&w); err != nil {
+	var req maintenanceCreateRequest
+	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	w.ID = 0
-	if w.Status == "" {
-		w.Status = models.MaintDraft
+	resources := normalizeMaintenanceResources(req)
+	status := req.Status
+	if status == "" {
+		status = models.MaintDraft
 	}
-	if w.Status != models.MaintDraft && w.Status != models.MaintPlanned {
+	if status != models.MaintDraft && status != models.MaintPlanned {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "create as draft or planned"})
 	}
-	if w.Title == "" || w.ResourceType == "" || w.ResourceID == 0 || w.StartsAt.IsZero() {
+	if req.Title == "" || len(resources) == 0 || req.StartsAt.IsZero() {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "title, resource and starts_at required"})
 	}
-	if !w.EndsAt.IsZero() && !w.EndsAt.After(w.StartsAt) {
+	if !req.EndsAt.IsZero() && !req.EndsAt.After(req.StartsAt) {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "ends_at must be after starts_at"})
 	}
-	if err := ctrl.maintenanceResourceExists(w.ResourceType, w.ResourceID); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	for _, r := range resources {
+		if err := ctrl.maintenanceResourceExists(r.ResourceType, r.ResourceID); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+	}
+	w := models.MaintenanceWindow{
+		Title:        req.Title,
+		Description:  req.Description,
+		ResourceType: resources[0].ResourceType,
+		ResourceID:   resources[0].ResourceID,
+		StartsAt:     req.StartsAt,
+		EndsAt:       req.EndsAt,
+		Status:       status,
 	}
 	if user, ok := c.Get("user").(models.User); ok {
 		w.CreatedBy = user.ID
 	}
-	if err := ctrl.DB.Create(&w).Error; err != nil {
+	err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&w).Error; err != nil {
+			return err
+		}
+		rows := make([]models.MaintenanceResource, len(resources))
+		for i, r := range resources {
+			rows[i] = models.MaintenanceResource{
+				WindowID:     w.ID,
+				ResourceType: r.ResourceType,
+				ResourceID:   r.ResourceID,
+			}
+		}
+		if err := tx.Create(&rows).Error; err != nil {
+			return err
+		}
+		w.Resources = rows
+		return nil
+	})
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusCreated, w)
+}
+
+func normalizeMaintenanceResources(req maintenanceCreateRequest) []models.MaintenanceResource {
+	seen := map[string]bool{}
+	var out []models.MaintenanceResource
+	add := func(kind string, id uint) {
+		if kind == "" || id == 0 {
+			return
+		}
+		key := kind + ":" + fmt.Sprint(id)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, models.MaintenanceResource{ResourceType: kind, ResourceID: id})
+	}
+	for _, r := range req.Resources {
+		add(r.ResourceType, r.ResourceID)
+	}
+	add(req.ResourceType, req.ResourceID)
+	return out
+}
+
+func windowResources(w models.MaintenanceWindow) []models.MaintenanceResource {
+	if len(w.Resources) > 0 {
+		return w.Resources
+	}
+	if w.ResourceType != "" && w.ResourceID != 0 {
+		return []models.MaintenanceResource{{
+			WindowID:     w.ID,
+			ResourceType: w.ResourceType,
+			ResourceID:   w.ResourceID,
+		}}
+	}
+	return nil
+}
+
+func (ctrl *Controller) labeledResources(resources []models.MaintenanceResource) []maintenanceResourceView {
+	out := make([]maintenanceResourceView, 0, len(resources))
+	for _, r := range resources {
+		out = append(out, maintenanceResourceView{
+			ResourceType: r.ResourceType,
+			ResourceID:   r.ResourceID,
+			Label:        ctrl.resourceLabel(r.ResourceType, r.ResourceID),
+		})
+	}
+	return out
+}
+
+func (ctrl *Controller) resourceLabel(kind string, id uint) string {
+	switch kind {
+	case models.MaintResourceDevice:
+		var d models.Device
+		if ctrl.DB.Select("name").First(&d, id).Error == nil && d.Name != "" {
+			return d.Name
+		}
+	case models.MaintResourceConnection:
+		if label := ctrl.connectionLabel(id); label != "" {
+			return label
+		}
+	case models.MaintResourceInterface:
+		var iface models.Interface
+		if ctrl.DB.Select("name").First(&iface, id).Error == nil && iface.Name != "" {
+			return iface.Name
+		}
+	case models.MaintResourceWavelength, models.MaintResourceFiber:
+		var s models.Service
+		if ctrl.DB.Select("service_id").First(&s, id).Error == nil && s.ServiceID != "" {
+			return s.ServiceID
+		}
+	}
+	return fmt.Sprintf("%s #%d", kind, id)
+}
+
+func (ctrl *Controller) connectionLabel(id uint) string {
+	var conn models.Connection
+	if ctrl.DB.First(&conn, id).Error != nil {
+		return ""
+	}
+	var a, b models.Device
+	var ia, ib models.Interface
+	_ = ctrl.DB.Select("name").First(&a, conn.DeviceAID)
+	_ = ctrl.DB.Select("name").First(&b, conn.DeviceBID)
+	_ = ctrl.DB.Select("name").First(&ia, conn.InterfaceAID)
+	_ = ctrl.DB.Select("name").First(&ib, conn.InterfaceBID)
+	return connectionDisplayName(a.Name, ia.Name, b.Name, ib.Name, conn.Label)
 }
 
 func (ctrl *Controller) maintenanceResourceExists(kind string, id uint) error {
@@ -76,6 +225,8 @@ func (ctrl *Controller) maintenanceResourceExists(kind string, id uint) error {
 		ctrl.DB.Model(&models.Device{}).Where("id = ?", id).Count(&n)
 	case models.MaintResourceInterface:
 		ctrl.DB.Model(&models.Interface{}).Where("id = ?", id).Count(&n)
+	case models.MaintResourceWavelength, models.MaintResourceFiber:
+		ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Count(&n)
 	default:
 		return fmt.Errorf("invalid resource_type")
 	}
@@ -143,10 +294,10 @@ func (ctrl *Controller) ApiMaintenanceImpact(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 	var w models.MaintenanceWindow
-	if err := ctrl.DB.First(&w, id).Error; err != nil {
+	if err := ctrl.DB.Preload("Resources").First(&w, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
-	impact, err := optical.ResourceImpact(ctrl.DB, w.ResourceType, w.ResourceID)
+	impact, err := optical.ResourcesImpact(ctrl.DB, windowResources(w))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
@@ -163,7 +314,7 @@ func (ctrl *Controller) ApiMaintenanceNotify(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 	var w models.MaintenanceWindow
-	if err := ctrl.DB.First(&w, id).Error; err != nil {
+	if err := ctrl.DB.Preload("Resources").First(&w, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
 	if w.Status != models.MaintPlanned && w.Status != models.MaintNotified {
@@ -172,7 +323,7 @@ func (ctrl *Controller) ApiMaintenanceNotify(c *echo.Context) error {
 	var req maintenanceNotifyRequest
 	_ = c.Bind(&req)
 
-	impact, err := optical.ResourceImpact(ctrl.DB, w.ResourceType, w.ResourceID)
+	impact, err := optical.ResourcesImpact(ctrl.DB, windowResources(w))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}

@@ -87,6 +87,8 @@ const (
 	MaintResourceConnection = "connection"
 	MaintResourceDevice     = "device"
 	MaintResourceInterface  = "interface"
+	MaintResourceWavelength = "wavelength"
+	MaintResourceFiber      = "fiber"
 
 	MaintDraft      = "draft"
 	MaintPlanned    = "planned"
@@ -167,17 +169,30 @@ type ServiceHop struct {
 	Label        string `json:"label" gorm:"type:varchar(255)"`
 }
 
-// MaintenanceWindow is a scheduled outage on a connection, device, or interface.
+// MaintenanceWindow is a scheduled outage on one or more devices, fibers
+// (cables or LF/LI services), wavelengths (VL/VI), or interfaces.
+// ResourceType/ResourceID denormalize the first attached resource so list
+// queries and pre-join rows keep working; Resources is the full set.
 type MaintenanceWindow struct {
 	FactumModel
-	Title        string    `json:"title" gorm:"type:varchar(255);not null"`
-	Description  string    `json:"description" gorm:"type:text"`
-	ResourceType string    `json:"resource_type" gorm:"type:varchar(16);not null;index"`
-	ResourceID   uint      `json:"resource_id" gorm:"index;not null"`
-	StartsAt     time.Time `json:"starts_at" gorm:"index;not null"`
-	EndsAt       time.Time `json:"ends_at"`
-	Status       string    `json:"status" gorm:"type:varchar(16);not null;index"`
-	CreatedBy    uint      `json:"created_by"`
+	Title        string                `json:"title" gorm:"type:varchar(255);not null"`
+	Description  string                `json:"description" gorm:"type:text"`
+	ResourceType string                `json:"resource_type" gorm:"type:varchar(16);not null;index"`
+	ResourceID   uint                  `json:"resource_id" gorm:"index;not null"`
+	StartsAt     time.Time             `json:"starts_at" gorm:"index;not null"`
+	EndsAt       time.Time             `json:"ends_at"`
+	Status       string                `json:"status" gorm:"type:varchar(16);not null;index"`
+	CreatedBy    uint                  `json:"created_by"`
+	Resources    []MaintenanceResource `json:"resources,omitempty" gorm:"foreignKey:WindowID"`
+}
+
+// MaintenanceResource is one device, fiber, wavelength, or interface attached
+// to a window. Impact is the union across all rows for that window.
+type MaintenanceResource struct {
+	FactumModel
+	WindowID     uint   `json:"window_id" gorm:"uniqueIndex:idx_maint_resources;not null;index"`
+	ResourceType string `json:"resource_type" gorm:"uniqueIndex:idx_maint_resources;type:varchar(16);not null"`
+	ResourceID   uint   `json:"resource_id" gorm:"uniqueIndex:idx_maint_resources;not null"`
 }
 
 // MaintenanceNotification is one recipient row for a window.

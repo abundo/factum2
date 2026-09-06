@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/optical"
@@ -219,6 +220,67 @@ func (ctrl *Controller) ApiGetDevices(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"message": err.Error()})
 	}
 	return c.JSON(http.StatusOK, items)
+}
+
+// ConnectionListDTO is a cable for typeahead pickers (maintenance fibers).
+type ConnectionListDTO struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+func connectionDisplayName(deviceA, ifaceA, deviceB, ifaceB, label string) string {
+	left := strings.TrimSpace(deviceA + " " + ifaceA)
+	right := strings.TrimSpace(deviceB + " " + ifaceB)
+	name := left + " ↔ " + right
+	if label != "" {
+		name += " (" + label + ")"
+	}
+	return name
+}
+
+func (ctrl *Controller) ApiGetConnections(c *echo.Context) error {
+	ctx := c.Request().Context()
+	conns, err := gorm.G[models.Connection](ctrl.DB).Find(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if len(conns) == 0 {
+		return c.JSON(http.StatusOK, []ConnectionListDTO{})
+	}
+	deviceIDs := make([]uint, 0, len(conns)*2)
+	ifaceIDs := make([]uint, 0, len(conns)*2)
+	for _, conn := range conns {
+		deviceIDs = append(deviceIDs, conn.DeviceAID, conn.DeviceBID)
+		ifaceIDs = append(ifaceIDs, conn.InterfaceAID, conn.InterfaceBID)
+	}
+	devices, err := gorm.G[models.Device](ctrl.DB).Where("id IN ?", deviceIDs).Find(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	ifaces, err := gorm.G[models.Interface](ctrl.DB).Where("id IN ?", ifaceIDs).Find(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	deviceName := make(map[uint]string, len(devices))
+	for _, d := range devices {
+		deviceName[d.ID] = d.Name
+	}
+	ifaceName := make(map[uint]string, len(ifaces))
+	for _, i := range ifaces {
+		ifaceName[i.ID] = i.Name
+	}
+	out := make([]ConnectionListDTO, 0, len(conns))
+	for _, conn := range conns {
+		out = append(out, ConnectionListDTO{
+			ID: conn.ID,
+			Name: connectionDisplayName(
+				deviceName[conn.DeviceAID], ifaceName[conn.InterfaceAID],
+				deviceName[conn.DeviceBID], ifaceName[conn.InterfaceBID],
+				conn.Label,
+			),
+		})
+	}
+	return c.JSON(http.StatusOK, out)
 }
 
 // ApiGetDeviceByName returns the device with a given name as a one-element

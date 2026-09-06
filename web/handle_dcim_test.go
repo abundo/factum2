@@ -8,6 +8,49 @@ import (
 	"github.com/abundo/factum2/models"
 )
 
+func TestApiGetConnections(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/connections", nil, nil, nil)
+	if err := ctrl.ApiGetConnections(c); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	var empty []ConnectionListDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &empty); err != nil {
+		t.Fatalf("decode empty: %v", err)
+	}
+	if empty == nil {
+		t.Fatal("want [] not null")
+	}
+
+	devA := models.Device{Name: "pe-a", NetboxID: 201}
+	devB := models.Device{Name: "pe-b", NetboxID: 202}
+	db.Create(&devA)
+	db.Create(&devB)
+	ia := models.Interface{DeviceID: devA.ID, Name: "Eth1"}
+	ib := models.Interface{DeviceID: devB.ID, Name: "Eth2"}
+	db.Create(&ia)
+	db.Create(&ib)
+	db.Create(&models.Connection{
+		DeviceAID: devA.ID, InterfaceAID: ia.ID,
+		DeviceBID: devB.ID, InterfaceBID: ib.ID,
+		Label: "trunk",
+	})
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/connections", nil, nil, nil)
+	if err := ctrl.ApiGetConnections(c); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var rows []ConnectionListDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Name != "pe-a Eth1 ↔ pe-b Eth2 (trunk)" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestApiGetDevicesIncludeInterfaces(t *testing.T) {
 	db := newTestDB(t)
 	dev := models.Device{Name: "dns-sync-r1", NetboxID: 424242, PrimaryIPv4: "10.0.0.1/32"}
