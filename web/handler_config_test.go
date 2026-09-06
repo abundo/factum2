@@ -675,6 +675,72 @@ func TestConfigAssignmentListWinningRowsAfterCopy(t *testing.T) {
 	if rows[0].ScopeID != child.ID {
 		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
 	}
+	var orig models.ConfigAssignment
+	err = db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error
+	if err == nil {
+		t.Fatal("original assignment still on folder after MOVE")
+	}
+}
+
+func TestConfigAssignmentPutFolderRemapsToChild(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&folder).Error; err != nil {
+		t.Fatal(err)
+	}
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": folder.ID, "value": 9100,
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT folder status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var putRow models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &putRow); err != nil {
+		t.Fatal(err)
+	}
+	var child models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ? AND name = ?", folder.ID, models.ConfigScopeKindParameter, models.ConfigParametersChildName).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if putRow.ScopeID != child.ID {
+		t.Fatalf("PUT folder returned scope %d, want child %d", putRow.ScopeID, child.ID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(folder.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("GET folder rows = %d, want 1", len(rows))
+	}
+	if rows[0].ScopeID != child.ID {
+		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
+	}
+	var orig models.ConfigAssignment
+	if err := db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error; err == nil {
+		t.Fatal("PUT folder wrote an original on the folder")
+	}
 }
 
 func TestConfigAssignmentSecretPutUnchanged(t *testing.T) {

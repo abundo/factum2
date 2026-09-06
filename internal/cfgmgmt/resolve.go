@@ -241,13 +241,6 @@ func resolveDefAt(db *gorm.DB, def *models.ConfigVariableDef, start *models.Conf
 				return v, p, nil
 			}
 		}
-		v, ok, err := assignmentValueAt(db, def, node)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			return v, node, nil
-		}
 	}
 	if len(def.DefaultValue) > 0 && string(def.DefaultValue) != "null" {
 		v, err := TypeCheckRaw(def, def.DefaultValue)
@@ -265,7 +258,9 @@ func resolveDefAt(db *gorm.DB, def *models.ConfigVariableDef, start *models.Conf
 }
 
 // Resolve walks from the interface's start scope to root and returns the
-// first assignment of varName. Falls back to the def's DefaultValue.
+// first assignment of varName on an enabled parameter child. Falls back
+// to the def's DefaultValue. Assignments on the walked organizational
+// scope itself are ignored.
 func Resolve(db *gorm.DB, interfaceID uint, varName string) (any, *models.ConfigScope, error) {
 	def, err := loadVarDef(db, varName)
 	if err != nil {
