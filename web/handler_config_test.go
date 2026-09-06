@@ -763,3 +763,141 @@ func TestConfigAssignmentSecretPutUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigScopePutOmitsDoNotZero(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	en := true
+	node := models.ConfigScope{
+		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+		SortOrder: 7, Enabled: en,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatUint(uint64(node.ID), 10)
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/scopes/x", map[string]any{
+		"name": "qos-core",
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiConfigScopeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var stored models.ConfigScope
+	if err := db.First(&stored, node.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "qos-core" {
+		t.Errorf("name = %s", stored.Name)
+	}
+	if stored.SortOrder != 7 {
+		t.Errorf("sort_order = %d, want 7", stored.SortOrder)
+	}
+	if !stored.Enabled {
+		t.Fatal("enabled was zeroed")
+	}
+}
+
+func TestConfigScopeMoveAndDetach(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lab := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&lab).Error; err != nil {
+		t.Fatal(err)
+	}
+	sites := models.ConfigScope{ParentID: &root.ID, Name: "sites", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&sites).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := models.ConfigScope{ParentID: &root.ID, Name: "other", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-move", Platform: "eos", NetboxID: 501}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifc).Error; err != nil {
+		t.Fatal(err)
+	}
+	did := dev.ID
+	devScope, err := cfgmgmt.AttachDevice(db, lab.ID, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/scopes/x/move", map[string]any{
+		"parent_id": sites.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(lab.ID), 10)})
+	if err := ctrl.ApiConfigScopeMove(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("move folder status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/scopes/x", map[string]any{
+		"parent_id": devScope.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(other.ID), 10)})
+	if err := ctrl.ApiConfigScopeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT folder under device status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var ifaceScope models.ConfigScope
+	if err := db.Where("kind = ? AND interface_id = ?", models.ConfigScopeKindInterface, ifc.ID).First(&ifaceScope).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/move", map[string]any{
+		"parent_id": sites.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(ifaceScope.ID), 10)})
+	if err := ctrl.ApiConfigScopeMove(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("move interface status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConfigAssignment{VariableDefID: def.ID, ScopeID: ifaceScope.ID, Value: []byte("1500")}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/detach", nil, []string{"id"}, []string{strconv.FormatUint(uint64(devScope.ID), 10)})
+	if err := ctrl.ApiConfigScopeDetach(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("detach status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var still models.Device
+	if err := db.First(&still, dev.ID).Error; err != nil {
+		t.Fatalf("device row deleted: %v", err)
+	}
+	if _, err := cfgmgmt.GetScope(db, devScope.ID); err == nil {
+		t.Fatal("device scope still present")
+	}
+	var nAssign int64
+	if err := db.Model(&models.ConfigAssignment{}).Where("scope_id = ?", ifaceScope.ID).Count(&nAssign).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nAssign != 0 {
+		t.Fatal("assignments survived detach")
+	}
+}

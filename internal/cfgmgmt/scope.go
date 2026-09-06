@@ -2,6 +2,7 @@ package cfgmgmt
 
 import (
 	"errors"
+	"log/slog"
 	"sort"
 	"strconv"
 
@@ -54,16 +55,23 @@ func CreateScope(db *gorm.DB, s *models.ConfigScope) (*models.ConfigScope, error
 	if !ValidScopeKind(s.Kind) {
 		return nil, statusErr(400, "invalid kind")
 	}
+	var parent *models.ConfigScope
 	if s.ParentID != nil {
-		if _, err := GetScope(db, *s.ParentID); err != nil {
+		p, err := GetScope(db, *s.ParentID)
+		if err != nil {
 			return nil, err
 		}
+		parent = p
 	} else {
 		root, err := RootScope(db)
 		if err != nil {
 			return nil, err
 		}
 		s.ParentID = &root.ID
+		parent = root
+	}
+	if err := assertParentKind(s, parent); err != nil {
+		return nil, err
 	}
 	if err := assertScopeKindIDs(s); err != nil {
 		return nil, err
@@ -124,82 +132,120 @@ func assertScopeUnique(db *gorm.DB, s *models.ConfigScope, excludeID uint) error
 	return nil
 }
 
-func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScope) (*models.ConfigScope, error) {
-	existing, err := GetScope(db, id)
-	if err != nil {
-		return nil, err
+func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScopeDTO) (*models.ConfigScope, error) {
+	if patch == nil {
+		patch = &models.ConfigScopeDTO{}
 	}
-	root, err := RootScope(db)
-	if err != nil {
-		return nil, err
-	}
-	if existing.ID == root.ID {
-		if patch.ParentID != nil {
-			return nil, statusErr(400, "cannot reparent the global root")
-		}
-		if patch.Name != "" && patch.Name != existing.Name {
-			return nil, statusErr(400, "cannot rename the global root")
-		}
-		if patch.Kind != "" && patch.Kind != existing.Kind {
-			return nil, statusErr(400, "cannot change the kind of the global root")
-		}
-	}
-	if patch.Kind != "" && !ValidScopeKind(patch.Kind) {
-		return nil, statusErr(400, "invalid kind")
-	}
-	if patch.ParentID != nil {
-		if *patch.ParentID == existing.ID {
-			return nil, statusErr(400, "scope cannot be its own parent")
-		}
-		cycle, err := WouldCycle(db, existing.ID, *patch.ParentID)
+	var out *models.ConfigScope
+	err := db.Transaction(func(tx *gorm.DB) error {
+		existing, err := GetScope(tx, id)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if cycle {
-			return nil, statusErr(400, "scope parent cycle")
+		root, err := RootScope(tx)
+		if err != nil {
+			return err
 		}
-		existing.ParentID = patch.ParentID
-	}
-	if patch.Name != "" {
-		existing.Name = patch.Name
-	}
-	if patch.Kind != "" {
-		existing.Kind = patch.Kind
-	}
-	if patch.SiteID != nil {
-		existing.SiteID = patch.SiteID
-	}
-	if patch.DeviceID != nil {
-		existing.DeviceID = patch.DeviceID
-	}
-	if patch.InterfaceID != nil {
-		existing.InterfaceID = patch.InterfaceID
-	}
-	existing.SortOrder = patch.SortOrder
-	if scopePayloadSet(patch.Payload) {
-		existing.Payload = patch.Payload
-	}
-	kind := existing.Kind
-	if patch.Kind != "" {
-		kind = patch.Kind
-	}
-	if kind == models.ConfigScopeKindParameter || kind == models.ConfigScopeKindCLI {
-		// bool DTO: omit and false are the same. Apply when the client sent
-		// kind (fuller body) or enabled=true.
-		if patch.Kind != "" || patch.Enabled {
-			existing.Enabled = patch.Enabled
+		if existing.ID == root.ID {
+			if parentChanged(existing, patch.ParentID) {
+				return statusErr(400, "cannot reparent the global root")
+			}
+			if patch.Name != nil && *patch.Name != "" && *patch.Name != existing.Name {
+				return statusErr(400, "cannot rename the global root")
+			}
+			if patch.Kind != nil && *patch.Kind != "" && *patch.Kind != existing.Kind {
+				return statusErr(400, "cannot change the kind of the global root")
+			}
 		}
-	}
-	if err := assertScopeKindIDs(existing); err != nil {
+		if patch.Kind != nil && *patch.Kind != "" && !ValidScopeKind(*patch.Kind) {
+			return statusErr(400, "invalid kind")
+		}
+		kindChanged := patch.Kind != nil && *patch.Kind != "" && *patch.Kind != existing.Kind
+		if kindChanged {
+			existing.Kind = *patch.Kind
+		}
+		if parentChanged(existing, patch.ParentID) {
+			moved, err := moveScopeTx(tx, existing, *patch.ParentID, patch.SortOrder)
+			if err != nil {
+				return err
+			}
+			existing = moved
+			if kindChanged {
+				existing.Kind = *patch.Kind
+			}
+		} else {
+			if kindChanged {
+				if err := assertCurrentParentKind(tx, existing); err != nil {
+					return err
+				}
+			}
+			if patch.SortOrder != nil && existing.ParentID != nil {
+				if err := placeAmongSiblings(tx, existing.ID, *existing.ParentID, patch.SortOrder); err != nil {
+					return err
+				}
+				reloaded, err := GetScope(tx, id)
+				if err != nil {
+					return err
+				}
+				if kindChanged {
+					reloaded.Kind = *patch.Kind
+				}
+				existing = reloaded
+			}
+		}
+		if patch.Name != nil && *patch.Name != "" {
+			existing.Name = *patch.Name
+		}
+		if patch.Kind != nil && *patch.Kind != "" {
+			existing.Kind = *patch.Kind
+		}
+		if patch.SiteID != nil {
+			existing.SiteID = patch.SiteID
+		}
+		if patch.DeviceID != nil {
+			existing.DeviceID = patch.DeviceID
+		}
+		if patch.InterfaceID != nil {
+			existing.InterfaceID = patch.InterfaceID
+		}
+		if patch.ServiceID != nil {
+			existing.ServiceID = patch.ServiceID
+		}
+		if patch.ServiceTypeID != nil {
+			existing.ServiceTypeID = patch.ServiceTypeID
+		}
+		if patch.Platform != nil {
+			existing.Platform = *patch.Platform
+		}
+		if patch.PayloadKind != nil {
+			existing.PayloadKind = *patch.PayloadKind
+		}
+		if patch.Payload != nil {
+			existing.Payload = *patch.Payload
+		}
+		if patch.Enabled != nil {
+			if existing.Kind == models.ConfigScopeKindParameter || existing.Kind == models.ConfigScopeKindCLI {
+				existing.Enabled = *patch.Enabled
+			} else if !*patch.Enabled {
+				return statusErr(400, "enabled is only valid for parameter and cli")
+			}
+		}
+		if err := assertScopeKindIDs(existing); err != nil {
+			return err
+		}
+		if err := assertScopeUnique(tx, existing, existing.ID); err != nil {
+			return err
+		}
+		if err := tx.Save(existing).Error; err != nil {
+			return err
+		}
+		out = existing
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := assertScopeUnique(db, existing, existing.ID); err != nil {
-		return nil, err
-	}
-	if err := db.Save(existing).Error; err != nil {
-		return nil, err
-	}
-	return existing, nil
+	return out, nil
 }
 
 func DeleteScope(db *gorm.DB, id uint) error {
@@ -214,6 +260,9 @@ func DeleteScope(db *gorm.DB, id uint) error {
 	if existing.ID == root.ID {
 		return statusErr(400, "cannot delete the global root")
 	}
+	if existing.Kind == models.ConfigScopeKindInterface {
+		return statusErr(409, "managed by device")
+	}
 	var n int64
 	if err := db.Model(&models.ConfigScope{}).Where("parent_id = ?", id).Count(&n).Error; err != nil {
 		return err
@@ -222,17 +271,367 @@ func DeleteScope(db *gorm.DB, id uint) error {
 		return statusErr(409, "scope has children")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		if existing.Kind == models.ConfigScopeKindParameter {
-			if err := deleteParameterAssignments(tx, existing); err != nil {
-				return err
-			}
-		}
-		return tx.Delete(existing).Error
+		return deleteScopeSubtree(tx, []models.ConfigScope{*existing})
 	})
 }
 
-func scopePayloadSet(p models.ConfigScopePayload) bool {
-	return p.Description != "" || len(p.Platforms) > 0 || p.Context != nil
+func parentChanged(existing *models.ConfigScope, newParent *uint) bool {
+	if newParent == nil {
+		return false
+	}
+	if existing.ParentID == nil {
+		return true
+	}
+	return *existing.ParentID != *newParent
+}
+
+func isReservedFolder(s *models.ConfigScope, rootID uint) bool {
+	if s == nil || s.Kind != models.ConfigScopeKindFolder {
+		return false
+	}
+	if s.ParentID == nil {
+		return s.Name == models.ConfigRootName
+	}
+	if *s.ParentID != rootID {
+		return false
+	}
+	return s.Name == models.ConfigCatalogName || s.Name == models.ConfigServicesFolderName
+}
+
+func assertCurrentParentKind(db *gorm.DB, child *models.ConfigScope) error {
+	if child == nil || child.ParentID == nil {
+		return nil
+	}
+	parent, err := GetScope(db, *child.ParentID)
+	if err != nil {
+		return err
+	}
+	return assertParentKind(child, parent)
+}
+
+func organizationalParentKind(k string) bool {
+	switch k {
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
+		return true
+	}
+	return false
+}
+
+func assertParentKind(child, parent *models.ConfigScope) error {
+	if child == nil || parent == nil {
+		return statusErr(400, "parent scope not found")
+	}
+	switch child.Kind {
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
+		if organizationalParentKind(parent.Kind) {
+			return nil
+		}
+		return statusErr(400, child.Kind+" cannot be under "+parent.Kind)
+	case models.ConfigScopeKindDevice:
+		if organizationalParentKind(parent.Kind) {
+			return nil
+		}
+		return statusErr(400, "device cannot be under "+parent.Kind)
+	case models.ConfigScopeKindInterface:
+		if parent.Kind != models.ConfigScopeKindDevice {
+			return statusErr(400, "interface must be under its device")
+		}
+		if child.DeviceID == nil || parent.DeviceID == nil || *child.DeviceID != *parent.DeviceID {
+			return statusErr(400, "interface must be under its device")
+		}
+		return nil
+	case models.ConfigScopeKindParameter:
+		switch parent.Kind {
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface, models.ConfigScopeKindService:
+			return nil
+		}
+		return statusErr(400, "parameter cannot be under "+parent.Kind)
+	case models.ConfigScopeKindCLI:
+		switch parent.Kind {
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
+			return nil
+		}
+		return statusErr(400, "cli cannot be under "+parent.Kind)
+	case models.ConfigScopeKindService:
+		switch parent.Kind {
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+			models.ConfigScopeKindDevice:
+			return nil
+		}
+		return statusErr(400, "service cannot be under "+parent.Kind)
+	case models.ConfigScopeKindServiceEndpoint:
+		if parent.Kind != models.ConfigScopeKindService {
+			return statusErr(400, "service_endpoint must be under its service")
+		}
+		if child.ServiceID != nil && parent.ServiceID != nil && *child.ServiceID != *parent.ServiceID {
+			return statusErr(400, "service_endpoint must be under its service")
+		}
+		return nil
+	default:
+		return statusErr(400, "invalid kind")
+	}
+}
+
+func placeAmongSiblings(db *gorm.DB, nodeID, parentID uint, want *int) error {
+	var siblings []models.ConfigScope
+	if err := db.Where("parent_id = ? AND id <> ?", parentID, nodeID).
+		Order("sort_order, name").Find(&siblings).Error; err != nil {
+		return err
+	}
+	pos := len(siblings)
+	if want != nil {
+		pos = *want
+		if pos < 0 {
+			pos = 0
+		}
+		if pos > len(siblings) {
+			pos = len(siblings)
+		}
+	}
+	write := func(id uint, order int) error {
+		return db.Model(&models.ConfigScope{}).Where("id = ?", id).Update("sort_order", order).Error
+	}
+	i := 0
+	for _, s := range siblings {
+		if i == pos {
+			if err := write(nodeID, i); err != nil {
+				return err
+			}
+			i++
+		}
+		if err := write(s.ID, i); err != nil {
+			return err
+		}
+		i++
+	}
+	if pos >= i {
+		if err := write(nodeID, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func compactSiblings(db *gorm.DB, parentID uint) error {
+	var siblings []models.ConfigScope
+	if err := db.Where("parent_id = ?", parentID).Order("sort_order, name").Find(&siblings).Error; err != nil {
+		return err
+	}
+	for i := range siblings {
+		if siblings[i].SortOrder == i {
+			continue
+		}
+		if err := db.Model(&models.ConfigScope{}).Where("id = ?", siblings[i].ID).
+			Update("sort_order", i).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MoveScope reparents id under parentID. sortOrder nil means last sibling.
+func MoveScope(db *gorm.DB, id, parentID uint, sortOrder *int) (*models.ConfigScope, error) {
+	var out *models.ConfigScope
+	err := db.Transaction(func(tx *gorm.DB) error {
+		existing, err := GetScope(tx, id)
+		if err != nil {
+			return err
+		}
+		node, err := moveScopeTx(tx, existing, parentID, sortOrder)
+		if err != nil {
+			return err
+		}
+		out = node
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func moveScopeTx(tx *gorm.DB, existing *models.ConfigScope, parentID uint, sortOrder *int) (*models.ConfigScope, error) {
+	root, err := RootScope(tx)
+	if err != nil {
+		return nil, err
+	}
+	if existing.ID == root.ID {
+		return nil, statusErr(400, "cannot reparent the global root")
+	}
+	if existing.Kind == models.ConfigScopeKindInterface {
+		return nil, statusErr(409, "managed by device")
+	}
+	parent, err := GetScope(tx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	changed := parentChanged(existing, &parentID)
+	if changed && isReservedFolder(existing, root.ID) {
+		return nil, statusErr(400, "cannot reparent reserved folder")
+	}
+	if existing.Kind == models.ConfigScopeKindServiceEndpoint && changed {
+		return nil, statusErr(409, "service_endpoint parent cannot change")
+	}
+	if changed {
+		if parentID == existing.ID {
+			return nil, statusErr(400, "scope cannot be its own parent")
+		}
+		cycle, err := WouldCycle(tx, existing.ID, parentID)
+		if err != nil {
+			return nil, err
+		}
+		if cycle {
+			return nil, statusErr(400, "scope parent cycle")
+		}
+		if err := assertParentKind(existing, parent); err != nil {
+			return nil, err
+		}
+	}
+	oldParent := existing.ParentID
+	if changed && existing.Kind == models.ConfigScopeKindDevice {
+		if existing.DeviceID == nil || *existing.DeviceID == 0 {
+			return nil, statusErr(400, "device scope requires device_id")
+		}
+		node, err := AttachDevice(tx, parentID, *existing.DeviceID)
+		if err != nil {
+			return nil, err
+		}
+		existing = node
+	} else if changed {
+		existing.ParentID = &parentID
+		if err := tx.Save(existing).Error; err != nil {
+			return nil, err
+		}
+	}
+	if err := placeAmongSiblings(tx, existing.ID, parentID, sortOrder); err != nil {
+		return nil, err
+	}
+	if changed && oldParent != nil && *oldParent != parentID {
+		if err := compactSiblings(tx, *oldParent); err != nil {
+			return nil, err
+		}
+	}
+	existing, err = GetScope(tx, existing.ID)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("cfgmgmt move", "scope", existing.ID, "kind", existing.Kind, "parent", parentID)
+	return existing, nil
+}
+
+func deleteScopeSubtree(db *gorm.DB, scopes []models.ConfigScope) error {
+	for i := len(scopes) - 1; i >= 0; i-- {
+		s := &scopes[i]
+		if s.Kind == models.ConfigScopeKindParameter {
+			if err := deleteParameterAssignments(db, s); err != nil {
+				return err
+			}
+		}
+		if err := db.Where("scope_id = ?", s.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
+			return err
+		}
+		if err := db.Where("scope_id = ?", s.ID).Delete(&models.ConfigCLIFeature{}).Error; err != nil {
+			return err
+		}
+		if err := db.Delete(s).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func descendantIDs(db *gorm.DB, rootID uint) (map[uint]bool, error) {
+	rows, err := DescendantScopes(db, rootID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[uint]bool, len(rows))
+	for _, s := range rows {
+		ids[s.ID] = true
+	}
+	return ids, nil
+}
+
+func servicesFolder(db *gorm.DB) (*models.ConfigScope, error) {
+	root, err := RootScope(db)
+	if err != nil {
+		return nil, err
+	}
+	return ensureChildFolder(db, root.ID, models.ConfigServicesFolderName)
+}
+
+func detachDestParent(db *gorm.DB, device *models.ConfigScope) (*uint, error) {
+	if device.ParentID != nil {
+		if _, err := GetScope(db, *device.ParentID); err == nil {
+			return device.ParentID, nil
+		} else if se := AsStatusError(err); se == nil || se.Status != 404 {
+			return nil, err
+		}
+	}
+	sf, err := servicesFolder(db)
+	if err != nil {
+		return nil, err
+	}
+	return &sf.ID, nil
+}
+
+// DetachDevice removes a device scope and its config descendants. kind=service
+// children are reparented. The DCIM device row is never deleted.
+func DetachDevice(db *gorm.DB, id uint) error {
+	existing, err := GetScope(db, id)
+	if err != nil {
+		return err
+	}
+	if existing.Kind != models.ConfigScopeKindDevice {
+		return statusErr(400, "detach is only for device scopes")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		dest, err := detachDestParent(tx, existing)
+		if err != nil {
+			return err
+		}
+		var serviceKids []models.ConfigScope
+		if err := tx.Where("parent_id = ? AND kind = ?", existing.ID, models.ConfigScopeKindService).
+			Find(&serviceKids).Error; err != nil {
+			return err
+		}
+		keep := map[uint]bool{}
+		for i := range serviceKids {
+			ids, err := descendantIDs(tx, serviceKids[i].ID)
+			if err != nil {
+				return err
+			}
+			for id := range ids {
+				keep[id] = true
+			}
+			serviceKids[i].ParentID = dest
+			if err := tx.Save(&serviceKids[i]).Error; err != nil {
+				return err
+			}
+		}
+		desc, err := DescendantScopes(tx, existing.ID)
+		if err != nil {
+			return err
+		}
+		var toDelete []models.ConfigScope
+		for _, s := range desc {
+			if keep[s.ID] {
+				continue
+			}
+			toDelete = append(toDelete, s)
+		}
+		if err := deleteScopeSubtree(tx, toDelete); err != nil {
+			return err
+		}
+		parentID := uint(0)
+		if dest != nil {
+			parentID = *dest
+		}
+		slog.Info("cfgmgmt detach", "scope", existing.ID, "kind", existing.Kind, "parent", parentID)
+		return nil
+	})
 }
 
 func isOrganizationalScope(s *models.ConfigScope) bool {
@@ -324,7 +723,12 @@ func deleteParameterAssignments(db *gorm.DB, scope *models.ConfigScope) error {
 // AttachDevice creates or updates a device-kind node under parentID and
 // ensures a child interface node exists for each inventory interface.
 func AttachDevice(db *gorm.DB, parentID, deviceID uint) (*models.ConfigScope, error) {
-	if _, err := GetScope(db, parentID); err != nil {
+	parent, err := GetScope(db, parentID)
+	if err != nil {
+		return nil, err
+	}
+	probe := &models.ConfigScope{Kind: models.ConfigScopeKindDevice, DeviceID: &deviceID}
+	if err := assertParentKind(probe, parent); err != nil {
 		return nil, err
 	}
 	var device models.Device
