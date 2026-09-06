@@ -76,6 +76,47 @@ func TestMigrateDatabaseRefusesUnmigratedPack(t *testing.T) {
 	}
 }
 
+type leftoverTemplateRow struct {
+	ID       uint `gorm:"primaryKey"`
+	Name     string
+	Platform string
+	ScopeID  *uint
+}
+
+func (leftoverTemplateRow) TableName() string { return "config_templates" }
+
+func TestMigrateDatabaseRefusesUnmigratedTemplate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+
+	if err := db.AutoMigrate(&leftoverTemplateRow{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&leftoverTemplateRow{Name: "banner", Platform: "eos"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = MigrateDatabase(db)
+	if err == nil {
+		t.Fatal("expected migrate to refuse drop of unmigrated template")
+	}
+	if !strings.Contains(err.Error(), "cannot drop config_templates") {
+		t.Fatalf("err = %v", err)
+	}
+	if !db.Migrator().HasTable("config_templates") {
+		t.Fatal("config_templates was dropped despite unmigrated template")
+	}
+}
+
 // TestMigrateDatabaseEmptyPostgres is the production first-boot path that
 // used to fail with SQLSTATE 42P01 ("relation interfaces does not exist")
 // because dedupeInterfaces queried the table before AutoMigrate created it.

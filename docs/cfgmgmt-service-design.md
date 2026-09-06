@@ -61,8 +61,9 @@ for them.
 ```
 
 Platform packs and baseline templates were the previous composition units.
-They still exist as API tables until a later drop, but the **operator
-path is the tree**: CLI objects and parameter objects.
+They have been replaced by CLI objects; the old pack/template HTTP routes
+return 410. The **operator path is the tree**: CLI objects and parameter
+objects.
 
 ---
 
