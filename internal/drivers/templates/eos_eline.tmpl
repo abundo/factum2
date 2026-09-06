@@ -6,13 +6,13 @@ against a real device inside a configure session. Shared by ApplyELINE
 alone). */}}
 {{define "cleanup"}}
 mpls ldp
-pseudowires
-no pseudowire {{.Name}}
-exit
+  pseudowires
+  no pseudowire {{.Name}}
+  exit
 exit
 patch panel
-no patch {{.Name}}
-exit
+  no patch {{.Name}}
+  exit
 {{range .StaleSubinterfaces}}
 no interface {{.Iface}}.{{.VLAN}}
 {{end}}
@@ -20,12 +20,12 @@ no interface {{.Iface}}.{{.VLAN}}
 
 {{template "cleanup" .}}
 interface {{.LocalIface}}
-no switchport
+  no switchport
 interface {{.LocalIface}}.{{.LocalVLAN}}
-description {{.Description}}
-encapsulation vlan
-client dot1q {{.LocalVLAN}}
-exit
+  description {{.Description}}
+  encapsulation vlan
+    client dot1q {{.LocalVLAN}}
+    exit
 exit
 
 {{if .Remote}}

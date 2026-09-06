@@ -5,8 +5,8 @@ Assumed benign no-op when name doesn't exist yet. Shared by ApplyELINE
 alone). */}}
 {{define "cleanup"}}
 l2vpn
-xconnect group default
-no p2p {{.Name}}
+  xconnect group default
+  no p2p {{.Name}}
 root
 {{range .StaleSubinterfaces}}
 no interface {{.Iface}}.{{.VLAN}}
