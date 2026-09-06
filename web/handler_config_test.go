@@ -627,3 +627,128 @@ func TestConfigVariableGet_RejectsSQLInjectionInID(t *testing.T) {
 		t.Fatalf("numeric id status = %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestConfigAssignmentListWinningRowsAfterCopy(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&folder).Error; err != nil {
+		t.Fatal(err)
+	}
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: json.RawMessage(`1500`)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgmgmt.Seed(db); err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(folder.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("GET folder rows = %d, want 1", len(rows))
+	}
+	if rows[0].ScopeID == folder.ID {
+		t.Fatal("winner scope_id is the folder original, want parameters child")
+	}
+	var child models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ? AND name = ?", folder.ID, models.ConfigScopeKindParameter, models.ConfigParametersChildName).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].ScopeID != child.ID {
+		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
+	}
+}
+
+func TestConfigAssignmentSecretPutUnchanged(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/variables", map[string]any{
+		"name": "enable_secret", "type": "secret", "secret": true,
+	}, nil, nil)
+	if err := ctrl.ApiConfigVariableCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var def models.ConfigVariableDef
+	if err := json.Unmarshal(rec.Body.Bytes(), &def); err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": root.ID, "value": "s3cret",
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(root.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	var listed []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed = %d", len(listed))
+	}
+	var listedVal any
+	if err := json.Unmarshal(listed[0].Value, &listedVal); err != nil {
+		t.Fatal(err)
+	}
+	if listedVal != "***" {
+		t.Errorf("GET value = %#v, want redacted", listedVal)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": root.ID, "value": "***",
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put *** status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var stored []models.ConfigAssignment
+	if err := db.Where("variable_def_id = ?", def.ID).Find(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) == 0 {
+		t.Fatal("no stored assignments")
+	}
+	for _, a := range stored {
+		var v any
+		if err := json.Unmarshal(a.Value, &v); err != nil {
+			t.Fatal(err)
+		}
+		if v != "s3cret" {
+			t.Errorf("stored value = %#v, want s3cret (*** must not persist)", v)
+		}
+	}
+}

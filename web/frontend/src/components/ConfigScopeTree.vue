@@ -71,12 +71,12 @@ function renderCell(e) {
   for (const col of Object.values(e.renderColInfosById ?? {})) {
     const data = e.node.data ?? {}
     if (col.id === 'kind') {
-      col.elem.textContent = kindLabel(data.kind || e.node.type)
+      col.elem.textContent = kindLabel(data.kind || e.node.type, e.node.title)
     }
   }
 }
 
-function kindLabel(kind) {
+function kindLabel(kind, name) {
   switch (kind) {
     case 'folder':
       return 'Folder'
@@ -88,6 +88,8 @@ function kindLabel(kind) {
       return 'Device'
     case 'interface':
       return 'Interface'
+    case 'parameter':
+      return name === 'parameters' ? 'Parameters' : 'Parameter'
     default:
       return kind || ''
   }
@@ -144,6 +146,7 @@ function buildTree(source) {
       location: { icon: false },
       device: { icon: false },
       interface: { icon: false },
+      parameter: { icon: false },
     },
     render: renderCell,
     activate: (e) => emit('select', selectedPayload(e.node)),

@@ -33,7 +33,61 @@ func Seed(db *gorm.DB) error {
 	if err := seedELINEPacks(db, eline.ID); err != nil {
 		return err
 	}
+	if err := copyAssignmentsOntoParameterChildren(db); err != nil {
+		return err
+	}
 	return ensureScopeUniqueIndexes(db)
+}
+
+// copyAssignmentsOntoParameterChildren copies assignments on non-parameter
+// scopes onto a reserved kind=parameter child named "parameters", leaving
+// the originals.
+func copyAssignmentsOntoParameterChildren(db *gorm.DB) error {
+	var scopeIDs []uint
+	if err := db.Model(&models.ConfigAssignment{}).Distinct("scope_id").Pluck("scope_id", &scopeIDs).Error; err != nil {
+		return err
+	}
+	if len(scopeIDs) == 0 {
+		return nil
+	}
+	var scopes []models.ConfigScope
+	if err := db.Where("id IN ?", scopeIDs).Find(&scopes).Error; err != nil {
+		return err
+	}
+	for i := range scopes {
+		s := &scopes[i]
+		if s.Kind == models.ConfigScopeKindParameter {
+			continue
+		}
+		child, err := ensureParametersChild(db, s.ID)
+		if err != nil {
+			return err
+		}
+		var rows []models.ConfigAssignment
+		if err := db.Where("scope_id = ?", s.ID).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, a := range rows {
+			var n int64
+			if err := db.Model(&models.ConfigAssignment{}).
+				Where("variable_def_id = ? AND scope_id = ?", a.VariableDefID, child.ID).
+				Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				continue
+			}
+			cp := models.ConfigAssignment{
+				VariableDefID: a.VariableDefID,
+				ScopeID:       child.ID,
+				Value:         a.Value,
+			}
+			if err := db.Create(&cp).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func ensureScopeUniqueIndexes(db *gorm.DB) error {
