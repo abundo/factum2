@@ -461,7 +461,7 @@ func TestCycleRejected(t *testing.T) {
 	if !cycle {
 		t.Fatal("expected cycle")
 	}
-	_, err = UpdateScope(db, a.ID, &models.ConfigScope{ParentID: &b.ID})
+	_, err = UpdateScope(db, a.ID, &models.ConfigScopeDTO{ParentID: &b.ID})
 	if err == nil {
 		t.Fatal("update should reject cycle")
 	}
@@ -912,7 +912,8 @@ func TestUpdateScopeRejectsDuplicateDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := d1.ID
-	if _, err := UpdateScope(db, n2.ID, &models.ConfigScope{DeviceID: &id, Kind: models.ConfigScopeKindDevice}); err == nil {
+	kind := models.ConfigScopeKindDevice
+	if _, err := UpdateScope(db, n2.ID, &models.ConfigScopeDTO{DeviceID: &id, Kind: &kind}); err == nil {
 		t.Fatal("expected duplicate device scope")
 	}
 	_ = n1
@@ -971,10 +972,12 @@ func TestRootCannotBeRenamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateScope(db, root.ID, &models.ConfigScope{Name: "not-global"}); err == nil {
+	name := "not-global"
+	if _, err := UpdateScope(db, root.ID, &models.ConfigScopeDTO{Name: &name}); err == nil {
 		t.Fatal("expected rename reject")
 	}
-	if _, err := UpdateScope(db, root.ID, &models.ConfigScope{Kind: models.ConfigScopeKindSite}); err == nil {
+	kind := models.ConfigScopeKindSite
+	if _, err := UpdateScope(db, root.ID, &models.ConfigScopeDTO{Kind: &kind}); err == nil {
 		t.Fatal("expected kind change reject")
 	}
 }
@@ -1394,7 +1397,7 @@ func TestUpdateScopePayloadAndEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	node, err := CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter, SortOrder: 4,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1402,9 +1405,8 @@ func TestUpdateScopePayloadAndEnabled(t *testing.T) {
 	if !node.Enabled {
 		t.Fatal("create should default Enabled")
 	}
-	updated, err := UpdateScope(db, node.ID, &models.ConfigScope{
-		Payload: models.ConfigScopePayload{Platforms: []string{"eos"}, Description: "NTP"},
-	})
+	payload := models.ConfigScopePayload{Platforms: []string{"eos"}, Description: "NTP"}
+	updated, err := UpdateScope(db, node.ID, &models.ConfigScopeDTO{Payload: &payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1414,7 +1416,11 @@ func TestUpdateScopePayloadAndEnabled(t *testing.T) {
 	if !updated.Enabled {
 		t.Fatal("name-less payload patch disabled the node")
 	}
-	renamed, err := UpdateScope(db, node.ID, &models.ConfigScope{Name: "qos-core"})
+	if updated.SortOrder != 4 {
+		t.Fatalf("sort_order = %d, want 4", updated.SortOrder)
+	}
+	name := "qos-core"
+	renamed, err := UpdateScope(db, node.ID, &models.ConfigScopeDTO{Name: &name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1424,9 +1430,8 @@ func TestUpdateScopePayloadAndEnabled(t *testing.T) {
 	if renamed.Payload.Description != "NTP" || !renamed.Enabled {
 		t.Fatalf("rename wiped payload/enabled: %+v", renamed)
 	}
-	disabled, err := UpdateScope(db, node.ID, &models.ConfigScope{
-		Kind: models.ConfigScopeKindParameter, Enabled: false,
-	})
+	en := false
+	disabled, err := UpdateScope(db, node.ID, &models.ConfigScopeDTO{Enabled: &en})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1521,5 +1526,177 @@ func TestResolveParameterObjectFilter(t *testing.T) {
 	}
 	if n, _ := asInt(v); n != 1234 {
 		t.Errorf("fallback child value = %v, want 1234", v)
+	}
+}
+
+func wantStatus(t *testing.T, err error, status int) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected status %d, got nil", status)
+	}
+	se := AsStatusError(err)
+	if se == nil {
+		t.Fatalf("expected StatusError %d, got %v", status, err)
+	}
+	if se.Status != status {
+		t.Fatalf("status = %d (%s), want %d", se.Status, se.Message, status)
+	}
+}
+
+func TestMoveFolderUnderFolderOKUnderDeviceRejected(t *testing.T) {
+	db := newTestDB(t)
+	global, folder, deviceScope, _, _ := seedTree(t, db)
+	child, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &global.ID, Name: "sites", Kind: models.ConfigScopeKindFolder,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MoveScope(db, child.ID, folder.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.ParentID == nil || *moved.ParentID != folder.ID {
+		t.Fatalf("parent = %v, want folder %d", moved.ParentID, folder.ID)
+	}
+	_, err = MoveScope(db, child.ID, deviceScope.ID, nil)
+	wantStatus(t, err, 400)
+}
+
+func TestMoveInterfaceRejected(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, ifaceScope, _ := seedTree(t, db)
+	_, err := MoveScope(db, ifaceScope.ID, folder.ID, nil)
+	wantStatus(t, err, 409)
+	err = DeleteScope(db, ifaceScope.ID)
+	wantStatus(t, err, 409)
+}
+
+func TestMoveCycleRejected(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := models.ConfigScope{ParentID: &root.ID, Name: "a", Kind: models.ConfigScopeKindFolder}
+	mustCreate(t, db, &a)
+	b := models.ConfigScope{ParentID: &a.ID, Name: "b", Kind: models.ConfigScopeKindFolder}
+	mustCreate(t, db, &b)
+	_, err = MoveScope(db, a.ID, b.ID, nil)
+	wantStatus(t, err, 400)
+	if se := AsStatusError(err); se != nil && se.Message != "scope parent cycle" {
+		t.Errorf("message = %q, want scope parent cycle", se.Message)
+	}
+}
+
+func TestGrandfatherIllegalParentNameUpdate(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, deviceScope, _, _ := seedTree(t, db)
+	illegal := models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: "under-device", Kind: models.ConfigScopeKindFolder,
+	}
+	mustCreate(t, db, &illegal)
+	name := "still-there"
+	updated, err := UpdateScope(db, illegal.ID, &models.ConfigScopeDTO{Name: &name})
+	if err != nil {
+		t.Fatalf("name-only update of grandfathered node: %v", err)
+	}
+	if updated.Name != name {
+		t.Fatalf("name = %s", updated.Name)
+	}
+	if updated.ParentID == nil || *updated.ParentID != deviceScope.ID {
+		t.Fatal("name-only update reparented")
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: "new-folder", Kind: models.ConfigScopeKindFolder,
+	})
+	wantStatus(t, err, 400)
+	_, err = MoveScope(db, folder.ID, deviceScope.ID, nil)
+	wantStatus(t, err, 400)
+}
+
+func TestDetachDeviceKeepsDCIMRemovesSubtree(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, deviceScope, ifaceScope, iface := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: ifaceScope.ID, Value: jsonRaw(t, 1500)})
+	cli := models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
+		Platform: "eos", PayloadKind: models.PayloadKindCLI, Enabled: true,
+	}
+	mustCreate(t, db, &cli)
+	feat := models.ConfigCLIFeature{ScopeID: cli.ID, Name: "apply", AddCommands: "banner motd"}
+	mustCreate(t, db, &feat)
+	svcRow := models.Service{ServiceID: "CN00099", ServiceType: "ELINE"}
+	mustCreate(t, db, &svcRow)
+	sid := svcRow.ID
+	svcScope := models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: svcRow.ServiceID, Kind: models.ConfigScopeKindService, ServiceID: &sid,
+	}
+	mustCreate(t, db, &svcScope)
+
+	if err := DetachDevice(db, deviceScope.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var dev models.Device
+	if err := db.First(&dev, iface.DeviceID).Error; err != nil {
+		t.Fatalf("device row deleted: %v", err)
+	}
+	if _, err := GetScope(db, deviceScope.ID); err == nil {
+		t.Fatal("device scope still present")
+	}
+	if _, err := GetScope(db, ifaceScope.ID); err == nil {
+		t.Fatal("interface scope still present")
+	}
+	if _, err := GetScope(db, cli.ID); err == nil {
+		t.Fatal("cli scope still present")
+	}
+	var nFeat int64
+	if err := db.Model(&models.ConfigCLIFeature{}).Where("id = ?", feat.ID).Count(&nFeat).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nFeat != 0 {
+		t.Fatal("cli feature survived detach")
+	}
+	var nAssign int64
+	if err := db.Model(&models.ConfigAssignment{}).Where("scope_id = ?", ifaceScope.ID).Count(&nAssign).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nAssign != 0 {
+		t.Fatal("assignments survived detach")
+	}
+	reloaded, err := GetScope(db, svcScope.ID)
+	if err != nil {
+		t.Fatalf("service scope deleted: %v", err)
+	}
+	if reloaded.ParentID == nil || *reloaded.ParentID != folder.ID {
+		t.Fatalf("service parent = %v, want folder %d", reloaded.ParentID, folder.ID)
+	}
+}
+
+func TestMoveDeviceRefreshesInterfaces(t *testing.T) {
+	db := newTestDB(t)
+	global, _, deviceScope, ifaceScope, iface := seedTree(t, db)
+	other := models.Interface{DeviceID: iface.DeviceID, Name: "Ethernet2", Type: "1000base-t", NetboxID: 2}
+	mustCreate(t, db, &other)
+	moved, err := MoveScope(db, deviceScope.ID, global.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.ParentID == nil || *moved.ParentID != global.ID {
+		t.Fatalf("parent = %v, want global %d", moved.ParentID, global.ID)
+	}
+	found, err := scopeByInterfaceID(db, other.ID)
+	if err != nil || found == nil {
+		t.Fatalf("new interface child missing: %v", err)
+	}
+	old, err := GetScope(db, ifaceScope.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.ParentID == nil || *old.ParentID != deviceScope.ID {
+		t.Fatal("existing interface child reparented")
 	}
 }

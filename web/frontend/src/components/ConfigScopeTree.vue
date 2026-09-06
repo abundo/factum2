@@ -7,8 +7,9 @@ import '@/assets/wunderbaum-theme.css'
 
 const props = defineProps({
   reloadKey: { type: Number, default: 0 },
+  canWrite: { type: Boolean, default: false },
 })
-const emit = defineEmits(['contextmenu', 'select'])
+const emit = defineEmits(['contextmenu', 'select', 'move'])
 
 const el = ref(null)
 let tree
@@ -90,6 +91,12 @@ function kindLabel(kind, name) {
       return 'Interface'
     case 'parameter':
       return name === 'parameters' ? 'Parameters' : 'Parameter'
+    case 'cli':
+      return 'CLI'
+    case 'service':
+      return 'Service'
+    case 'service_endpoint':
+      return 'Endpoint'
     default:
       return kind || ''
   }
@@ -147,9 +154,42 @@ function buildTree(source) {
       device: { icon: false },
       interface: { icon: false },
       parameter: { icon: false },
+      cli: { icon: false },
+      service: { icon: false },
+      service_endpoint: { icon: false },
     },
     render: renderCell,
     activate: (e) => emit('select', selectedPayload(e.node)),
+    dnd: {
+      dragStart: (e) => {
+        if (!props.canWrite) return false
+        const kind = e.node.data?.kind || e.node.type
+        if (kind === 'interface') return false
+        if (kind === 'folder' && e.node.title === 'global' && !e.node.data?.parent_id) return false
+        return true
+      },
+      dragEnter: () => ['over', 'before', 'after'],
+      drop: (e) => {
+        const source = e.sourceNode
+        const target = e.node
+        if (!source?.data?.id || !target) return
+        const mode = e.suggestedDropMode
+        let parentId
+        let sortOrder = null
+        if (mode === 'appendChild') {
+          parentId = target.data?.id
+        } else {
+          parentId = target.data?.parent_id
+          if (!parentId) return
+          const remaining = (target.parent?.children ?? []).filter((n) => n.key !== source.key)
+          const idx = remaining.findIndex((n) => n.key === target.key)
+          sortOrder = mode === 'before' ? idx : idx + 1
+          if (idx < 0) sortOrder = remaining.length
+        }
+        if (!parentId || parentId === source.data.id) return
+        emit('move', { id: source.data.id, parent_id: parentId, sort_order: sortOrder })
+      },
+    },
   })
   bindContextMenu()
 }

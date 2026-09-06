@@ -37,12 +37,43 @@ func (ctrl *Controller) ApiConfigScopeTree(c *echo.Context) error {
 	return c.JSON(http.StatusOK, tree)
 }
 
+func scopeFromDTO(dto *models.ConfigScopeDTO) models.ConfigScope {
+	row := models.ConfigScope{
+		ParentID: dto.ParentID, SiteID: dto.SiteID,
+		DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
+		ServiceID: dto.ServiceID, ServiceTypeID: dto.ServiceTypeID,
+	}
+	if dto.Name != nil {
+		row.Name = *dto.Name
+	}
+	if dto.Kind != nil {
+		row.Kind = *dto.Kind
+	}
+	if dto.Platform != nil {
+		row.Platform = *dto.Platform
+	}
+	if dto.PayloadKind != nil {
+		row.PayloadKind = *dto.PayloadKind
+	}
+	if dto.SortOrder != nil {
+		row.SortOrder = *dto.SortOrder
+	}
+	if dto.Payload != nil {
+		row.Payload = *dto.Payload
+	}
+	return row
+}
+
 func (ctrl *Controller) ApiConfigScopeCreate(c *echo.Context) error {
 	var dto models.ConfigScopeDTO
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if dto.DeviceID != nil && dto.Kind == models.ConfigScopeKindDevice {
+	kind := ""
+	if dto.Kind != nil {
+		kind = *dto.Kind
+	}
+	if dto.DeviceID != nil && kind == models.ConfigScopeKindDevice {
 		parent := uint(0)
 		if dto.ParentID != nil {
 			parent = *dto.ParentID
@@ -59,11 +90,7 @@ func (ctrl *Controller) ApiConfigScopeCreate(c *echo.Context) error {
 		}
 		return c.JSON(http.StatusCreated, node)
 	}
-	row := models.ConfigScope{
-		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
-		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder, Payload: dto.Payload,
-	}
+	row := scopeFromDTO(&dto)
 	created, err := cfgmgmt.CreateScope(ctrl.DB, &row)
 	if err != nil {
 		return configWriteError(c, err)
@@ -80,12 +107,7 @@ func (ctrl *Controller) ApiConfigScopeUpdate(c *echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row := models.ConfigScope{
-		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
-		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder, Payload: dto.Payload, Enabled: dto.Enabled,
-	}
-	updated, err := cfgmgmt.UpdateScope(ctrl.DB, id, &row)
+	updated, err := cfgmgmt.UpdateScope(ctrl.DB, id, &dto)
 	if err != nil {
 		return configWriteError(c, err)
 	}
@@ -98,6 +120,33 @@ func (ctrl *Controller) ApiConfigScopeDelete(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
 	}
 	if err := cfgmgmt.DeleteScope(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) ApiConfigScopeMove(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var req models.MoveScopeRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	updated, err := cfgmgmt.MoveScope(ctrl.DB, id, req.ParentID, req.SortOrder)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+func (ctrl *Controller) ApiConfigScopeDetach(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if err := cfgmgmt.DetachDevice(ctrl.DB, id); err != nil {
 		return configWriteError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)

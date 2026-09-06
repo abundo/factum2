@@ -15,6 +15,8 @@ import {
   deleteServiceType,
   deleteTemplate,
   deleteVariable,
+  detachScope,
+  moveScope,
   getMatrix,
   listAssignments,
   listMacros,
@@ -196,6 +198,10 @@ function applyFilter(q) {
   treeRef.value?.filter(q)
 }
 
+function isOrgKind(kind) {
+  return kind === 'folder' || kind === 'site' || kind === 'location'
+}
+
 function itemsFor(node) {
   const write = authStore.canWrite
   if (!write) {
@@ -212,13 +218,17 @@ function itemsFor(node) {
   const items = [
     { id: 'expand', label: 'Expand' },
     { id: 'collapse', label: 'Collapse' },
-    { id: 'sep' },
-    { id: 'add-folder', label: 'Add child folder' },
   ]
-  if (node.kind !== 'interface') {
+  if (isOrgKind(node.kind)) {
+    items.push({ id: 'sep' }, { id: 'add-folder', label: 'Add child folder' })
     items.push({ id: 'attach-device', label: 'Attach device' })
   }
-  if (node.kind !== 'folder' || node.title !== 'global' || node.parent_id) {
+  if (node.kind === 'device') {
+    items.push({ id: 'sep2' }, { id: 'detach', label: 'Detach', danger: true })
+  } else if (
+    node.kind !== 'interface' &&
+    (node.kind !== 'folder' || node.title !== 'global' || node.parent_id)
+  ) {
     items.push({ id: 'sep2' }, { id: 'del', label: 'Delete', danger: true })
   }
   return items
@@ -287,6 +297,21 @@ async function runMenu(id) {
   if (id === 'del' && node?.id) {
     confirm.value = { kind: 'scope', id: node.id, label: node.title }
   }
+  if (id === 'detach' && node?.id) {
+    confirm.value = { kind: 'detach', id: node.id, label: node.title }
+  }
+}
+
+function onMove({ id, parent_id, sort_order }) {
+  const body = { parent_id }
+  if (sort_order != null) body.sort_order = sort_order
+  moveScope(id, body)
+    .then(() => {
+      reloadKey.value += 1
+    })
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Move failed.') }),
+    )
 }
 
 function saveDialog() {
@@ -337,6 +362,7 @@ function performDelete() {
   saving.value = true
   let req
   if (c.kind === 'scope') req = deleteScope(c.id)
+  if (c.kind === 'detach') req = detachScope(c.id)
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
   if (c.kind === 'type') req = deleteServiceType(c.id).then(loadTypes)
   if (c.kind === 'pack') req = deletePlatformPack(c.id).then(loadPacks)
@@ -351,10 +377,14 @@ function performDelete() {
   req
     .then(() => {
       confirm.value = null
-      if (c.kind === 'scope') reloadKey.value += 1
+      if (c.kind === 'scope' || c.kind === 'detach') reloadKey.value += 1
     })
     .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Delete failed.') }),
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, c.kind === 'detach' ? 'Detach failed.' : 'Delete failed.'),
+      }),
     )
     .finally(() => {
       saving.value = false
@@ -793,9 +823,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             <ConfigScopeTree
               ref="treeRef"
               :reload-key="reloadKey"
+              :can-write="authStore.canWrite"
               class="min-h-0 flex-1"
               @contextmenu="onContextMenu"
               @select="onSelect"
+              @move="onMove"
             />
           </div>
           <div class="flex min-h-0 flex-col gap-3 overflow-auto">
@@ -1542,11 +1574,25 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </template>
   </UModal>
 
-  <UModal :open="!!confirm" title="Confirm delete" @update:open="(v) => !v && (confirm = null)">
-    <template #body> Delete {{ confirm?.label }}? </template>
+  <UModal
+    :open="!!confirm"
+    :title="confirm?.kind === 'detach' ? 'Confirm detach' : 'Confirm delete'"
+    @update:open="(v) => !v && (confirm = null)"
+  >
+    <template #body>
+      <span v-if="confirm?.kind === 'detach'">
+        Detach {{ confirm?.label }} from the tree? The device remains in inventory.
+      </span>
+      <span v-else> Delete {{ confirm?.label }}? </span>
+    </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="confirm = null" />
-      <UButton label="Delete" color="error" :loading="saving" @click="performDelete" />
+      <UButton
+        :label="confirm?.kind === 'detach' ? 'Detach' : 'Delete'"
+        color="error"
+        :loading="saving"
+        @click="performDelete"
+      />
     </template>
   </UModal>
 </template>
