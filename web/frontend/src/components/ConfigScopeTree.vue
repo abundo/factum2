@@ -77,6 +77,14 @@ function renderCell(e) {
   }
 }
 
+function isReservedFolderNode(node) {
+  const kind = node.data?.kind || node.type
+  if (kind !== 'folder') return false
+  const name = node.title
+  if (name === 'global' && !node.data?.parent_id) return true
+  return name === '_catalog' || name === '_services'
+}
+
 function kindLabel(kind, name) {
   switch (kind) {
     case 'folder':
@@ -165,7 +173,7 @@ function buildTree(source) {
         if (!props.canWrite) return false
         const kind = e.node.data?.kind || e.node.type
         if (kind === 'interface') return false
-        if (kind === 'folder' && e.node.title === 'global' && !e.node.data?.parent_id) return false
+        if (isReservedFolderNode(e.node)) return false
         return true
       },
       dragEnter: () => ['over', 'before', 'after'],
