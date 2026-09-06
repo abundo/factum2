@@ -304,15 +304,30 @@ VID. VRP's read side has no dot1q-tunnel/Q-in-Q support, so neither does
 the write side - callers must not pass `VLANConfig.SwitchportMode ==
 "dot1q-tunnel"` for this driver.
 
+`ApplyCLISession` is the cfgmgmt/service-push path: already-rendered CLI
+lines are pasted inside a `system-view` session via `sshRunCLIPipeline`
+(one idle wait for the whole batch, same as XR/SR OS ELINE apply) and
+always followed by `return` so nested views don't leave the shell in
+config mode. VRP applies each line to running immediately - there is no
+candidate/commit, and this path does not `save` (persistence stays
+`RunningConfigSave`). CLI errors (`Error: ...`) are scanned out of the
+combined output because the classic CLI keeps accepting lines after a
+rejected one. `sessionName` is ignored; VRP has no named configure
+sessions. Two-stage/candidate configuration (where `return` would prompt
+to discard uncommitted changes) is not supported, matching the existing
+`SetInterfaceDescription(s)` write path.
+
 `GetDeviceConfig` parses `display current-config` via the same hierarchical
 CLI parser (`config_context.go`) and `tagparse.go` engine IOS-XR uses (with
 VRP's own comment character, `#`). VRP has no ELINE/ELAN/VRF/L3VPN parsing
 
 - only interfaces and global VLANs are populated; those maps stay empty.
-  VRP also has no ELINE _write_ support at all (no `driver_vrp_eline.go`) -
+  VRP also has no `ApplyELINE`/`RemoveELINE` (no `driver_vrp_eline.go`) -
   `ELINEApplier`/`ELINERemover` are deliberately separate interfaces from
-  `DriverClient` for exactly this reason, so a platform without ELINE support
-  never needs a stub method.
+  `DriverClient` for exactly this reason, so a platform without ELINE
+  support never needs a stub method. Service push still works when a CLI
+  object exists: that path type-asserts `CLISessionApplier`, which VRP
+  now implements.
 
 ## Open ROADM (`driver_openroadm.go`, `driver_openroadm_xml.go`)
 

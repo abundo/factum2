@@ -44,7 +44,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 ### What stays
 
 - Go + Echo + Gorm/Postgres + Vue 3 / Nuxt UI Config page. No new product.
-- Drivers still execute; CLI objects are data. Huawei `vrp` can preview and cannot apply CLI sessions (`CLISessionApplier` is implemented for EOS / IOS-XR / SR OS only). `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupPlatformPack` today).
+- Drivers still execute; CLI objects are data. Huawei `vrp` implements `CLISessionApplier` (SSH `system-view` session) alongside EOS / IOS-XR / SR OS. `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupPlatformPack` today).
 - Lime-owned commercial fields stay Lime-owned (`Service.Source == "lime"`).
 - Secrets remain `***` on **read** of variable defs and assignments (`cfgmgmt.RedactAssignmentSecrets`, `RedactVariableSecrets`). PUT-unchanged for `***` / omit / JSON null exists today **only** for variable-def defaults (`ApiConfigVariableUpdate`). Assignment upsert (`UpsertAssignment`) currently always saves `dto.Value` and will persist `"***"` if the GUI re-saves a redacted cell. Parameter objects must **implement** that contract on assignment write; it is not already there.
 - Wavelength / dark fiber stay inventory-only. No CLI objects for them.
@@ -89,7 +89,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 
 6. **Device in the tree is attach-only.** Add = `AttachDevice` (existing). Remove = `DetachDevice` (new): delete the device scope’s **config** descendants, reparent `kind=service` children, **never** `DELETE FROM devices`. Update = reparent, refresh interface children (v1 add-only, same as `ensureInterfaceChildren` today), display DCIM fields read-only. Rationale: NetBox is upstream for inventory. Today’s `DeleteScope` 409s because attach always created interface children.
 
-7. **Render is additive for CLI, override for parameters. Push stays service-only.** After a move, resolve walks the new parent chain. Baseline CLI on the ancestor chain all **preview** (ancestor first, then device, then per-interface). Service-translation CLI is looked up **globally** by `(service_type, platform)`, ignoring tree location. **Apply** is still `POST /api/service/:id/push` (cleanup then apply for that service). Baseline CLI is **not** sent in a service push. `sros-md` → `sros` fallback and `vrp` preview-only stay.
+7. **Render is additive for CLI, override for parameters. Push stays service-only.** After a move, resolve walks the new parent chain. Baseline CLI on the ancestor chain all **preview** (ancestor first, then device, then per-interface). Service-translation CLI is looked up **globally** by `(service_type, platform)`, ignoring tree location. **Apply** is still `POST /api/service/:id/push` (cleanup then apply for that service). Baseline CLI is **not** sent in a service push. `sros-md` → `sros` fallback stays.
 
 8. **Migration copies, dual-reads **and dual-writes**, then drops.** Assignments on non-parameter scopes are **copied** onto a child parameter object named `parameters`; originals stay until a later MOVE PR. During that window, PUT (folder **or** reserved `parameters` child) and DELETE of a winner write/delete **both** the child and the original row so a binary rollback to pre-PR2 `resolveDefAt` still sees the latest values — and a delete actually removes the var. Null-`scope_id` templates become **direct children of `global`**. Packs become CLI objects under `_catalog/cli/...`. Seed checksum hashes CLI features **and** context / `RemoveAtRoot` / `UpdateCommands`. Pack and template tables remain readable until a drop PR. `docs/cfgmgmt-service-design.md` is rewritten in the GUI/docs PR, not deleted.
 
@@ -603,7 +603,7 @@ Push (`apiServiceGenericPush`):
 - Unchanged entry point and credentials. **Does not include baseline CLI.**
 - Command list built by the service-translation renderer instead of `RenderPackApplyBody`.
 - `RequireCLIPack` becomes `RequireCLIObject` (must be `payload_kind=cli`, the **column**).
-- `isSupportedDriverPlatform` still includes `vrp` for other device APIs, but VRP has no `CLISessionApplier` — push returns the existing error, wording → `"CLI object exists but this platform cannot apply CLI sessions yet"`.
+- `isSupportedDriverPlatform` includes `vrp`; VRP implements `CLISessionApplier` (`system-view` … `return`). The `"CLI object exists but this platform cannot apply CLI sessions yet"` error remains for platforms whose driver does not.
 - ELINE: `PrepareELINEApply`, `stampELINEApplied`, abandoned-device teardown unchanged.
 - No automatic rollback of sibling devices (same as today).
 - Idempotency: feature remove blobs must be safe no-ops; this is an operator/seed contract, not something the engine proves.

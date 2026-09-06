@@ -4,6 +4,7 @@ package drivers
 // (SSH CLI only, no NETCONF/eAPI) and how it compares to the others.
 
 import (
+	"fmt"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -263,6 +264,63 @@ func (driver *VrpDriver) SetInterfaceVLANs(name []string, params []*VLANConfig) 
 	}
 	_, err = sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", cmds)
 	return err
+}
+
+// ----------------------------------------------------------------------
+// ApplyCLISession - already-rendered CLI lines inside a system-view
+// session. sessionName is ignored (VRP has no named configure sessions).
+// ----------------------------------------------------------------------
+
+// vrpCLIErrorMarkers matches VRP's "Error: ..." line prefix (e.g.
+// "Error: Unrecognized command found at '^' position.", "Error: The VLAN
+// does not exist."). sshRunCLIPipeline has no per-command status code -
+// the session keeps accepting lines after a rejected one - so an error
+// has to be found by scanning the captured output text.
+var vrpCLIErrorMarkers = regexp.MustCompile(`(?m)^\s*Error:`)
+
+// vrpFindCLIError returns the first error line found in output (the
+// combined capture for a whole sshRunCLIPipeline batch), or "" if none of
+// it looks like a VRP CLI error.
+func vrpFindCLIError(output string) string {
+	loc := vrpCLIErrorMarkers.FindStringIndex(output)
+	if loc == nil {
+		return ""
+	}
+	line := output[loc[0]:]
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	return strings.TrimSpace(line)
+}
+
+// vrpCLISessionCommands wraps cmds in system-view ... return without
+// touching the network, so the session shape is unit-testable the way
+// vrpInterfaceVLANsCommands is. "return" leaves user view from any nested
+// config depth (interface, vlan, ...) rather than requiring a matching
+// number of "quit"s.
+func vrpCLISessionCommands(cmds []string) []string {
+	full := append([]string{"system-view"}, cmds...)
+	return append(full, "return")
+}
+
+// vrpCLISession pastes cmds inside a system-view session. Each line is
+// applied to running immediately - VRP has no candidate/commit step here,
+// matching SetInterfaceDescriptions. Does not "save"; persistence is a
+// separate RunningConfigSave.
+func (driver *VrpDriver) vrpCLISession(cmds []string) error {
+	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", vrpCLISessionCommands(cmds), nil)
+	if err != nil {
+		return err
+	}
+	if msg := vrpFindCLIError(output); msg != "" {
+		return fmt.Errorf("vrp cli apply failed: %s", msg)
+	}
+	return nil
+}
+
+// ApplyCLISession implements CLISessionApplier for Huawei VRP.
+func (driver *VrpDriver) ApplyCLISession(_ string, cmds []string) error {
+	return driver.vrpCLISession(cmds)
 }
 
 // ----------------------------------------------------------------------

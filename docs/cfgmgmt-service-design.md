@@ -94,8 +94,7 @@ exist is a data migration, not a rename.
    scope tree, not on the service type. CLI blobs see them as `.Vars`.
 7. **Platforms you will push.** Each NOS needs its own CLI object.
    `sros-md` falls back to a `sros` object if no dedicated row exists.
-   Huawei `vrp` can store CLI and preview, but cannot apply a CLI session
-   yet.
+   Huawei `vrp` applies CLI sessions the same way as EOS / IOS-XR / SR OS.
 
 Built-in types seeded on migrate (`cfgmgmt.Seed`):
 
@@ -488,7 +487,7 @@ Baseline is not sent in a service push.
    - look up the translation CLI object for `service_type` + device
      platform (`sros-md` falls back to `sros`)
    - require `payload_kind=cli` and a `CLISessionApplier` driver
-     (`eos`, `ios-xr`, `sros` / `sros-md`)
+     (`eos`, `ios-xr`, `sros` / `sros-md`, `vrp`)
    - render cleanup once, then each endpoint body, one CLI session
    - ELINE: `PrepareELINEApply` (SR OS SDP guard), stamp `AppliedEndpoint*`,
      teardown abandoned devices

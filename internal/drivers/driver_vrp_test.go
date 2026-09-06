@@ -71,3 +71,63 @@ func TestVrpInterfaceVLANsCommandsMismatch(t *testing.T) {
 		t.Fatal("want error for mismatched name/config counts, got nil")
 	}
 }
+
+func TestVrpCLISessionCommands(t *testing.T) {
+	got := vrpCLISessionCommands([]string{
+		"interface GigabitEthernet0/0/1",
+		"description ID=CN00570 Acme AB",
+		"quit",
+	})
+	want := []string{
+		"system-view",
+		"interface GigabitEthernet0/0/1",
+		"description ID=CN00570 Acme AB",
+		"quit",
+		"return",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cmds = %v\nwant %v", got, want)
+	}
+}
+
+func TestVrpFindCLIError(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "no error",
+			output: "[HUAWEI]interface GigabitEthernet0/0/1\n[HUAWEI-GigabitEthernet0/0/1]description foo\n<HUAWEI>",
+			want:   "",
+		},
+		{
+			name:   "unrecognized command",
+			output: "interface GigabitEthernet0/0/1x\nError: Unrecognized command found at '^' position.\n[HUAWEI]",
+			want:   "Error: Unrecognized command found at '^' position.",
+		},
+		{
+			name:   "vlan missing",
+			output: "port default vlan 99\nError: The VLAN does not exist.\n[HUAWEI-GigabitEthernet0/0/1]",
+			want:   "Error: The VLAN does not exist.",
+		},
+		{
+			name:   "leading whitespace",
+			output: "commit\n  Error: The system is busy now, please try later.\n[HUAWEI]",
+			want:   "Error: The system is busy now, please try later.",
+		},
+		{
+			name:   "not a real marker mid-word",
+			output: "description Error: never matches mid-line\n[HUAWEI]",
+			want:   "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := vrpFindCLIError(c.output)
+			if got != c.want {
+				t.Errorf("vrpFindCLIError() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

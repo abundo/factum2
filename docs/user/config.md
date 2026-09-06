@@ -50,8 +50,8 @@ the update field is hidden.
   must stay at configure root (`no` / `delete` of a service object).
 
 Translation objects are looked up globally by service type + platform
-(`sros-md` falls back to `sros`). Huawei `vrp` can preview; it cannot
-apply a CLI session yet.
+(`sros-md` falls back to `sros`). Huawei `vrp` applies the same way as
+the other CLI platforms (`system-view` session).
 
 ## Devices and services
 
