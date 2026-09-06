@@ -161,19 +161,27 @@ function saveCLI() {
   if (!props.selected?.id) return
   saving.value = true
   const typeId = optionValue(cliForm.value.service_type_id)
+  const pattern = (cliForm.value.pattern ?? '').trim()
+  const enter = (cliForm.value.enter ?? '').trim()
+  const exit = (cliForm.value.exit ?? '').trim()
+  const prev = props.selected?.payload ?? {}
+  const merged = { ...prev, description: cliForm.value.description ?? '' }
+  if (pattern || enter || exit) {
+    merged.context = {
+      ...(prev.context ?? {}),
+      pattern,
+      enter,
+      exit,
+    }
+  } else {
+    delete merged.context
+  }
   const payload = {
     platform: optionValue(cliForm.value.platform) ?? '',
     payload_kind: optionValue(cliForm.value.payload_kind) || 'cli',
     enabled: !!cliForm.value.enabled,
     service_type_id: typeId || 0,
-    payload: {
-      description: cliForm.value.description ?? '',
-      context: {
-        pattern: cliForm.value.pattern ?? '',
-        enter: cliForm.value.enter ?? '',
-        exit: cliForm.value.exit ?? '',
-      },
-    },
+    payload: merged,
   }
   updateScope(props.selected.id, payload)
     .then(() => {

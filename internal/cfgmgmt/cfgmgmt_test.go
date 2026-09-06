@@ -2068,6 +2068,89 @@ func TestRenderDevicePrefersCLIOverTemplate(t *testing.T) {
 	}
 }
 
+func TestRenderDeviceTwinIgnoresTranslationAndOtherPlatform(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-twin-filter", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner from-template",
+		ScopeID: &root.ID, Enabled: true,
+	})
+	var eline models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
+		Platform: "eos", ServiceTypeID: &eline.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "sros",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawTmpl, sawCLI bool
+	for _, s := range out.Sources {
+		if s.Source == "template:banner" {
+			sawTmpl = true
+			if !reflect.DeepEqual(s.Commands, []string{"banner from-template"}) {
+				t.Errorf("template commands = %v", s.Commands)
+			}
+		}
+		if s.Source == "cli:banner" {
+			sawCLI = true
+		}
+	}
+	if !sawTmpl {
+		t.Fatal("eos template hidden by translation or sros CLI twin")
+	}
+	if sawCLI {
+		t.Fatal("translation/sros CLI should not render as baseline on eos")
+	}
+
+	disabled, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, err := UpdateScope(db, disabled.ID, &models.ConfigScopeDTO{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawTmpl, sawCLI = false, false
+	for _, s := range out.Sources {
+		if s.Source == "template:banner" {
+			sawTmpl = true
+		}
+		if s.Source == "cli:banner" {
+			sawCLI = true
+		}
+	}
+	if sawTmpl {
+		t.Fatal("disabled baseline CLI should still hide the matching template")
+	}
+	if sawCLI {
+		t.Fatal("disabled CLI should not emit commands")
+	}
+}
+
 func TestCreateScopeRejectsInvalidContextPattern(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)

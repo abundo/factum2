@@ -471,7 +471,7 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 		if t.ScopeID != nil && !scopeIDs[*t.ScopeID] {
 			continue
 		}
-		twin, err := hasCLITwin(db, t.Name, t.ScopeID)
+		twin, err := hasCLITwin(db, t.Name, t.ScopeID, t.Platform, device.Platform)
 		if err != nil {
 			return nil, err
 		}
