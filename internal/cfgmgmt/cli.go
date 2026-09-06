@@ -341,7 +341,7 @@ func RenderCLIObject(db *gorm.DB, obj *models.ConfigScope, data any) ([]string, 
 	return out, nil
 }
 
-func hasCLITwin(db *gorm.DB, name string, scopeID *uint) (bool, error) {
+func hasCLITwin(db *gorm.DB, name string, scopeID *uint, tmplPlatform, devicePlatform string) (bool, error) {
 	parentID := scopeID
 	if parentID == nil {
 		root, err := RootScope(db)
@@ -350,13 +350,35 @@ func hasCLITwin(db *gorm.DB, name string, scopeID *uint) (bool, error) {
 		}
 		parentID = &root.ID
 	}
-	var n int64
-	if err := db.Model(&models.ConfigScope{}).
-		Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, name, *parentID).
-		Count(&n).Error; err != nil {
+	var rows []models.ConfigScope
+	if err := db.Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, name, *parentID).
+		Find(&rows).Error; err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	for i := range rows {
+		s := &rows[i]
+		if isTranslationCLI(s) {
+			continue
+		}
+		// Disabled baseline objects still count so a migrated template is not
+		// resurrected after the operator turns the CLI object off.
+		if !cliTemplatePlatformsMatch(s.Platform, tmplPlatform) {
+			continue
+		}
+		if !platformMatch(s.Platform, devicePlatform) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// cliTemplatePlatformsMatch is empty-platform-matches-all on both sides.
+func cliTemplatePlatformsMatch(cliPlat, tmplPlat string) bool {
+	if strings.TrimSpace(cliPlat) == "" || strings.TrimSpace(tmplPlat) == "" {
+		return true
+	}
+	return NormalizePlatform(cliPlat) == NormalizePlatform(tmplPlat)
 }
 
 func reverseScopes(in []models.ConfigScope) []models.ConfigScope {
