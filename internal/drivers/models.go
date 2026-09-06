@@ -83,7 +83,7 @@ type Interface struct {
 	// Netbox interface standing in for one would otherwise look like it is.
 	Label string
 
-	// L2 switchport config, for global-VLAN platforms (EOS, VRP) where an
+	// L2 switchport config, for global-VLAN platforms (EOS, VRP, Cisco SMB) where an
 	// access/trunk port references DeviceConfig.GlobalVLANs by ID - bridge-
 	// domain platforms (IOS-XR, SR OS) don't use these, since their VLANs
 	// are scoped per bridge-domain/ELAN instead, not global to the device.
@@ -95,8 +95,8 @@ type Interface struct {
 	// transport rather than L3/IP routing - IOS-XR's "interface X
 	// l2transport" and VRP's "interface X mode l2", both trailing tokens on
 	// the interface line itself rather than a child line. Distinct from
-	// SwitchportMode above, which is the global-VLAN platforms' (EOS, VRP
-	// physical ports) equivalent concept - a bridge-domain platform's L2
+	// SwitchportMode above, which is the global-VLAN platforms' (EOS, VRP,
+	// Cisco SMB physical ports) equivalent concept - a bridge-domain platform's L2
 	// subinterface has no global VLAN membership to express that way. Not
 	// consumed anywhere yet; captured so a caller like internal/device-sync
 	// can later tell "no IPAddresses because this is an L2 leg" apart from
@@ -113,7 +113,7 @@ type VLAN struct {
 // VLANConfig is the desired switchport/VLAN state for one interface, passed
 // to DriverClient.SetInterfaceVLANs - the write-side counterpart of
 // Interface's SwitchportMode/UntaggedVLAN/TaggedVLANs fields above. Only
-// meaningful on global-VLAN platforms (EOS, VRP) - see SetInterfaceVLANs.
+// meaningful on global-VLAN platforms (EOS, VRP, Cisco SMB) - see SetInterfaceVLANs.
 type VLANConfig struct {
 	SwitchportMode string // "access", "trunk" or "dot1q-tunnel" (Q-in-Q); "" to remove switchport config
 	UntaggedVLAN   int    // access VLAN, native/PVID VLAN, or outer/S-VLAN tag; 0 if none

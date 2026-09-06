@@ -59,9 +59,9 @@ type DriverClient interface {
 	SetInterfaceDescription(intf *netboxtool.NBInterface) error
 	SetInterfaceDescriptions(name []string, intf []*netboxtool.NBInterface) error
 	// SetInterfaceVLANs pushes switchport/VLAN config to a set of interfaces
-	// - only implemented for global-VLAN platforms (EOS, VRP); every other
-	// platform returns an error, since they have no per-interface global
-	// VLAN concept (see Interface.SwitchportMode's doc comment).
+	// - only implemented for global-VLAN platforms (EOS, VRP, Cisco SMB);
+	// every other platform returns an error, since they have no per-interface
+	// global VLAN concept (see Interface.SwitchportMode's doc comment).
 	SetInterfaceVLANs(name []string, params []*VLANConfig) error
 	Version() (*VersionModel, error)
 

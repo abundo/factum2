@@ -1003,7 +1003,7 @@ func (ds *DeviceSync) syncInterfaceVlans(pair *devicePair) {
 			continue
 		}
 
-		// A q-in-q interface ("dot1q-tunnel" on VRP/EOS, same SwitchportMode
+		// A q-in-q interface ("dot1q-tunnel" on VRP/EOS/Cisco SMB, same SwitchportMode
 		// value both drivers' generic "port link-type"/"switchport mode"
 		// parsing already captures verbatim) carries its outer/S-VLAN tag
 		// in Netbox's qinq_svlan field instead of untagged_vlan - the two

@@ -268,7 +268,7 @@ The update editor is hidden in v1 (missing update ⇒ remove then add).
 
 | Field | Rule |
 | ----- | ---- |
-| `platform` | Lower-cased NetBox platform: `eos`, `ios-xr`, `sros`, `sros-md`, `vrp`. Unique per type for translation objects. |
+| `platform` | Lower-cased NetBox platform: `eos`, `ios-xr`, `sros`, `sros-md`, `vrp`, `ciscosmb`. Unique per type for translation objects. |
 | `payload_kind` | Default `cli`. `netconf` / `restconf` can be stored and previewed; **push requires `cli`**. |
 | `service_type_id` | Set for translation. Empty/zero = baseline CLI (applies when the object's **parent** is on the device ancestor chain). |
 | Context | Pattern language: `interface <name>`, `router bgp <as>` (not raw RE2). Empty / `global` = no wrap. When `enter` is set: one enter, remove, add, exit. `RemoveAtRoot` = remove unwrapped, then wrapped add. |
@@ -487,7 +487,7 @@ Baseline is not sent in a service push.
    - look up the translation CLI object for `service_type` + device
      platform (`sros-md` falls back to `sros`)
    - require `payload_kind=cli` and a `CLISessionApplier` driver
-     (`eos`, `ios-xr`, `sros` / `sros-md`, `vrp`)
+     (`eos`, `ios-xr`, `sros` / `sros-md`, `vrp`, `ciscosmb`)
    - render cleanup once, then each endpoint body, one CLI session
    - ELINE: `PrepareELINEApply` (SR OS SDP guard), stamp `AppliedEndpoint*`,
      teardown abandoned devices

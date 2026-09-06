@@ -57,7 +57,7 @@ const originalPayload = ref(new Map())
 const saving = ref(false)
 const addVlanInput = ref(null)
 
-// L3 ports use "no switchport" on EOS/VRP - empty SwitchportMode means not
+// L3 ports use "no switchport" on EOS/VRP/Cisco SMB - empty SwitchportMode means not
 // a switchport. Used to ignore stale VLAN membership when rendering cells
 // and collecting columns, not to hide the row: an empty-mode Ethernet can
 // still have VLANs assigned here (that write converts it to a switchport).

@@ -44,7 +44,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 ### What stays
 
 - Go + Echo + Gorm/Postgres + Vue 3 / Nuxt UI Config page. No new product.
-- Drivers still execute; CLI objects are data. Huawei `vrp` implements `CLISessionApplier` (SSH `system-view` session) alongside EOS / IOS-XR / SR OS. `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupPlatformPack` today).
+- Drivers still execute; CLI objects are data. Huawei `vrp` implements `CLISessionApplier` (SSH `system-view` session) alongside EOS / IOS-XR / SR OS / Cisco SMB. `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupPlatformPack` today).
 - Lime-owned commercial fields stay Lime-owned (`Service.Source == "lime"`).
 - Secrets remain `***` on **read** of variable defs and assignments (`cfgmgmt.RedactAssignmentSecrets`, `RedactVariableSecrets`). PUT-unchanged for `***` / omit / JSON null exists today **only** for variable-def defaults (`ApiConfigVariableUpdate`). Assignment upsert (`UpsertAssignment`) currently always saves `dto.Value` and will persist `"***"` if the GUI re-saves a redacted cell. Parameter objects must **implement** that contract on assignment write; it is not already there.
 - Wavelength / dark fiber stay inventory-only. No CLI objects for them.
@@ -603,7 +603,7 @@ Push (`apiServiceGenericPush`):
 - Unchanged entry point and credentials. **Does not include baseline CLI.**
 - Command list built by the service-translation renderer instead of `RenderPackApplyBody`.
 - `RequireCLIPack` becomes `RequireCLIObject` (must be `payload_kind=cli`, the **column**).
-- `isSupportedDriverPlatform` includes `vrp`; VRP implements `CLISessionApplier` (`system-view` … `return`). The `"CLI object exists but this platform cannot apply CLI sessions yet"` error remains for platforms whose driver does not.
+- `isSupportedDriverPlatform` includes `vrp` and `ciscosmb`; VRP implements `CLISessionApplier` (`system-view` … `return`), Cisco SMB `configure` … `end`. The `"CLI object exists but this platform cannot apply CLI sessions yet"` error remains for platforms whose driver does not.
 - ELINE: `PrepareELINEApply`, `stampELINEApplied`, abandoned-device teardown unchanged.
 - No automatic rollback of sibling devices (same as today).
 - Idempotency: feature remove blobs must be safe no-ops; this is an operator/seed contract, not something the engine proves.

@@ -151,7 +151,7 @@ function isSwitchport(iface) {
 }
 
 function vlanSummary(iface) {
-  // L3 ports ("no switchport" on EOS/VRP) have no traditional VLAN
+  // L3 ports ("no switchport" on EOS/VRP/Cisco SMB) have no traditional VLAN
   // membership - leave the cell empty even if stale untagged/tagged data
   // is still present on the record.
   if (!isSwitchport(iface)) return { text: '', title: '' }
@@ -407,7 +407,7 @@ function onVlanSaved(updated) {
   reloadDeviceInterfaces()
 }
 
-const supportedDriverPlatforms = ['eos', 'sros', 'sros-md', 'ios-xr', 'vrp']
+const supportedDriverPlatforms = ['eos', 'sros', 'sros-md', 'ios-xr', 'vrp', 'ciscosmb']
 const isSupportedDriverPlatform = computed(() =>
   supportedDriverPlatforms.includes((device.value?.platform ?? '').toLowerCase()),
 )
@@ -420,10 +420,10 @@ const canUseDriver = computed(
 )
 
 // Platforms whose driver can push switchport/VLAN config to the device
-// (see globalVlanPlatforms in web/handle_device_interfaces.go) - both model
+// (see globalVlanPlatforms in web/handle_device_interfaces.go) - they model
 // VLANs as a device-wide VLAN database, unlike sros/sros-md/ios-xr which
 // have no per-interface global-VLAN concept at all.
-const globalVlanPlatforms = ['eos', 'vrp']
+const globalVlanPlatforms = ['eos', 'vrp', 'ciscosmb']
 const isGlobalVlanPlatform = computed(() =>
   globalVlanPlatforms.includes((device.value?.platform ?? '').toLowerCase()),
 )
@@ -736,7 +736,7 @@ onMounted(loadDevices)
             @click="openVlan"
           />
           <span v-if="!isSupportedDriverPlatform" class="text-sm text-muted-color"
-            >Refresh/Update require an EOS, SROS-MD, IOS-XR or VRP device (this device is "{{
+            >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this device is "{{
               device?.platform || 'unknown'
             }}").</span
           >

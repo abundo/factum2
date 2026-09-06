@@ -347,14 +347,15 @@ NetboxApiToken` from the primary (`GET /api/netbox-config`,
   fetched stay local / on NetBox's URL; they are not tunneled.
 
 `internal/drivers` talks to network devices directly (Arista EOS, Cisco
-IOS-XR, Nokia SR OS, Huawei VRP, Open ROADM MSA): NETCONF against OpenConfig
+IOS-XR, Cisco SMB, Nokia SR OS, Huawei VRP, Open ROADM MSA): NETCONF against OpenConfig
 models for interface state/config on EOS/IOS-XR/SR OS (shared plumbing in
 `internal/drivers/openconfig.go`), plus a per-platform CLI-shaped transport
 for what NETCONF can't express (arbitrary commands, `show running-config`,
 config save). That second transport is Arista's eAPI JSON-RPC for EOS
 (`internal/drivers/eapi.go`, which also serves as EOS's fallback when its
 NETCONF agent isn't enabled - it's off by default) and SSH CLI screen-
-scraping (`sshRunCLI`) for IOS-XR, SR OS, and VRP (VRP has no NETCONF).
+scraping (`sshRunCLI`) for IOS-XR, SR OS, VRP, and Cisco SMB (VRP and Cisco
+SMB have no NETCONF).
 Open ROADM is a read-only NETCONF driver against native
 `org-openroadm-device` YANG (`driver_openroadm.go`), not OpenConfig; optical
 inventory is a separate `OpticalClient` interface (same split as

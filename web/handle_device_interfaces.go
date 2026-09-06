@@ -23,13 +23,14 @@ import (
 //	GetInterfacesStatus/SetInterfaceDescriptions (internal/drivers.
 //	AristaDriver for "eos", internal/drivers.NokiaDriver for "sros"/
 //	"sros-md", internal/drivers.IOSXRDriver for "ios-xr",
-//	internal/drivers.VrpDriver for "vrp"). Credentials are supplied
+//	internal/drivers.VrpDriver for "vrp", internal/drivers.CiscoSMBDriver
+//	for "ciscosmb"). Credentials are supplied
 //	per-request by the caller (never persisted), the same way the
 //	factum2-driver-cli commands take --username/--password.
 //
 // --------------------------------------------------------------------------
 
-var supportedDriverPlatforms = []string{"eos", "sros", "sros-md", "ios-xr", "vrp"}
+var supportedDriverPlatforms = []string{"eos", "sros", "sros-md", "ios-xr", "vrp", "ciscosmb"}
 
 type deviceCredentialsRequest struct {
 	Username string `json:"username"`
@@ -51,12 +52,13 @@ func isSupportedDriverPlatform(device *models.Device) bool {
 
 // globalVlanPlatforms are the platforms whose driver implements
 // SetInterfaceVLANs for real (internal/drivers.AristaDriver for "eos",
-// internal/drivers.VrpDriver for "vrp") - both model VLANs as a device-wide
-// VLAN database that switchports reference, unlike ios-xr/sros(-md), which
-// have no per-interface global-VLAN concept at all (see
+// internal/drivers.VrpDriver for "vrp", internal/drivers.CiscoSMBDriver
+// for "ciscosmb") - they model VLANs as a device-wide VLAN database that
+// switchports reference, unlike ios-xr/sros(-md), which have no
+// per-interface global-VLAN concept at all (see
 // drivers.Interface.SwitchportMode's doc comment). A separate list from
 // supportedDriverPlatforms since the two properties are independent.
-var globalVlanPlatforms = []string{"eos", "vrp"}
+var globalVlanPlatforms = []string{"eos", "vrp", "ciscosmb"}
 
 // isGlobalVlanPlatform is isSupportedDriverPlatform's counterpart for the
 // VLAN endpoint.
@@ -264,7 +266,7 @@ type deviceInterfacesUpdateVlansRequest struct {
 }
 
 // ApiDeviceInterfacesUpdateVlans pushes edited switchport/VLAN config out to
-// the device itself (EOS/VRP drivers only - see globalVlanPlatforms) and
+// the device itself (EOS/VRP/Cisco SMB drivers only - see globalVlanPlatforms) and
 // Netbox (creating any new VLAN in Settings.DeviceSyncVlanGroupName's Netbox
 // VLAN group as needed, via the same NetboxMgr internal/device-sync uses for
 // its own VLAN sync), then refreshes factum's own interface/VLAN cache for

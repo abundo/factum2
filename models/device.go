@@ -95,7 +95,7 @@ type Interface struct {
 	VLANNames map[int]string `json:"vlan_names,omitempty" gorm:"serializer:json"`
 	// SwitchportMode is "access", "trunk" or "dot1q-tunnel" (Q-in-Q), mirroring
 	// drivers.Interface.SwitchportMode - only meaningful on global-VLAN
-	// platforms (EOS, VRP), "" if not a switchport or unknown.
+	// platforms (EOS, VRP, Cisco SMB), "" if not a switchport or unknown.
 	SwitchportMode string `json:"switchport_mode" gorm:"type:varchar(255)"`
 
 	LibrenmsID uint `json:"librenms_id"`

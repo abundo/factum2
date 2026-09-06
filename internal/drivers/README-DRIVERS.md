@@ -12,6 +12,7 @@ platform is added. Netbox platform names currently registered:
 | ----------------- | -------------------------- |
 | `eos`             | Arista EOS                 |
 | `ios-xr`          | Cisco IOS-XR               |
+| `ciscosmb`        | Cisco SMB (SG300/SG350/C1200/C1300) |
 | `sros`, `sros-md` | Nokia SR OS (same factory) |
 | `vrp`             | Huawei VRP                 |
 | `openroadm`       | Open ROADM MSA (read-only) |
@@ -31,18 +32,19 @@ driver's comments just to keep a comparison table up to date.
 | Cisco IOS-XR | NETCONF/OpenConfig (candidate+commit)                                 | SSH CLI                    | not supported (commit already persists)   |
 | Nokia SR OS  | NETCONF/OpenConfig read; native `nokia-conf` write (candidate+commit) | SSH CLI (MD-CLI)           | not supported (commit already persists)   |
 | Huawei VRP   | SSH CLI only                                                          | SSH CLI                    | SSH CLI `save` + `y` confirmation         |
+| Cisco SMB    | SSH CLI only                                                          | SSH CLI                    | SSH CLI `copy running-config startup-config` + `y` |
 | Open ROADM   | NETCONF `org-openroadm-device` (read-only)                            | NETCONF YANG XML           | not supported (read-only)                 |
 
-Three of the five platforms (EOS, IOS-XR, SR OS) expose the standard
+Three of the six platforms (EOS, IOS-XR, SR OS) expose the standard
 `openconfig-interfaces`/`openconfig-platform` YANG models over NETCONF, so
 they share one filter/reply shape and one set of dial/edit helpers
 (`openconfig.go`) instead of each parsing its own XML. Open ROADM also
 speaks NETCONF but against the native `org-openroadm-device` tree, not
 OpenConfig - it reuses `netconfDial`/`netconfGet` and has its own XML
-types (`driver_openroadm_xml.go`). VRP has no NETCONF/JSON-RPC management
-API at all, so every one of its operations goes over plain SSH CLI - the
-same SSH/idle-detection transport (`sshRunCLI`/`sshRunCLIPipeline` in
-`openconfig.go`) that IOS-XR and SR OS fall back to for the handful of
+types (`driver_openroadm_xml.go`). VRP and Cisco SMB have no NETCONF/JSON-RPC
+management API at all, so every one of their operations goes over plain SSH
+CLI - the same SSH/idle-detection transport (`sshRunCLI`/`sshRunCLIPipeline`
+in `openconfig.go`) that IOS-XR and SR OS fall back to for the handful of
 things NETCONF can't do (arbitrary CLI commands, CLI-text running-config,
 in SR OS's case also config _writes_ outside interface descriptions - see
 below).
@@ -329,6 +331,58 @@ VRP's own comment character, `#`). VRP has no ELINE/ELAN/VRF/L3VPN parsing
   object exists: that path type-asserts `CLISessionApplier`, which VRP
   now implements.
 
+## Cisco SMB (`driver_ciscosmb.go`)
+
+Cisco Small Business / Catalyst 1200 & 1300 switches (SG300, SG350, C1200,
+C1300) have no NETCONF or JSON-RPC management API, so every operation goes
+over classic SSH CLI via the shared `sshRunCLI` transport - the same shape
+as VRP, against a Cisco-like CLI. Paging is disabled with `terminal
+datadump` (the command that actually works on SG300/SG350; `terminal length
+0` is unrecognized on some trains). Privilege 15 is assumed at login; this
+driver does not send `enable`.
+
+Reads:
+
+- **`Version`** — `show version` (SG300's `SW version` or SG350/C1300's
+  Active-image `Version:`), `show inventory` (PID/VID/SN), `show system`
+  (MAC).
+- **`GetInterfacesStatus`** — `show interfaces description` plus status
+  and configuration tables. Abbreviated names (`gi1`, `po1`, `vlan 1`) are
+  expanded to the long form running-config uses (`GigabitEthernet1`,
+  `Port-channel1`, `Vlan1`) so they match `GetDeviceConfig`.
+- **`GetDeviceConfig`** — `show running-config`. Cisco SMB CLI is
+  exit-delimited (and only sometimes indented), so this does **not** use
+  `ParseConfigContext`; `smbParseExitConfig` builds the `ConfigNode` tree
+  from `interface` / `vlan database` blocks, then tagparse.go fills
+  interfaces and global VLANs. VLAN names live on `interface vlan N` /
+  `name` as well as `vlan N name ...` inside `vlan database`. `interface
+  range ...` lines are skipped. No ELINE/ELAN/VRF/L3VPN parsing.
+- **`GetNeighbors`** — `show lldp neighbors` (column table: Port, Device
+  ID, Port ID, System Name). Empty System Name is allowed.
+
+Writes:
+
+- **`SetInterfaceDescription(s)`** — `configure` … `interface` …
+  `description` / `no description` … `end`.
+- **`SetInterfaceVLANs`** — global-VLAN platform. Referenced VIDs are
+  declared first via `vlan database` / `vlan 10,20,30` (SMB rejects
+  `switchport access vlan` for an undeclared VID). Access/trunk use the
+  usual `switchport mode` / `access vlan` / `trunk native|allowed vlan`
+  commands. Q-in-Q is `switchport mode customer` (SMB's name for the
+  mode factum stores as `dot1q-tunnel`).
+- **`RunningConfigSave`** — `copy running-config startup-config` plus `y`
+  for the overwrite prompt.
+- **`ApplyCLISession`** — already-rendered CLI inside `configure` …
+  `end`. `sessionName` is ignored (no named configure sessions). CLI
+  errors (`% Unrecognized command`, `% Incomplete command`, …) are scanned
+  out of the combined pipeline output. Does not save; persistence stays
+  `RunningConfigSave`.
+
+No `ApplyELINE`/`RemoveELINE` — these are L2 access switches, not PE
+routers. Service push still works when a CLI object exists, via
+`CLISessionApplier`. Coverage today is network-free unit tests of command
+construction and fixture parsing; there is no containerlab image.
+
 ## Open ROADM (`driver_openroadm.go`, `driver_openroadm_xml.go`)
 
 Open ROADM MSA devices speak NETCONF against the native
@@ -399,10 +453,13 @@ There is no containerlab image.
 - **`config_context.go`** - hierarchical (indentation-based) config-text
   parser, for platforms whose running config is CLI text organized by
   indentation (IOS-XR, VRP). EOS and SR OS don't need this: both return
-  running config as JSON, which already has the tree structure.
+  running config as JSON, which already has the tree structure. Cisco SMB
+  is exit-delimited rather than indented, so it builds the same
+  `ConfigNode` tree itself (`smbParseExitConfig`) and then reuses
+  tagparse.go.
 - **`tagparse.go`** - a declarative `cfg:"..."`-tag-driven engine that fills
-  a struct straight from a `config_context.go` node tree, replacing
-  hand-written per-platform regexp+switch parsing. Used by IOS-XR and VRP.
+  a struct straight from a `ConfigNode` tree, replacing hand-written
+  per-platform regexp+switch parsing. Used by IOS-XR, VRP and Cisco SMB.
 - **`eline_intent.go`** - `ELINEIntent`/`ELINERemoval`, the vendor-neutral
   shapes each platform's `ApplyELINE`/`RemoveELINE` renders through its own
   template, plus the `ELINEApplier`/`ELINERemover` interfaces (deliberately
