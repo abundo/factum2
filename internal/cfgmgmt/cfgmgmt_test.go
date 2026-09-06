@@ -2201,6 +2201,25 @@ func cliChild(t *testing.T, db *gorm.DB, parentID uint, name string) models.Conf
 	return s
 }
 
+func cliChildByPlatform(t *testing.T, db *gorm.DB, parentID uint, name, platform string) models.ConfigScope {
+	t.Helper()
+	var rows []models.ConfigScope
+	if err := db.Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, parentID, name).Find(&rows).Error; err != nil {
+		t.Fatalf("list cli %s under %d: %v", name, parentID, err)
+	}
+	for i := range rows {
+		s := &rows[i]
+		if isTranslationCLI(s) {
+			continue
+		}
+		if NormalizePlatform(s.Platform) == NormalizePlatform(platform) {
+			return *s
+		}
+	}
+	t.Fatalf("baseline cli %s/%s under %d not found in %+v", name, platform, parentID, rows)
+	return models.ConfigScope{}
+}
+
 func TestSeedMigratesNullScopeTemplateToGlobalCLI(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)
@@ -2370,5 +2389,136 @@ func TestSeedTemplateMigrationIdempotent(t *testing.T) {
 	}
 	if tmpls != 1 {
 		t.Fatalf("template count = %d, want 1 (not deleted)", tmpls)
+	}
+}
+
+func TestSeedMigratesSameNameTemplatesPerPlatform(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eline models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
+		Platform: "eos", ServiceTypeID: &eline.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srosCLI, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "sros",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigCLIFeature{
+		ScopeID: srosCLI.ID, Name: "body", AddCommands: "banner from-existing-sros",
+	})
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner from-eos-template", Enabled: true,
+	})
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "sros", Body: "banner from-sros-template", Enabled: true,
+	})
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "ntp", Platform: "eos", Body: "ntp server 1.1.1.1", Enabled: true,
+	})
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "ntp", Platform: "sros", Body: "ntp server 9.9.9.9", Enabled: true,
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+
+	eosNTP := cliChildByPlatform(t, db, root.ID, "ntp", "eos")
+	srosNTP := cliChildByPlatform(t, db, root.ID, "ntp", "sros")
+	eosNTPFeats, err := ListCLIFeatures(db, eosNTP.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srosNTPFeats, err := ListCLIFeatures(db, srosNTP.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eosNTPFeats) != 1 || eosNTPFeats[0].AddCommands != "ntp server 1.1.1.1" {
+		t.Errorf("eos ntp features = %+v", eosNTPFeats)
+	}
+	if len(srosNTPFeats) != 1 || srosNTPFeats[0].AddCommands != "ntp server 9.9.9.9" {
+		t.Errorf("sros ntp features = %+v", srosNTPFeats)
+	}
+
+	eosCLI := cliChildByPlatform(t, db, root.ID, "banner", "eos")
+	srosGot := cliChildByPlatform(t, db, root.ID, "banner", "sros")
+	if srosGot.ID != srosCLI.ID {
+		t.Fatalf("sros cli id = %d, want pre-existing %d", srosGot.ID, srosCLI.ID)
+	}
+	eosFeats, err := ListCLIFeatures(db, eosCLI.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eosFeats) != 1 || eosFeats[0].AddCommands != "banner from-eos-template" {
+		t.Errorf("eos features = %+v", eosFeats)
+	}
+	srosFeats, err := ListCLIFeatures(db, srosGot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srosFeats) != 1 || srosFeats[0].AddCommands != "banner from-existing-sros" {
+		t.Errorf("sros features overwritten: %+v", srosFeats)
+	}
+
+	var kids []models.ConfigScope
+	if err := db.Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "banner").
+		Find(&kids).Error; err != nil {
+		t.Fatal(err)
+	}
+	var nEos, nSros, nTrans int
+	for i := range kids {
+		if isTranslationCLI(&kids[i]) {
+			nTrans++
+			continue
+		}
+		switch NormalizePlatform(kids[i].Platform) {
+		case "eos":
+			nEos++
+		case "sros":
+			nSros++
+		}
+	}
+	if nEos != 1 || nSros != 1 || nTrans != 1 {
+		t.Fatalf("banner children eos=%d sros=%d trans=%d (from %+v), want 1 each", nEos, nSros, nTrans, kids)
+	}
+}
+
+func TestSeedMigratesDisabledTemplate(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-off", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner motd dark", Enabled: false,
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	cli := cliChild(t, db, root.ID, "banner")
+	if cli.Enabled {
+		t.Fatal("disabled template must copy Enabled=false")
+	}
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range out.Sources {
+		if s.Source == "cli:banner" || s.Source == "template:banner" {
+			t.Fatalf("disabled twin still emitted %s: %+v", s.Source, out.Sources)
+		}
 	}
 }

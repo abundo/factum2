@@ -341,6 +341,29 @@ func RenderCLIObject(db *gorm.DB, obj *models.ConfigScope, data any) ([]string, 
 	return out, nil
 }
 
+// findBaselineCLITwins returns kind=cli children of parent with the same name
+// that are baseline (no service_type_id) and platform-compatible with tmplPlatform.
+// Empty platform on either side matches all, same as cliTemplatePlatformsMatch.
+func findBaselineCLITwins(db *gorm.DB, name string, parentID uint, tmplPlatform string) ([]models.ConfigScope, error) {
+	var rows []models.ConfigScope
+	if err := db.Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, name, parentID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]models.ConfigScope, 0, len(rows))
+	for i := range rows {
+		s := &rows[i]
+		if isTranslationCLI(s) {
+			continue
+		}
+		if !cliTemplatePlatformsMatch(s.Platform, tmplPlatform) {
+			continue
+		}
+		out = append(out, *s)
+	}
+	return out, nil
+}
+
 func hasCLITwin(db *gorm.DB, name string, scopeID *uint, tmplPlatform, devicePlatform string) (bool, error) {
 	parentID := scopeID
 	if parentID == nil {
@@ -350,22 +373,14 @@ func hasCLITwin(db *gorm.DB, name string, scopeID *uint, tmplPlatform, devicePla
 		}
 		parentID = &root.ID
 	}
-	var rows []models.ConfigScope
-	if err := db.Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, name, *parentID).
-		Find(&rows).Error; err != nil {
+	rows, err := findBaselineCLITwins(db, name, *parentID, tmplPlatform)
+	if err != nil {
 		return false, err
 	}
 	for i := range rows {
-		s := &rows[i]
-		if isTranslationCLI(s) {
-			continue
-		}
 		// Disabled baseline objects still count so a migrated template is not
 		// resurrected after the operator turns the CLI object off.
-		if !cliTemplatePlatformsMatch(s.Platform, tmplPlatform) {
-			continue
-		}
-		if !platformMatch(s.Platform, devicePlatform) {
+		if !platformMatch(rows[i].Platform, devicePlatform) {
 			continue
 		}
 		return true, nil

@@ -152,8 +152,10 @@ func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
 }
 
 // migrateTemplatesToCLI copies each ConfigTemplate onto a kind=cli child of
-// its scope (or of global when ScopeID is nil). Existing CLI objects with
-// the same name+parent are left alone; template rows are not deleted.
+// its scope (or of global when ScopeID is nil). A true twin — baseline CLI
+// with the same name+parent and matching platform — is left alone.
+// Translation CLI and a different platform do not block the copy.
+// Template rows are not deleted.
 func migrateTemplatesToCLI(db *gorm.DB) error {
 	root, err := RootScope(db)
 	if err != nil {
@@ -170,13 +172,11 @@ func migrateTemplatesToCLI(db *gorm.DB) error {
 			parentID = *t.ScopeID
 		}
 		if err := db.Transaction(func(tx *gorm.DB) error {
-			var n int64
-			if err := tx.Model(&models.ConfigScope{}).
-				Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, t.Name, parentID).
-				Count(&n).Error; err != nil {
+			twins, err := findBaselineCLITwins(tx, t.Name, parentID, t.Platform)
+			if err != nil {
 				return err
 			}
-			if n > 0 {
+			if len(twins) > 0 {
 				return nil
 			}
 			pid := parentID
@@ -191,11 +191,15 @@ func migrateTemplatesToCLI(db *gorm.DB) error {
 			if err := normalizeCLIScope(&obj); err != nil {
 				return err
 			}
-			// Select Enabled so a disabled template is not stored as the
-			// column default (true).
-			if err := tx.Select("ParentID", "Name", "Kind", "Platform", "PayloadKind", "Enabled", "SortOrder", "Payload").
-				Create(&obj).Error; err != nil {
+			if err := tx.Create(&obj).Error; err != nil {
 				return err
+			}
+			// Gorm skips the zero value for a bool with default:true, so a
+			// disabled template would be stored enabled unless we write it.
+			if !t.Enabled {
+				if err := tx.Model(&obj).Update("enabled", false).Error; err != nil {
+					return err
+				}
 			}
 			feat := models.ConfigCLIFeature{
 				ScopeID:     obj.ID,
