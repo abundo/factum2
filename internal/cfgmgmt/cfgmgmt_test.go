@@ -2991,6 +2991,88 @@ func TestELANSamePortDifferentVLANTwoRefs(t *testing.T) {
 	}
 }
 
+func TestProjectEndpointScopesDedupsIdentity(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-dup", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	mustCreate(t, db, &ifc)
+	svc := models.Service{ServiceID: "CN00930", ServiceType: "ELAN"}
+	mustCreate(t, db, &svc)
+	if _, err := AttachService(db, folder.ID, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	same := models.ServiceEndpoint{
+		Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(10, 0, 0),
+	}
+	if err := ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{same, same}); err != nil {
+		t.Fatal(err)
+	}
+	canon, err := scopeByServiceID(db, svc.ID)
+	if err != nil || canon == nil {
+		t.Fatal(err)
+	}
+	countKids := func() int {
+		t.Helper()
+		var n int64
+		if err := db.Model(&models.ConfigScope{}).
+			Where("parent_id = ? AND kind = ?", canon.ID, models.ConfigScopeKindServiceEndpoint).
+			Count(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		return int(n)
+	}
+	if got := countKids(); got != 1 {
+		t.Fatalf("children after duplicate table rows = %d, want 1", got)
+	}
+	if err := projectEndpointScopes(db, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := countKids(); got != 1 {
+		t.Fatalf("children after second project = %d, want 1", got)
+	}
+}
+
+func TestVirtualRefsSkipUnattached(t *testing.T) {
+	db := newTestDB(t)
+	_, _, _, _, iface := seedTree(t, db)
+	svc := models.Service{ServiceID: "CN00931", ServiceType: "ELAN"}
+	mustCreate(t, db, &svc)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID,
+		Fields: EncodeEndpointFields(10, 0, 0),
+	})
+	tree, err := ScopeTree(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs int
+	walkTree(tree, func(n ScopeTreeNode) {
+		if n.Type == models.ConfigScopeKindServiceRef {
+			refs++
+		}
+	})
+	if refs != 0 {
+		t.Fatalf("unattached service produced %d refs, want 0", refs)
+	}
+}
+
+func TestEndpointIdentityNonVLANFields(t *testing.T) {
+	a := models.ServiceEndpoint{ServiceID: 1, Role: "endpoint", DeviceID: 2, InterfaceID: 3, Fields: jsonRaw(t, map[string]any{"vrf": "red"})}
+	b := models.ServiceEndpoint{ServiceID: 1, Role: "endpoint", DeviceID: 2, InterfaceID: 3, Fields: jsonRaw(t, map[string]any{"vrf": "blue"})}
+	if EndpointIdentity(a) == EndpointIdentity(b) {
+		t.Fatal("expected distinct identity for different non-vlan fields")
+	}
+	empty := models.ServiceEndpoint{ServiceID: 1, Role: "endpoint", DeviceID: 2, InterfaceID: 3}
+	if !strings.HasSuffix(EndpointIdentity(empty), ":0") {
+		t.Fatalf("empty fields disc = %s, want ...:0", EndpointIdentity(empty))
+	}
+}
+
 func TestCreateServiceFromTreeZeroEndpoints(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)

@@ -189,6 +189,16 @@ func projectEndpointScopes(db *gorm.DB, serviceID uint) error {
 	have := make(map[string]models.ConfigScope, len(kids))
 	for i := range kids {
 		id := identityFromEndpointScope(&kids[i])
+		if _, ok := have[id]; ok {
+			desc, err := DescendantScopes(db, kids[i].ID)
+			if err != nil {
+				return err
+			}
+			if err := deleteScopeSubtree(db, desc); err != nil {
+				return err
+			}
+			continue
+		}
 		have[id] = kids[i]
 	}
 	want := make(map[string]bool, len(eps))
@@ -196,6 +206,9 @@ func projectEndpointScopes(db *gorm.DB, serviceID uint) error {
 		ep := eps[i]
 		ep.ServiceID = serviceID
 		key := EndpointIdentity(ep)
+		if want[key] {
+			continue
+		}
 		want[key] = true
 		did, iid := ep.DeviceID, ep.InterfaceID
 		payload := models.ConfigScopePayload{Role: ep.Role, Fields: fieldsMap(ep.Fields)}
@@ -225,6 +238,7 @@ func projectEndpointScopes(db *gorm.DB, serviceID uint) error {
 		if err := db.Create(&child).Error; err != nil {
 			return err
 		}
+		have[key] = child
 	}
 	for key, child := range have {
 		if want[key] {

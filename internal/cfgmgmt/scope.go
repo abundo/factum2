@@ -39,6 +39,7 @@ type ScopeTreeData struct {
 	ServiceLabel  string                    `json:"service_label,omitempty"`
 	Role          string                    `json:"role,omitempty"`
 	Disc          string                    `json:"disc,omitempty"`
+	Identity      string                    `json:"identity,omitempty"`
 }
 
 func GetScope(db *gorm.DB, id uint) (*models.ConfigScope, error) {
@@ -1010,8 +1011,13 @@ func virtualServiceRefs(db *gorm.DB, scopes []models.ConfigScope) (map[uint][]Sc
 		}
 	}
 	out := map[uint][]ScopeTreeNode{}
+	seenIdent := map[string]bool{}
 	for i := range eps {
 		ep := eps[i]
+		canon := canonBySvc[ep.ServiceID]
+		if canon == nil {
+			continue
+		}
 		parent := ifaceByID[ep.InterfaceID]
 		if parent == nil {
 			parent = deviceByID[ep.DeviceID]
@@ -1019,13 +1025,13 @@ func virtualServiceRefs(db *gorm.DB, scopes []models.ConfigScope) (map[uint][]Sc
 		if parent == nil {
 			continue
 		}
+		ident := EndpointIdentity(ep)
+		if seenIdent[ident] {
+			continue
+		}
+		seenIdent[ident] = true
 		label := labelByID[ep.ServiceID]
 		disc := endpointDisc(ep.Fields)
-		ident := EndpointIdentity(ep)
-		var canonicalID uint
-		if c := canonBySvc[ep.ServiceID]; c != nil {
-			canonicalID = c.ID
-		}
 		did, iid, sid := ep.DeviceID, ep.InterfaceID, ep.ServiceID
 		title := label + " (" + ep.Role + ")"
 		if vlan := VLANFromFields(ep.Fields); vlan != 0 {
@@ -1041,11 +1047,12 @@ func virtualServiceRefs(db *gorm.DB, scopes []models.ConfigScope) (map[uint][]Sc
 				DeviceID:     &did,
 				InterfaceID:  &iid,
 				ServiceID:    &sid,
-				CanonicalID:  canonicalID,
+				CanonicalID:  canon.ID,
 				ServiceRowID: ep.ServiceID,
 				ServiceLabel: label,
 				Role:         ep.Role,
 				Disc:         disc,
+				Identity:     ident,
 			},
 		}
 		out[parent.ID] = append(out[parent.ID], node)
