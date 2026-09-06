@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
@@ -725,6 +726,74 @@ func TestConfigAssignmentListWinningRowsAfterMove(t *testing.T) {
 	err = db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("original after MOVE: %v, want not found", err)
+	}
+}
+
+func TestApiConfigRender_ServiceDraftEndpoints(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	pe1 := models.Device{Name: "pe1", Platform: "eos", NetboxID: 701}
+	if err := db.Create(&pe1).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet5", Type: "1000base-t", NetboxID: 710}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00009", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/render", map[string]any{
+		"service_id": svc.ID,
+		"endpoints": []map[string]any{
+			{
+				"role": "a", "device_id": pe1.ID, "interface_id": ifa.ID,
+				"fields": map[string]any{"vlan": 50},
+			},
+		},
+	}, nil, nil)
+	if err := ctrl.ApiConfigRender(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Sources []cfgmgmt.RenderedSource `json:"sources"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Sources) == 0 {
+		t.Fatal("no sources")
+	}
+	found := false
+	for _, src := range body.Sources {
+		if src.Error != "" {
+			t.Fatalf("%s: %s", src.Platform, src.Error)
+		}
+		joined := strings.Join(src.Commands, "\n")
+		if strings.Contains(joined, "interface Ethernet5.50") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("draft missing selected interface: %+v", body.Sources)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/render", map[string]any{}, nil, nil)
+	if err := ctrl.ApiConfigRender(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty body status = %d, want 400", rec.Code)
 	}
 }
 

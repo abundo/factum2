@@ -577,9 +577,18 @@ func (ctrl *Controller) ApiConfigMacroDelete(c *echo.Context) error {
 	return h.Delete(c)
 }
 
+type configRenderEndpoint struct {
+	Role        string          `json:"role"`
+	DeviceID    uint            `json:"device_id"`
+	InterfaceID uint            `json:"interface_id"`
+	Fields      json.RawMessage `json:"fields"`
+}
+
 type configRenderRequest struct {
-	DeviceID  uint `json:"device_id"`
-	ServiceID uint `json:"service_id"`
+	DeviceID  uint                    `json:"device_id"`
+	ServiceID uint                    `json:"service_id"`
+	Endpoints *[]configRenderEndpoint `json:"endpoints"`
+	Fields    json.RawMessage         `json:"fields"`
 }
 
 func (ctrl *Controller) ApiConfigRender(c *echo.Context) error {
@@ -596,6 +605,20 @@ func (ctrl *Controller) ApiConfigRender(c *echo.Context) error {
 			return configWriteError(c, err)
 		}
 		return c.JSON(http.StatusOK, out)
+	}
+	if req.Endpoints != nil {
+		eps := make([]models.ServiceEndpoint, 0, len(*req.Endpoints))
+		for _, ep := range *req.Endpoints {
+			eps = append(eps, models.ServiceEndpoint{
+				ServiceID: req.ServiceID, Role: ep.Role,
+				DeviceID: ep.DeviceID, InterfaceID: ep.InterfaceID, Fields: ep.Fields,
+			})
+		}
+		sources, err := cfgmgmt.RenderServiceEndpoints(ctrl.DB, req.ServiceID, eps, req.Fields)
+		if err != nil {
+			return configWriteError(c, err)
+		}
+		return c.JSON(http.StatusOK, map[string]any{"sources": sources})
 	}
 	sources, err := cfgmgmt.RenderService(ctrl.DB, req.ServiceID)
 	if err != nil {

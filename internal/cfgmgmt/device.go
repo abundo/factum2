@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/models"
@@ -172,6 +171,10 @@ func vlanFromFields(m map[string]any) int {
 }
 
 func GenericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface) (*GenericRenderData, error) {
+	return genericData(db, svc, ep, device, iface, nil, false)
+}
+
+func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, siblings []models.ServiceEndpoint, siblingsSet bool) (*GenericRenderData, error) {
 	vars := map[string]any{}
 	if iface != nil {
 		m, err := ResolveMap(db, iface.ID)
@@ -206,11 +209,14 @@ func GenericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 		data.ServiceNumericID = int(n)
 	}
 	if svc.ServiceType == "ELINE" {
-		data.Description = elineDescription(svc.ServiceID, customerName(db, svc.CustomerID))
-		siblings, err := ListEndpoints(db, svc.ID)
-		if err != nil {
-			return nil, err
+		if !siblingsSet {
+			var err error
+			siblings, err = ListEndpoints(db, svc.ID)
+			if err != nil {
+				return nil, err
+			}
 		}
+		data.Description = elineDescription(svc.ServiceID, customerName(db, svc.CustomerID))
 		if err := fillELINEPeer(db, svc, ep, device, data, siblings); err != nil {
 			return nil, err
 		}
@@ -268,6 +274,9 @@ func fillELINEPeer(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint,
 func otherEndpoint(ep *models.ServiceEndpoint, siblings []models.ServiceEndpoint) *models.ServiceEndpoint {
 	for i := range siblings {
 		s := &siblings[i]
+		if s.DeviceID == 0 || s.InterfaceID == 0 {
+			continue
+		}
 		if ep.ID != 0 && s.ID == ep.ID {
 			continue
 		}
@@ -366,7 +375,7 @@ func elineDescription(serviceID, customer string) string {
 	return fmt.Sprintf("ID=%s %s", serviceID, customer)
 }
 
-func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps []models.ServiceEndpoint) []RenderedSource {
+func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps, all []models.ServiceEndpoint) []RenderedSource {
 	lookupErr := func(msg string) []RenderedSource {
 		return []RenderedSource{{
 			Source: "service:" + svc.ServiceID, Kind: "service",
@@ -398,7 +407,7 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
 			continue
 		}
-		data, err := GenericData(db, svc, ep, device, iface)
+		data, err := genericData(db, svc, ep, device, iface, all, true)
 		if err != nil {
 			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
 			continue
@@ -408,7 +417,7 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 			cleanupDone = true
 		}
 		src := RenderedSource{
-			Source: "service:" + svc.ServiceID + ":" + ep.Role + ":" + strconv.FormatUint(uint64(ep.ID), 10),
+			Source: device.Name + " / " + iface.Name + " (" + ep.Role + ")",
 			Kind:   "service", Platform: platform, PayloadKind: payloadKind, Commands: cmds,
 		}
 		if err != nil {
@@ -451,23 +460,45 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 		if err := db.First(&svc, svcID).Error; err != nil {
 			continue
 		}
-		result.Sources = append(result.Sources, renderGenericForDevice(db, &svc, device, group)...)
+		var all []models.ServiceEndpoint
+		if err := db.Where("service_id = ?", svcID).Find(&all).Error; err != nil {
+			result.Sources = append(result.Sources, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
+			continue
+		}
+		result.Sources = append(result.Sources, renderGenericForDevice(db, &svc, device, group, all)...)
 	}
 	return result, nil
 }
 
-// RenderService renders every endpoint of a service (preview, no device I/O).
+// RenderService renders every saved endpoint of a service (preview, no device I/O).
 func RenderService(db *gorm.DB, serviceID uint) ([]RenderedSource, error) {
-	var svc models.Service
-	if err := db.First(&svc, serviceID).Error; err != nil {
-		return nil, statusErr(404, "service not found")
-	}
 	var eps []models.ServiceEndpoint
 	if err := db.Where("service_id = ?", serviceID).Find(&eps).Error; err != nil {
 		return nil, err
 	}
-	byDev := map[uint][]models.ServiceEndpoint{}
+	return RenderServiceEndpoints(db, serviceID, eps, nil)
+}
+
+// RenderServiceEndpoints renders the given endpoints against a saved service
+// (preview, no device I/O). Incomplete rows (no device or interface) are
+// skipped. fields, when non-empty, overlays Service.Fields for the render.
+func RenderServiceEndpoints(db *gorm.DB, serviceID uint, eps []models.ServiceEndpoint, fields json.RawMessage) ([]RenderedSource, error) {
+	var svc models.Service
+	if err := db.First(&svc, serviceID).Error; err != nil {
+		return nil, statusErr(404, "service not found")
+	}
+	if len(fields) > 0 && string(fields) != "null" {
+		svc.Fields = fields
+	}
+	ready := make([]models.ServiceEndpoint, 0, len(eps))
 	for _, ep := range eps {
+		if ep.DeviceID == 0 || ep.InterfaceID == 0 {
+			continue
+		}
+		ready = append(ready, ep)
+	}
+	byDev := map[uint][]models.ServiceEndpoint{}
+	for _, ep := range ready {
 		byDev[ep.DeviceID] = append(byDev[ep.DeviceID], ep)
 	}
 	var out []RenderedSource
@@ -477,7 +508,7 @@ func RenderService(db *gorm.DB, serviceID uint) ([]RenderedSource, error) {
 			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
 			continue
 		}
-		out = append(out, renderGenericForDevice(db, &svc, dev, group)...)
+		out = append(out, renderGenericForDevice(db, &svc, dev, group, ready)...)
 	}
 	return out, nil
 }

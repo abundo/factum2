@@ -57,9 +57,11 @@ for ELINE, and so on) is a physical port plus VLAN or subinterface. Save
 endpoints on the service (dialog or Config inspector), then **Push** to
 render the CLI object for each device's NOS and apply it.
 
-Push needs write permission and device credentials. Preview the CLI on
-the [Config](config.md) page before you rely on a new CLI object in
-production.
+**Show configuration** on the edit dialog renders that CLI for the
+devices and interfaces currently selected (including unsaved picks). It
+does not contact the devices. Push still needs write permission and
+device credentials. Preview from the [Config](config.md) page before you
+rely on a new CLI object in production.
 
 NetBox L2VPN import fills endpoints on matching Factum services after
 device-sync and `factum2-netbox sync`; it does not create service rows.

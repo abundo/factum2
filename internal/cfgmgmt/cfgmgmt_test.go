@@ -1066,6 +1066,66 @@ func TestSeedUpdatesUntouchedCLI(t *testing.T) {
 	}
 }
 
+func TestRenderServiceEndpointsDraftUsesSelectedPorts(t *testing.T) {
+	db := newTestDB(t)
+	cust := models.Customer{Name: "Acme AB"}
+	mustCreate(t, db, &cust)
+	pe1 := models.Device{Name: "pe1", Platform: "eos", NetboxID: 601}
+	pe2 := models.Device{Name: "pe2", Platform: "eos", NetboxID: 602}
+	mustCreate(t, db, &pe1)
+	mustCreate(t, db, &pe2)
+	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet3", Type: "1000base-t", NetboxID: 610}
+	ifb := models.Interface{DeviceID: pe2.ID, Name: "Ethernet4", Type: "1000base-t", NetboxID: 620}
+	mustCreate(t, db, &ifa)
+	mustCreate(t, db, &ifb)
+	lo1 := models.Interface{DeviceID: pe1.ID, Name: "Loopback0", Type: "virtual", NetboxID: 611}
+	lo2 := models.Interface{DeviceID: pe2.ID, Name: "Loopback0", Type: "virtual", NetboxID: 621}
+	mustCreate(t, db, &lo1)
+	mustCreate(t, db, &lo2)
+	mustCreate(t, db, &models.Address{InterfaceID: lo1.ID, Address: "10.0.0.1/32"})
+	mustCreate(t, db, &models.Address{InterfaceID: lo2.ID, Address: "10.0.0.2/32"})
+
+	svc := models.Service{
+		CustomerID:  cust.ID,
+		ServiceID:   "CN00042",
+		ServiceType: "ELINE",
+	}
+	mustCreate(t, db, &svc)
+
+	out, err := RenderServiceEndpoints(db, svc.ID, []models.ServiceEndpoint{
+		{Role: "a", DeviceID: pe1.ID, InterfaceID: ifa.ID, Fields: EncodeEndpointFields(111, 0, 0)},
+		{Role: "b", DeviceID: pe2.ID, InterfaceID: ifb.ID, Fields: EncodeEndpointFields(222, 0, 0)},
+		{Role: "a", DeviceID: 0, InterfaceID: 0},
+	}, nil)
+	if err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	var joined string
+	for _, src := range out {
+		if src.Error != "" {
+			t.Fatalf("render error: %s", src.Error)
+		}
+		joined += strings.Join(src.Commands, "\n") + "\n"
+	}
+	if !strings.Contains(joined, "interface Ethernet3.111") {
+		t.Errorf("missing selected A port in %v", joined)
+	}
+	if !strings.Contains(joined, "neighbor 10.0.0.2") {
+		t.Errorf("missing remote neighbor in %v", joined)
+	}
+	if strings.Contains(joined, "Ethernet1.100") {
+		t.Errorf("used placeholder interface, want selected ports: %v", joined)
+	}
+
+	saved, err := RenderService(db, svc.ID)
+	if err != nil {
+		t.Fatalf("saved: %v", err)
+	}
+	if len(saved) != 0 {
+		t.Fatalf("unsaved draft should not appear in saved render: %+v", saved)
+	}
+}
+
 func TestWalkParentsDepthError(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)

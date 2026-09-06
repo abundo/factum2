@@ -1,7 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, ref, watch } from 'vue'
-import { listServiceTypes } from '@/api/config'
+import { listServiceTypes, renderConfig } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { getDevice } from '@/api/devices'
 import {
@@ -80,6 +80,16 @@ const genericSaving = ref(false)
 const genericPushing = ref(false)
 const genericPushResults = ref([])
 const genericPickerIndex = ref(null)
+
+const showConfigPreview = ref(false)
+const configPreview = ref([])
+const configPreviewError = ref('')
+const configPreviewLoading = ref(false)
+let previewSeq = 0
+
+const completeEndpoints = computed(() =>
+  genericEndpoints.value.filter((ep) => ep.device_id && ep.interface_id),
+)
 
 const customerOptions = computed(() => customers.value.map((c) => ({ id: c.id, name: c.name })))
 
@@ -224,7 +234,13 @@ function loadServiceById(id) {
 }
 
 watch(open, (isOpen) => {
-  if (!isOpen || !props.serviceId) return
+  if (!isOpen) {
+    showConfigPreview.value = false
+    configPreview.value = []
+    configPreviewError.value = ''
+    return
+  }
+  if (!props.serviceId) return
   loadCustomers()
   loadServiceTypes().then(() => loadServiceById(props.serviceId))
 })
@@ -284,6 +300,53 @@ function openGenericPicker(i) {
   pickerTarget.value = 'generic'
   pickerOpen.value = true
 }
+
+function loadConfigPreview() {
+  if (!service.value?.id || !genericRoles.value.length) {
+    configPreview.value = []
+    configPreviewError.value = ''
+    return
+  }
+  const seq = ++previewSeq
+  configPreviewLoading.value = true
+  configPreviewError.value = ''
+  renderConfig({
+    service_id: service.value.id,
+    fields: { ...schemaValues.value },
+    endpoints: genericEndpoints.value.map((ep) => ({
+      role: ep.role,
+      device_id: ep.device_id || 0,
+      interface_id: ep.interface_id || 0,
+      fields: ep.fields || {},
+    })),
+  })
+    .then((data) => {
+      if (seq !== previewSeq) return
+      configPreview.value = data?.sources ?? []
+    })
+    .catch((err) => {
+      if (seq !== previewSeq) return
+      configPreviewError.value = err?.response?.data?.error ?? 'Failed to render configuration.'
+      configPreview.value = []
+    })
+    .finally(() => {
+      if (seq !== previewSeq) return
+      configPreviewLoading.value = false
+    })
+}
+
+function toggleConfigPreview() {
+  showConfigPreview.value = !showConfigPreview.value
+  if (showConfigPreview.value) loadConfigPreview()
+}
+
+watch(
+  [genericEndpoints, schemaValues],
+  () => {
+    if (showConfigPreview.value) loadConfigPreview()
+  },
+  { deep: true },
+)
 
 const pickerDeviceId = computed(
   () => genericEndpoints.value[genericPickerIndex.value]?.device_id ?? null,
@@ -744,6 +807,63 @@ function deleteServiceConfirmed() {
                 :disabled="!canWrite"
                 @click="addGenericEndpoint(role.name)"
               />
+            </div>
+            <div class="flex flex-col gap-3">
+              <UButton
+                :label="showConfigPreview ? 'Hide configuration' : 'Show configuration'"
+                :icon="showConfigPreview ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                variant="outline"
+                color="neutral"
+                @click="toggleConfigPreview"
+              />
+              <div v-if="showConfigPreview" class="flex flex-col gap-3">
+                <p class="text-muted-color text-sm m-0">
+                  CLI that would be applied for the selected devices and interfaces. Does not
+                  contact the devices.
+                </p>
+                <p
+                  v-if="configPreviewLoading && !configPreview.length"
+                  class="text-muted-color text-sm m-0"
+                >
+                  Rendering configuration…
+                </p>
+                <p v-if="configPreviewError" class="text-red-500 text-sm m-0">
+                  {{ configPreviewError }}
+                </p>
+                <p
+                  v-else-if="!configPreviewLoading && !completeEndpoints.length"
+                  class="text-muted-color text-sm m-0"
+                >
+                  Select a device and interface on at least one endpoint to preview CLI.
+                </p>
+                <p
+                  v-else-if="!configPreviewLoading && !configPreview.length"
+                  class="text-muted-color text-sm m-0"
+                >
+                  No platform pack for this type and the selected device platform(s).
+                </p>
+                <div
+                  v-for="(src, i) in configPreview"
+                  :key="i"
+                  class="border border-default rounded p-3"
+                >
+                  <div class="font-medium mb-2">
+                    {{ src.source }}
+                    <span v-if="src.platform" class="text-muted-color ms-1">{{
+                      src.platform
+                    }}</span>
+                    <span v-if="src.payload_kind" class="text-muted-color ms-1">{{
+                      src.payload_kind
+                    }}</span>
+                  </div>
+                  <div v-if="src.error" class="text-red-500 text-sm">{{ src.error }}</div>
+                  <pre
+                    v-else
+                    class="font-mono text-xs overflow-auto max-h-80 p-3 rounded-md bg-muted whitespace-pre m-0"
+                    >{{ (src.commands ?? []).join('\n') || '(empty)' }}</pre
+                  >
+                </div>
+              </div>
             </div>
             <div class="flex justify-end gap-2">
               <UButton
