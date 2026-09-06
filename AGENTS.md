@@ -108,7 +108,12 @@ meant to run off the primary host.
 are a `ServiceType` + per-NOS CLI objects in the DB, not a new Go
 package. Endpoints live in `service_endpoints`. Each type can carry
 `sync_source` / `netbox_type` so device-sync and NetBox reverse-import
-are not ELINE-hardcoded. How to design one:
+are not ELINE-hardcoded. The Config **tree** holds folders, attached
+devices (detach never deletes DCIM), parameter objects, CLI objects, and
+service objects (views onto `models.Service`, virtual refs on ports).
+Translation CLI lives under `_catalog/cli/<type>/<platform>`; baseline
+CLI is a child of `global` or a site/device, never `_catalog`. How to
+design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
 
 **L2VPN path (device → Netbox → factum Service):**

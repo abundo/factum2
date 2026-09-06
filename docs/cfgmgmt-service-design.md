@@ -271,7 +271,7 @@ The update editor is hidden in v1 (missing update ⇒ remove then add).
 | `platform` | Lower-cased NetBox platform: `eos`, `ios-xr`, `sros`, `sros-md`, `vrp`. Unique per type for translation objects. |
 | `payload_kind` | Default `cli`. `netconf` / `restconf` can be stored and previewed; **push requires `cli`**. |
 | `service_type_id` | Set for translation. Empty/zero = baseline CLI (applies when the object's **parent** is on the device ancestor chain). |
-| Context | Empty = no wrap. When `enter` is set, render wraps add with enter/exit. |
+| Context | Pattern language: `interface <name>`, `router bgp <as>` (not raw RE2). Empty / `global` = no wrap. When `enter` is set: one enter, remove, add, exit. `RemoveAtRoot` = remove unwrapped, then wrapped add. |
 
 Do **not** put golden/baseline CLI under `_catalog`. `_catalog` is a child
 of `global` but is **not** an ancestor of a PE under a site, so baseline
@@ -485,7 +485,7 @@ Baseline is not sent in a service push.
    (`username`, `password`) from the service dialog. Per endpoint device:
 
    - look up the translation CLI object for `service_type` + device
-     platform (pack fallback until those tables drop)
+     platform (`sros-md` falls back to `sros`)
    - require `payload_kind=cli` and a `CLISessionApplier` driver
      (`eos`, `ios-xr`, `sros` / `sros-md`)
    - render cleanup once, then each endpoint body, one CLI session
