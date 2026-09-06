@@ -83,23 +83,6 @@ export function deleteServiceType(id) {
   return http.delete(`/config/service-types/${id}`)
 }
 
-export function listPlatformPacks(serviceTypeId) {
-  return http
-    .get('/config/platform-packs', {
-      params: serviceTypeId ? { service_type_id: serviceTypeId } : {},
-    })
-    .then((res) => res.data ?? [])
-}
-export function createPlatformPack(payload) {
-  return http.post('/config/platform-packs', payload).then((res) => res.data)
-}
-export function updatePlatformPack(id, payload) {
-  return http.put(`/config/platform-packs/${id}`, payload).then((res) => res.data)
-}
-export function deletePlatformPack(id) {
-  return http.delete(`/config/platform-packs/${id}`)
-}
-
 export function listMacros() {
   return http.get('/config/macros').then((res) => res.data ?? [])
 }
@@ -111,19 +94,6 @@ export function updateMacro(id, payload) {
 }
 export function deleteMacro(id) {
   return http.delete(`/config/macros/${id}`)
-}
-
-export function listTemplates() {
-  return http.get('/config/templates').then((res) => res.data ?? [])
-}
-export function createTemplate(payload) {
-  return http.post('/config/templates', payload).then((res) => res.data)
-}
-export function updateTemplate(id, payload) {
-  return http.put(`/config/templates/${id}`, payload).then((res) => res.data)
-}
-export function deleteTemplate(id) {
-  return http.delete(`/config/templates/${id}`)
 }
 
 export function renderConfig(payload) {

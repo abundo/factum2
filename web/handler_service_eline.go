@@ -521,33 +521,6 @@ func (ctrl *Controller) applyELINECmds(drv drivers.DriverClient, device *models.
 		}
 		return applier.ApplyCLISession(intent.Name, cmds)
 	}
-	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
-	if err != nil {
-		return err
-	}
-	if pack != nil && pack.ApplyTemplate != "" {
-		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
-			return err
-		}
-		if prep, ok := drv.(drivers.ELINEPrepareChecker); ok {
-			if err := prep.PrepareELINEApply(intent); err != nil {
-				return err
-			}
-		}
-		data, err := drivers.ELINETemplateData(intent, strings.ToLower(device.Platform))
-		if err != nil {
-			return err
-		}
-		cmds, err := cfgmgmt.Render(ctrl.DB, pack.ApplyTemplate, "", data)
-		if err != nil {
-			return err
-		}
-		applier, ok := drv.(drivers.CLISessionApplier)
-		if !ok {
-			return fmt.Errorf("platform pack exists but this platform cannot apply CLI sessions yet")
-		}
-		return applier.ApplyCLISession(intent.Name, cmds)
-	}
 	applier, ok := drv.(drivers.ELINEApplier)
 	if !ok {
 		return fmt.Errorf("ELINE provisioning is not yet supported for platform %s", device.Platform)
@@ -593,24 +566,6 @@ func (ctrl *Controller) removeELINECmds(drv drivers.DriverClient, device *models
 		applier, ok := drv.(drivers.CLISessionApplier)
 		if !ok {
 			return fmt.Errorf("CLI object exists but this platform cannot apply CLI sessions yet")
-		}
-		return applier.ApplyCLISession(removal.Name, cmds)
-	}
-	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
-	if err != nil {
-		return err
-	}
-	if pack != nil && pack.ApplyTemplate != "" {
-		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
-			return err
-		}
-		cmds, err := cfgmgmt.RenderPackCleanup(ctrl.DB, pack, removal)
-		if err != nil {
-			return err
-		}
-		applier, ok := drv.(drivers.CLISessionApplier)
-		if !ok {
-			return fmt.Errorf("platform pack exists but this platform cannot apply CLI sessions yet")
 		}
 		return applier.ApplyCLISession(removal.Name, cmds)
 	}

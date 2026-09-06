@@ -19,14 +19,11 @@ func packChecksum(body string) string {
 }
 
 // Seed creates the global root scope, reserved _catalog/_services folders,
-// built-in service types, and ELINE platform packs when they are missing.
-// Operator-edited packs are left alone; checksum-matching rows are
-// refreshed from the embed files. Assignments on non-parameter scopes are
+// built-in service types, and ELINE translation CLI objects when they are
+// missing. Operator-edited CLI objects are left alone; checksum-matching
+// rows are refreshed from the embed files under
+// internal/drivers/templates. Assignments on non-parameter scopes are
 // copied onto a reserved parameters child and the originals are deleted.
-// ConfigTemplate rows are copied onto kind=cli children (null scope →
-// global); original template rows stay. Packs are upserted as translation
-// CLI objects under _catalog/cli/<type>/; the CLI checksum (features +
-// context) is the writer that decides whether embed refresh is allowed.
 // Typed CN/CI services without a tree node are placed under _services.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
@@ -35,17 +32,11 @@ func Seed(db *gorm.DB) error {
 	if err := seedReservedFolders(db); err != nil {
 		return err
 	}
-	if err := migrateTemplatesToCLI(db); err != nil {
-		return err
-	}
 	eline, err := seedServiceTypes(db)
 	if err != nil {
 		return err
 	}
-	if err := seedELINEPacks(db, eline.ID); err != nil {
-		return err
-	}
-	if err := seedPacksToCLI(db); err != nil {
+	if err := seedELINECLI(db, eline.ID); err != nil {
 		return err
 	}
 	if err := copyAssignmentsOntoParameterChildren(db); err != nil {
@@ -214,68 +205,6 @@ func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
 	return nil
 }
 
-// migrateTemplatesToCLI copies each ConfigTemplate onto a kind=cli child of
-// its scope (or of global when ScopeID is nil). A true twin — baseline CLI
-// with the same name+parent and matching platform — is left alone.
-// Translation CLI and a different platform do not block the copy.
-// Template rows are not deleted.
-func migrateTemplatesToCLI(db *gorm.DB) error {
-	root, err := RootScope(db)
-	if err != nil {
-		return err
-	}
-	var tmpls []models.ConfigTemplate
-	if err := db.Find(&tmpls).Error; err != nil {
-		return err
-	}
-	for i := range tmpls {
-		t := &tmpls[i]
-		parentID := root.ID
-		if t.ScopeID != nil {
-			parentID = *t.ScopeID
-		}
-		if err := db.Transaction(func(tx *gorm.DB) error {
-			twins, err := findBaselineCLITwins(tx, t.Name, parentID, t.Platform)
-			if err != nil {
-				return err
-			}
-			if len(twins) > 0 {
-				return nil
-			}
-			pid := parentID
-			obj := models.ConfigScope{
-				ParentID:    &pid,
-				Name:        t.Name,
-				Kind:        models.ConfigScopeKindCLI,
-				Platform:    t.Platform,
-				PayloadKind: t.PayloadKind,
-				Enabled:     t.Enabled,
-			}
-			if err := normalizeCLIScope(&obj); err != nil {
-				return err
-			}
-			if err := tx.Create(&obj).Error; err != nil {
-				return err
-			}
-			// Gorm skips the zero value for a bool with default:true, so a
-			// disabled template would be stored enabled unless we write it.
-			if !t.Enabled {
-				if err := tx.Model(&obj).Update("enabled", false).Error; err != nil {
-					return err
-				}
-			}
-			feat := models.ConfigCLIFeature{
-				ScopeID:     obj.ID,
-				Name:        "body",
-				AddCommands: t.Body,
-			}
-			return tx.Create(&feat).Error
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func ensureScopeUniqueIndexes(db *gorm.DB) error {
 	if db.Dialector.Name() != "postgres" {
@@ -448,8 +377,8 @@ func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 	return &eline, nil
 }
 
-func seedELINEPacks(db *gorm.DB, elineTypeID uint) error {
-	packs := []struct {
+func seedELINECLI(db *gorm.DB, elineTypeID uint) error {
+	for _, p := range []struct {
 		platform string
 		body     string
 	}{
@@ -457,55 +386,12 @@ func seedELINEPacks(db *gorm.DB, elineTypeID uint) error {
 		{"ios-xr", templates.IOSXREline},
 		{"sros", templates.SROSEline},
 		{"sros-md", templates.SROSEline},
-	}
-	for _, p := range packs {
-		sum := packChecksum(p.body)
-		var row models.PlatformPack
-		err := db.Where("service_type_id = ? AND platform = ?", elineTypeID, p.platform).First(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			row = models.PlatformPack{
-				ServiceTypeID: elineTypeID,
-				Platform:      p.platform,
-				PayloadKind:   models.PayloadKindCLI,
-				ApplyTemplate: p.body,
-				SeedChecksum:  sum,
-			}
-			if err := db.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil {
+	} {
+		if err := syncELINECLI(db, elineTypeID, p.platform, p.body); err != nil {
 			return err
 		}
-		if row.SeedChecksum == "" && row.ApplyTemplate == p.body {
-			row.SeedChecksum = sum
-			if err := db.Save(&row).Error; err != nil {
-				return err
-			}
-		}
-		// Embed refresh is owned by seedPacksToCLI (CLI is the checksum writer).
 	}
 	return nil
-}
-
-func elineEmbedBody(platform string) string {
-	switch NormalizePlatform(platform) {
-	case "eos":
-		return templates.EOSEline
-	case "ios-xr":
-		return templates.IOSXREline
-	case "sros", "sros-md":
-		return templates.SROSEline
-	}
-	return ""
-}
-
-func packEmbedBody(typeName, platform string) string {
-	if typeName == "ELINE" {
-		return elineEmbedBody(platform)
-	}
-	return ""
 }
 
 func catalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, error) {
@@ -522,23 +408,6 @@ func catalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, er
 		return nil, err
 	}
 	return ensureChildFolder(db, cliFolder.ID, typeName)
-}
-
-func packUntouched(row *models.PlatformPack) bool {
-	if row == nil {
-		return false
-	}
-	if row.SeedChecksum == "" {
-		return false
-	}
-	return row.SeedChecksum == packChecksum(row.ApplyTemplate)
-}
-
-func cliPayloadKind(row *models.PlatformPack) string {
-	if row != nil && row.PayloadKind != "" {
-		return row.PayloadKind
-	}
-	return models.PayloadKindCLI
 }
 
 // CLIObjectChecksum is the canonical seed hash for a translation CLI object:
@@ -604,34 +473,8 @@ func currentCLIChecksum(obj *models.ConfigScope, feats []models.ConfigCLIFeature
 	return CLIObjectChecksum(obj.Platform, kind, obj.Payload.Context, feats)
 }
 
-// seedPacksToCLI upserts a translation CLI object per platform_packs row
-// under _catalog/cli/<ServiceType.Name>/. CLI is the checksum writer: an
-// operator edit of features or context skips embed refresh for both pack
-// and CLI. Untouched packs (or a missing CLI) copy embed/current pack onto
-// CLI features; an old-UI pack edit with an untouched CLI copies pack → CLI
-// once, then CLI is source.
-func seedPacksToCLI(db *gorm.DB) error {
-	var packs []models.PlatformPack
-	if err := db.Find(&packs).Error; err != nil {
-		return err
-	}
-	for i := range packs {
-		if err := syncPackCLI(db, &packs[i]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func syncPackCLI(db *gorm.DB, pack *models.PlatformPack) error {
-	var st models.ServiceType
-	if err := db.First(&st, pack.ServiceTypeID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		return err
-	}
-	cli, err := lookupCLIObjectByTypeID(db, pack.ServiceTypeID, pack.Platform, false)
+func syncELINECLI(db *gorm.DB, typeID uint, platform, embed string) error {
+	cli, err := lookupCLIObjectByTypeID(db, typeID, platform, false)
 	if err != nil {
 		return err
 	}
@@ -644,22 +487,13 @@ func syncPackCLI(db *gorm.DB, pack *models.PlatformPack) error {
 			return nil
 		}
 	}
-	embed := packEmbedBody(st.Name, pack.Platform)
-	kind := cliPayloadKind(pack)
-	apply, cleanup := pack.ApplyTemplate, pack.CleanupTemplate
-	mirrorPack := false
-	if packUntouched(pack) && embed != "" {
-		apply = embed
-		cleanup = ""
-		mirrorPack = true
-	}
-	add, remove := packToCLIBlobs(apply, cleanup)
-	return writePackCLI(db, pack, st.Name, kind, add, remove, mirrorPack, apply)
+	add, remove := packToCLIBlobs(embed, "")
+	return writeTranslationCLI(db, typeID, "ELINE", platform, models.PayloadKindCLI, add, remove)
 }
 
-func writePackCLI(db *gorm.DB, pack *models.PlatformPack, typeName, kind, add, remove string, mirrorPack bool, applyBody string) error {
+func writeTranslationCLI(db *gorm.DB, typeID uint, typeName, platform, kind, add, remove string) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		cli, err := lookupCLIObjectByTypeID(tx, pack.ServiceTypeID, pack.Platform, false)
+		cli, err := lookupCLIObjectByTypeID(tx, typeID, platform, false)
 		if err != nil {
 			return err
 		}
@@ -668,13 +502,13 @@ func writePackCLI(db *gorm.DB, pack *models.PlatformPack, typeName, kind, add, r
 			if err != nil {
 				return err
 			}
-			stID := pack.ServiceTypeID
+			stID := typeID
 			obj := models.ConfigScope{
 				ParentID:      &parent.ID,
-				Name:          pack.Platform,
+				Name:          platform,
 				Kind:          models.ConfigScopeKindCLI,
 				ServiceTypeID: &stID,
-				Platform:      pack.Platform,
+				Platform:      platform,
 				PayloadKind:   kind,
 				Enabled:       true,
 			}
@@ -685,7 +519,7 @@ func writePackCLI(db *gorm.DB, pack *models.PlatformPack, typeName, kind, add, r
 			cli = created
 		} else {
 			cli.PayloadKind = kind
-			cli.Platform = NormalizePlatform(pack.Platform)
+			cli.Platform = NormalizePlatform(platform)
 			cli.Payload.Context = nil
 			if err := tx.Save(cli).Error; err != nil {
 				return err
@@ -704,23 +538,8 @@ func writePackCLI(db *gorm.DB, pack *models.PlatformPack, typeName, kind, add, r
 		if err := tx.Create(&feat).Error; err != nil {
 			return err
 		}
-		feats := []models.ConfigCLIFeature{feat}
-		sum := CLIObjectChecksum(cli.Platform, kind, cli.Payload.Context, feats)
-		if err := tx.Model(cli).Update("seed_checksum", sum).Error; err != nil {
-			return err
-		}
-		if mirrorPack {
-			updates := map[string]any{
-				"apply_template":   applyBody,
-				"cleanup_template": "",
-				"seed_checksum":    packChecksum(applyBody),
-				"payload_kind":     kind,
-			}
-			if err := tx.Model(pack).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		sum := CLIObjectChecksum(cli.Platform, kind, cli.Payload.Context, []models.ConfigCLIFeature{feat})
+		return tx.Model(cli).Update("seed_checksum", sum).Error
 	})
 }
 

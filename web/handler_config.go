@@ -546,55 +546,10 @@ func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (ctrl *Controller) ApiConfigPlatformPackList(c *echo.Context) error {
-	var typeID uint
-	_ = echo.QueryParamsBinder(c).Uint("service_type_id", &typeID).BindError()
-	q := ctrl.DB.Model(&models.PlatformPack{})
-	if typeID != 0 {
-		q = q.Where("service_type_id = ?", typeID)
-	}
-	var rows []models.PlatformPack
-	if err := q.Order("platform").Find(&rows).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, rows)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackGet(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.GetOne(c)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackCreate(c *echo.Context) error {
-	var dto models.PlatformPackDTO
-	if err := c.Bind(&dto); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	if dto.ServiceTypeID == 0 || dto.Platform == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service_type_id and platform are required"})
-	}
-	kind := dto.PayloadKind
-	if kind == "" {
-		kind = models.PayloadKindCLI
-	}
-	row := models.PlatformPack{
-		ServiceTypeID: dto.ServiceTypeID, Platform: cfgmgmt.NormalizePlatform(dto.Platform),
-		PayloadKind: kind, ApplyTemplate: dto.ApplyTemplate, CleanupTemplate: dto.CleanupTemplate,
-	}
-	if err := ctrl.DB.Create(&row).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	return c.JSON(http.StatusCreated, row)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackUpdate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.Update(c)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackDelete(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.Delete(c)
+func (ctrl *Controller) ApiConfigLegacyGone(c *echo.Context) error {
+	return c.JSON(http.StatusGone, map[string]any{
+		"error": "platform packs and config templates have been replaced by CLI objects",
+	})
 }
 
 func (ctrl *Controller) ApiConfigMacroList(c *echo.Context) error {
@@ -619,31 +574,6 @@ func (ctrl *Controller) ApiConfigMacroUpdate(c *echo.Context) error {
 
 func (ctrl *Controller) ApiConfigMacroDelete(c *echo.Context) error {
 	h := NewSecureCRUDHandler[models.ConfigMacro, models.ConfigMacroDTO](ctrl.DB)
-	return h.Delete(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateList(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.GetAll(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateGet(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.GetOne(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateCreate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.Create(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateUpdate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.Update(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateDelete(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
 	return h.Delete(c)
 }
 
@@ -741,7 +671,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	return c.JSON(http.StatusOK, rows)
 }
 
-// ApiServicePush renders the platform pack and applies CLI sessions.
+// ApiServicePush renders the translation CLI object and applies CLI sessions.
 func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -838,34 +768,18 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
 		}
-		var pack *models.PlatformPack
 		if cliObj == nil {
-			pack, err = cfgmgmt.LookupPlatformPack(ctrl.DB, svc.ServiceType, device.Platform)
-			if err != nil {
-				results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
-				continue
-			}
-		}
-		if cliObj == nil && pack == nil {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
 				Error:  cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, device.Platform),
 			})
 			continue
 		}
-		if cliObj != nil {
-			if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
-				results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
-				continue
-			}
-		} else if err := cfgmgmt.RequireCLIPack(pack); err != nil {
+		if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
 		}
-		cannotApply := "platform pack exists but this platform cannot apply CLI sessions yet"
-		if cliObj != nil {
-			cannotApply = "CLI object exists but this platform cannot apply CLI sessions yet"
-		}
+		cannotApply := "CLI object exists but this platform cannot apply CLI sessions yet"
 		if !isSupportedDriverPlatform(&device) {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
@@ -913,22 +827,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			if firstData == nil {
 				firstData = data
 			}
-			var part []string
-			if cliObj != nil {
-				part, err = cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
-			} else {
-				body, bodyErr := cfgmgmt.RenderPackApplyBody(ctrl.DB, pack, data)
-				err = bodyErr
-				part = body
-				if err == nil && !cleanupDone {
-					cl, clErr := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
-					if clErr != nil {
-						err = clErr
-					} else {
-						part = append(cl, body...)
-					}
-				}
-			}
+			part, err := cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
 			if err != nil {
 				pushErr = err.Error()
 				break

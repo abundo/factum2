@@ -241,54 +241,6 @@ type ServiceTypeDTO struct {
 	NetboxType    string         `json:"netbox_type"`
 }
 
-// PlatformPack is one platform's apply/cleanup templates for a service type.
-type PlatformPack struct {
-	FactumModel
-	ServiceTypeID   uint   `json:"service_type_id" gorm:"uniqueIndex:idx_cfg_pack_type_plat;not null"`
-	Platform        string `json:"platform" gorm:"uniqueIndex:idx_cfg_pack_type_plat;not null;type:varchar(64)"`
-	PayloadKind     string `json:"payload_kind" gorm:"type:varchar(32)"`
-	ApplyTemplate   string `json:"apply_template" gorm:"type:text"`
-	CleanupTemplate string `json:"cleanup_template" gorm:"type:text"`
-	// SeedChecksum is sha256 of the embed body last written by Seed. Empty
-	// or matching the stored body means the row is untouched and may be
-	// refreshed; a mismatch means an operator edited it.
-	SeedChecksum string `json:"-" gorm:"type:varchar(64)"`
-}
-
-func (PlatformPack) TableName() string { return "platform_packs" }
-
-type PlatformPackDTO struct {
-	ID              uint   `json:"id"`
-	ServiceTypeID   uint   `json:"service_type_id"`
-	Platform        string `json:"platform"`
-	PayloadKind     string `json:"payload_kind"`
-	ApplyTemplate   string `json:"apply_template"`
-	CleanupTemplate string `json:"cleanup_template"`
-}
-
-// ConfigTemplate is a baseline/golden snippet attached to a scope.
-type ConfigTemplate struct {
-	FactumModel
-	Name        string `json:"name" gorm:"not null;type:varchar(255)"`
-	Platform    string `json:"platform" gorm:"type:varchar(64)"`
-	PayloadKind string `json:"payload_kind" gorm:"type:varchar(32)"`
-	Body        string `json:"body" gorm:"type:text"`
-	ScopeID     *uint  `json:"scope_id"`
-	Enabled     bool   `json:"enabled"`
-}
-
-func (ConfigTemplate) TableName() string { return "config_templates" }
-
-type ConfigTemplateDTO struct {
-	ID          uint   `json:"id"`
-	Name        string `json:"name"`
-	Platform    string `json:"platform"`
-	PayloadKind string `json:"payload_kind"`
-	Body        string `json:"body"`
-	ScopeID     *uint  `json:"scope_id"`
-	Enabled     bool   `json:"enabled"`
-}
-
 // ConfigMacro is a named snippet templates can {{include}}.
 type ConfigMacro struct {
 	FactumModel
