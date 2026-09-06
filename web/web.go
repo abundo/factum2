@@ -282,6 +282,8 @@ func GUI(p *GuiParams) error {
 	cfg.GET("/scopes/tree", ctrl.ApiConfigScopeTree, ctrl.RequireRead)
 	cfg.POST("/scopes", ctrl.ApiConfigScopeCreate, ctrl.RequireWrite)
 	cfg.PUT("/scopes/:id", ctrl.ApiConfigScopeUpdate, ctrl.RequireWrite)
+	cfg.POST("/scopes/:id/move", ctrl.ApiConfigScopeMove, ctrl.RequireWrite)
+	cfg.POST("/scopes/:id/detach", ctrl.ApiConfigScopeDetach, ctrl.RequireWrite)
 	cfg.DELETE("/scopes/:id", ctrl.ApiConfigScopeDelete, ctrl.RequireWrite)
 	cfg.GET("/variables", ctrl.ApiConfigVariableList, ctrl.RequireRead)
 	cfg.GET("/variables/:id", ctrl.ApiConfigVariableGet, ctrl.RequireRead)

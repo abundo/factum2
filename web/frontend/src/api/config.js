@@ -15,6 +15,12 @@ export function updateScope(id, payload) {
 export function deleteScope(id) {
   return http.delete(`/config/scopes/${id}`)
 }
+export function moveScope(id, payload) {
+  return http.post(`/config/scopes/${id}/move`, payload).then((res) => res.data)
+}
+export function detachScope(id) {
+  return http.post(`/config/scopes/${id}/detach`)
+}
 
 export function listVariables() {
   return http.get('/config/variables').then((res) => res.data ?? [])

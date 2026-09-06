@@ -76,20 +76,26 @@ type ConfigScope struct {
 func (ConfigScope) TableName() string { return "config_scopes" }
 
 type ConfigScopeDTO struct {
-	ID            uint               `json:"id"`
-	ParentID      *uint              `json:"parent_id"`
-	Name          string             `json:"name"`
-	Kind          string             `json:"kind"`
-	SiteID        *uint              `json:"site_id"`
-	DeviceID      *uint              `json:"device_id"`
-	InterfaceID   *uint              `json:"interface_id"`
-	ServiceID     *uint              `json:"service_id"`
-	ServiceTypeID *uint              `json:"service_type_id"`
-	Platform      string             `json:"platform"`
-	PayloadKind   string             `json:"payload_kind"`
-	Enabled       bool               `json:"enabled"`
-	SortOrder     int                `json:"sort_order"`
-	Payload       ConfigScopePayload `json:"payload"`
+	ID            uint                `json:"id"`
+	ParentID      *uint               `json:"parent_id"`
+	Name          *string             `json:"name"`
+	Kind          *string             `json:"kind"`
+	SiteID        *uint               `json:"site_id"`
+	DeviceID      *uint               `json:"device_id"`
+	InterfaceID   *uint               `json:"interface_id"`
+	ServiceID     *uint               `json:"service_id"`
+	ServiceTypeID *uint               `json:"service_type_id"`
+	Platform      *string             `json:"platform"`
+	PayloadKind   *string             `json:"payload_kind"`
+	Enabled       *bool               `json:"enabled"`
+	SortOrder     *int                `json:"sort_order"`
+	Payload       *ConfigScopePayload `json:"payload"`
+}
+
+// MoveScopeRequest is POST /api/config/scopes/:id/move. SortOrder nil = last sibling.
+type MoveScopeRequest struct {
+	ParentID  uint `json:"parent_id"`
+	SortOrder *int `json:"sort_order"`
 }
 
 // ConfigScopePayload is kind-specific data stored as JSON on ConfigScope.
