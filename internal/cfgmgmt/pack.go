@@ -106,39 +106,28 @@ func ServiceTypeExists(db *gorm.DB, name string) (bool, error) {
 	return n > 0, nil
 }
 
-// LookupPlatformPack returns the pack for typeName+platform. sros-md falls
-// back to sros when no dedicated pack exists.
-func LookupPlatformPack(db *gorm.DB, typeName, platform string) (*models.PlatformPack, error) {
+// LookupCLIObject returns the kind=cli translator for a service type name
+// and platform. sros-md falls back to sros when no dedicated object exists.
+func LookupCLIObject(db *gorm.DB, typeName, platform string) (*models.ConfigScope, error) {
 	st, err := LookupServiceType(db, typeName)
 	if err != nil {
 		return nil, err
 	}
-	plat := NormalizePlatform(platform)
-	var pack models.PlatformPack
-	err = db.Where("service_type_id = ? AND platform = ?", st.ID, plat).First(&pack).Error
-	if err == nil {
-		return &pack, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if plat == "sros-md" {
-		err = db.Where("service_type_id = ? AND platform = ?", st.ID, "sros").First(&pack).Error
-		if err == nil {
-			return &pack, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-	}
-	return nil, nil
+	return lookupCLIObjectByTypeID(db, st.ID, platform, true)
 }
 
-func RequireCLIPack(pack *models.PlatformPack) error {
-	if pack == nil {
-		return statusErr(400, "no platform pack for this service type and device platform")
+// MissingCLIObjectMessage is the preview/push error when no translation
+// CLI object exists for type+platform.
+func MissingCLIObjectMessage(typeName, platform string) string {
+	return "no CLI object for " + typeName + "/" + platform
+}
+
+// RequireCLIObject gates push on the payload_kind column (not JSON).
+func RequireCLIObject(obj *models.ConfigScope) error {
+	if obj == nil {
+		return statusErr(400, "no CLI object for this service type and device platform")
 	}
-	kind := pack.PayloadKind
+	kind := obj.PayloadKind
 	if kind == "" {
 		kind = models.PayloadKindCLI
 	}

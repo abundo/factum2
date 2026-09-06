@@ -5,16 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // columnFromFields prefers an explicit DTO column value, then the
@@ -257,13 +254,6 @@ var validCategories = map[string]bool{
 // have no service type, since the prefix alone fully describes them.
 var capacityCategories = map[string]bool{"CN": true, "CI": true}
 
-// serviceIDRe matches the <category><5 digits> shape ApiServiceCreate
-// auto-assigns - used to pick out which existing ServiceID values count
-// towards the next number for a category, since older/Lime-sourced rows
-// carry arbitrary free-text service IDs that must not be mistaken for one
-// of ours just because they happen to start with the same prefix.
-var serviceIDRe = regexp.MustCompile(`^([A-Z]{2})(\d{5})$`)
-
 // categoryFromServiceID derives a service's category from its ServiceID's
 // <category><5-digit> prefix rather than storing it as a separate column -
 // older/Lime-sourced rows with free-text service IDs that don't match the
@@ -296,64 +286,14 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 		}
 	}
 
-	var created models.Service
+	var created *models.Service
 	err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
-		serviceID := strings.TrimSpace(dto.ServiceID)
-		if serviceID == "" {
-			// Locking existing rows for this category serializes concurrent
-			// auto-assignments against each other; the only unguarded edge
-			// is two concurrent first-ever creations for a brand-new
-			// category (nothing to lock yet) both computing "1" - accepted
-			// as practically irrelevant for a low-traffic internal admin
-			// tool.
-			var existing []models.Service
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("service_id LIKE ?", dto.Category+"%").
-				Find(&existing).Error; err != nil {
-				return err
-			}
-
-			next := 1
-			for _, svc := range existing {
-				m := serviceIDRe.FindStringSubmatch(svc.ServiceID)
-				if m == nil || m[1] != dto.Category {
-					continue
-				}
-				n, err := strconv.Atoi(m[2])
-				if err != nil {
-					continue
-				}
-				if n+1 > next {
-					next = n + 1
-				}
-			}
-			serviceID = fmt.Sprintf("%s%05d", dto.Category, next)
-		} else {
-			var count int64
-			if err := tx.Model(&models.Service{}).
-				Where("service_id = ?", serviceID).
-				Count(&count).Error; err != nil {
-				return err
-			}
-			if count > 0 {
-				return fmt.Errorf("service ID %q is already in use", serviceID)
-			}
+		row, err := cfgmgmt.CreateServiceRecord(tx, &dto)
+		if err != nil {
+			return err
 		}
-
-		created = models.Service{
-			CustomerID:      dto.CustomerID,
-			Comment:         dto.Comment,
-			ServiceID:       serviceID,
-			ServiceType:     dto.ServiceType,
-			BandwidthMbps:   columnFromFields(dto.BandwidthMbps, dto.Fields, models.SchemaFieldBandwidthMbps),
-			MaxMacAddresses: columnFromFields(dto.MaxMacAddresses, dto.Fields, models.SchemaFieldMaxMacAddresses),
-			DeliveryPoint1:  dto.DeliveryPoint1,
-			DeliveryPoint2:  dto.DeliveryPoint2,
-			Product:         dto.Product,
-			Service:         dto.Service,
-			Fields:          dto.Fields,
-		}
-		return tx.Create(&created).Error
+		created = row
+		return nil
 	})
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -431,6 +371,9 @@ func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Serv
 		}
 
 		if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+			if err := cfgmgmt.DetachServiceByRowID(tx, existing.ID); err != nil {
+				return err
+			}
 			if err := optical.DeletePathForService(tx, existing.ID); err != nil {
 				return err
 			}

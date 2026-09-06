@@ -15,6 +15,24 @@ export function updateScope(id, payload) {
 export function deleteScope(id) {
   return http.delete(`/config/scopes/${id}`)
 }
+export function moveScope(id, payload) {
+  return http.post(`/config/scopes/${id}/move`, payload).then((res) => res.data)
+}
+export function detachScope(id) {
+  return http.post(`/config/scopes/${id}/detach`)
+}
+export function listFeatures(scopeId) {
+  return http.get(`/config/scopes/${scopeId}/features`).then((res) => res.data ?? [])
+}
+export function createFeature(scopeId, payload) {
+  return http.post(`/config/scopes/${scopeId}/features`, payload).then((res) => res.data)
+}
+export function updateFeature(id, payload) {
+  return http.put(`/config/features/${id}`, payload).then((res) => res.data)
+}
+export function deleteFeature(id) {
+  return http.delete(`/config/features/${id}`)
+}
 
 export function listVariables() {
   return http.get('/config/variables').then((res) => res.data ?? [])
@@ -65,23 +83,6 @@ export function deleteServiceType(id) {
   return http.delete(`/config/service-types/${id}`)
 }
 
-export function listPlatformPacks(serviceTypeId) {
-  return http
-    .get('/config/platform-packs', {
-      params: serviceTypeId ? { service_type_id: serviceTypeId } : {},
-    })
-    .then((res) => res.data ?? [])
-}
-export function createPlatformPack(payload) {
-  return http.post('/config/platform-packs', payload).then((res) => res.data)
-}
-export function updatePlatformPack(id, payload) {
-  return http.put(`/config/platform-packs/${id}`, payload).then((res) => res.data)
-}
-export function deletePlatformPack(id) {
-  return http.delete(`/config/platform-packs/${id}`)
-}
-
 export function listMacros() {
   return http.get('/config/macros').then((res) => res.data ?? [])
 }
@@ -93,19 +94,6 @@ export function updateMacro(id, payload) {
 }
 export function deleteMacro(id) {
   return http.delete(`/config/macros/${id}`)
-}
-
-export function listTemplates() {
-  return http.get('/config/templates').then((res) => res.data ?? [])
-}
-export function createTemplate(payload) {
-  return http.post('/config/templates', payload).then((res) => res.data)
-}
-export function updateTemplate(id, payload) {
-  return http.put(`/config/templates/${id}`, payload).then((res) => res.data)
-}
-export function deleteTemplate(id) {
-  return http.delete(`/config/templates/${id}`)
 }
 
 export function renderConfig(payload) {

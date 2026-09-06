@@ -22,7 +22,7 @@ currently on GitHub.
 | Customers / Contacts | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
 | Prefixes | IPAM | Only if **IP address management** is enabled |
-| Services / Config / Maintenance | Provisioning | Capacity services, CLI templates, optical maintenance |
+| Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |
 | Job overview / status / scheduler | Jobs | Trigger and watch syncs |
 | Settings, users, workers | Admin | Administrators only |
 

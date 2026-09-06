@@ -37,33 +37,80 @@ func (ctrl *Controller) ApiConfigScopeTree(c *echo.Context) error {
 	return c.JSON(http.StatusOK, tree)
 }
 
+func scopeFromDTO(dto *models.ConfigScopeDTO) models.ConfigScope {
+	row := models.ConfigScope{
+		ParentID: dto.ParentID, SiteID: dto.SiteID,
+		DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
+		ServiceID: dto.ServiceID, ServiceTypeID: dto.ServiceTypeID,
+	}
+	if dto.Name != nil {
+		row.Name = *dto.Name
+	}
+	if dto.Kind != nil {
+		row.Kind = *dto.Kind
+	}
+	if dto.Platform != nil {
+		row.Platform = *dto.Platform
+	}
+	if dto.PayloadKind != nil {
+		row.PayloadKind = *dto.PayloadKind
+	}
+	if dto.SortOrder != nil {
+		row.SortOrder = *dto.SortOrder
+	}
+	if dto.Payload != nil {
+		row.Payload = *dto.Payload
+	}
+	return row
+}
+
 func (ctrl *Controller) ApiConfigScopeCreate(c *echo.Context) error {
 	var dto models.ConfigScopeDTO
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if dto.DeviceID != nil && dto.Kind == models.ConfigScopeKindDevice {
-		parent := uint(0)
-		if dto.ParentID != nil {
-			parent = *dto.ParentID
-		} else {
-			root, err := cfgmgmt.RootScope(ctrl.DB)
-			if err != nil {
-				return configWriteError(c, err)
-			}
-			parent = root.ID
+	kind := ""
+	if dto.Kind != nil {
+		kind = *dto.Kind
+	}
+	parent := uint(0)
+	if dto.ParentID != nil {
+		parent = *dto.ParentID
+	} else {
+		root, err := cfgmgmt.RootScope(ctrl.DB)
+		if err != nil {
+			return configWriteError(c, err)
 		}
+		parent = root.ID
+	}
+	if dto.DeviceID != nil && kind == models.ConfigScopeKindDevice {
 		node, err := cfgmgmt.AttachDevice(ctrl.DB, parent, *dto.DeviceID)
 		if err != nil {
 			return configWriteError(c, err)
 		}
 		return c.JSON(http.StatusCreated, node)
 	}
-	row := models.ConfigScope{
-		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
-		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder,
+	if kind == models.ConfigScopeKindService {
+		if dto.Attach != nil && dto.ServiceID != nil && *dto.ServiceID != 0 {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "attach and service_id are mutually exclusive"})
+		}
+		if dto.Attach != nil {
+			node, err := cfgmgmt.CreateServiceFromTree(ctrl.DB, parent, dto.Attach)
+			if err != nil {
+				return configWriteError(c, err)
+			}
+			return c.JSON(http.StatusCreated, node)
+		}
+		if dto.ServiceID != nil && *dto.ServiceID != 0 {
+			node, err := cfgmgmt.AttachService(ctrl.DB, parent, *dto.ServiceID)
+			if err != nil {
+				return configWriteError(c, err)
+			}
+			return c.JSON(http.StatusCreated, node)
+		}
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service_id or attach is required"})
 	}
+	row := scopeFromDTO(&dto)
 	created, err := cfgmgmt.CreateScope(ctrl.DB, &row)
 	if err != nil {
 		return configWriteError(c, err)
@@ -80,12 +127,7 @@ func (ctrl *Controller) ApiConfigScopeUpdate(c *echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row := models.ConfigScope{
-		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
-		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder,
-	}
-	updated, err := cfgmgmt.UpdateScope(ctrl.DB, id, &row)
+	updated, err := cfgmgmt.UpdateScope(ctrl.DB, id, &dto)
 	if err != nil {
 		return configWriteError(c, err)
 	}
@@ -98,6 +140,99 @@ func (ctrl *Controller) ApiConfigScopeDelete(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
 	}
 	if err := cfgmgmt.DeleteScope(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) ApiConfigScopeMove(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var req models.MoveScopeRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	updated, err := cfgmgmt.MoveScope(ctrl.DB, id, req.ParentID, req.SortOrder)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+func (ctrl *Controller) ApiConfigScopeDetach(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if err := cfgmgmt.DetachDevice(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) ApiConfigFeatureList(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if _, err := cfgmgmt.GetScope(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	rows, err := cfgmgmt.ListCLIFeatures(ctrl.DB, id)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, rows)
+}
+
+func (ctrl *Controller) ApiConfigFeatureCreate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var dto models.ConfigCLIFeatureDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	row := models.ConfigCLIFeature{
+		Name:           dto.Name,
+		SortOrder:      dto.SortOrder,
+		AddCommands:    dto.AddCommands,
+		UpdateCommands: dto.UpdateCommands,
+		RemoveCommands: dto.RemoveCommands,
+		RemoveAtRoot:   dto.RemoveAtRoot,
+	}
+	created, err := cfgmgmt.CreateCLIFeature(ctrl.DB, id, &row)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusCreated, created)
+}
+
+func (ctrl *Controller) ApiConfigFeatureUpdate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var dto models.ConfigCLIFeatureDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	updated, err := cfgmgmt.UpdateCLIFeature(ctrl.DB, id, &dto)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+func (ctrl *Controller) ApiConfigFeatureDelete(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if err := cfgmgmt.DeleteCLIFeature(ctrl.DB, id); err != nil {
 		return configWriteError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -246,7 +381,11 @@ func (ctrl *Controller) ApiConfigAssignmentUpsert(c *echo.Context) error {
 	if err != nil {
 		return configWriteError(c, err)
 	}
-	return c.JSON(http.StatusOK, row)
+	rows := []models.ConfigAssignment{*row}
+	if err := cfgmgmt.RedactAssignmentSecrets(ctrl.DB, rows); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, rows[0])
 }
 
 func (ctrl *Controller) ApiConfigAssignmentDelete(c *echo.Context) error {
@@ -407,55 +546,10 @@ func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (ctrl *Controller) ApiConfigPlatformPackList(c *echo.Context) error {
-	var typeID uint
-	_ = echo.QueryParamsBinder(c).Uint("service_type_id", &typeID).BindError()
-	q := ctrl.DB.Model(&models.PlatformPack{})
-	if typeID != 0 {
-		q = q.Where("service_type_id = ?", typeID)
-	}
-	var rows []models.PlatformPack
-	if err := q.Order("platform").Find(&rows).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, rows)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackGet(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.GetOne(c)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackCreate(c *echo.Context) error {
-	var dto models.PlatformPackDTO
-	if err := c.Bind(&dto); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	if dto.ServiceTypeID == 0 || dto.Platform == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service_type_id and platform are required"})
-	}
-	kind := dto.PayloadKind
-	if kind == "" {
-		kind = models.PayloadKindCLI
-	}
-	row := models.PlatformPack{
-		ServiceTypeID: dto.ServiceTypeID, Platform: cfgmgmt.NormalizePlatform(dto.Platform),
-		PayloadKind: kind, ApplyTemplate: dto.ApplyTemplate, CleanupTemplate: dto.CleanupTemplate,
-	}
-	if err := ctrl.DB.Create(&row).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	return c.JSON(http.StatusCreated, row)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackUpdate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.Update(c)
-}
-
-func (ctrl *Controller) ApiConfigPlatformPackDelete(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.PlatformPack, models.PlatformPackDTO](ctrl.DB)
-	return h.Delete(c)
+func (ctrl *Controller) ApiConfigLegacyGone(c *echo.Context) error {
+	return c.JSON(http.StatusGone, map[string]any{
+		"error": "platform packs and config templates have been replaced by CLI objects",
+	})
 }
 
 func (ctrl *Controller) ApiConfigMacroList(c *echo.Context) error {
@@ -480,31 +574,6 @@ func (ctrl *Controller) ApiConfigMacroUpdate(c *echo.Context) error {
 
 func (ctrl *Controller) ApiConfigMacroDelete(c *echo.Context) error {
 	h := NewSecureCRUDHandler[models.ConfigMacro, models.ConfigMacroDTO](ctrl.DB)
-	return h.Delete(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateList(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.GetAll(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateGet(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.GetOne(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateCreate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.Create(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateUpdate(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
-	return h.Update(c)
-}
-
-func (ctrl *Controller) ApiConfigTemplateDelete(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ConfigTemplate, models.ConfigTemplateDTO](ctrl.DB)
 	return h.Delete(c)
 }
 
@@ -602,7 +671,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	return c.JSON(http.StatusOK, rows)
 }
 
-// ApiServicePush renders the platform pack and applies CLI sessions.
+// ApiServicePush renders the translation CLI object and applies CLI sessions.
 func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -694,19 +763,27 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			continue
 		}
 
-		pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, svc.ServiceType, device.Platform)
+		cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, svc.ServiceType, device.Platform)
 		if err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
 		}
-		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
+		if cliObj == nil {
+			results = append(results, ApiServiceElinePushResult{
+				Device: device.Name,
+				Error:  cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, device.Platform),
+			})
+			continue
+		}
+		if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
 		}
+		cannotApply := "CLI object exists but this platform cannot apply CLI sessions yet"
 		if !isSupportedDriverPlatform(&device) {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
-				Error:  "platform pack exists but this platform cannot apply CLI sessions yet",
+				Error:  cannotApply,
 			})
 			continue
 		}
@@ -719,7 +796,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		if !ok {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
-				Error:  "platform pack exists but this platform cannot apply CLI sessions yet",
+				Error:  cannotApply,
 			})
 			continue
 		}
@@ -728,6 +805,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		var firstData *cfgmgmt.GenericRenderData
 		label := device.Name
 		pushErr := ""
+		cleanupDone := false
 		for i := range byDev[deviceID] {
 			ep := &byDev[deviceID][i]
 			var iface *models.Interface
@@ -748,19 +826,14 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			}
 			if firstData == nil {
 				firstData = data
-				cl, err := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
-				if err != nil {
-					pushErr = err.Error()
-					break
-				}
-				cmds = append(cmds, cl...)
 			}
-			body, err := cfgmgmt.RenderPackApplyBody(ctrl.DB, pack, data)
+			part, err := cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
 			if err != nil {
 				pushErr = err.Error()
 				break
 			}
-			cmds = append(cmds, body...)
+			cmds = append(cmds, part...)
+			cleanupDone = true
 		}
 		if pushErr != "" {
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: pushErr})

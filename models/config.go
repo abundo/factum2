@@ -14,11 +14,14 @@ const (
 	ConfigScopeKindCLI             = "cli"
 	ConfigScopeKindService         = "service"
 	ConfigScopeKindServiceEndpoint = "service_endpoint"
+	// ConfigScopeKindServiceRef is virtual: ScopeTree injects it, it is not stored.
+	ConfigScopeKindServiceRef = "service_ref"
 
-	ConfigRootName           = "global"
-	ConfigCatalogName        = "_catalog"
-	ConfigCatalogCLIName     = "cli"
-	ConfigServicesFolderName = "_services"
+	ConfigRootName            = "global"
+	ConfigCatalogName         = "_catalog"
+	ConfigCatalogCLIName      = "cli"
+	ConfigServicesFolderName  = "_services"
+	ConfigParametersChildName = "parameters"
 
 	VarTypeString       = "string"
 	VarTypeInt          = "int"
@@ -75,27 +78,38 @@ type ConfigScope struct {
 func (ConfigScope) TableName() string { return "config_scopes" }
 
 type ConfigScopeDTO struct {
-	ID            uint               `json:"id"`
-	ParentID      *uint              `json:"parent_id"`
-	Name          string             `json:"name"`
-	Kind          string             `json:"kind"`
-	SiteID        *uint              `json:"site_id"`
-	DeviceID      *uint              `json:"device_id"`
-	InterfaceID   *uint              `json:"interface_id"`
-	ServiceID     *uint              `json:"service_id"`
-	ServiceTypeID *uint              `json:"service_type_id"`
-	Platform      string             `json:"platform"`
-	PayloadKind   string             `json:"payload_kind"`
-	Enabled       bool               `json:"enabled"`
-	SortOrder     int                `json:"sort_order"`
-	Payload       ConfigScopePayload `json:"payload"`
+	ID            uint                `json:"id"`
+	ParentID      *uint               `json:"parent_id"`
+	Name          *string             `json:"name"`
+	Kind          *string             `json:"kind"`
+	SiteID        *uint               `json:"site_id"`
+	DeviceID      *uint               `json:"device_id"`
+	InterfaceID   *uint               `json:"interface_id"`
+	ServiceID     *uint               `json:"service_id"`
+	ServiceTypeID *uint               `json:"service_type_id"`
+	Platform      *string             `json:"platform"`
+	PayloadKind   *string             `json:"payload_kind"`
+	Enabled       *bool               `json:"enabled"`
+	SortOrder     *int                `json:"sort_order"`
+	Payload       *ConfigScopePayload `json:"payload"`
+	// Attach creates a new CN/CI inventory row plus a canonical service
+	// node with zero endpoints. Mutually exclusive with ServiceID (attach existing).
+	Attach *ServiceDTO `json:"attach,omitempty"`
+}
+
+// MoveScopeRequest is POST /api/config/scopes/:id/move. SortOrder nil = last sibling.
+type MoveScopeRequest struct {
+	ParentID  uint `json:"parent_id"`
+	SortOrder *int `json:"sort_order"`
 }
 
 // ConfigScopePayload is kind-specific data stored as JSON on ConfigScope.
 type ConfigScopePayload struct {
-	Description string      `json:"description,omitempty"`
-	Platforms   []string    `json:"platforms,omitempty"`
-	Context     *CLIContext `json:"context,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Platforms   []string       `json:"platforms,omitempty"`
+	Context     *CLIContext    `json:"context,omitempty"`
+	Role        string         `json:"role,omitempty"`
+	Fields      map[string]any `json:"fields,omitempty"`
 }
 
 // CLIContext is the optional CLI mode wrapping for a kind=cli object.
@@ -225,54 +239,6 @@ type ServiceTypeDTO struct {
 	EndpointRoles []EndpointRole `json:"endpoint_roles"`
 	SyncSource    string         `json:"sync_source"`
 	NetboxType    string         `json:"netbox_type"`
-}
-
-// PlatformPack is one platform's apply/cleanup templates for a service type.
-type PlatformPack struct {
-	FactumModel
-	ServiceTypeID   uint   `json:"service_type_id" gorm:"uniqueIndex:idx_cfg_pack_type_plat;not null"`
-	Platform        string `json:"platform" gorm:"uniqueIndex:idx_cfg_pack_type_plat;not null;type:varchar(64)"`
-	PayloadKind     string `json:"payload_kind" gorm:"type:varchar(32)"`
-	ApplyTemplate   string `json:"apply_template" gorm:"type:text"`
-	CleanupTemplate string `json:"cleanup_template" gorm:"type:text"`
-	// SeedChecksum is sha256 of the embed body last written by Seed. Empty
-	// or matching the stored body means the row is untouched and may be
-	// refreshed; a mismatch means an operator edited it.
-	SeedChecksum string `json:"-" gorm:"type:varchar(64)"`
-}
-
-func (PlatformPack) TableName() string { return "platform_packs" }
-
-type PlatformPackDTO struct {
-	ID              uint   `json:"id"`
-	ServiceTypeID   uint   `json:"service_type_id"`
-	Platform        string `json:"platform"`
-	PayloadKind     string `json:"payload_kind"`
-	ApplyTemplate   string `json:"apply_template"`
-	CleanupTemplate string `json:"cleanup_template"`
-}
-
-// ConfigTemplate is a baseline/golden snippet attached to a scope.
-type ConfigTemplate struct {
-	FactumModel
-	Name        string `json:"name" gorm:"not null;type:varchar(255)"`
-	Platform    string `json:"platform" gorm:"type:varchar(64)"`
-	PayloadKind string `json:"payload_kind" gorm:"type:varchar(32)"`
-	Body        string `json:"body" gorm:"type:text"`
-	ScopeID     *uint  `json:"scope_id"`
-	Enabled     bool   `json:"enabled"`
-}
-
-func (ConfigTemplate) TableName() string { return "config_templates" }
-
-type ConfigTemplateDTO struct {
-	ID          uint   `json:"id"`
-	Name        string `json:"name"`
-	Platform    string `json:"platform"`
-	PayloadKind string `json:"payload_kind"`
-	Body        string `json:"body"`
-	ScopeID     *uint  `json:"scope_id"`
-	Enabled     bool   `json:"enabled"`
 }
 
 // ConfigMacro is a named snippet templates can {{include}}.

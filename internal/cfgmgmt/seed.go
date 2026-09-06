@@ -3,7 +3,10 @@ package cfgmgmt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/abundo/factum2/internal/drivers/templates"
 	"github.com/abundo/factum2/models"
@@ -16,9 +19,12 @@ func packChecksum(body string) string {
 }
 
 // Seed creates the global root scope, reserved _catalog/_services folders,
-// built-in service types, and ELINE platform packs when they are missing.
-// Operator-edited packs are left alone; checksum-matching rows are
-// refreshed from the embed files.
+// built-in service types, and ELINE translation CLI objects when they are
+// missing. Operator-edited CLI objects are left alone; checksum-matching
+// rows are refreshed from the embed files under
+// internal/drivers/templates. Assignments on non-parameter scopes are
+// copied onto a reserved parameters child and the originals are deleted.
+// Typed CN/CI services without a tree node are placed under _services.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
@@ -30,10 +36,173 @@ func Seed(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if err := seedELINEPacks(db, eline.ID); err != nil {
+	if err := seedELINECLI(db, eline.ID); err != nil {
+		return err
+	}
+	if err := copyAssignmentsOntoParameterChildren(db); err != nil {
+		return err
+	}
+	if err := moveAssignmentsOntoParameterChildren(db); err != nil {
+		return err
+	}
+	if err := migrateServicesToTree(db); err != nil {
 		return err
 	}
 	return ensureScopeUniqueIndexes(db)
+}
+
+// migrateServicesToTree places each typed CN/CI inventory row under _services
+// when it has no kind=service scope yet. VL/VI/LF/LI and untyped rows are
+// skipped. Later Lime/NetBox sync does not call this; operators attach new
+// rows themselves.
+func migrateServicesToTree(db *gorm.DB) error {
+	types, err := ListServiceTypes(db)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(types))
+	for _, t := range types {
+		known[t.Name] = true
+	}
+	var svcs []models.Service
+	if err := db.Find(&svcs).Error; err != nil {
+		return err
+	}
+	if len(svcs) == 0 {
+		return nil
+	}
+	folder, err := servicesFolder(db)
+	if err != nil {
+		return err
+	}
+	for i := range svcs {
+		svc := &svcs[i]
+		if !known[svc.ServiceType] {
+			continue
+		}
+		if models.OpticalServiceCategories[models.CategoryFromServiceID(svc.ServiceID)] {
+			continue
+		}
+		existing, err := scopeByServiceID(db, svc.ID)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if _, err := insertCanonicalService(tx, folder.ID, svc); err != nil {
+				return err
+			}
+			return projectEndpointScopes(tx, svc.ID)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copyAssignmentsOntoParameterChildren copies assignments on non-parameter
+// scopes onto a reserved kind=parameter child named "parameters". Originals
+// are deleted by moveAssignmentsOntoParameterChildren immediately after.
+func copyAssignmentsOntoParameterChildren(db *gorm.DB) error {
+	var scopeIDs []uint
+	if err := db.Model(&models.ConfigAssignment{}).Distinct("scope_id").Pluck("scope_id", &scopeIDs).Error; err != nil {
+		return err
+	}
+	if len(scopeIDs) == 0 {
+		return nil
+	}
+	var scopes []models.ConfigScope
+	if err := db.Where("id IN ?", scopeIDs).Find(&scopes).Error; err != nil {
+		return err
+	}
+	for i := range scopes {
+		s := &scopes[i]
+		if s.Kind == models.ConfigScopeKindParameter {
+			continue
+		}
+		child, err := ensureParametersChild(db, s.ID)
+		if err != nil {
+			return err
+		}
+		var rows []models.ConfigAssignment
+		if err := db.Where("scope_id = ?", s.ID).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, a := range rows {
+			var n int64
+			if err := db.Model(&models.ConfigAssignment{}).
+				Where("variable_def_id = ? AND scope_id = ?", a.VariableDefID, child.ID).
+				Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				continue
+			}
+			cp := models.ConfigAssignment{
+				VariableDefID: a.VariableDefID,
+				ScopeID:       child.ID,
+				Value:         a.Value,
+			}
+			if err := db.Create(&cp).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// moveAssignmentsOntoParameterChildren deletes original assignment rows on
+// non-parameter scopes that already have a matching copy on the reserved
+// parameters child. Copied rows stay. Rolling back this binary without a
+// DB restore loses assignment values on old resolveDefAt (which only
+// reads the walked organizational scope). PUT still remaps folder/device/
+// interface writes onto the child until the tree-first GUI PR.
+func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
+	var scopeIDs []uint
+	if err := db.Model(&models.ConfigAssignment{}).Distinct("scope_id").Pluck("scope_id", &scopeIDs).Error; err != nil {
+		return err
+	}
+	if len(scopeIDs) == 0 {
+		return nil
+	}
+	var scopes []models.ConfigScope
+	if err := db.Where("id IN ?", scopeIDs).Find(&scopes).Error; err != nil {
+		return err
+	}
+	for i := range scopes {
+		s := &scopes[i]
+		if s.Kind == models.ConfigScopeKindParameter {
+			continue
+		}
+		child, err := findParametersChild(db, s.ID)
+		if err != nil {
+			return err
+		}
+		if child == nil {
+			continue
+		}
+		var rows []models.ConfigAssignment
+		if err := db.Where("scope_id = ?", s.ID).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, a := range rows {
+			var n int64
+			if err := db.Model(&models.ConfigAssignment{}).
+				Where("variable_def_id = ? AND scope_id = ?", a.VariableDefID, child.ID).
+				Count(&n).Error; err != nil {
+				return err
+			}
+			if n == 0 {
+				continue
+			}
+			if err := db.Where("id = ?", a.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func ensureScopeUniqueIndexes(db *gorm.DB) error {
@@ -207,8 +376,8 @@ func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
 	return &eline, nil
 }
 
-func seedELINEPacks(db *gorm.DB, elineTypeID uint) error {
-	packs := []struct {
+func seedELINECLI(db *gorm.DB, elineTypeID uint) error {
+	for _, p := range []struct {
 		platform string
 		body     string
 	}{
@@ -216,48 +385,161 @@ func seedELINEPacks(db *gorm.DB, elineTypeID uint) error {
 		{"ios-xr", templates.IOSXREline},
 		{"sros", templates.SROSEline},
 		{"sros-md", templates.SROSEline},
-	}
-	for _, p := range packs {
-		sum := packChecksum(p.body)
-		var row models.PlatformPack
-		err := db.Where("service_type_id = ? AND platform = ?", elineTypeID, p.platform).First(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			row = models.PlatformPack{
-				ServiceTypeID: elineTypeID,
-				Platform:      p.platform,
-				PayloadKind:   models.PayloadKindCLI,
-				ApplyTemplate: p.body,
-				SeedChecksum:  sum,
-			}
-			if err := db.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		untouched := row.SeedChecksum != "" && row.SeedChecksum == packChecksum(row.ApplyTemplate)
-		if row.SeedChecksum == "" && row.ApplyTemplate == p.body {
-			row.SeedChecksum = sum
-			if err := db.Save(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if !untouched {
-			continue
-		}
-		if row.ApplyTemplate == p.body && row.SeedChecksum == sum {
-			continue
-		}
-		row.ApplyTemplate = p.body
-		row.SeedChecksum = sum
-		if err := db.Save(&row).Error; err != nil {
+	} {
+		if err := syncELINECLI(db, elineTypeID, p.platform, p.body); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func catalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, error) {
+	root, err := RootScope(db)
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := ensureChildFolder(db, root.ID, models.ConfigCatalogName)
+	if err != nil {
+		return nil, err
+	}
+	cliFolder, err := ensureChildFolder(db, catalog.ID, models.ConfigCatalogCLIName)
+	if err != nil {
+		return nil, err
+	}
+	return ensureChildFolder(db, cliFolder.ID, typeName)
+}
+
+// CLIObjectChecksum is the canonical seed hash for a translation CLI object:
+//
+//	sha256(platform + "\n" + payload_kind + "\n" + canonicalJSON(context) + "\n" +
+//	  for each feature in sort_order:
+//	    name + "\nremove_at_root=" + bool + "\nadd\n" + AddCommands +
+//	    "\nupdate\n" + UpdateCommands + "\nremove\n" + RemoveCommands + "\n")
+//
+// Empty UpdateCommands still contributes "\nupdate\n". canonicalJSON uses
+// deterministic key order for pattern/enter/exit/captures; nil context is
+// "null" so setting enter counts as an operator edit.
+func CLIObjectChecksum(platform, payloadKind string, ctx *models.CLIContext, feats []models.ConfigCLIFeature) string {
+	var b strings.Builder
+	b.WriteString(platform)
+	b.WriteByte('\n')
+	b.WriteString(payloadKind)
+	b.WriteByte('\n')
+	b.WriteString(canonicalJSONContext(ctx))
+	b.WriteByte('\n')
+	for _, f := range feats {
+		b.WriteString(f.Name)
+		b.WriteByte('\n')
+		b.WriteString("remove_at_root=")
+		b.WriteString(fmt.Sprintf("%v", f.RemoveAtRoot))
+		b.WriteByte('\n')
+		b.WriteString("add\n")
+		b.WriteString(f.AddCommands)
+		b.WriteString("\nupdate\n")
+		b.WriteString(f.UpdateCommands)
+		b.WriteString("\nremove\n")
+		b.WriteString(f.RemoveCommands)
+		b.WriteByte('\n')
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+func canonicalJSONContext(ctx *models.CLIContext) string {
+	if ctx == nil {
+		return "null"
+	}
+	type canon struct {
+		Pattern  string            `json:"pattern"`
+		Enter    string            `json:"enter"`
+		Exit     string            `json:"exit"`
+		Captures map[string]string `json:"captures,omitempty"`
+	}
+	b, err := json.Marshal(canon{
+		Pattern: ctx.Pattern, Enter: ctx.Enter, Exit: ctx.Exit, Captures: ctx.Captures,
+	})
+	if err != nil {
+		return "null"
+	}
+	return string(b)
+}
+
+func currentCLIChecksum(obj *models.ConfigScope, feats []models.ConfigCLIFeature) string {
+	kind := obj.PayloadKind
+	if kind == "" {
+		kind = models.PayloadKindCLI
+	}
+	return CLIObjectChecksum(obj.Platform, kind, obj.Payload.Context, feats)
+}
+
+func syncELINECLI(db *gorm.DB, typeID uint, platform, embed string) error {
+	cli, err := lookupCLIObjectByTypeID(db, typeID, platform, false)
+	if err != nil {
+		return err
+	}
+	if cli != nil {
+		feats, err := ListCLIFeatures(db, cli.ID)
+		if err != nil {
+			return err
+		}
+		if cli.SeedChecksum != currentCLIChecksum(cli, feats) {
+			return nil
+		}
+	}
+	add, remove := packToCLIBlobs(embed, "")
+	return writeTranslationCLI(db, typeID, "ELINE", platform, models.PayloadKindCLI, add, remove)
+}
+
+func writeTranslationCLI(db *gorm.DB, typeID uint, typeName, platform, kind, add, remove string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		cli, err := lookupCLIObjectByTypeID(tx, typeID, platform, false)
+		if err != nil {
+			return err
+		}
+		if cli == nil {
+			parent, err := catalogCLITypeFolder(tx, typeName)
+			if err != nil {
+				return err
+			}
+			stID := typeID
+			obj := models.ConfigScope{
+				ParentID:      &parent.ID,
+				Name:          platform,
+				Kind:          models.ConfigScopeKindCLI,
+				ServiceTypeID: &stID,
+				Platform:      platform,
+				PayloadKind:   kind,
+				Enabled:       true,
+			}
+			created, err := CreateScope(tx, &obj)
+			if err != nil {
+				return err
+			}
+			cli = created
+		} else {
+			cli.PayloadKind = kind
+			cli.Platform = NormalizePlatform(platform)
+			cli.Payload.Context = nil
+			if err := tx.Save(cli).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("scope_id = ?", cli.ID).Delete(&models.ConfigCLIFeature{}).Error; err != nil {
+			return err
+		}
+		feat := models.ConfigCLIFeature{
+			ScopeID:        cli.ID,
+			Name:           "apply",
+			SortOrder:      0,
+			AddCommands:    add,
+			RemoveCommands: remove,
+		}
+		if err := tx.Create(&feat).Error; err != nil {
+			return err
+		}
+		sum := CLIObjectChecksum(cli.Platform, kind, cli.Payload.Context, []models.ConfigCLIFeature{feat})
+		return tx.Model(cli).Update("seed_checksum", sum).Error
+	})
 }
 
 // RootScope returns the global root folder.

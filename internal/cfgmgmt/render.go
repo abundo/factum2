@@ -13,6 +13,87 @@ import (
 
 var cleanupInvokeRe = regexp.MustCompile(`\{\{-?\s*template\s+"cleanup"\s+[^}]*\}\}`)
 
+var defineStartRe = regexp.MustCompile(`\{\{-?\s*define\s+(?:"([^"]+)"|` + "`([^`]+)`" + `)\s*-?\}\}`)
+
+// extractDefineBody returns the inner source of {{define "name"}}…{{end}},
+// counting nested if/range/with/block/define so a cleanup that contains
+// {{range}}…{{end}} is not truncated at the first end.
+func extractDefineBody(src, name string) string {
+	if src == "" || name == "" {
+		return ""
+	}
+	locs := defineStartRe.FindAllStringSubmatchIndex(src, -1)
+	start := -1
+	for _, loc := range locs {
+		got := ""
+		if loc[2] >= 0 {
+			got = src[loc[2]:loc[3]]
+		} else if loc[4] >= 0 {
+			got = src[loc[4]:loc[5]]
+		}
+		if got == name {
+			start = loc[1]
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	depth := 1
+	i := start
+	for i < len(src) {
+		j := strings.Index(src[i:], "{{")
+		if j < 0 {
+			break
+		}
+		j += i
+		k := strings.Index(src[j:], "}}")
+		if k < 0 {
+			break
+		}
+		end := j + k + 2
+		verb := templateActionVerb(src[j+2 : j+k])
+		switch verb {
+		case "if", "range", "with", "block", "define":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				return src[start:j]
+			}
+		}
+		i = end
+	}
+	return ""
+}
+
+func templateActionVerb(action string) string {
+	s := strings.TrimSpace(action)
+	s = strings.TrimPrefix(s, "-")
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "/*") {
+		return "comment"
+	}
+	if strings.HasSuffix(s, "-") {
+		s = strings.TrimSpace(s[:len(s)-1])
+	}
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func packToCLIBlobs(apply, cleanup string) (add, remove string) {
+	add = cleanupInvokeRe.ReplaceAllString(apply, "")
+	if strings.TrimSpace(cleanup) != "" {
+		remove = cleanup
+	} else {
+		remove = extractDefineBody(apply, "cleanup")
+	}
+	return add, remove
+}
+
 const maxIncludeDepth = 8
 
 // Render executes Go text/template body (or a named define) against data.
@@ -70,59 +151,4 @@ func splitCLI(text string) []string {
 		}
 	}
 	return cmds
-}
-
-// RenderPackApply renders a platform pack's apply template.
-func RenderPackApply(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
-	if pack == nil || pack.ApplyTemplate == "" {
-		return nil, statusErr(400, "platform pack has no apply template")
-	}
-	return Render(db, pack.ApplyTemplate, "", data)
-}
-
-// RenderPackApplyBody renders the apply template with the "cleanup" define
-// emptied so a multi-endpoint push can run teardown once, then each body.
-func RenderPackApplyBody(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
-	if pack == nil || pack.ApplyTemplate == "" {
-		return nil, statusErr(400, "platform pack has no apply template")
-	}
-	stripped := cleanupInvokeRe.ReplaceAllString(pack.ApplyTemplate, "")
-	return Render(db, stripped, "", data)
-}
-
-// RenderPackCleanupIfPresent is RenderPackCleanup, or nil if the pack has
-// no cleanup template and no "cleanup" define.
-func RenderPackCleanupIfPresent(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
-	if pack == nil {
-		return nil, nil
-	}
-	if pack.CleanupTemplate != "" {
-		return Render(db, pack.CleanupTemplate, "", data)
-	}
-	if pack.ApplyTemplate == "" {
-		return nil, nil
-	}
-	cmds, err := Render(db, pack.ApplyTemplate, "cleanup", data)
-	if err != nil {
-		if strings.Contains(err.Error(), "no such template") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return cmds, nil
-}
-
-// RenderPackCleanup renders teardown commands from CleanupTemplate, or the
-// apply template's "cleanup" define when CleanupTemplate is empty.
-func RenderPackCleanup(db *gorm.DB, pack *models.PlatformPack, data any) ([]string, error) {
-	if pack == nil {
-		return nil, statusErr(400, "platform pack missing")
-	}
-	if pack.CleanupTemplate != "" {
-		return Render(db, pack.CleanupTemplate, "", data)
-	}
-	if pack.ApplyTemplate == "" {
-		return nil, statusErr(400, "platform pack has no cleanup template")
-	}
-	return Render(db, pack.ApplyTemplate, "cleanup", data)
 }

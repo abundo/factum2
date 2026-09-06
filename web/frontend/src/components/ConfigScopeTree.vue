@@ -7,8 +7,9 @@ import '@/assets/wunderbaum-theme.css'
 
 const props = defineProps({
   reloadKey: { type: Number, default: 0 },
+  canWrite: { type: Boolean, default: false },
 })
-const emit = defineEmits(['contextmenu', 'select'])
+const emit = defineEmits(['contextmenu', 'select', 'move', 'rebind'])
 
 const el = ref(null)
 let tree
@@ -71,14 +72,24 @@ function renderCell(e) {
   for (const col of Object.values(e.renderColInfosById ?? {})) {
     const data = e.node.data ?? {}
     if (col.id === 'kind') {
-      col.elem.textContent = kindLabel(data.kind || e.node.type)
+      col.elem.textContent = kindLabel(data.kind || e.node.type, e.node.title)
     }
   }
 }
 
-function kindLabel(kind) {
+function isReservedFolderNode(node) {
+  const kind = node.data?.kind || node.type
+  if (kind !== 'folder') return false
+  const name = node.title
+  if (name === 'global' && !node.data?.parent_id) return true
+  return name === '_catalog' || name === '_services'
+}
+
+function kindLabel(kind, name) {
   switch (kind) {
     case 'folder':
+      if (name === '_catalog') return 'Catalog'
+      if (name === '_services') return 'Services'
       return 'Folder'
     case 'site':
       return 'Site'
@@ -88,6 +99,16 @@ function kindLabel(kind) {
       return 'Device'
     case 'interface':
       return 'Interface'
+    case 'parameter':
+      return name === 'parameters' ? 'Parameters' : 'Parameter'
+    case 'cli':
+      return 'CLI'
+    case 'service':
+      return 'Service'
+    case 'service_endpoint':
+      return 'Endpoint'
+    case 'service_ref':
+      return 'Service'
     default:
       return kind || ''
   }
@@ -144,9 +165,72 @@ function buildTree(source) {
       location: { icon: false },
       device: { icon: false },
       interface: { icon: false },
+      parameter: { icon: false },
+      cli: { icon: false },
+      service: { icon: false },
+      service_endpoint: { icon: false },
+      service_ref: { icon: false },
     },
     render: renderCell,
-    activate: (e) => emit('select', selectedPayload(e.node)),
+    activate: (e) => {
+      const data = e.node.data ?? {}
+      const kind = data.kind || e.node.type
+      if (kind === 'service_ref' && data.canonical_id) {
+        const canon = tree.findKey(String(data.canonical_id))
+        if (canon) {
+          canon.setActive()
+          return
+        }
+        emit('select', {
+          key: String(data.canonical_id),
+          id: data.canonical_id,
+          title: data.service_label,
+          kind: 'service',
+          service_id: data.service_row_id,
+        })
+        return
+      }
+      emit('select', selectedPayload(e.node))
+    },
+    dnd: {
+      dragStart: (e) => {
+        if (!props.canWrite) return false
+        const kind = e.node.data?.kind || e.node.type
+        if (kind === 'interface' || kind === 'service_endpoint') return false
+        if (isReservedFolderNode(e.node)) return false
+        return true
+      },
+      dragEnter: () => ['over', 'before', 'after'],
+      drop: (e) => {
+        const source = e.sourceNode
+        const target = e.node
+        if (!source || !target) return
+        const srcKind = source.data?.kind || source.type
+        if (srcKind === 'service_ref') {
+          const tgtKind = target.data?.kind || target.type
+          if (tgtKind === 'interface' && target.data?.interface_id && target.data?.device_id) {
+            emit('rebind', { ref: selectedPayload(source), target: selectedPayload(target) })
+          }
+          return
+        }
+        if (!source.data?.id) return
+        const mode = e.suggestedDropMode
+        let parentId
+        let sortOrder = null
+        if (mode === 'appendChild') {
+          parentId = target.data?.id
+        } else {
+          parentId = target.data?.parent_id
+          if (!parentId) return
+          const remaining = (target.parent?.children ?? []).filter((n) => n.key !== source.key)
+          const idx = remaining.findIndex((n) => n.key === target.key)
+          sortOrder = mode === 'before' ? idx : idx + 1
+          if (idx < 0) sortOrder = remaining.length
+        }
+        if (!parentId || parentId === source.data.id) return
+        emit('move', { id: source.data.id, parent_id: parentId, sort_order: sortOrder })
+      },
+    },
   })
   bindContextMenu()
 }

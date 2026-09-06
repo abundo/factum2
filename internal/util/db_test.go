@@ -2,6 +2,7 @@ package util
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -32,6 +33,87 @@ func TestMigrateDatabaseEmptySQLite(t *testing.T) {
 	}
 	if err := MigrateDatabase(db); err != nil {
 		t.Fatalf("second migrate (already applied): %v", err)
+	}
+}
+
+type leftoverPackRow struct {
+	ID            uint `gorm:"primaryKey"`
+	ServiceTypeID uint
+	Platform      string
+}
+
+func (leftoverPackRow) TableName() string { return "platform_packs" }
+
+func TestMigrateDatabaseRefusesUnmigratedPack(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+
+	if err := db.AutoMigrate(&leftoverPackRow{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&leftoverPackRow{ServiceTypeID: 1, Platform: "eos"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = MigrateDatabase(db)
+	if err == nil {
+		t.Fatal("expected migrate to refuse drop of unmigrated pack")
+	}
+	if !strings.Contains(err.Error(), "cannot drop platform_packs") {
+		t.Fatalf("err = %v", err)
+	}
+	if !db.Migrator().HasTable("platform_packs") {
+		t.Fatal("platform_packs was dropped despite unmigrated pack")
+	}
+}
+
+type leftoverTemplateRow struct {
+	ID       uint `gorm:"primaryKey"`
+	Name     string
+	Platform string
+	ScopeID  *uint
+}
+
+func (leftoverTemplateRow) TableName() string { return "config_templates" }
+
+func TestMigrateDatabaseRefusesUnmigratedTemplate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+
+	if err := db.AutoMigrate(&leftoverTemplateRow{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&leftoverTemplateRow{Name: "banner", Platform: "eos"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = MigrateDatabase(db)
+	if err == nil {
+		t.Fatal("expected migrate to refuse drop of unmigrated template")
+	}
+	if !strings.Contains(err.Error(), "cannot drop config_templates") {
+		t.Fatalf("err = %v", err)
+	}
+	if !db.Migrator().HasTable("config_templates") {
+		t.Fatal("config_templates was dropped despite unmigrated template")
 	}
 }
 

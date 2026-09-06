@@ -133,8 +133,6 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.ConfigVariableDef{},
 		&models.ConfigAssignment{},
 		&models.ServiceType{},
-		&models.PlatformPack{},
-		&models.ConfigTemplate{},
 		&models.ConfigMacro{},
 		&models.ServiceEndpoint{},
 	)
@@ -164,7 +162,21 @@ func MigrateDatabase(db *gorm.DB) error {
 		return err
 	}
 
+	// Refuse DROP of leftover pack/template rows that were never copied
+	// onto a CLI object. Seed does not read those tables; an unmigrated
+	// row would be lost. Run the previous migrate first.
+	if err := cfgmgmt.AssertPacksHaveCLITwins(db); err != nil {
+		return err
+	}
+	if err := cfgmgmt.AssertTemplatesHaveCLITwins(db); err != nil {
+		return err
+	}
+
 	if err := cfgmgmt.Seed(db); err != nil {
+		return err
+	}
+
+	if err := cfgmgmt.DropPackAndTemplateTables(db); err != nil {
 		return err
 	}
 

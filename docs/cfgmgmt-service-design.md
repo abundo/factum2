@@ -1,59 +1,69 @@
 # Designing a Factum service type
 
 How to add a **capacity service** (CN/CI) that Factum can validate, preview,
-and push to devices. The machinery lives in `internal/cfgmgmt`. You design
-the type and its platform packs in the database (Config GUI or API); you
-do **not** add a new Go package per service.
+and push to devices. You design the type, the CLI that implements it, and
+the service instance **in the Config GUI tree**. You do **not** add a new
+Go package per service. The machinery lives in `internal/cfgmgmt`.
 
-ELINE uses the same **generic endpoints** + **platform packs** path as
-every other capacity type. It still has NetBox L2VPN reconcile on save
-(and reverse-import from `factum-netbox sync`). Do not add
+ELINE uses the same **generic endpoints** + **CLI objects** path as every
+other capacity type. It still has NetBox L2VPN reconcile on save (and
+reverse-import from `factum2-netbox sync`). Do not add
 `Service.EndpointA/B*` columns for a new type.
 
 Related code:
 
 | Piece | Where |
 | ----- | ----- |
-| Models | `models/config.go` (`ServiceType`, `PlatformPack`, `ServiceEndpoint`) |
+| Models | `models/config.go` (`ServiceType`, `ConfigScope` kinds, `ConfigCLIFeature`, `ServiceEndpoint`) |
 | Engine | `internal/cfgmgmt/` |
 | HTTP | `web/handler_config.go`, `web/handler_service.go` |
-| GUI | Config page (types + packs), service edit dialog (endpoints + push) |
-| Seeded ELINE packs | `internal/drivers/templates/*.tmpl` |
+| GUI | Config page (tree + inspector + catalog), service edit dialog (push) |
+| Seeded ELINE CLI | `internal/drivers/templates/*.tmpl` (seed source for `_catalog/cli/ELINE/<platform>`) |
 
 ---
 
 ## What you are designing
 
-A Factum **service type** is a vendor-agnostic class of connectivity:
+Four pieces, all in the Config GUI:
 
-- **Name** — stored on `Service.ServiceType` (e.g. `ELAN`, `L3VPN`).
-- **Schema** — optional per-service fields (`Service.Fields`), available in
-  templates as `.Fields`.
-- **Endpoint roles** — how many terminations, on which devices/interfaces,
-  and which typed fields each termination carries.
-- **Platform packs** — one Go `text/template` per NOS that turns that
-  intent into CLI (the only payload kind that can be applied today).
+1. **Service type** (catalog) — vendor-agnostic class: name, schema, endpoint
+   roles, optional `sync_source` / `netbox_type`.
+2. **CLI objects** under `global / _catalog / cli / <Type> / <platform>` —
+   per-NOS translation of that intent into command lists.
+3. **Parameter objects** — named groups of variable assignments that inherit
+   down the tree (MTU, AS number, NTP, …).
+4. **Service object** in the tree — a view onto a `models.Service` row
+   (create or attach) plus endpoints.
 
-A **service instance** is a `models.Service` row (create wizard, Lime sync,
-or API) with that type set. Endpoints are a separate table
+A **service instance** is still a `models.Service` row (tree create, wizard,
+Lime sync, or API) with that type set. Endpoints are a separate table
 (`service_endpoints`), replaced as a set via `PUT /api/service/:id/endpoints`.
+The tree node is not a second inventory.
 
 Wavelength (VL/VI) and dark fiber (LF/LI) are **not** cfgmgmt services.
-They have no `ServiceType` and no device CLI. Do not invent packs for them.
+They have no `ServiceType` and no device CLI. Do not invent CLI objects
+for them.
 
 ```
-  ServiceType (name, schema, endpoint_roles)
+  ServiceType catalog (name, schema, endpoint_roles)
        │
-       ├─ PlatformPack (eos / ios-xr / sros / …)
-       │     apply_template + optional cleanup
+       ├─ CLI object  (_catalog/cli/<Type>/<platform>)
+       │     features: add / remove command blobs
        │
-       └─ Service instance  (CN/CI + service_type)
+       ├─ Parameter object  (assignments → .Vars)
+       │
+       └─ Service object in the tree  (CN/CI + service_type)
               └─ ServiceEndpoint[]  (role, device, interface, fields)
                      │
                      ▼
-              Render  →  Preview (POST /api/config/render)
+              Render  →  Preview (docked on the Config tree)
               Push    →  CLI session on each endpoint device
 ```
+
+Platform packs and baseline templates were the previous composition units.
+They have been replaced by CLI objects; the old pack/template HTTP routes
+return 410. The **operator path is the tree**: CLI objects and parameter
+objects.
 
 ---
 
@@ -70,20 +80,21 @@ exist is a data migration, not a rename.
 3. **Cardinality.** `min` / `max` per role. `max: 0` means unlimited.
 4. **Per-endpoint fields.** Anything that varies by termination (VLAN, SAP,
    encapsulation, inner/outer tag). These are validated and shown in the
-   service edit dialog.
+   service inspector.
 5. **Per-service fields.** Anything shared by every endpoint (VRF name,
    RT/RD, numeric service id, MTU, bandwidth). These live on
-   `Service.Fields` as `.Fields` in templates. The create wizard and
-   service dialog render a form from `schema`. Well-known names are also
+   `Service.Fields` as `.Fields` in CLI blobs. The create wizard and
+   inspector render a form from `schema`. Well-known names are also
    copied to dedicated Service columns for list views and older API
    clients: `bandwidth_mbps` → `Service.BandwidthMbps`,
    `max_mac_addresses` → `Service.MaxMacAddresses`.
 6. **What is not a service field.** Device/site-wide knobs (AS number,
-   loopback, NTP, default MTU) belong in **config variables** on the scope
-   tree, not on the service type. Templates see them as `.Vars`.
-7. **Platforms you will push.** Each NOS needs its own pack. `sros-md`
-   falls back to a `sros` pack if no dedicated row exists. Huawei `vrp`
-   can store a pack and preview, but cannot apply a CLI session yet.
+   loopback, NTP, default MTU) belong in **parameter objects** on the
+   scope tree, not on the service type. CLI blobs see them as `.Vars`.
+7. **Platforms you will push.** Each NOS needs its own CLI object.
+   `sros-md` falls back to a `sros` object if no dedicated row exists.
+   Huawei `vrp` can store CLI and preview, but cannot apply a CLI session
+   yet.
 
 Built-in types seeded on migrate (`cfgmgmt.Seed`):
 
@@ -97,14 +108,15 @@ Built-in types seeded on migrate (`cfgmgmt.Seed`):
 The create wizard lists every type from this API as a capacity product
 (CN/CI), including extra form fields from `schema`. Built-in types cannot
 be renamed or deleted; you can still edit description, schema, roles, and
-the device-sync mapping. ELINE/ELAN/L3VPN have **no platform packs**
-besides the seeded ELINE ones until you add them.
+the device-sync mapping. ELINE has **seeded CLI objects** under
+`_catalog/cli/ELINE/{eos,ios-xr,sros}`. ELAN/L3VPN/POLARIX have none until
+you add them.
 
 ---
 
-## 1. Create the service type
+## 1. Create the service type (catalog)
 
-**GUI:** Config → Service types → add.
+**GUI:** Config → Catalog → Service types → add.
 
 **API:** `POST /api/config/service-types`
 
@@ -129,6 +141,9 @@ besides the seeded ELINE ones until you add them.
   "netbox_type": "vpls"
 }
 ```
+
+The type is a catalog row, not a tree node. JSON textareas for schema and
+roles are acceptable in the GUI; a form editor is a later follow-up.
 
 ### Name
 
@@ -224,38 +239,56 @@ type-checked with the same engine (`cfgmgmt.TypeCheck`).
 
 ---
 
-## 2. Write a platform pack per NOS
+## 2. Add CLI objects under `_catalog/cli`
 
-**GUI:** Config → Platform packs → add.
+Service translation is looked up **globally** by `(service_type, platform)`.
+Tree location is ignored for that lookup, so put translation objects under
+the reserved folder:
 
-**API:** `POST /api/config/platform-packs`
+`global / _catalog / cli / <ServiceType.Name> / <platform>`
+
+**GUI:** Config tree → expand `_catalog` → `cli` → add a folder named as
+the type if missing → right-click → **Add CLI object**. Set **Service
+type** in the inspector (empty = baseline/golden CLI, not translation).
+Add features; each **add** / **remove** blob is one Go `text/template`.
+The update editor is hidden in v1 (missing update ⇒ remove then add).
+
+**API:** `POST /api/config/scopes` then `POST /api/config/scopes/:id/features`
 
 ```json
 {
-  "service_type_id": 2,
+  "parent_id": 12,
+  "kind": "cli",
+  "name": "eos",
   "platform": "eos",
   "payload_kind": "cli",
-  "apply_template": "...",
-  "cleanup_template": ""
+  "service_type_id": 2
 }
 ```
 
 | Field | Rule |
 | ----- | ---- |
-| `service_type_id` | ID of the type, not the name. |
-| `platform` | Lower-cased NetBox platform: `eos`, `ios-xr`, `sros`, `sros-md`, `vrp`. Unique per type. |
+| `platform` | Lower-cased NetBox platform: `eos`, `ios-xr`, `sros`, `sros-md`, `vrp`. Unique per type for translation objects. |
 | `payload_kind` | Default `cli`. `netconf` / `restconf` can be stored and previewed; **push requires `cli`**. |
-| `apply_template` | Go `text/template`. Required to render or push. |
-| `cleanup_template` | Optional teardown. If empty, a `{{define "cleanup"}}` inside the apply template is used. |
+| `service_type_id` | Set for translation. Empty/zero = baseline CLI (applies when the object's **parent** is on the device ancestor chain). |
+| Context | Pattern language: `interface <name>`, `router bgp <as>` (not raw RE2). Empty / `global` = no wrap. When `enter` is set: one enter, remove, add, exit. `RemoveAtRoot` = remove unwrapped, then wrapped add. |
 
-Seeded ELINE packs are refreshed from embed files on migrate **only** when
-the stored body still matches `seed_checksum`. Operator edits are left
-alone. Your new packs are never overwritten by Seed.
+Do **not** put golden/baseline CLI under `_catalog`. `_catalog` is a child
+of `global` but is **not** an ancestor of a PE under a site, so baseline
+objects placed there would never be collected. Global baseline CLI objects
+are **direct children of `global`**.
+
+Seeded ELINE CLI objects are refreshed from embed files on migrate **only**
+when the stored features + context still match `seed_checksum`. Operator
+edits are left alone. Your new objects are never overwritten by Seed.
 
 ### Template language
 
-`cfgmgmt.Render` parses with `missingkey=error`: a reference to an absent
-field fails the preview/push. Guard optional data with `{{if}}`.
+Each feature blob is parsed with `missingkey=error`: a reference to an
+absent field fails the preview/push. Guard optional data with `{{if}}`.
+`{{range}}` / `{{define}}` are legal inside a blob. Output is split on
+newlines; blank and whitespace-only lines are dropped. Write one CLI
+command (or MD-CLI line) per line.
 
 Allowed functions (no file, HTTP, or shell):
 
@@ -265,26 +298,23 @@ Allowed functions (no file, HTTP, or shell):
 | `include` | `{{include "macro-name"}}` — body of a `ConfigMacro`. Nested at most 8 deep. |
 | `eq` / `ne` | Equality via `fmt.Sprint`, so `1` and `"1"` compare equal. |
 
-Output is split on newlines; blank and whitespace-only lines are dropped.
-Write one CLI command (or MD-CLI line) per line.
-
 **Cleanup contract** (generic push, several endpoints on one device):
 
-1. Cleanup is rendered **once** for the first endpoint, then each
-   endpoint's apply body.
-2. If the apply template invokes cleanup with
-   `{{template "cleanup" .}}`, that invoke is stripped from per-endpoint
-   bodies (`RenderPackApplyBody`) so teardown does not run N times.
-3. Put shared teardown in `{{define "cleanup"}}` and invoke it at the top
-   of apply, **or** put it in `cleanup_template` and leave apply as body
-   only.
+1. Remove (cleanup) is rendered **once** for the first endpoint, then each
+   endpoint's add body.
+2. Put shared teardown in the feature **remove** blob, keyed by `.Name`
+   (the service ID). Assume the object may not exist yet.
+3. Empty context: remove and add are emitted as-is. Non-empty `enter`:
+   one enter / remove-or-add / exit wrap (`RemoveAtRoot` true: remove
+   unwrapped, then wrapped add).
 
-Idempotent cleanup: `no` / `delete` of objects keyed by `.Name`
-(the service ID). Assume the object may not exist yet.
+Migrated ELINE objects are one feature with empty context; the add blob is
+the old apply template with the cleanup invoke stripped, and the remove
+blob is the old cleanup define.
 
 ### Generic template context
 
-Packs execute against `cfgmgmt.GenericRenderData`:
+Service-translation CLI executes against `cfgmgmt.GenericRenderData`:
 
 ```
 .Name               string            Service.ServiceID (e.g. CN00012)
@@ -313,17 +343,24 @@ keys on a map index yield nil rather than `missingkey=error`.
 
 DCIM is read-only inventory. Do not try to write it from a template.
 
-Non-ELINE packs leave Peer/Remote/SDPID/Stale zero; do not reference them.
+Non-ELINE objects leave Peer/Remote/SDPID/Stale zero; do not reference them.
 
-### Example: EOS ELAN (VPLS-shaped) body
+Baseline CLI objects see `.Name`, `.Device`, `.Vars` (and `.Interface` /
+`.LocalIface` when parented under an interface). They do **not** see
+service endpoints.
 
-Sketch only — match your own lab's CLI. Cleanup keyed by service ID:
+### Example: EOS ELAN (VPLS-shaped) add blob
+
+Sketch only — match your own lab's CLI. Cleanup keyed by service ID in
+the **remove** blob:
 
 ```
-{{define "cleanup"}}
 no router bgp vpls {{.Name}}
-{{end}}
-{{template "cleanup" .}}
+```
+
+Add:
+
+```
 interface {{.LocalIface}}
 no switchport
 interface {{.LocalIface}}.{{.LocalVLAN}}
@@ -340,24 +377,51 @@ exit
 exit
 ```
 
-SR OS packs should be MD-CLI block-paste (see
+SR OS objects should be MD-CLI block-paste (see
 `internal/drivers/templates/sros_eline.tmpl`): one `/configure … { }`
-block, `delete` in cleanup, apply-groups for invariants.
+block, `delete` in remove, apply-groups for invariants.
 
-IOS-XR packs should return to `root` the way
+IOS-XR objects should return to `root` the way
 `internal/drivers/templates/iosxr_eline.tmpl` does.
 
 ### Shared snippets
 
-Config → Macros. A pack can `{{include "eline-defaults"}}`. Macros see the
-**same data** as the caller. Use them for repeated banners or apply-group
-names, not for per-platform whole services (that is what packs are).
+Config → Catalog → Macros. A CLI blob can `{{include "eline-defaults"}}`.
+Macros see the **same data** as the caller. Use them for repeated banners
+or apply-group names, not for per-platform whole services (that is what
+CLI objects are).
 
 ---
 
-## 3. Preview before you push
+## 3. Parameter objects
 
-**GUI:** Config → Preview (device) or render a service.
+Variable **definitions** (name, type, default, constraints) live in the
+Variables catalog. Values live on **parameter objects** in the tree, not
+on arbitrary folders.
+
+**GUI:** right-click a folder / site / location / device / interface /
+service → **Add parameter object**. Select it and **Assign**. Scalar types
+get typed inputs; list/map stay JSON.
+
+A parameter object applies to its **parent and the parent's descendants**
+(closest ancestor wins; at one parent, higher `sort_order` wins). The
+reserved child named `parameters` is what migrate copies folder
+assignments onto. Extra named objects (`ntp`, `qos-core`) are first-class
+nodes you can move.
+
+`PUT /api/config/assignments` with a non-parameter `scope_id` still
+**remaps** onto the reserved `parameters` child (folder Assign remains as
+compatibility). Prefer assigning on the parameter node itself.
+
+Secrets are redacted on read (`***`). A PUT that sends `***` or omits the
+value leaves the stored secret unchanged.
+
+---
+
+## 4. Preview before you push
+
+**GUI:** Config tree, Preview dock (device from the current selection or
+the picker).
 
 **API:**
 
@@ -366,24 +430,39 @@ POST /api/config/render
 { "service_id": 123 }
 ```
 
-or `{ "device_id": 45 }` for that device's baseline templates **plus**
+or `{ "device_id": 45 }` for that device's baseline CLI objects **plus**
 every terminating service.
 
 Each source is `{source, kind, platform, payload_kind, commands[], error}`.
-Fix `error` (unknown field, missing pack, template parse) before pushing.
+`kind` is `cli` for baseline objects (`source` = `"cli:<name>"`) and
+`service` for translation (`source` still `"device / iface (role)"`). Fix
+`error` (unknown field, missing CLI object, template parse) before
+pushing.
 
-A device render also includes enabled `ConfigTemplate` rows whose platform
-matches and whose scope is on the device's ancestor chain. Those are
-**baseline/golden config**, not services. Do not put service logic there.
+Baseline CLI on the ancestor chain all **preview** (ancestor first, then
+device, then per-interface). **Apply** is still
+`POST /api/service/:id/push` (cleanup then apply for that service only).
+Baseline is not sent in a service push.
 
 ---
 
-## 4. Instantiate, attach endpoints, push
+## 5. Instantiate a service in the tree
 
-1. **Create** a CN/CI service with this type (wizard or
-   `POST /api/service`). Lime-synced rows can have the type attached later
-   (`PUT /api/service/:id/type`) without editing Lime-owned fields.
-2. **Endpoints** in the service dialog, or:
+1. **Create** from the tree: right-click a folder (or a device — the
+   canonical node is parented at the device's folder / `_services`, not
+   under the interface). Category CN/CI, type, company. The node is
+   created with **zero endpoints**; complete the set in the inspector.
+   Lime create is not offered.
+
+   Or **attach** an existing typed CN/CI (Lime rows included). Commercial
+   Lime fields stay read-only; you can still set type and endpoints.
+
+   The wizard (`POST /api/service`) still works; attach the row afterwards
+   if you want it in the tree. New Lime-synced rows are **not**
+   auto-placed; migrate placed existing typed rows under `_services`.
+
+2. **Endpoints** in the inspector (same `PUT /api/service/:id/endpoints`
+   as the service dialog):
 
    ```http
    PUT /api/service/:id/endpoints
@@ -396,12 +475,17 @@ matches and whose scope is on the device's ancestor chain. Those are
    }
    ```
 
-   The whole set is replaced. ELINE also derives `PseudowireID` and, when
+   The whole set is replaced. Endpoint children of the service node are
+   projected from that table. Virtual **service refs** appear under each
+   involved device/interface (not stored rows). Drag a ref onto another
+   interface to rebind. ELINE also derives `PseudowireID` and, when
    NetBox is configured, reconciles L2VPN + subinterfaces.
-3. **Push** `POST /api/service/:id/push` with device credentials
-   (`username`, `password`). Per endpoint device:
 
-   - look up the pack for `service_type` + device platform
+3. **Push** `POST /api/service/:id/push` with device credentials
+   (`username`, `password`) from the service dialog. Per endpoint device:
+
+   - look up the translation CLI object for `service_type` + device
+     platform (`sros-md` falls back to `sros`)
    - require `payload_kind=cli` and a `CLISessionApplier` driver
      (`eos`, `ios-xr`, `sros` / `sros-md`)
    - render cleanup once, then each endpoint body, one CLI session
@@ -412,23 +496,24 @@ matches and whose scope is on the device's ancestor chain. Those are
    it. Failures are returned per device; there is no automatic rollback of
    siblings that already succeeded.
 
+Default tree delete of a service node **detaches** it (inventory remains).
+Devices are attach-only; Detach never deletes the DCIM row.
+
 ---
 
 ## Config variables vs service fields vs endpoint fields
 
 | Data | Lives on | Template | When to use |
 | ---- | -------- | -------- | ----------- |
-| Config variable | Scope tree assignment | `.Vars["name"]` | Inherited (global → site → device → interface). Platform-filterable. |
+| Config variable | Parameter object assignment | `.Vars["name"]` | Inherited (global → site → device → interface). Platform-filterable. |
 | Service field | `Service.Fields` / type `schema` | `.Fields.name` | One value for the whole instance (VRF, RT, numeric id). |
 | Endpoint field | `ServiceEndpoint.Fields` / role `fields` | `.Endpoint.Fields.name` and, for `vlan`, `.LocalVLAN` | Varies per termination. |
 | Inventory | Device / interface row | `.Device` / `.Interface` / `.LocalIface` | Already in DCIM; do not duplicate as a field. |
 
-Resolution walks interface scope → device scope → parents → root, then the
-variable's default. Required variables with no value fail resolve; render
-skips failed vars in `.Vars` rather than aborting the whole device.
-
-Secrets are redacted on read (`***`). A PUT that sends `***` or omits the
-value leaves the stored secret unchanged.
+Resolution walks the interface's parameter children and ancestor chain
+(closest wins), then the variable's default. Required variables with no
+value fail resolve; render skips failed vars in `.Vars` rather than
+aborting the whole device.
 
 ---
 
@@ -441,13 +526,16 @@ ELINE is a normal cfgmgmt type with extra NetBox and peer-render behaviour:
 - Push: `POST /api/service/:id/push` (and `/eline/push`, same path).
 - Render context: `GenericRenderData` with `.Remote`, `.PeerLocal*`,
   `.SDPID`, `.StaleSubinterfaces` filled from sibling endpoints.
-- Packs: seeded from `internal/drivers/templates/{eos,iosxr,sros}_eline.tmpl`.
-- Edit the pack in the GUI to tweak CLI; leave `seed_checksum` mismatched
-  so migrate will not clobber it. Change the embed file + Seed when the
-  default for **new** databases should move.
-- Reverse-import: `factum-netbox sync` writes `service_endpoints` for every
+- CLI objects: seeded from `internal/drivers/templates/{eos,iosxr,sros}_eline.tmpl`
+  under `_catalog/cli/ELINE/`.
+- Edit the CLI feature in the tree to tweak CLI; leave `seed_checksum`
+  mismatched so migrate will not clobber it. Change the embed file + Seed
+  when the default for **new** databases should move.
+- Reverse-import: `factum2-netbox sync` writes `service_endpoints` for every
   L2VPN whose type matches a service type's `netbox_type` (evpl→ELINE,
-  vpls→ELAN), using that type's endpoint roles.
+  vpls→ELAN), using that type's endpoint roles. It does not create Service
+  rows. Endpoint children are projected if a canonical tree node already
+  exists.
 
 Do not add `EndpointA*` columns for a new type.
 
@@ -458,23 +546,24 @@ Do not add `EndpointA*` columns for a new type.
 - [ ] Topology and roles written down (names, min, max).
 - [ ] Per-endpoint fields scalar (`vlan`, `string`, `int`, `ip`). VLAN
       field named `vlan` if templates need `.LocalVLAN`.
-- [ ] Per-service data either in `schema` / `Service.Fields` or in config
-      variables — not both for the same key.
-- [ ] Type created (or built-in roles/schema updated). Confirm it appears
-      in the create wizard.
-- [ ] One pack per platform you will push; `payload_kind=cli`.
-- [ ] `{{define "cleanup"}}` (or `cleanup_template`) keyed by `.Name`,
-      safe if the object is absent.
-- [ ] Apply body uses `{{if}}` around optional maps; `missingkey=error`.
-- [ ] Preview `POST /api/config/render` for each platform with a lab
-      device + two endpoints.
+- [ ] Per-service data either in `schema` / `Service.Fields` or in
+      parameter objects — not both for the same key.
+- [ ] Type created in Catalog → Service types. Confirm it appears in the
+      create wizard.
+- [ ] One CLI object per platform you will push, under
+      `_catalog/cli/<Type>/`, `payload_kind=cli`, service type set.
+- [ ] Feature remove blob keyed by `.Name`, safe if the object is absent.
+- [ ] Add blob uses `{{if}}` around optional maps; `missingkey=error`.
+- [ ] Preview from the Config tree for each platform with a lab device +
+      two endpoints.
 - [ ] Push to a lab device; confirm cleanup + re-apply is idempotent.
-- [ ] `sros-md` either has its own pack or can inherit `sros`.
+- [ ] `sros-md` either has its own CLI object or can inherit `sros`.
 - [ ] No new Go types, no new `cmd/`, no ELINE columns.
 
 When the CLI cannot express the service, that is a **driver** gap
-(`internal/drivers/README-DRIVERS.md`), not a cfgmgmt one. Packs cannot
-reach NETCONF/OpenConfig until `payload_kind` other than `cli` is applied.
+(`internal/drivers/README-DRIVERS.md`), not a cfgmgmt one. CLI objects
+cannot reach NETCONF/OpenConfig until `payload_kind` other than `cli` is
+applied.
 
 ---
 
@@ -482,15 +571,22 @@ reach NETCONF/OpenConfig until `payload_kind` other than `cli` is applied.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET/POST | `/api/config/service-types` | List / create type (`sync_source`, `netbox_type`) |
+| GET/POST | `/api/config/scopes` | List / create tree nodes (`kind`: folder, site, location, device, parameter, cli, service, …) |
+| PUT/DELETE | `/api/config/scopes/:id` | Update / delete (service default = detach; device uses `/detach`) |
+| POST | `/api/config/scopes/:id/move` | Reparent (`parent_id`, optional `sort_order`) |
+| POST | `/api/config/scopes/:id/detach` | Device only: drop config children, keep DCIM row |
+| GET/POST | `/api/config/scopes/:id/features` | List / create CLI features |
+| PUT/DELETE | `/api/config/features/:id` | Update / delete a feature |
+| GET/POST | `/api/config/service-types` | Catalog: list / create type (`sync_source`, `netbox_type`) |
 | PUT/DELETE | `/api/config/service-types/:id` | Update / delete (not built-in delete) |
-| GET/POST | `/api/config/platform-packs` | List (`?service_type_id=`) / create pack |
-| PUT/DELETE | `/api/config/platform-packs/:id` | Update / delete pack |
+| GET/POST | `/api/config/variables` | Variable definition catalog |
+| GET/PUT | `/api/config/assignments` | Values on a parameter node (non-parameter `scope_id` remaps) |
 | GET/POST | `/api/config/macros` | Named `{{include}}` snippets |
 | POST | `/api/config/render` | Preview device or service |
 | PUT | `/api/service/:id/type` | Set type on an instance (incl. Lime) |
 | GET/PUT | `/api/service/:id/endpoints` | Endpoints (including ELINE) |
-| POST | `/api/service/:id/push` | Apply CLI |
+| POST | `/api/service/:id/push` | Apply CLI (service translation only) |
+| * | `/api/config/platform-packs`, `/api/config/templates` | Gone (410); use CLI objects |
 
 Write routes need `RequireWrite`. Config seed runs from
 `util.MigrateDatabase` → `cfgmgmt.Seed`.

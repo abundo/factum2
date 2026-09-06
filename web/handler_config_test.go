@@ -2,12 +2,16 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/models"
+	"github.com/labstack/echo/v5"
+	"gorm.io/gorm"
 )
 
 func TestConfigScopeCreateAndTree(t *testing.T) {
@@ -307,6 +311,48 @@ func TestApiServiceEndpointsPutELINE(t *testing.T) {
 	}
 	if stored.PseudowireID == 0 {
 		t.Fatal("expected pseudowire_id")
+	}
+}
+
+func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00003", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a3", Platform: "eos", NetboxID: 301}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"endpoints": []map[string]any{
+			{"role": "a", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+		},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	eps, err := cfgmgmt.ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 0 {
+		t.Fatalf("partial PUT stored %d endpoints", len(eps))
 	}
 }
 
@@ -625,5 +671,485 @@ func TestConfigVariableGet_RejectsSQLInjectionInID(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("numeric id status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigAssignmentListWinningRowsAfterMove(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&folder).Error; err != nil {
+		t.Fatal(err)
+	}
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: json.RawMessage(`1500`)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgmgmt.Seed(db); err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(folder.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("GET folder rows = %d, want 1", len(rows))
+	}
+	if rows[0].ScopeID == folder.ID {
+		t.Fatal("winner scope_id is the folder original, want parameters child")
+	}
+	var child models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ? AND name = ?", folder.ID, models.ConfigScopeKindParameter, models.ConfigParametersChildName).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].ScopeID != child.ID {
+		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
+	}
+	var orig models.ConfigAssignment
+	err = db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("original after MOVE: %v, want not found", err)
+	}
+}
+
+func TestConfigAssignmentPutFolderRemapsToChild(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&folder).Error; err != nil {
+		t.Fatal(err)
+	}
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": folder.ID, "value": 9100,
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT folder status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var putRow models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &putRow); err != nil {
+		t.Fatal(err)
+	}
+	var child models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ? AND name = ?", folder.ID, models.ConfigScopeKindParameter, models.ConfigParametersChildName).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if putRow.ScopeID != child.ID {
+		t.Fatalf("PUT folder returned scope %d, want child %d", putRow.ScopeID, child.ID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(folder.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("GET folder rows = %d, want 1", len(rows))
+	}
+	if rows[0].ScopeID != child.ID {
+		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
+	}
+	var orig models.ConfigAssignment
+	if err := db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("original after PUT folder: %v, want not found", err)
+	}
+}
+
+func TestConfigAssignmentSecretPutUnchanged(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/variables", map[string]any{
+		"name": "enable_secret", "type": "secret", "secret": true,
+	}, nil, nil)
+	if err := ctrl.ApiConfigVariableCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var def models.ConfigVariableDef
+	if err := json.Unmarshal(rec.Body.Bytes(), &def); err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": root.ID, "value": "s3cret",
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/assignments?scope_id="+strconv.FormatUint(uint64(root.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiConfigAssignmentList(c); err != nil {
+		t.Fatal(err)
+	}
+	var listed []models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed = %d", len(listed))
+	}
+	var listedVal any
+	if err := json.Unmarshal(listed[0].Value, &listedVal); err != nil {
+		t.Fatal(err)
+	}
+	if listedVal != "***" {
+		t.Errorf("GET value = %#v, want redacted", listedVal)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/assignments", map[string]any{
+		"variable_def_id": def.ID, "scope_id": root.ID, "value": "***",
+	}, nil, nil)
+	if err := ctrl.ApiConfigAssignmentUpsert(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put *** status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var putRow models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &putRow); err != nil {
+		t.Fatal(err)
+	}
+	var putVal any
+	if err := json.Unmarshal(putRow.Value, &putVal); err != nil {
+		t.Fatal(err)
+	}
+	if putVal != "***" {
+		t.Errorf("PUT *** body = %#v, want redacted", putVal)
+	}
+
+	var stored []models.ConfigAssignment
+	if err := db.Where("variable_def_id = ?", def.ID).Find(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) == 0 {
+		t.Fatal("no stored assignments")
+	}
+	for _, a := range stored {
+		var v any
+		if err := json.Unmarshal(a.Value, &v); err != nil {
+			t.Fatal(err)
+		}
+		if v != "s3cret" {
+			t.Errorf("stored value = %#v, want s3cret (*** must not persist)", v)
+		}
+	}
+}
+
+func TestConfigScopePutOmitsDoNotZero(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	en := true
+	node := models.ConfigScope{
+		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+		SortOrder: 7, Enabled: en,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatUint(uint64(node.ID), 10)
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/scopes/x", map[string]any{
+		"name": "qos-core",
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiConfigScopeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var stored models.ConfigScope
+	if err := db.First(&stored, node.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "qos-core" {
+		t.Errorf("name = %s", stored.Name)
+	}
+	if stored.SortOrder != 7 {
+		t.Errorf("sort_order = %d, want 7", stored.SortOrder)
+	}
+	if !stored.Enabled {
+		t.Fatal("enabled was zeroed")
+	}
+}
+
+func TestConfigScopeMoveAndDetach(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lab := models.ConfigScope{ParentID: &root.ID, Name: "lab", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&lab).Error; err != nil {
+		t.Fatal(err)
+	}
+	sites := models.ConfigScope{ParentID: &root.ID, Name: "sites", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&sites).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := models.ConfigScope{ParentID: &root.ID, Name: "other", Kind: models.ConfigScopeKindFolder}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-move", Platform: "eos", NetboxID: 501}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifc).Error; err != nil {
+		t.Fatal(err)
+	}
+	did := dev.ID
+	devScope, err := cfgmgmt.AttachDevice(db, lab.ID, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/scopes/x/move", map[string]any{
+		"parent_id": sites.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(lab.ID), 10)})
+	if err := ctrl.ApiConfigScopeMove(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("move folder status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/scopes/x", map[string]any{
+		"parent_id": devScope.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(other.ID), 10)})
+	if err := ctrl.ApiConfigScopeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT folder under device status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var ifaceScope models.ConfigScope
+	if err := db.Where("kind = ? AND interface_id = ?", models.ConfigScopeKindInterface, ifc.ID).First(&ifaceScope).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/move", map[string]any{
+		"parent_id": sites.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(ifaceScope.ID), 10)})
+	if err := ctrl.ApiConfigScopeMove(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("move interface status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	if err := db.Create(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ConfigAssignment{VariableDefID: def.ID, ScopeID: ifaceScope.ID, Value: []byte("1500")}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/detach", nil, []string{"id"}, []string{strconv.FormatUint(uint64(devScope.ID), 10)})
+	if err := ctrl.ApiConfigScopeDetach(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("detach status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var still models.Device
+	if err := db.First(&still, dev.ID).Error; err != nil {
+		t.Fatalf("device row deleted: %v", err)
+	}
+	if _, err := cfgmgmt.GetScope(db, devScope.ID); err == nil {
+		t.Fatal("device scope still present")
+	}
+	var nAssign int64
+	if err := db.Model(&models.ConfigAssignment{}).Where("scope_id = ?", ifaceScope.ID).Count(&nAssign).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nAssign != 0 {
+		t.Fatal("assignments survived detach")
+	}
+}
+
+func TestConfigCLIFeatureCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/scopes", map[string]any{
+		"parent_id": root.ID, "name": "mtu", "kind": "cli", "platform": "eos",
+	}, nil, nil)
+	if err := ctrl.ApiConfigScopeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create cli status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var cli models.ConfigScope
+	if err := json.Unmarshal(rec.Body.Bytes(), &cli); err != nil {
+		t.Fatal(err)
+	}
+	if cli.PayloadKind != models.PayloadKindCLI {
+		t.Errorf("payload_kind = %q, want cli", cli.PayloadKind)
+	}
+
+	scopeID := strconv.FormatUint(uint64(cli.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/features", map[string]any{
+		"name": "mtu", "add_commands": "mtu 9100", "remove_commands": "no mtu",
+	}, []string{"id"}, []string{scopeID})
+	if err := ctrl.ApiConfigFeatureCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create feature status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var feat models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &feat); err != nil {
+		t.Fatal(err)
+	}
+	if feat.ScopeID != cli.ID || feat.Name != "mtu" {
+		t.Fatalf("feature = %+v", feat)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/scopes/x/features", nil, []string{"id"}, []string{scopeID})
+	if err := ctrl.ApiConfigFeatureList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var listed []models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != feat.ID {
+		t.Fatalf("list = %+v", listed)
+	}
+
+	featID := strconv.FormatUint(uint64(feat.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/features/x", map[string]any{
+		"name": "mtu", "add_commands": "mtu 9000", "remove_commands": "no mtu", "remove_at_root": true,
+	}, []string{"id"}, []string{featID})
+	if err := ctrl.ApiConfigFeatureUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.AddCommands != "mtu 9000" || !updated.RemoveAtRoot {
+		t.Fatalf("updated = %+v", updated)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/config/features/x", nil, []string{"id"}, []string{featID})
+	if err := ctrl.ApiConfigFeatureDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var n int64
+	if err := db.Model(&models.ConfigCLIFeature{}).Where("id = ?", feat.ID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("feature row survived delete")
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/features", map[string]any{
+		"name": "x",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(root.ID), 10)})
+	if err := ctrl.ApiConfigFeatureCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("feature on folder status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigLegacyPackAndTemplateRoutesGone(t *testing.T) {
+	ctrl := &Controller{}
+	e := echo.New()
+	e.GET("/api/config/platform-packs", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.POST("/api/config/platform-packs", ctrl.ApiConfigLegacyGone)
+	e.PUT("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.DELETE("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/templates", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+	e.POST("/api/config/templates", ctrl.ApiConfigLegacyGone)
+	e.PUT("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+	e.DELETE("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+
+	paths := []struct {
+		method, path string
+	}{
+		{http.MethodGet, "/api/config/platform-packs"},
+		{http.MethodGet, "/api/config/platform-packs/1"},
+		{http.MethodPost, "/api/config/platform-packs"},
+		{http.MethodPut, "/api/config/platform-packs/1"},
+		{http.MethodDelete, "/api/config/platform-packs/1"},
+		{http.MethodGet, "/api/config/templates"},
+		{http.MethodGet, "/api/config/templates/1"},
+		{http.MethodPost, "/api/config/templates"},
+		{http.MethodPut, "/api/config/templates/1"},
+		{http.MethodDelete, "/api/config/templates/1"},
+	}
+	for _, tc := range paths {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusGone {
+			t.Errorf("%s %s status = %d, want 410, body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
 	}
 }
