@@ -2426,6 +2426,91 @@ func TestDropPacksWhenTwinsExist(t *testing.T) {
 	}
 }
 
+type leftoverTemplateRow struct {
+	ID       uint `gorm:"primaryKey"`
+	Name     string
+	Platform string
+	ScopeID  *uint
+}
+
+func (leftoverTemplateRow) TableName() string { return "config_templates" }
+
+func createLeftoverTemplateTable(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(&leftoverTemplateRow{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDropTemplatesRefusesWithoutCLITwin(t *testing.T) {
+	db := newTestDB(t)
+	createLeftoverTemplateTable(t, db)
+	mustCreate(t, db, &leftoverTemplateRow{Name: "banner", Platform: "eos"})
+	err := AssertTemplatesHaveCLITwins(db)
+	if err == nil {
+		t.Fatal("expected refuse when a template has no CLI twin")
+	}
+	if !strings.Contains(err.Error(), "cannot drop config_templates") || !strings.Contains(err.Error(), "banner") {
+		t.Fatalf("err = %v", err)
+	}
+	if !db.Migrator().HasTable("config_templates") {
+		t.Fatal("assert must not drop config_templates")
+	}
+}
+
+func TestDropTemplatesWhenTwinsExist(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLeftoverTemplateTable(t, db)
+	mustCreate(t, db, &leftoverTemplateRow{Name: "banner", Platform: "eos"})
+	if err := AssertTemplatesHaveCLITwins(db); err != nil {
+		t.Fatalf("assert: %v", err)
+	}
+	if err := DropPackAndTemplateTables(db); err != nil {
+		t.Fatal(err)
+	}
+	if db.Migrator().HasTable("config_templates") {
+		t.Fatal("config_templates still present after drop")
+	}
+}
+
+func TestDropTemplatesTranslationCLIIsNotTwin(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var elan models.ServiceType
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
+		Platform: "eos", ServiceTypeID: &elan.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLeftoverTemplateTable(t, db)
+	mustCreate(t, db, &leftoverTemplateRow{Name: "banner", Platform: "eos"})
+	err = AssertTemplatesHaveCLITwins(db)
+	if err == nil {
+		t.Fatal("translation CLI must not count as a baseline twin")
+	}
+	if !strings.Contains(err.Error(), "cannot drop config_templates") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func walkTree(nodes []ScopeTreeNode, fn func(ScopeTreeNode)) {
 	for _, n := range nodes {
 		fn(n)
