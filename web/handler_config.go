@@ -152,6 +152,72 @@ func (ctrl *Controller) ApiConfigScopeDetach(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+func (ctrl *Controller) ApiConfigFeatureList(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if _, err := cfgmgmt.GetScope(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	rows, err := cfgmgmt.ListCLIFeatures(ctrl.DB, id)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, rows)
+}
+
+func (ctrl *Controller) ApiConfigFeatureCreate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var dto models.ConfigCLIFeatureDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	row := models.ConfigCLIFeature{
+		Name:           dto.Name,
+		SortOrder:      dto.SortOrder,
+		AddCommands:    dto.AddCommands,
+		UpdateCommands: dto.UpdateCommands,
+		RemoveCommands: dto.RemoveCommands,
+		RemoveAtRoot:   dto.RemoveAtRoot,
+	}
+	created, err := cfgmgmt.CreateCLIFeature(ctrl.DB, id, &row)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusCreated, created)
+}
+
+func (ctrl *Controller) ApiConfigFeatureUpdate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	var dto models.ConfigCLIFeatureDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	updated, err := cfgmgmt.UpdateCLIFeature(ctrl.DB, id, &dto)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+func (ctrl *Controller) ApiConfigFeatureDelete(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	if err := cfgmgmt.DeleteCLIFeature(ctrl.DB, id); err != nil {
+		return configWriteError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 func (ctrl *Controller) ApiConfigVariableList(c *echo.Context) error {
 	var rows []models.ConfigVariableDef
 	if err := ctrl.DB.Find(&rows).Error; err != nil {

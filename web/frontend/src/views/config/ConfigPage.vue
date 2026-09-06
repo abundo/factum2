@@ -19,6 +19,7 @@ import {
   moveScope,
   getMatrix,
   listAssignments,
+  listScopes,
   listMacros,
   listPlatformPacks,
   listServiceTypes,
@@ -34,6 +35,7 @@ import {
   upsertAssignment,
 } from '@/api/config'
 import { getDevices } from '@/api/devices'
+import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -62,6 +64,7 @@ const formError = ref('')
 const confirm = ref(null)
 const attachDeviceId = ref(null)
 const devices = ref([])
+const scopesById = ref({})
 
 const assignments = ref([])
 const variables = ref([])
@@ -222,6 +225,10 @@ function itemsFor(node) {
   if (isOrgKind(node.kind)) {
     items.push({ id: 'sep' }, { id: 'add-folder', label: 'Add child folder' })
     items.push({ id: 'attach-device', label: 'Attach device' })
+    items.push({ id: 'add-cli', label: 'Add CLI object' })
+  }
+  if (node.kind === 'device' || node.kind === 'interface') {
+    items.push({ id: 'sep-cli' }, { id: 'add-cli', label: 'Add CLI object' })
   }
   if (node.kind === 'device') {
     items.push({ id: 'sep2' }, { id: 'detach', label: 'Detach', danger: true })
@@ -244,9 +251,41 @@ function closeMenu() {
   menu.value = { ...menu.value, open: false }
 }
 
+function isLeafKind(kind) {
+  return kind === 'parameter' || kind === 'cli'
+}
+
+function nearestMatrixNode(node) {
+  if (!node) return null
+  if (!isLeafKind(node.kind)) return node
+  let cur = node
+  const map = scopesById.value
+  while (cur) {
+    if (
+      cur.kind === 'folder' ||
+      cur.kind === 'site' ||
+      cur.kind === 'location' ||
+      cur.kind === 'device'
+    ) {
+      return cur
+    }
+    if (!cur.parent_id) return null
+    cur = map[cur.parent_id]
+  }
+  return null
+}
+
 function onSelect(node) {
   selected.value = node
   if (node?.id) loadNodeDetails(node)
+  if (node?.kind === 'device' && node.device_id) {
+    previewDeviceId.value = node.device_id
+  } else if (isLeafKind(node?.kind)) {
+    const anc = nearestMatrixNode(node)
+    if (anc?.kind === 'device' && anc.device_id) {
+      previewDeviceId.value = anc.device_id
+    }
+  }
 }
 
 async function loadNodeDetails(node) {
@@ -294,6 +333,11 @@ async function runMenu(id) {
     dialog.value = 'device'
     return
   }
+  if (id === 'add-cli') {
+    form.value = { parent_id: node?.id, name: '', kind: 'cli', platform: 'eos' }
+    dialog.value = 'cli'
+    return
+  }
   if (id === 'del' && node?.id) {
     confirm.value = { kind: 'scope', id: node.id, label: node.title }
   }
@@ -308,6 +352,7 @@ function onMove({ id, parent_id, sort_order }) {
   moveScope(id, body)
     .then(() => {
       reloadKey.value += 1
+      loadScopesIndex()
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Move failed.') }),
@@ -338,6 +383,19 @@ function saveDialog() {
       kind: 'device',
       device_id: attachDeviceId.value,
     })
+  } else if (dialog.value === 'cli') {
+    const name = (form.value.name ?? '').trim()
+    if (!name) {
+      saving.value = false
+      return
+    }
+    req = createScope({
+      parent_id: form.value.parent_id,
+      name,
+      kind: 'cli',
+      platform: optionValue(form.value.platform) ?? '',
+      payload_kind: 'cli',
+    })
   }
   if (!req) {
     saving.value = false
@@ -347,6 +405,7 @@ function saveDialog() {
     .then(() => {
       dialog.value = null
       reloadKey.value += 1
+      loadScopesIndex()
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Request failed.') }),
@@ -377,7 +436,10 @@ function performDelete() {
   req
     .then(() => {
       confirm.value = null
-      if (c.kind === 'scope' || c.kind === 'detach') reloadKey.value += 1
+      if (c.kind === 'scope' || c.kind === 'detach') {
+        reloadKey.value += 1
+        loadScopesIndex()
+      }
     })
     .catch((err) =>
       toast.add({
@@ -569,11 +631,12 @@ function saveAssign() {
 }
 
 function loadMatrix() {
-  if (!selected.value?.id || !matrixVar.value) {
+  const start = nearestMatrixNode(selected.value) || selected.value
+  if (!start?.id || !matrixVar.value) {
     matrixRows.value = []
     return
   }
-  getMatrix(selected.value.id, matrixVar.value)
+  getMatrix(start.id, matrixVar.value)
     .then((rows) => {
       matrixRows.value = rows
     })
@@ -748,8 +811,25 @@ function runPreview() {
     )
 }
 
-function assignmentName(id) {
-  return variables.value.find((v) => v.id === id)?.name ?? `#${id}`
+async function loadScopesIndex() {
+  try {
+    const rows = await listScopes()
+    const m = {}
+    for (const s of rows ?? []) m[s.id] = s
+    scopesById.value = m
+  } catch {
+    scopesById.value = {}
+  }
+}
+
+function onInspectorSaved() {
+  reloadKey.value += 1
+  loadScopesIndex()
+  if (selected.value?.id) loadNodeDetails(selected.value)
+}
+
+function onDeleteAssignment(row) {
+  confirm.value = { kind: 'assignment', id: row.id, label: 'assignment' }
 }
 
 function onDocClick() {
@@ -763,6 +843,7 @@ onMounted(() => {
   loadPacks()
   loadMacros()
   loadTemplates()
+  loadScopesIndex()
   getDevices()
     .then((d) => {
       devices.value = d ?? []
@@ -818,7 +899,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               />
             </div>
             <p class="text-muted-color text-sm mb-2 shrink-0">
-              Right-click to add a folder or attach a device. Select a node to edit assignments.
+              Right-click to add a folder, attach a device, or add a CLI object. Select a node to
+              inspect it.
             </p>
             <ConfigScopeTree
               ref="treeRef"
@@ -830,83 +912,19 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               @move="onMove"
             />
           </div>
-          <div class="flex min-h-0 flex-col gap-3 overflow-auto">
-            <div v-if="!selected" class="text-muted-color text-sm">Select a scope node.</div>
-            <template v-else>
-              <h5 class="m-0">{{ selected.title }}</h5>
-              <div class="text-sm text-muted-color">
-                Kind: {{ selected.kind }}
-                <span v-if="selected.device_id"> · device #{{ selected.device_id }}</span>
-                <span v-if="selected.interface_id"> · interface #{{ selected.interface_id }}</span>
-              </div>
-              <div class="flex items-center justify-between">
-                <h6 class="m-0">Assignments</h6>
-                <UButton
-                  v-if="authStore.canWrite"
-                  size="sm"
-                  icon="i-lucide-plus"
-                  label="Assign"
-                  @click="openAssign()"
-                />
-              </div>
-              <UTable
-                :data="assignments"
-                :columns="[
-                  { accessorKey: 'variable_def_id', header: 'Variable' },
-                  { accessorKey: 'value', header: 'Value' },
-                  { id: 'actions', header: '' },
-                ]"
-                empty="No assignments on this node."
-              >
-                <template #variable_def_id-cell="{ row }">
-                  {{ assignmentName(row.original.variable_def_id) }}
-                </template>
-                <template #value-cell="{ row }">
-                  {{ JSON.stringify(row.original.value) }}
-                </template>
-                <template #actions-cell="{ row }">
-                  <div class="flex gap-1">
-                    <UButton
-                      icon="i-lucide-pencil"
-                      variant="outline"
-                      color="neutral"
-                      size="sm"
-                      @click="openAssign(row.original)"
-                    />
-                    <UButton
-                      v-if="authStore.canWrite"
-                      icon="i-lucide-trash-2"
-                      variant="outline"
-                      color="error"
-                      size="sm"
-                      @click="
-                        confirm = { kind: 'assignment', id: row.original.id, label: 'assignment' }
-                      "
-                    />
-                  </div>
-                </template>
-              </UTable>
-              <template v-if="selected.kind === 'interface'">
-                <h6 class="m-0">Effective values</h6>
-                <UTable
-                  :data="resolved"
-                  :columns="[
-                    { accessorKey: 'name', header: 'Variable' },
-                    { accessorKey: 'value', header: 'Value' },
-                    { accessorKey: 'source_name', header: 'Source' },
-                  ]"
-                  empty="No variables defined."
-                >
-                  <template #value-cell="{ row }">
-                    {{ row.original.error || JSON.stringify(row.original.value) }}
-                  </template>
-                  <template #source_name-cell="{ row }">
-                    {{ row.original.from_default ? 'default' : row.original.source_name || '—' }}
-                  </template>
-                </UTable>
-              </template>
-            </template>
-          </div>
+          <ConfigNodeInspector
+            class="flex min-h-0 flex-col gap-3 overflow-auto"
+            :selected="selected"
+            :assignments="assignments"
+            :resolved="resolved"
+            :variables="variables"
+            :service-types="serviceTypes"
+            :macros="macros"
+            :can-write="authStore.canWrite"
+            @assign="openAssign"
+            @delete-assignment="onDeleteAssignment"
+            @saved="onInspectorSaved"
+          />
         </div>
       </template>
 
@@ -1244,6 +1262,31 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <template #body>
       <label class="block font-bold mb-2">Name</label>
       <UInput v-model="form.name" autofocus />
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal :open="dialog === 'cli'" title="CLI object" @update:open="(v) => !v && (dialog = null)">
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <div>
+          <label class="block font-bold mb-2">Name</label>
+          <UInput v-model="form.name" autofocus />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Platform</label>
+          <USelectMenu
+            v-model="form.platform"
+            :items="platformOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </div>
+      </div>
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
