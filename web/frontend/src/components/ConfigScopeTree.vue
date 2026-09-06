@@ -156,8 +156,8 @@ function buildTree(source) {
     },
     source,
     columns: [
-      { id: '*', title: 'Name', width: '320px' },
-      { id: 'kind', title: 'Kind', width: '*' },
+      { id: '*', title: 'Name', width: '*' },
+      { id: 'kind', title: 'Kind', width: '110px' },
     ],
     types: {
       folder: { icon: false },
@@ -293,13 +293,16 @@ function expandAll() {
 }
 
 function collapseAll() {
-  tree?.expandAll(false)
+  if (!tree) return
+  // expandAll(false) only collapses the first level unless deep is set, so
+  // re-expanding a parent would restore every previously expanded descendant.
+  tree.expandAll(false, { deep: true })
 }
 
 function expandNode(key) {
   const node = key ? tree?.findKey(key) : null
   if (node) node.setExpanded(true)
-  else expandAll()
+  else expandOneLevel()
 }
 
 function collapseNode(key) {
@@ -320,6 +323,7 @@ onBeforeUnmount(destroyTree)
 defineExpose({
   filter,
   expandAll,
+  expandOneLevel,
   collapseAll,
   expandNode,
   collapseNode,

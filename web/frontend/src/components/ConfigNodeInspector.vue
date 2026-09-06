@@ -201,7 +201,7 @@ function addGenericEndpoint(roleName, extra = {}) {
     role: roleName,
     device_id: extra.device_id ?? null,
     interface_id: extra.interface_id ?? null,
-    fields: { ...(extra.fields ?? {}) },
+    fields: { ...extra.fields },
     label: extra.label ?? '',
   })
 }
@@ -226,7 +226,7 @@ function loadService(id) {
   getService(id)
     .then((data) => {
       serviceRow.value = { ...data }
-      schemaValues.value = { ...(data.fields ?? {}) }
+      schemaValues.value = { ...data.fields }
       if (schemaValues.value.bandwidth_mbps == null && data.bandwidth_mbps) {
         schemaValues.value.bandwidth_mbps = data.bandwidth_mbps
       }
@@ -237,7 +237,7 @@ function loadService(id) {
         role: ep.role,
         device_id: ep.device_id,
         interface_id: ep.interface_id,
-        fields: { ...(ep.fields ?? {}) },
+        fields: { ...ep.fields },
         label: '',
       }))
       if (genericEndpoints.value.length === 0) {
@@ -373,7 +373,7 @@ function saveCLI() {
   const merged = { ...prev, description: cliForm.value.description ?? '' }
   if (pattern || enter || exit) {
     merged.context = {
-      ...(prev.context ?? {}),
+      ...prev.context,
       pattern,
       enter,
       exit,
@@ -411,7 +411,11 @@ function addFeature() {
       return loadFeatures(props.selected.id)
     })
     .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Add feature failed.') }),
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Add feature failed.'),
+      }),
     )
     .finally(() => {
       saving.value = false
@@ -460,7 +464,7 @@ function toggleFeature(id) {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-col gap-3 overflow-auto">
+  <div class="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-auto">
     <div v-if="!selected" class="text-muted-color text-sm">Select a scope node.</div>
     <template v-else>
       <h5 class="m-0">{{ selected.title }}</h5>
@@ -476,7 +480,9 @@ function toggleFeature(id) {
           <div class="text-sm">
             Service ID:
             <RouterLink to="/service" class="underline">{{ serviceRow.service_id }}</RouterLink>
-            <span v-if="limeOwned" class="text-muted-color"> · Lime (commercial fields read-only)</span>
+            <span v-if="limeOwned" class="text-muted-color">
+              · Lime (commercial fields read-only)</span
+            >
           </div>
           <div>
             <label class="mb-1 block font-bold">Type</label>
@@ -496,11 +502,7 @@ function toggleFeature(id) {
             :disabled="!canWrite"
           />
           <div v-if="canWrite" class="flex justify-end">
-            <UButton
-              label="Save type"
-              :loading="saving"
-              @click="saveServiceTypeFields"
-            />
+            <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
           </div>
           <h6 class="m-0">Endpoints</h6>
           <p class="text-muted-color text-sm m-0">
@@ -525,7 +527,12 @@ function toggleFeature(id) {
             <div>
               <label class="mb-1 block font-bold">Device / interface</label>
               <div class="flex items-center gap-2">
-                <UInput :model-value="ep.label" disabled placeholder="Not selected" class="w-full" />
+                <UInput
+                  :model-value="ep.label"
+                  disabled
+                  placeholder="Not selected"
+                  class="w-full"
+                />
                 <UButton
                   v-if="canWrite"
                   icon="i-lucide-list-tree"
@@ -623,11 +630,15 @@ function toggleFeature(id) {
           <UInput v-model="cliForm.description" class="w-full" />
         </div>
         <div>
-          <label class="mb-1 block font-bold">Context pattern</label>
+          <label class="mb-1 block font-bold">Context pattern (regex)</label>
+          <p class="text-muted-color text-sm mb-1 m-0">
+            Anchored regex. Empty or <code>global</code> matches the configure root.
+            <code>&lt;ident&gt;</code> captures a token, e.g. <code>interface &lt;name&gt;</code>.
+          </p>
           <UInput
             v-model="cliForm.pattern"
             placeholder="interface &lt;name&gt; (empty = global)"
-            class="w-full"
+            class="w-full font-mono"
           />
         </div>
         <div>
@@ -703,7 +714,7 @@ function toggleFeature(id) {
               <label class="mb-1 block font-bold">Add commands</label>
               <GoTemplateEditor
                 v-model="featureDrafts[feat.id].add_commands"
-                class="min-h-48"
+                class="min-h-64 flex-1"
                 :schema="cliSchema"
                 placeholder="Go text/template. One CLI command per output line."
               />
@@ -712,7 +723,7 @@ function toggleFeature(id) {
               <label class="mb-1 block font-bold">Remove commands</label>
               <GoTemplateEditor
                 v-model="featureDrafts[feat.id].remove_commands"
-                class="min-h-48"
+                class="min-h-64 flex-1"
                 :schema="cliSchema"
                 placeholder="Go text/template. Idempotent teardown."
               />

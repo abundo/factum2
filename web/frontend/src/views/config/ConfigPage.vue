@@ -22,6 +22,7 @@ import {
   renderConfig,
   resolveInterface,
   updateMacro,
+  updateScope,
   updateServiceType,
   updateVariable,
   upsertAssignment,
@@ -71,6 +72,17 @@ const serviceTypes = ref([])
 const macros = ref([])
 const previewDeviceId = ref(null)
 const preview = ref(null)
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const TREE_WIDTH_KEY = 'factum:config-tree-width'
+const TREE_WIDTH_DEFAULT = 360
+const TREE_WIDTH_MIN = 220
+function loadTreeWidth() {
+  const n = Number(localStorage.getItem(TREE_WIDTH_KEY))
+  return Number.isFinite(n) && n >= TREE_WIDTH_MIN ? n : TREE_WIDTH_DEFAULT
+}
+const treeWidth = ref(loadTreeWidth())
+const treeResizing = ref(false)
 const macroBodyPlaceholder = 'Go text/template. Inserted with {{include "name"}}.'
 
 const tabItems = [
@@ -78,7 +90,7 @@ const tabItems = [
     label: 'Tree',
     value: 'tree',
     slot: 'tree',
-    class: 'flex min-h-0 flex-1 flex-col overflow-auto lg:overflow-hidden',
+    class: 'flex min-h-0 h-full flex-1 flex-col overflow-auto lg:overflow-hidden',
   },
   { label: 'Matrix', value: 'matrix', slot: 'matrix' },
 ]
@@ -124,9 +136,7 @@ const netboxTypeOptions = [
 ]
 
 const deviceOptions = computed(() => devices.value.map((d) => ({ label: d.name, value: d.id })))
-const customerOptions = computed(() =>
-  customers.value.map((c) => ({ label: c.name, value: c.id })),
-)
+const customerOptions = computed(() => customers.value.map((c) => ({ label: c.name, value: c.id })))
 const attachServiceOptions = computed(() =>
   attachableServices.value.map((s) => ({
     label: `${s.service_id} (${s.service_type || 'typed'})`,
@@ -208,6 +218,21 @@ function isReservedFolder(node) {
   return node.title === '_catalog' || node.title === '_services'
 }
 
+function canRename(node) {
+  if (!node?.id) return false
+  if (isReservedFolder(node)) return false
+  if (node.kind === 'parameter' && node.title === 'parameters') return false
+  return isOrgKind(node.kind) || node.kind === 'parameter' || node.kind === 'cli'
+}
+
+const renameKindLabels = {
+  folder: 'folder',
+  site: 'site',
+  location: 'location',
+  parameter: 'parameter object',
+  cli: 'CLI object',
+}
+
 function canAddParameter(kind) {
   return isOrgKind(kind) || kind === 'device' || kind === 'interface' || kind === 'service'
 }
@@ -229,6 +254,9 @@ function itemsFor(node) {
     { id: 'expand', label: 'Expand' },
     { id: 'collapse', label: 'Collapse' },
   ]
+  if (canRename(node)) {
+    items.push({ id: 'rename', label: 'Rename' })
+  }
   if (isOrgKind(node.kind)) {
     items.push({ id: 'sep' }, { id: 'add-folder', label: 'Add child folder' })
     items.push({ id: 'add-site', label: 'Add site' })
@@ -374,6 +402,11 @@ async function runMenu(id) {
     treeRef.value?.collapseNode(node?.key)
     return
   }
+  if (id === 'rename' && node?.id) {
+    form.value = { id: node.id, name: node.title, kind: node.kind }
+    dialog.value = 'rename'
+    return
+  }
   if (id === 'add-folder' || id === 'add-site' || id === 'add-location') {
     const kind = id === 'add-site' ? 'site' : id === 'add-location' ? 'location' : 'folder'
     form.value = { parent_id: node?.id, name: '', kind }
@@ -498,16 +531,14 @@ function canonicalJSON(v) {
 function sha256hexSync(message) {
   const bytes = new TextEncoder().encode(message)
   const K = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-    0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-    0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-    0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-    0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-    0xc67178f2,
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
   ]
   const rotr = (n, x) => (x >>> n) | (x << (32 - n))
   let l = bytes.length
@@ -565,9 +596,7 @@ function sha256hexSync(message) {
     h6 = (h6 + g) >>> 0
     h7 = (h7 + h) >>> 0
   }
-  return [h0, h1, h2, h3, h4, h5, h6, h7]
-    .map((n) => n.toString(16).padStart(8, '0'))
-    .join('')
+  return [h0, h1, h2, h3, h4, h5, h6, h7].map((n) => n.toString(16).padStart(8, '0')).join('')
 }
 
 function endpointDisc(fields) {
@@ -738,6 +767,13 @@ function saveDialog() {
       kind: 'service',
       service_id: attachServiceId.value,
     })
+  } else if (dialog.value === 'rename') {
+    const name = (form.value.name ?? '').trim()
+    if (!name || !form.value.id) {
+      saving.value = false
+      return
+    }
+    req = updateScope(form.value.id, { name })
   }
   if (!req) {
     saving.value = false
@@ -745,9 +781,13 @@ function saveDialog() {
   }
   req
     .then((node) => {
+      const wasRename = dialog.value === 'rename'
       dialog.value = null
       reloadKey.value += 1
       loadScopesIndex()
+      if (wasRename && node?.id && selected.value?.id === node.id) {
+        selected.value = { ...selected.value, title: node.name }
+      }
       if (node?.id && (node.kind === 'parameter' || node.kind === 'cli')) {
         selected.value = {
           key: String(node.id),
@@ -781,16 +821,16 @@ function performDelete() {
   if (c.kind === 'remove-endpoint' && c.node) {
     const node = c.node
     req = getServiceEndpoints(node.service_row_id).then((rows) => {
-        const next = (rows ?? []).filter((ep) => !endpointMatchesRef(ep, node))
-        return putServiceEndpoints(node.service_row_id, {
-          endpoints: next.map((ep) => ({
-            role: ep.role,
-            device_id: ep.device_id,
-            interface_id: ep.interface_id,
-            fields: ep.fields || {},
-          })),
-        })
+      const next = (rows ?? []).filter((ep) => !endpointMatchesRef(ep, node))
+      return putServiceEndpoints(node.service_row_id, {
+        endpoints: next.map((ep) => ({
+          role: ep.role,
+          device_id: ep.device_id,
+          interface_id: ep.interface_id,
+          fields: ep.fields || {},
+        })),
       })
+    })
   }
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
   if (c.kind === 'type') req = deleteServiceType(c.id).then(loadTypes)
@@ -964,7 +1004,8 @@ function openAssign(row) {
         value_text:
           val == null || typeof val === 'string' ? (val ?? '') : JSON.stringify(val, null, 2),
         value_bool: !!val,
-        value_number: typeof val === 'number' ? val : val == null || val === '' ? null : Number(val),
+        value_number:
+          typeof val === 'number' ? val : val == null || val === '' ? null : Number(val),
       }
     : { variable_def_id: null, value_text: '', value_bool: false, value_number: null }
   if (def) form.value.variable_def_id = def.id
@@ -1124,15 +1165,55 @@ function saveMacro() {
     })
 }
 
+const previewText = computed(() => {
+  const sources = preview.value?.sources ?? []
+  if (!sources.length) return ''
+  return sources
+    .map((src) => {
+      const title = [src.source, src.kind].filter(Boolean).join(' — ')
+      const body = src.error ? `error: ${src.error}` : (src.commands ?? []).join('\n')
+      return `===== ${title} =====\n${body}`
+    })
+    .join('\n\n')
+})
+
 function runPreview() {
   if (!previewDeviceId.value) return
+  previewLoading.value = true
   renderConfig({ device_id: previewDeviceId.value })
     .then((data) => {
       preview.value = data
+      previewOpen.value = true
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Render failed.') }),
     )
+    .finally(() => {
+      previewLoading.value = false
+    })
+}
+
+function startTreeResize(event) {
+  event.preventDefault()
+  treeResizing.value = true
+  const startX = event.clientX
+  const startWidth = treeWidth.value
+  const parent = event.currentTarget?.parentElement
+  const max = Math.max(TREE_WIDTH_MIN, Math.floor((parent?.clientWidth ?? window.innerWidth) * 0.7))
+  document.body.style.cursor = 'col-resize'
+  function onMove(moveEvent) {
+    const next = startWidth + (moveEvent.clientX - startX)
+    treeWidth.value = Math.min(max, Math.max(TREE_WIDTH_MIN, next))
+  }
+  function onUp() {
+    treeResizing.value = false
+    document.body.style.cursor = ''
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth.value))
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
 }
 
 async function loadScopesIndex() {
@@ -1173,7 +1254,10 @@ onMounted(() => {
     })
     .catch(() => {})
 })
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
+  document.body.style.cursor = ''
+})
 </script>
 
 <template>
@@ -1195,14 +1279,18 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       :ui="{
         root: 'items-stretch',
         list: 'shrink-0',
-        content: 'min-h-0 flex-1 overflow-auto',
+        content: 'min-h-0 flex-1 overflow-auto lg:overflow-hidden',
       }"
     >
       <template #tree>
         <div
-          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(16rem,1fr)_auto_auto] gap-4 py-3 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)_auto] xl:grid-cols-3 xl:grid-rows-1"
+          class="flex min-h-0 h-full flex-1 flex-col overflow-auto py-3 lg:flex-row lg:overflow-hidden"
+          :class="{ 'select-none': treeResizing }"
         >
-          <div class="flex min-h-0 flex-col overflow-hidden lg:row-span-2 xl:row-span-1">
+          <div
+            class="flex min-h-80 flex-col overflow-hidden max-lg:!w-full lg:min-h-0 lg:shrink-0"
+            :style="{ width: treeWidth + 'px' }"
+          >
             <div class="flex flex-wrap gap-2 items-center mb-2 shrink-0">
               <SearchInput
                 v-model="filter"
@@ -1216,7 +1304,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 color="neutral"
                 size="sm"
                 title="Expand one level"
-                @click="treeRef?.expandAll()"
+                @click="treeRef?.expandOneLevel()"
               />
               <UButton
                 icon="i-lucide-fold-vertical"
@@ -1242,55 +1330,52 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               @rebind="onRebind"
             />
           </div>
-          <ConfigNodeInspector
-            class="flex min-h-0 flex-col gap-3 overflow-auto"
-            :selected="selected"
-            :assignments="assignments"
-            :resolved="resolved"
-            :variables="variables"
-            :service-types="serviceTypes"
-            :macros="macros"
-            :can-write="authStore.canWrite"
-            :draft-endpoint="draftEndpoint"
-            @assign="openAssign"
-            @delete-assignment="onDeleteAssignment"
-            @saved="onInspectorSaved"
-          />
           <div
-            class="flex min-h-0 flex-col gap-3 overflow-auto border-t border-default pt-3 lg:col-start-2 lg:border-t-0 lg:pt-0 xl:col-start-3"
-          >
-            <h5 class="m-0">Preview</h5>
-            <p class="text-muted-color text-sm m-0">
-              Desired CLI for a device (baseline CLI objects + terminating services). Does not
-              contact the device.
-            </p>
-            <div class="flex flex-wrap gap-2 items-end">
-              <div>
-                <label class="block font-bold mb-1">Device</label>
-                <USelectMenu
-                  v-model="previewDeviceId"
-                  :items="deviceOptions"
-                  value-key="value"
-                  label-key="label"
-                  placeholder="Device"
-                  class="w-64"
-                />
-              </div>
-              <UButton label="Render" :disabled="!previewDeviceId" @click="runPreview" />
-            </div>
-            <div v-if="preview" class="flex flex-col gap-3">
-              <div
-                v-for="(src, i) in preview.sources ?? []"
-                :key="i"
-                class="border border-default rounded p-3"
-              >
-                <div class="font-medium mb-2">
-                  {{ src.source }} <span class="text-muted-color">{{ src.kind }}</span>
+            class="hidden lg:block w-1 shrink-0 cursor-col-resize self-stretch hover:bg-primary/30"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize config tree"
+            @mousedown="startTreeResize"
+          />
+          <div class="mt-4 flex min-h-80 min-w-0 flex-1 flex-col overflow-hidden lg:mt-0 lg:min-h-0 lg:pl-3">
+            <ConfigNodeInspector
+              class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto"
+              :selected="selected"
+              :assignments="assignments"
+              :resolved="resolved"
+              :variables="variables"
+              :service-types="serviceTypes"
+              :macros="macros"
+              :can-write="authStore.canWrite"
+              :draft-endpoint="draftEndpoint"
+              @assign="openAssign"
+              @delete-assignment="onDeleteAssignment"
+              @saved="onInspectorSaved"
+            />
+            <div class="shrink-0 border-t border-default pt-3 mt-3 flex flex-col gap-2">
+              <h5 class="m-0">Preview</h5>
+              <p class="text-muted-color text-sm m-0">
+                Desired CLI for a device (baseline CLI objects + terminating services). Does not
+                contact the device.
+              </p>
+              <div class="flex flex-wrap gap-2 items-end">
+                <div class="min-w-0 flex-1">
+                  <label class="block font-bold mb-1">Device</label>
+                  <USelectMenu
+                    v-model="previewDeviceId"
+                    :items="deviceOptions"
+                    value-key="value"
+                    label-key="label"
+                    placeholder="Device"
+                    class="w-full max-w-64"
+                  />
                 </div>
-                <div v-if="src.error" class="text-red-500 text-sm">{{ src.error }}</div>
-                <pre v-else class="text-sm overflow-auto max-h-80">{{
-                  (src.commands ?? []).join('\n')
-                }}</pre>
+                <UButton
+                  label="Render"
+                  :disabled="!previewDeviceId"
+                  :loading="previewLoading"
+                  @click="runPreview"
+                />
               </div>
             </div>
           </div>
@@ -1298,7 +1383,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       </template>
 
       <template #matrix>
-        <div class="flex flex-col gap-3 py-3">
+        <div class="flex h-full min-h-0 flex-col gap-3 overflow-auto py-3">
           <p class="text-muted-color text-sm">
             Select a tree node first, then a variable. Rows are interfaces under that folder or
             device (or the nearest such ancestor if you selected a parameter, CLI object, or
@@ -1337,11 +1422,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </UTabs>
   </div>
 
-  <USlideover
-    v-model:open="catalogOpen"
-    title="Catalog"
-    :ui="{ content: 'max-w-3xl w-full' }"
-  >
+  <USlideover v-model:open="catalogOpen" title="Catalog" :ui="{ content: 'max-w-3xl w-full' }">
     <template #body>
       <p class="text-muted-color text-sm m-0 mb-3">
         Definitions used by the tree — not tree nodes themselves.
@@ -1515,6 +1596,42 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   </div>
 
   <UModal
+    :open="dialog === 'rename'"
+    :title="`Rename ${renameKindLabels[form.kind] || 'item'}`"
+    @update:open="(v) => !v && (dialog = null)"
+  >
+    <template #body>
+      <label class="block font-bold mb-2">Name</label>
+      <UInput v-model="form.name" autofocus @keydown.enter.prevent="saveDialog" />
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Rename" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal
+    v-model:open="previewOpen"
+    title="Rendered config"
+    :ui="{
+      overlay: 'bg-elevated/80',
+      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
+      body: 'flex flex-1 min-h-0 flex-col overflow-hidden',
+    }"
+  >
+    <template #body>
+      <textarea
+        readonly
+        class="h-full min-h-0 w-full resize-none rounded-md border border-default bg-muted p-3 font-mono text-sm"
+        :value="previewText || 'No rendered output.'"
+      />
+    </template>
+    <template #footer>
+      <UButton label="Close" variant="ghost" @click="previewOpen = false" />
+    </template>
+  </UModal>
+
+  <UModal
     :open="dialog === 'folder'"
     :title="orgKindTitles[form.kind] || 'Folder'"
     @update:open="(v) => !v && (dialog = null)"
@@ -1684,9 +1801,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           />
         </div>
         <div v-if="assignDef?.type === 'bool'">
-          <label class="flex items-center gap-2"
-            ><USwitch v-model="form.value_bool" /> Value</label
-          >
+          <label class="flex items-center gap-2"><USwitch v-model="form.value_bool" /> Value</label>
         </div>
         <div v-else-if="assignDef?.type === 'int' || assignDef?.type === 'vlan'">
           <label class="block font-bold mb-2">Value</label>
