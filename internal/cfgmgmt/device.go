@@ -325,7 +325,7 @@ func loopbackIfaceName(platform string) string {
 // RenderedSource is one template or service's rendered CLI (or other payload).
 type RenderedSource struct {
 	Source      string   `json:"source"`
-	Kind        string   `json:"kind"` // template | service
+	Kind        string   `json:"kind"` // cli | template | service
 	Platform    string   `json:"platform"`
 	PayloadKind string   `json:"payload_kind"`
 	Commands    []string `json:"commands"`
@@ -454,6 +454,11 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 	if err != nil {
 		return nil, err
 	}
+	cliSources, err := renderBaselineCLI(db, device, vars)
+	if err != nil {
+		return nil, err
+	}
+	result.Sources = append(result.Sources, cliSources...)
 	var tmpls []models.ConfigTemplate
 	if err := db.Where("enabled = ?", true).Find(&tmpls).Error; err != nil {
 		return nil, err
@@ -464,6 +469,13 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 			continue
 		}
 		if t.ScopeID != nil && !scopeIDs[*t.ScopeID] {
+			continue
+		}
+		twin, err := hasCLITwin(db, t.Name, t.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		if twin {
 			continue
 		}
 		kind := t.PayloadKind

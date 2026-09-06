@@ -20,13 +20,19 @@ type ScopeTreeNode struct {
 }
 
 type ScopeTreeData struct {
-	ID          uint   `json:"id"`
-	Kind        string `json:"kind"`
-	ParentID    *uint  `json:"parent_id,omitempty"`
-	SiteID      *uint  `json:"site_id,omitempty"`
-	DeviceID    *uint  `json:"device_id,omitempty"`
-	InterfaceID *uint  `json:"interface_id,omitempty"`
-	SortOrder   int    `json:"sort_order"`
+	ID            uint                      `json:"id"`
+	Kind          string                    `json:"kind"`
+	ParentID      *uint                     `json:"parent_id,omitempty"`
+	SiteID        *uint                     `json:"site_id,omitempty"`
+	DeviceID      *uint                     `json:"device_id,omitempty"`
+	InterfaceID   *uint                     `json:"interface_id,omitempty"`
+	ServiceID     *uint                     `json:"service_id,omitempty"`
+	ServiceTypeID *uint                     `json:"service_type_id,omitempty"`
+	Platform      string                    `json:"platform,omitempty"`
+	PayloadKind   string                    `json:"payload_kind,omitempty"`
+	Enabled       bool                      `json:"enabled"`
+	SortOrder     int                       `json:"sort_order"`
+	Payload       models.ConfigScopePayload `json:"payload"`
 }
 
 func GetScope(db *gorm.DB, id uint) (*models.ConfigScope, error) {
@@ -77,6 +83,12 @@ func CreateScope(db *gorm.DB, s *models.ConfigScope) (*models.ConfigScope, error
 		return nil, err
 	}
 	if err := assertScopeUnique(db, s, 0); err != nil {
+		return nil, err
+	}
+	if err := normalizeCLIScope(s); err != nil {
+		return nil, err
+	}
+	if err := assertCLIUnique(db, s, 0); err != nil {
 		return nil, err
 	}
 	s.Enabled = true
@@ -212,7 +224,11 @@ func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScopeDTO) (*models.Co
 			existing.ServiceID = patch.ServiceID
 		}
 		if patch.ServiceTypeID != nil {
-			existing.ServiceTypeID = patch.ServiceTypeID
+			if *patch.ServiceTypeID == 0 {
+				existing.ServiceTypeID = nil
+			} else {
+				existing.ServiceTypeID = patch.ServiceTypeID
+			}
 		}
 		if patch.Platform != nil {
 			existing.Platform = *patch.Platform
@@ -234,6 +250,12 @@ func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScopeDTO) (*models.Co
 			return err
 		}
 		if err := assertScopeUnique(tx, existing, existing.ID); err != nil {
+			return err
+		}
+		if err := normalizeCLIScope(existing); err != nil {
+			return err
+		}
+		if err := assertCLIUnique(tx, existing, existing.ID); err != nil {
 			return err
 		}
 		if err := tx.Save(existing).Error; err != nil {
@@ -855,13 +877,19 @@ func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope
 		Title: s.Name,
 		Type:  s.Kind,
 		Data: ScopeTreeData{
-			ID:          s.ID,
-			Kind:        s.Kind,
-			ParentID:    s.ParentID,
-			SiteID:      s.SiteID,
-			DeviceID:    s.DeviceID,
-			InterfaceID: s.InterfaceID,
-			SortOrder:   s.SortOrder,
+			ID:            s.ID,
+			Kind:          s.Kind,
+			ParentID:      s.ParentID,
+			SiteID:        s.SiteID,
+			DeviceID:      s.DeviceID,
+			InterfaceID:   s.InterfaceID,
+			ServiceID:     s.ServiceID,
+			ServiceTypeID: s.ServiceTypeID,
+			Platform:      s.Platform,
+			PayloadKind:   s.PayloadKind,
+			Enabled:       s.Enabled,
+			SortOrder:     s.SortOrder,
+			Payload:       s.Payload,
 		},
 	}
 	if path[s.ID] {
@@ -1169,7 +1197,15 @@ func Matrix(db *gorm.DB, scopeID uint, varName string) ([]MatrixRow, error) {
 	if _, err := loadVarDef(db, varName); err != nil {
 		return nil, err
 	}
-	scopes, err := DescendantScopes(db, scopeID)
+	start, err := GetScope(db, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	start, err = nearestMatrixScope(db, start)
+	if err != nil {
+		return nil, err
+	}
+	scopes, err := DescendantScopes(db, start.ID)
 	if err != nil {
 		return nil, err
 	}

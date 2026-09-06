@@ -969,3 +969,105 @@ func TestConfigScopeMoveAndDetach(t *testing.T) {
 		t.Fatal("assignments survived detach")
 	}
 }
+
+func TestConfigCLIFeatureCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/scopes", map[string]any{
+		"parent_id": root.ID, "name": "mtu", "kind": "cli", "platform": "eos",
+	}, nil, nil)
+	if err := ctrl.ApiConfigScopeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create cli status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var cli models.ConfigScope
+	if err := json.Unmarshal(rec.Body.Bytes(), &cli); err != nil {
+		t.Fatal(err)
+	}
+	if cli.PayloadKind != models.PayloadKindCLI {
+		t.Errorf("payload_kind = %q, want cli", cli.PayloadKind)
+	}
+
+	scopeID := strconv.FormatUint(uint64(cli.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/features", map[string]any{
+		"name": "mtu", "add_commands": "mtu 9100", "remove_commands": "no mtu",
+	}, []string{"id"}, []string{scopeID})
+	if err := ctrl.ApiConfigFeatureCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create feature status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var feat models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &feat); err != nil {
+		t.Fatal(err)
+	}
+	if feat.ScopeID != cli.ID || feat.Name != "mtu" {
+		t.Fatalf("feature = %+v", feat)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/scopes/x/features", nil, []string{"id"}, []string{scopeID})
+	if err := ctrl.ApiConfigFeatureList(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var listed []models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != feat.ID {
+		t.Fatalf("list = %+v", listed)
+	}
+
+	featID := strconv.FormatUint(uint64(feat.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPut, "/api/config/features/x", map[string]any{
+		"name": "mtu", "add_commands": "mtu 9000", "remove_commands": "no mtu", "remove_at_root": true,
+	}, []string{"id"}, []string{featID})
+	if err := ctrl.ApiConfigFeatureUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.ConfigCLIFeature
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.AddCommands != "mtu 9000" || !updated.RemoveAtRoot {
+		t.Fatalf("updated = %+v", updated)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/config/features/x", nil, []string{"id"}, []string{featID})
+	if err := ctrl.ApiConfigFeatureDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var n int64
+	if err := db.Model(&models.ConfigCLIFeature{}).Where("id = ?", feat.ID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("feature row survived delete")
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes/x/features", map[string]any{
+		"name": "x",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(root.ID), 10)})
+	if err := ctrl.ApiConfigFeatureCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("feature on folder status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
