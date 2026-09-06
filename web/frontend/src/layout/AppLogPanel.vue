@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { useLogPanel } from './composables/logPanel'
 
 const { state, close, setHeight, clear, togglePause, connect, disconnect } = useLogPanel()
@@ -38,11 +39,7 @@ function startResize(event) {
 
 function formatTime(iso) {
   const d = new Date(iso)
-  return (
-    d.toLocaleTimeString(undefined, { hour12: false }) +
-    '.' +
-    String(d.getMilliseconds()).padStart(3, '0')
-  )
+  return formatDateTime(iso) + '.' + String(d.getMilliseconds()).padStart(3, '0')
 }
 
 onMounted(connect)
