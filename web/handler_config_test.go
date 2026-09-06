@@ -312,6 +312,48 @@ func TestApiServiceEndpointsPutELINE(t *testing.T) {
 	}
 }
 
+func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00003", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a3", Platform: "eos", NetboxID: 301}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"endpoints": []map[string]any{
+			{"role": "a", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+		},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	eps, err := cfgmgmt.ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 0 {
+		t.Fatalf("partial PUT stored %d endpoints", len(eps))
+	}
+}
+
 func TestCannotDeleteBuiltinServiceType(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

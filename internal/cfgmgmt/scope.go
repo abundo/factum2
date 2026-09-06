@@ -2,6 +2,7 @@ package cfgmgmt
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -33,6 +34,11 @@ type ScopeTreeData struct {
 	Enabled       bool                      `json:"enabled"`
 	SortOrder     int                       `json:"sort_order"`
 	Payload       models.ConfigScopePayload `json:"payload"`
+	CanonicalID   uint                      `json:"canonical_id,omitempty"`
+	ServiceRowID  uint                      `json:"service_row_id,omitempty"`
+	ServiceLabel  string                    `json:"service_label,omitempty"`
+	Role          string                    `json:"role,omitempty"`
+	Disc          string                    `json:"disc,omitempty"`
 }
 
 func GetScope(db *gorm.DB, id uint) (*models.ConfigScope, error) {
@@ -108,6 +114,10 @@ func assertScopeKindIDs(s *models.ConfigScope) error {
 		if s.InterfaceID == nil || *s.InterfaceID == 0 {
 			return statusErr(400, "interface scope requires interface_id")
 		}
+	case models.ConfigScopeKindService:
+		if s.ServiceID == nil || *s.ServiceID == 0 {
+			return statusErr(400, "service scope requires service_id")
+		}
 	}
 	return nil
 }
@@ -139,6 +149,20 @@ func assertScopeUnique(db *gorm.DB, s *models.ConfigScope, excludeID uint) error
 		}
 		if n > 0 {
 			return statusErr(409, "an interface scope already exists for this interface")
+		}
+	}
+	if s.Kind == models.ConfigScopeKindService && s.ServiceID != nil {
+		q := db.Model(&models.ConfigScope{}).
+			Where("kind = ? AND service_id = ?", models.ConfigScopeKindService, *s.ServiceID)
+		if excludeID != 0 {
+			q = q.Where("id <> ?", excludeID)
+		}
+		var n int64
+		if err := q.Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			return statusErr(409, "a service scope already exists for this service")
 		}
 	}
 	return nil
@@ -285,6 +309,12 @@ func DeleteScope(db *gorm.DB, id uint) error {
 	if existing.Kind == models.ConfigScopeKindInterface {
 		return statusErr(409, "managed by device")
 	}
+	if existing.Kind == models.ConfigScopeKindService {
+		return detachServiceNode(db, existing)
+	}
+	if existing.Kind == models.ConfigScopeKindServiceEndpoint {
+		return deleteServiceEndpointScope(db, existing)
+	}
 	var n int64
 	if err := db.Model(&models.ConfigScope{}).Where("parent_id = ?", id).Count(&n).Error; err != nil {
 		return err
@@ -295,6 +325,68 @@ func DeleteScope(db *gorm.DB, id uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return deleteScopeSubtree(tx, []models.ConfigScope{*existing})
 	})
+}
+
+func deleteServiceEndpointScope(db *gorm.DB, child *models.ConfigScope) error {
+	var serviceRowID uint
+	if child.ServiceID != nil {
+		serviceRowID = *child.ServiceID
+	}
+	if serviceRowID == 0 && child.ParentID != nil {
+		parent, err := GetScope(db, *child.ParentID)
+		if err != nil {
+			return err
+		}
+		if parent.ServiceID != nil {
+			serviceRowID = *parent.ServiceID
+		}
+	}
+	if serviceRowID == 0 {
+		return db.Transaction(func(tx *gorm.DB) error {
+			return deleteScopeSubtree(tx, []models.ConfigScope{*child})
+		})
+	}
+	eps, err := ListEndpoints(db, serviceRowID)
+	if err != nil {
+		return err
+	}
+	drop := identityFromEndpointScope(child)
+	remaining := make([]models.ServiceEndpoint, 0, len(eps))
+	matched := false
+	for _, ep := range eps {
+		ep.ServiceID = serviceRowID
+		if EndpointIdentity(ep) == drop {
+			matched = true
+			continue
+		}
+		remaining = append(remaining, ep)
+	}
+	if !matched {
+		return db.Transaction(func(tx *gorm.DB) error {
+			desc, err := DescendantScopes(tx, child.ID)
+			if err != nil {
+				return err
+			}
+			return deleteScopeSubtree(tx, desc)
+		})
+	}
+	var svc models.Service
+	if err := db.First(&svc, serviceRowID).Error; err != nil {
+		return err
+	}
+	st, err := LookupServiceType(db, svc.ServiceType)
+	if err != nil {
+		return err
+	}
+	if err := ValidateEndpoints(db, st, remaining); err != nil {
+		return err
+	}
+	if svc.ServiceType == "ELINE" {
+		if err := ValidateELINEShape(db, remaining); err != nil {
+			return err
+		}
+	}
+	return ReplaceEndpoints(db, serviceRowID, remaining)
 }
 
 func parentChanged(existing *models.ConfigScope, newParent *uint) bool {
@@ -841,6 +933,10 @@ func ScopeTree(db *gorm.DB) ([]ScopeTreeNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	refs, err := virtualServiceRefs(db, rows)
+	if err != nil {
+		return nil, err
+	}
 	byParent := map[uint][]models.ConfigScope{}
 	var roots []models.ConfigScope
 	for _, s := range rows {
@@ -859,12 +955,110 @@ func ScopeTree(db *gorm.DB) ([]ScopeTreeNode, error) {
 	out := make([]ScopeTreeNode, 0, len(roots))
 	path := map[uint]bool{}
 	for i := range roots {
-		out = append(out, buildTreeNode(&roots[i], byParent, path))
+		out = append(out, buildTreeNode(&roots[i], byParent, refs, path))
 	}
 	return out, nil
 }
 
-func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope, path map[uint]bool) ScopeTreeNode {
+func virtualServiceRefs(db *gorm.DB, scopes []models.ConfigScope) (map[uint][]ScopeTreeNode, error) {
+	var eps []models.ServiceEndpoint
+	if err := db.Find(&eps).Error; err != nil {
+		return nil, err
+	}
+	if len(eps) == 0 {
+		return nil, nil
+	}
+	svcIDs := make([]uint, 0, len(eps))
+	seenSvc := map[uint]bool{}
+	for _, ep := range eps {
+		if seenSvc[ep.ServiceID] {
+			continue
+		}
+		seenSvc[ep.ServiceID] = true
+		svcIDs = append(svcIDs, ep.ServiceID)
+	}
+	var svcs []models.Service
+	if err := db.Where("id IN ?", svcIDs).Find(&svcs).Error; err != nil {
+		return nil, err
+	}
+	labelByID := make(map[uint]string, len(svcs))
+	for _, s := range svcs {
+		label := s.ServiceID
+		if label == "" {
+			label = fmt.Sprintf("service-%d", s.ID)
+		}
+		labelByID[s.ID] = label
+	}
+	ifaceByID := map[uint]*models.ConfigScope{}
+	deviceByID := map[uint]*models.ConfigScope{}
+	canonBySvc := map[uint]*models.ConfigScope{}
+	for i := range scopes {
+		s := &scopes[i]
+		switch s.Kind {
+		case models.ConfigScopeKindInterface:
+			if s.InterfaceID != nil {
+				ifaceByID[*s.InterfaceID] = s
+			}
+		case models.ConfigScopeKindDevice:
+			if s.DeviceID != nil {
+				deviceByID[*s.DeviceID] = s
+			}
+		case models.ConfigScopeKindService:
+			if s.ServiceID != nil {
+				canonBySvc[*s.ServiceID] = s
+			}
+		}
+	}
+	out := map[uint][]ScopeTreeNode{}
+	for i := range eps {
+		ep := eps[i]
+		parent := ifaceByID[ep.InterfaceID]
+		if parent == nil {
+			parent = deviceByID[ep.DeviceID]
+		}
+		if parent == nil {
+			continue
+		}
+		label := labelByID[ep.ServiceID]
+		disc := endpointDisc(ep.Fields)
+		ident := EndpointIdentity(ep)
+		var canonicalID uint
+		if c := canonBySvc[ep.ServiceID]; c != nil {
+			canonicalID = c.ID
+		}
+		did, iid, sid := ep.DeviceID, ep.InterfaceID, ep.ServiceID
+		title := label + " (" + ep.Role + ")"
+		if vlan := VLANFromFields(ep.Fields); vlan != 0 {
+			title = fmt.Sprintf("%s (%s · %d)", label, ep.Role, vlan)
+		}
+		node := ScopeTreeNode{
+			Key:   "ref:" + ident,
+			Title: title,
+			Type:  models.ConfigScopeKindServiceRef,
+			Data: ScopeTreeData{
+				Kind:         models.ConfigScopeKindServiceRef,
+				ParentID:     &parent.ID,
+				DeviceID:     &did,
+				InterfaceID:  &iid,
+				ServiceID:    &sid,
+				CanonicalID:  canonicalID,
+				ServiceRowID: ep.ServiceID,
+				ServiceLabel: label,
+				Role:         ep.Role,
+				Disc:         disc,
+			},
+		}
+		out[parent.ID] = append(out[parent.ID], node)
+	}
+	for pid := range out {
+		sort.Slice(out[pid], func(i, j int) bool {
+			return out[pid][i].Title < out[pid][j].Title
+		})
+	}
+	return out, nil
+}
+
+func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope, refs map[uint][]ScopeTreeNode, path map[uint]bool) ScopeTreeNode {
 	kids := byParent[s.ID]
 	sort.Slice(kids, func(i, j int) bool {
 		if kids[i].SortOrder != kids[j].SortOrder {
@@ -897,8 +1091,9 @@ func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope
 	}
 	path[s.ID] = true
 	for i := range kids {
-		n.Children = append(n.Children, buildTreeNode(&kids[i], byParent, path))
+		n.Children = append(n.Children, buildTreeNode(&kids[i], byParent, refs, path))
 	}
+	n.Children = append(n.Children, refs[s.ID]...)
 	delete(path, s.ID)
 	return n
 }

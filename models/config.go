@@ -14,6 +14,8 @@ const (
 	ConfigScopeKindCLI             = "cli"
 	ConfigScopeKindService         = "service"
 	ConfigScopeKindServiceEndpoint = "service_endpoint"
+	// ConfigScopeKindServiceRef is virtual: ScopeTree injects it, it is not stored.
+	ConfigScopeKindServiceRef = "service_ref"
 
 	ConfigRootName            = "global"
 	ConfigCatalogName         = "_catalog"
@@ -90,6 +92,9 @@ type ConfigScopeDTO struct {
 	Enabled       *bool               `json:"enabled"`
 	SortOrder     *int                `json:"sort_order"`
 	Payload       *ConfigScopePayload `json:"payload"`
+	// Attach creates a new CN/CI inventory row plus a canonical service
+	// node with zero endpoints. Mutually exclusive with ServiceID (attach existing).
+	Attach *ServiceDTO `json:"attach,omitempty"`
 }
 
 // MoveScopeRequest is POST /api/config/scopes/:id/move. SortOrder nil = last sibling.
@@ -100,9 +105,11 @@ type MoveScopeRequest struct {
 
 // ConfigScopePayload is kind-specific data stored as JSON on ConfigScope.
 type ConfigScopePayload struct {
-	Description string      `json:"description,omitempty"`
-	Platforms   []string    `json:"platforms,omitempty"`
-	Context     *CLIContext `json:"context,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Platforms   []string       `json:"platforms,omitempty"`
+	Context     *CLIContext    `json:"context,omitempty"`
+	Role        string         `json:"role,omitempty"`
+	Fields      map[string]any `json:"fields,omitempty"`
 }
 
 // CLIContext is the optional CLI mode wrapping for a kind=cli object.

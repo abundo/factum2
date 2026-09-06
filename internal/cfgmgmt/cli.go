@@ -619,7 +619,10 @@ func nearestMatrixScope(db *gorm.DB, start *models.ConfigScope) (*models.ConfigS
 	if start == nil {
 		return nil, statusErr(400, "missing scope")
 	}
-	if start.Kind != models.ConfigScopeKindParameter && start.Kind != models.ConfigScopeKindCLI {
+	switch start.Kind {
+	case models.ConfigScopeKindParameter, models.ConfigScopeKindCLI,
+		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint:
+	default:
 		return start, nil
 	}
 	chain, err := WalkParents(db, start)
