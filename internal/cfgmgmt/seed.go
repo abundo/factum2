@@ -205,7 +205,6 @@ func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
 	return nil
 }
 
-
 func ensureScopeUniqueIndexes(db *gorm.DB) error {
 	if db.Dialector.Name() != "postgres" {
 		return nil
