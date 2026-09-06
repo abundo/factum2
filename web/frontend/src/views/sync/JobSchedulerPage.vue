@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { createSchedule, deleteSchedule, getSchedules, updateSchedule } from '@/api/schedules'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/datetime'
@@ -265,7 +266,7 @@ onUnmounted(() => {
           @click="openNew"
         />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <p class="text-muted-color mb-4">

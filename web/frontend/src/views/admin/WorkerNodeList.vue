@@ -8,6 +8,7 @@ import {
   updateWorkerNode,
 } from '@/api/workerNodes'
 import PasswordInput from '@/components/PasswordInput.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const toast = useToast()
@@ -154,7 +155,7 @@ onMounted(loadWorkerNodes)
         <h4 class="m-0">Worker nodes</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable

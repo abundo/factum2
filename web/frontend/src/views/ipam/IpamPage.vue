@@ -13,6 +13,7 @@ import {
   updateVrf,
 } from '@/api/ipam'
 import IpamPrefixTree from '@/components/IpamPrefixTree.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import { useAuthStore } from '@/stores/auth'
 
 defineOptions({ name: 'IpamPage' })
@@ -274,9 +275,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <div class="flex flex-wrap gap-2 items-center justify-between mb-3 shrink-0">
       <h4 class="m-0">IPAM</h4>
       <div class="flex flex-wrap gap-2 items-center">
-        <UInput
+        <SearchInput
           v-model="filter"
-          icon="i-lucide-search"
           placeholder="Filter..."
           class="w-56"
           @update:model-value="applyFilter"

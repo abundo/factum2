@@ -10,6 +10,7 @@ import {
   updateLdapRoleMapping,
 } from '@/api/ldapRoleMappings'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const toast = useToast()
@@ -234,12 +235,7 @@ onMounted(() => {
       <div class="flex items-center justify-between mb-6">
         <h4 class="m-0 font-semibold text-lg">LDAP/AD group -&gt; role mappings</h4>
         <div class="flex items-center gap-2">
-          <UInput
-            v-model="globalFilter"
-            icon="i-lucide-search"
-            placeholder="Search..."
-            class="w-64"
-          />
+          <SearchInput v-model="globalFilter" class="w-64" />
           <UButton label="New" icon="i-lucide-plus" color="neutral" @click="openNew" />
         </div>
       </div>

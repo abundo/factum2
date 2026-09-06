@@ -32,6 +32,7 @@ import { getServiceEndpoints, getServices, putServiceEndpoints } from '@/api/ser
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 
@@ -1203,9 +1204,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         >
           <div class="flex min-h-0 flex-col overflow-hidden lg:row-span-2 xl:row-span-1">
             <div class="flex flex-wrap gap-2 items-center mb-2 shrink-0">
-              <UInput
+              <SearchInput
                 v-model="filter"
-                icon="i-lucide-search"
                 placeholder="Filter..."
                 class="w-56"
                 @update:model-value="applyFilter"

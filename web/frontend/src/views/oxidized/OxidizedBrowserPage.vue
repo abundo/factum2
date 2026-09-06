@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getOxidizedNodes } from '@/api/oxidized'
 import OxidizedNodeDialog from '@/components/OxidizedNodeDialog.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import {
   apiError,
@@ -102,7 +103,7 @@ watch(
           :loading="loading"
           @click="load"
         />
-        <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+        <SearchInput v-model="globalFilter" />
       </div>
     </div>
 

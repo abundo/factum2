@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { deletePendingNextSync, getPendingDeletes } from '@/api/librenms'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/datetime'
@@ -122,7 +123,7 @@ onMounted(load)
   <div class="card">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
       <h4 class="m-0">Device deletions</h4>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <p class="text-muted-color mb-4">

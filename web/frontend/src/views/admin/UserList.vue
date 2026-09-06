@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 import { createUser, deleteUser, getUsers, updateUser } from '@/api/users'
 import { getRoles } from '@/api/roles'
 import PasswordInput from '@/components/PasswordInput.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const toast = useToast()
@@ -174,7 +175,7 @@ onMounted(() => {
         <h4 class="m-0">Users</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable v-model:sorting="sorting" v-model:global-filter="globalFilter" :data="users" :columns="columns"

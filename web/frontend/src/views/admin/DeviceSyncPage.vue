@@ -9,6 +9,7 @@ import {
   updateDeviceSyncAuth,
 } from '@/api/deviceSyncAuth'
 import PasswordInput from '@/components/PasswordInput.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useSettings } from '@/composables/useSettings'
 
@@ -260,7 +261,7 @@ onMounted(loadDeviceSyncAuths)
           <h4 class="m-0">Credentials</h4>
           <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
         </div>
-        <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+        <SearchInput v-model="globalFilter" />
       </div>
       <p class="text-muted-color text-sm mb-4">
         Login credentials internal/device-sync uses to connect directly to devices. Name is either

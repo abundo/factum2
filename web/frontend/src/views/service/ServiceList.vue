@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getCustomers } from '@/api/customers'
 import { getServices } from '@/api/services'
+import SearchInput from '@/components/SearchInput.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -118,7 +119,7 @@ onMounted(() => {
           @click="openNew"
         />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable

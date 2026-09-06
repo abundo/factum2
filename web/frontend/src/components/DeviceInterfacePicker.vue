@@ -2,6 +2,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, nextTick, ref, watch } from 'vue'
 import { getDevice, getDevices } from '@/api/devices'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const props = defineProps({
@@ -216,13 +217,7 @@ function confirmSelection() {
         <div class="flex flex-col gap-2 min-w-0">
           <div class="flex items-center justify-between gap-2">
             <label class="font-bold">Device</label>
-            <UInput
-              v-model="deviceFilter"
-              icon="i-lucide-search"
-              placeholder="Search..."
-              size="sm"
-              class="w-48"
-            />
+            <SearchInput v-model="deviceFilter" size="sm" class="w-48" />
           </div>
           <UTable
             ref="deviceTable"
@@ -263,10 +258,8 @@ function confirmSelection() {
         <div class="flex flex-col gap-2 min-w-0">
           <div class="flex items-center justify-between gap-2">
             <label class="font-bold">Interface</label>
-            <UInput
+            <SearchInput
               v-model="interfaceFilter"
-              icon="i-lucide-search"
-              placeholder="Search..."
               size="sm"
               class="w-48"
               :disabled="!selectedDeviceId"

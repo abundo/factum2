@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
+import SearchInput from '@/components/SearchInput.vue'
 
 const props = defineProps({
   devices: { type: Array, default: () => [] },
@@ -146,7 +147,7 @@ function submit() {
   <div class="flex w-80 shrink-0 flex-col min-h-0 rounded-lg border border-default bg-default">
     <div class="p-3 border-b border-default space-y-2 shrink-0">
       <div class="font-medium">Assign locations</div>
-      <UInput v-model="search" icon="i-lucide-search" placeholder="Search devices..." size="sm" />
+      <SearchInput v-model="search" placeholder="Search devices..." size="sm" />
       <label class="flex items-center gap-2 text-sm text-muted-color">
         <UCheckbox v-model="missingSiteOnly" />
         Without a site

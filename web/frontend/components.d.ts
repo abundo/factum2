@@ -24,6 +24,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SchemaFields: typeof import('./src/components/SchemaFields.vue')['default']
+    SearchInput: typeof import('./src/components/SearchInput.vue')['default']
     ServiceEditDialog: typeof import('./src/components/ServiceEditDialog.vue')['default']
     SortableColumnHeader: typeof import('./src/components/SortableColumnHeader.vue')['default']
     UAlert: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']

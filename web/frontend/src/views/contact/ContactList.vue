@@ -11,6 +11,7 @@ import {
   updateContact,
 } from '@/api/contacts'
 import { getCustomers } from '@/api/customers'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -207,7 +208,7 @@ onMounted(loadContacts)
           @click="openNew"
         />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable

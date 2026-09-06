@@ -2,6 +2,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { onMounted, ref } from 'vue'
 import { createRole, getRoles, updateRole } from '@/api/roles'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const toast = useToast()
@@ -110,7 +111,7 @@ onMounted(loadRoles)
         <h4 class="m-0">Roles</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable

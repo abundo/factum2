@@ -18,6 +18,7 @@ import {
 import OxidizedNodeDialog from '@/components/OxidizedNodeDialog.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
@@ -525,7 +526,7 @@ onMounted(loadDevices)
   <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <h4 class="m-0">Devices</h4>
-      <UInput v-model="globalFilter" icon="i-lucide-search" placeholder="Search..." />
+      <SearchInput v-model="globalFilter" />
     </div>
 
     <UTable
