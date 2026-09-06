@@ -176,6 +176,20 @@ func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScope) (*models.Confi
 		existing.InterfaceID = patch.InterfaceID
 	}
 	existing.SortOrder = patch.SortOrder
+	if scopePayloadSet(patch.Payload) {
+		existing.Payload = patch.Payload
+	}
+	kind := existing.Kind
+	if patch.Kind != "" {
+		kind = patch.Kind
+	}
+	if kind == models.ConfigScopeKindParameter || kind == models.ConfigScopeKindCLI {
+		// bool DTO: omit and false are the same. Apply when the client sent
+		// kind (fuller body) or enabled=true.
+		if patch.Kind != "" || patch.Enabled {
+			existing.Enabled = patch.Enabled
+		}
+	}
 	if err := assertScopeKindIDs(existing); err != nil {
 		return nil, err
 	}
@@ -215,6 +229,10 @@ func DeleteScope(db *gorm.DB, id uint) error {
 		}
 		return tx.Delete(existing).Error
 	})
+}
+
+func scopePayloadSet(p models.ConfigScopePayload) bool {
+	return p.Description != "" || len(p.Platforms) > 0 || p.Context != nil
 }
 
 func isOrganizationalScope(s *models.ConfigScope) bool {
@@ -612,6 +630,8 @@ func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.C
 
 func ListAssignments(db *gorm.DB, scopeID uint) ([]models.ConfigAssignment, error) {
 	if scopeID == 0 {
+		// Every assignment row, including COPY duplicates. Callers that
+		// want one winner per variable pass a non-zero scope_id.
 		var rows []models.ConfigAssignment
 		if err := db.Find(&rows).Error; err != nil {
 			return nil, err
@@ -619,7 +639,13 @@ func ListAssignments(db *gorm.DB, scopeID uint) ([]models.ConfigAssignment, erro
 		return rows, nil
 	}
 	scope, err := GetScope(db, scopeID)
-	if err == nil && isOrganizationalScope(scope) {
+	if err != nil {
+		if se := AsStatusError(err); se != nil && se.Status == 404 {
+			return []models.ConfigAssignment{}, nil
+		}
+		return nil, err
+	}
+	if isOrganizationalScope(scope) {
 		return winningAssignments(db, scope)
 	}
 	var rows []models.ConfigAssignment
@@ -685,9 +711,25 @@ func DeleteAssignment(db *gorm.DB, id uint) error {
 	if err != nil {
 		return err
 	}
+	var childID uint
+	if isOrganizationalScope(scope) {
+		child, err := findParametersChild(db, scope.ID)
+		if err != nil {
+			return err
+		}
+		if child != nil {
+			childID = child.ID
+		}
+	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		if parent != nil {
 			if err := tx.Where("variable_def_id = ? AND scope_id = ?", row.VariableDefID, parent.ID).
+				Delete(&models.ConfigAssignment{}).Error; err != nil {
+				return err
+			}
+		}
+		if childID != 0 {
+			if err := tx.Where("variable_def_id = ? AND scope_id = ?", row.VariableDefID, childID).
 				Delete(&models.ConfigAssignment{}).Error; err != nil {
 				return err
 			}

@@ -520,7 +520,9 @@ function saveAssign() {
     variable_def_id: form.value.variable_def_id,
     scope_id: selected.value.id,
   }
-  if (value !== '***') {
+  const def = variables.value.find((v) => v.id === form.value.variable_def_id)
+  const secret = !!(def && (def.secret || def.type === 'secret'))
+  if (!(secret && value === '***')) {
     payload.value = value
   }
   upsertAssignment(payload)

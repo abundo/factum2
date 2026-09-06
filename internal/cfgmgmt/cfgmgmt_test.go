@@ -1354,3 +1354,172 @@ func TestResolvePrefersParameterChild(t *testing.T) {
 		t.Errorf("value = %v, want child 9000", v)
 	}
 }
+
+func TestDeleteOriginalAssignmentAlsoDeletesChild(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	if orig == nil {
+		t.Fatal("missing original")
+	}
+	if err := DeleteAssignment(db, orig.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ListAssignments(db, folder.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("GET folder after deleting original = %d, want 0", len(rows))
+	}
+	v, src, err := resolveDefAt(db, &def, &folder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != nil || src != nil {
+		t.Fatalf("resolve after delete original value=%v source=%+v", v, src)
+	}
+}
+
+func TestUpdateScopePayloadAndEnabled(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !node.Enabled {
+		t.Fatal("create should default Enabled")
+	}
+	updated, err := UpdateScope(db, node.ID, &models.ConfigScope{
+		Payload: models.ConfigScopePayload{Platforms: []string{"eos"}, Description: "NTP"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Payload.Description != "NTP" || len(updated.Payload.Platforms) != 1 || updated.Payload.Platforms[0] != "eos" {
+		t.Fatalf("payload = %+v", updated.Payload)
+	}
+	if !updated.Enabled {
+		t.Fatal("name-less payload patch disabled the node")
+	}
+	renamed, err := UpdateScope(db, node.ID, &models.ConfigScope{Name: "qos-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Name != "qos-core" {
+		t.Fatalf("name = %s", renamed.Name)
+	}
+	if renamed.Payload.Description != "NTP" || !renamed.Enabled {
+		t.Fatalf("rename wiped payload/enabled: %+v", renamed)
+	}
+	disabled, err := UpdateScope(db, node.ID, &models.ConfigScope{
+		Kind: models.ConfigScopeKindParameter, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Enabled {
+		t.Fatal("expected enabled=false")
+	}
+	if disabled.Payload.Description != "NTP" {
+		t.Fatalf("disable wiped payload: %+v", disabled.Payload)
+	}
+}
+
+func TestResolveParameterObjectFilter(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+
+	eosChild := models.ConfigScope{
+		ParentID: &folder.ID, Name: models.ConfigParametersChildName,
+		Kind: models.ConfigScopeKindParameter, Enabled: true, SortOrder: 1,
+		Payload: models.ConfigScopePayload{Platforms: []string{"eos"}},
+	}
+	mustCreate(t, db, &eosChild)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: eosChild.ID, Value: jsonRaw(t, 9000)})
+
+	v, src, err := resolveDefAt(db, &def, &folder, "ios-xr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != folder.ID {
+		t.Fatalf("ios-xr source = %+v, want original folder", src)
+	}
+	if n, _ := asInt(v); n != 1500 {
+		t.Errorf("ios-xr value = %v, want 1500", v)
+	}
+
+	v, src, err = resolveDefAt(db, &def, &folder, "sros-md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != folder.ID {
+		t.Fatalf("sros-md vs eos-only source = %+v, want folder", src)
+	}
+
+	srosChild := models.ConfigScope{
+		ParentID: &folder.ID, Name: "sros-knobs",
+		Kind: models.ConfigScopeKindParameter, Enabled: true, SortOrder: 2,
+		Payload: models.ConfigScopePayload{Platforms: []string{"sros"}},
+	}
+	mustCreate(t, db, &srosChild)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: srosChild.ID, Value: jsonRaw(t, 9100)})
+
+	v, src, err = resolveDefAt(db, &def, &folder, "sros-md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != srosChild.ID {
+		t.Fatalf("sros-md source = %+v, want sros child", src)
+	}
+	if n, _ := asInt(v); n != 9100 {
+		t.Errorf("sros-md value = %v, want 9100", v)
+	}
+
+	eosChild.Enabled = false
+	if err := db.Save(&eosChild).Error; err != nil {
+		t.Fatal(err)
+	}
+	v, src, err = resolveDefAt(db, &def, &folder, "eos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != folder.ID {
+		t.Fatalf("disabled child source = %+v, want original", src)
+	}
+	if n, _ := asInt(v); n != 1500 {
+		t.Errorf("disabled child value = %v, want 1500", v)
+	}
+
+	other := models.ConfigScope{
+		ParentID: &folder.ID, Name: "ntp",
+		Kind: models.ConfigScopeKindParameter, Enabled: true, SortOrder: 0,
+	}
+	mustCreate(t, db, &other)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: other.ID, Value: jsonRaw(t, 1234)})
+	v, src, err = resolveDefAt(db, &def, &folder, "eos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != other.ID {
+		t.Fatalf("fallback child source = %+v, want ntp", src)
+	}
+	if n, _ := asInt(v); n != 1234 {
+		t.Errorf("fallback child value = %v, want 1234", v)
+	}
+}

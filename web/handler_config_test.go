@@ -734,6 +734,17 @@ func TestConfigAssignmentSecretPutUnchanged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put *** status = %d, body=%s", rec.Code, rec.Body.String())
 	}
+	var putRow models.ConfigAssignment
+	if err := json.Unmarshal(rec.Body.Bytes(), &putRow); err != nil {
+		t.Fatal(err)
+	}
+	var putVal any
+	if err := json.Unmarshal(putRow.Value, &putVal); err != nil {
+		t.Fatal(err)
+	}
+	if putVal != "***" {
+		t.Errorf("PUT *** body = %#v, want redacted", putVal)
+	}
 
 	var stored []models.ConfigAssignment
 	if err := db.Where("variable_def_id = ?", def.ID).Find(&stored).Error; err != nil {
