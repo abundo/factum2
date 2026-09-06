@@ -1830,3 +1830,364 @@ func TestMoveDeviceRefreshesInterfaces(t *testing.T) {
 		t.Fatal("existing interface child reparented")
 	}
 }
+
+func TestCompileContextPattern(t *testing.T) {
+	re, err := CompileContextPattern("interface <name>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if re == nil {
+		t.Fatal("expected compiled regex")
+	}
+	if got, want := re.String(), `^interface\s+(?P<name>\S+)$`; got != want {
+		t.Errorf("pattern = %q, want %q", got, want)
+	}
+	re, err = CompileContextPattern("router bgp <as>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := re.String(), `^router\s+bgp\s+(?P<as>\S+)$`; got != want {
+		t.Errorf("bgp pattern = %q, want %q", got, want)
+	}
+	for _, p := range []string{"", "global", "GLOBAL", "  global  "} {
+		re, err = CompileContextPattern(p)
+		if err != nil {
+			t.Fatalf("%q: %v", p, err)
+		}
+		if re != nil {
+			t.Errorf("%q: got %v, want nil", p, re)
+		}
+	}
+	if _, err := CompileContextPattern("interface <name"); err == nil {
+		t.Fatal("expected invalid capture error")
+	}
+}
+
+func TestWrapEmptyContext(t *testing.T) {
+	db := newTestDB(t)
+	feat := models.ConfigCLIFeature{
+		RemoveCommands: "no mtu",
+		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+	}
+	data := BaselineRenderData{Vars: map[string]any{"mtu": 9100}}
+	got, err := RenderCLIFeature(db, nil, &feat, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"no mtu", "mtu 9100"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	empty := &models.CLIContext{Pattern: "global", Enter: "", Exit: "exit"}
+	got, err = RenderCLIFeature(db, empty, &feat, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("global ctx got %v, want %v", got, want)
+	}
+}
+
+func TestWrapEnterRemoveAtRootFalse(t *testing.T) {
+	db := newTestDB(t)
+	ctx := &models.CLIContext{
+		Pattern: "interface <name>",
+		Enter:   "interface {{.LocalIface}}",
+		Exit:    "exit",
+	}
+	feat := models.ConfigCLIFeature{
+		RemoveCommands: "no mtu",
+		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+	}
+	data := BaselineRenderData{LocalIface: "Ethernet1", Vars: map[string]any{"mtu": 9100}}
+	got, err := RenderCLIFeature(db, ctx, &feat, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"interface Ethernet1", "no mtu", "mtu 9100", "exit"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestWrapEnterRemoveAtRootTrue(t *testing.T) {
+	db := newTestDB(t)
+	ctx := &models.CLIContext{
+		Pattern: "interface <name>",
+		Enter:   "interface {{.LocalIface}}",
+		Exit:    "exit",
+	}
+	feat := models.ConfigCLIFeature{
+		RemoveCommands: "no mtu",
+		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+		RemoveAtRoot:   true,
+	}
+	data := BaselineRenderData{LocalIface: "Ethernet1", Vars: map[string]any{"mtu": 9100}}
+	got, err := RenderCLIFeature(db, ctx, &feat, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"no mtu", "interface Ethernet1", "mtu 9100", "exit"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestLookupCLIObjectSROSMDFallback(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eline models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	obj, err := LookupCLIObject(db, eline.ID, "sros-md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj != nil {
+		t.Fatalf("unexpected CLI object %+v", obj)
+	}
+	sros := models.ConfigScope{
+		ParentID: &root.ID, Name: "sros", Kind: models.ConfigScopeKindCLI,
+		Platform: "sros", PayloadKind: models.PayloadKindCLI, Enabled: true,
+		ServiceTypeID: &eline.ID,
+	}
+	mustCreate(t, db, &sros)
+	got, err := LookupCLIObject(db, eline.ID, "sros-md")
+	if err != nil || got == nil {
+		t.Fatalf("fallback: %v %#v", err, got)
+	}
+	if got.ID != sros.ID {
+		t.Fatalf("got id %d, want sros %d", got.ID, sros.ID)
+	}
+	md := models.ConfigScope{
+		ParentID: &root.ID, Name: "sros-md", Kind: models.ConfigScopeKindCLI,
+		Platform: "sros-md", PayloadKind: models.PayloadKindCLI, Enabled: true,
+		ServiceTypeID: &eline.ID,
+	}
+	mustCreate(t, db, &md)
+	got, err = LookupCLIObject(db, eline.ID, "sros-md")
+	if err != nil || got == nil {
+		t.Fatalf("dedicated: %v %#v", err, got)
+	}
+	if got.ID != md.ID {
+		t.Fatalf("got id %d, want sros-md %d", got.ID, md.ID)
+	}
+}
+
+func TestRenderDeviceIncludesBaselineCLI(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-cli", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	cli, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "ntp", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cli.PayloadKind != models.PayloadKindCLI {
+		t.Fatalf("payload_kind = %q, want cli", cli.PayloadKind)
+	}
+	mustCreate(t, db, &models.ConfigCLIFeature{
+		ScopeID: cli.ID, Name: "servers", SortOrder: 0,
+		AddCommands: "ntp server 1.1.1.1",
+	})
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range out.Sources {
+		if s.Source == "cli:ntp" {
+			found = true
+			if s.Kind != "cli" {
+				t.Errorf("kind = %s", s.Kind)
+			}
+			if s.Error != "" {
+				t.Fatalf("render error: %s", s.Error)
+			}
+			if !reflect.DeepEqual(s.Commands, []string{"ntp server 1.1.1.1"}) {
+				t.Errorf("commands = %v", s.Commands)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("baseline CLI missing from RenderDevice: %+v", out.Sources)
+	}
+}
+
+func TestRenderDevicePrefersCLIOverTemplate(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-twin", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner from-template",
+		ScopeID: &root.ID, Enabled: true,
+	})
+	cli, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigCLIFeature{
+		ScopeID: cli.ID, Name: "body", AddCommands: "banner from-cli",
+	})
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCLI, sawTmpl bool
+	for _, s := range out.Sources {
+		if s.Source == "cli:banner" {
+			sawCLI = true
+			if !reflect.DeepEqual(s.Commands, []string{"banner from-cli"}) {
+				t.Errorf("cli commands = %v", s.Commands)
+			}
+		}
+		if s.Source == "template:banner" {
+			sawTmpl = true
+		}
+	}
+	if !sawCLI {
+		t.Fatal("CLI twin missing")
+	}
+	if sawTmpl {
+		t.Fatal("template should be skipped when a CLI twin exists")
+	}
+}
+
+func TestRenderDeviceTwinIgnoresTranslationAndOtherPlatform(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-twin-filter", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner from-template",
+		ScopeID: &root.ID, Enabled: true,
+	})
+	var eline models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
+		Platform: "eos", ServiceTypeID: &eline.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "sros",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawTmpl, sawCLI bool
+	for _, s := range out.Sources {
+		if s.Source == "template:banner" {
+			sawTmpl = true
+			if !reflect.DeepEqual(s.Commands, []string{"banner from-template"}) {
+				t.Errorf("template commands = %v", s.Commands)
+			}
+		}
+		if s.Source == "cli:banner" {
+			sawCLI = true
+		}
+	}
+	if !sawTmpl {
+		t.Fatal("eos template hidden by translation or sros CLI twin")
+	}
+	if sawCLI {
+		t.Fatal("translation/sros CLI should not render as baseline on eos")
+	}
+
+	disabled, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, err := UpdateScope(db, disabled.ID, &models.ConfigScopeDTO{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawTmpl, sawCLI = false, false
+	for _, s := range out.Sources {
+		if s.Source == "template:banner" {
+			sawTmpl = true
+		}
+		if s.Source == "cli:banner" {
+			sawCLI = true
+		}
+	}
+	if sawTmpl {
+		t.Fatal("disabled baseline CLI should still hide the matching template")
+	}
+	if sawCLI {
+		t.Fatal("disabled CLI should not emit commands")
+	}
+}
+
+func TestCreateScopeRejectsInvalidContextPattern(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "bad", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+		Payload: models.ConfigScopePayload{Context: &models.CLIContext{Pattern: "interface <name"}},
+	})
+	if err == nil {
+		t.Fatal("expected invalid pattern")
+	}
+}
+
+func TestMatrixWalksParameterAncestor(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, ifaceScope, iface := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt, DefaultValue: jsonRaw(t, 1500)}
+	mustCreate(t, db, &def)
+	param, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &folder.ID, Name: "qos", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := Matrix(db, param.ID, "mtu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.InterfaceID == iface.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("matrix from parameter missed interface: %+v (iface scope %d)", rows, ifaceScope.ID)
+	}
+}

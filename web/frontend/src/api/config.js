@@ -21,6 +21,18 @@ export function moveScope(id, payload) {
 export function detachScope(id) {
   return http.post(`/config/scopes/${id}/detach`)
 }
+export function listFeatures(scopeId) {
+  return http.get(`/config/scopes/${scopeId}/features`).then((res) => res.data ?? [])
+}
+export function createFeature(scopeId, payload) {
+  return http.post(`/config/scopes/${scopeId}/features`, payload).then((res) => res.data)
+}
+export function updateFeature(id, payload) {
+  return http.put(`/config/features/${id}`, payload).then((res) => res.data)
+}
+export function deleteFeature(id) {
+  return http.delete(`/config/features/${id}`)
+}
 
 export function listVariables() {
   return http.get('/config/variables').then((res) => res.data ?? [])

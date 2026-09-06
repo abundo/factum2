@@ -243,12 +243,23 @@ export const cfgmgmtMacroSchema = {
 
 export const cfgmgmtBaselineSchema = {
   notes:
-    'Golden/baseline CLI for a device. Rendered with .Name, .Device, and .Vars. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
+    'Golden/baseline CLI for a device. Rendered with .Name, .Device, and .Vars. Interface-parented objects also see .Interface and .LocalIface. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Device name' },
     { name: '.Device', type: 'DCIMDevice', description: 'Read-only inventory for this device' },
     ...cfgmgmtDeviceVars,
+    {
+      name: '.Interface',
+      type: 'DCIMInterface',
+      description: 'Read-only interface inventory when this CLI object is under an interface',
+    },
+    {
+      name: '.Interface.Name',
+      type: 'string',
+      description: 'Interface name (empty at device/folder)',
+    },
+    { name: '.LocalIface', type: 'string', description: 'Interface.Name when parent is an interface' },
     cfgmgmtVarsNote,
   ],
 }
