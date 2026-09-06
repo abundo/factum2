@@ -14,6 +14,97 @@ const el = ref(null)
 let tree
 let onContextMenu
 
+function splitHextets(s) {
+  if (!s) return []
+  const parts = s.split(':')
+  const out = []
+  for (const p of parts) {
+    if (!/^[0-9a-f]{1,4}$/i.test(p)) return null
+    out.push(parseInt(p, 16))
+  }
+  return out
+}
+
+function parseIpv6(addr) {
+  const lower = addr.toLowerCase()
+  if (lower.includes('.')) return null
+  const dbl = lower.indexOf('::')
+  if (dbl >= 0) {
+    if (lower.indexOf('::', dbl + 2) !== -1) return null
+    const left = splitHextets(lower.slice(0, dbl))
+    const right = splitHextets(lower.slice(dbl + 2))
+    if (!left || !right) return null
+    const missing = 8 - left.length - right.length
+    if (missing < 0) return null
+    return [...left, ...Array(missing).fill(0), ...right]
+  }
+  const parts = splitHextets(lower)
+  if (!parts || parts.length !== 8) return null
+  return parts
+}
+
+// Parse "10.1.0.0/16" / "2001:db8::/32" into a comparable key. Null if the
+// title is not a CIDR (namespace / VRF rows).
+function parseCidr(s) {
+  if (!s || typeof s !== 'string') return null
+  const slash = s.lastIndexOf('/')
+  if (slash < 0) return null
+  const addr = s.slice(0, slash).trim()
+  const bits = Number(s.slice(slash + 1))
+  if (!Number.isInteger(bits) || bits < 0) return null
+  if (addr.includes('.')) {
+    const parts = addr.split('.')
+    if (parts.length !== 4 || bits > 32) return null
+    let value = 0n
+    for (const part of parts) {
+      if (!/^\d{1,3}$/.test(part)) return null
+      const n = Number(part)
+      if (n > 255) return null
+      value = (value << 8n) + BigInt(n)
+    }
+    return { family: 4, bits, value }
+  }
+  const hextets = parseIpv6(addr)
+  if (!hextets || bits > 128) return null
+  let value = 0n
+  for (const h of hextets) value = (value << 16n) + BigInt(h)
+  return { family: 6, bits, value }
+}
+
+function isPrefixNode(n) {
+  const kind = n.kind || n.type
+  return kind === 'allocated' || kind === 'pool'
+}
+
+// Longest-prefix-match order: IPv4 before IPv6, then network address,
+// then longer prefix first (more specific wins on the same network).
+function compareLpm(a, b) {
+  if (a.family !== b.family) return a.family - b.family
+  if (a.value < b.value) return -1
+  if (a.value > b.value) return 1
+  return b.bits - a.bits
+}
+
+function compareTreeNodes(a, b) {
+  const aPfx = isPrefixNode(a)
+  const bPfx = isPrefixNode(b)
+  if (aPfx && bPfx) {
+    const ap = parseCidr(a.title)
+    const bp = parseCidr(b.title)
+    if (ap && bp) return compareLpm(ap, bp)
+    if (ap) return -1
+    if (bp) return 1
+    return (a.title || '').localeCompare(b.title || '')
+  }
+  if (aPfx !== bPfx) return aPfx ? -1 : 1
+  return (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+}
+
+function sortPrefixNodes(nodes) {
+  if (!Array.isArray(nodes) || nodes.length < 2) return nodes ?? []
+  return nodes.slice().sort(compareTreeNodes)
+}
+
 function toWbNode(n) {
   const node = {
     key: n.key,
@@ -24,11 +115,15 @@ function toWbNode(n) {
     ...n.data,
   }
   if (Array.isArray(n.children) && n.children.length) {
-    node.children = n.children.map(toWbNode)
+    node.children = sortPrefixNodes(n.children.map(toWbNode))
   } else if (!n.lazy) {
     node.children = []
   }
   return node
+}
+
+function toWbForest(rows) {
+  return sortPrefixNodes((rows ?? []).map(toWbNode))
 }
 
 function selectedPayload(node) {
@@ -137,7 +232,7 @@ function buildTree(source) {
       vrf: { icon: false },
       allocated: { icon: false },
     },
-    lazyLoad: (e) => getForest(e.node.key).then((rows) => (rows ?? []).map(toWbNode)),
+    lazyLoad: (e) => getForest(e.node.key).then((rows) => toWbForest(rows)),
     render: renderCell,
   })
   bindContextMenu()
@@ -173,7 +268,7 @@ async function reveal(keys) {
 function load(revealKeys) {
   return getForest()
     .then((rows) => {
-      const source = (rows ?? []).map(toWbNode)
+      const source = toWbForest(rows)
       if (tree) {
         return tree.load(source)
       }
