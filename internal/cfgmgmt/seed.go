@@ -20,11 +20,16 @@ func packChecksum(body string) string {
 // Operator-edited packs are left alone; checksum-matching rows are
 // refreshed from the embed files. Assignments on non-parameter scopes are
 // copied onto a reserved parameters child and the originals are deleted.
+// ConfigTemplate rows are copied onto kind=cli children (null scope →
+// global); original template rows stay.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
 	}
 	if err := seedReservedFolders(db); err != nil {
+		return err
+	}
+	if err := migrateTemplatesToCLI(db); err != nil {
 		return err
 	}
 	eline, err := seedServiceTypes(db)
@@ -141,6 +146,65 @@ func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
 			if err := db.Where("id = ?", a.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// migrateTemplatesToCLI copies each ConfigTemplate onto a kind=cli child of
+// its scope (or of global when ScopeID is nil). Existing CLI objects with
+// the same name+parent are left alone; template rows are not deleted.
+func migrateTemplatesToCLI(db *gorm.DB) error {
+	root, err := RootScope(db)
+	if err != nil {
+		return err
+	}
+	var tmpls []models.ConfigTemplate
+	if err := db.Find(&tmpls).Error; err != nil {
+		return err
+	}
+	for i := range tmpls {
+		t := &tmpls[i]
+		parentID := root.ID
+		if t.ScopeID != nil {
+			parentID = *t.ScopeID
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			var n int64
+			if err := tx.Model(&models.ConfigScope{}).
+				Where("kind = ? AND name = ? AND parent_id = ?", models.ConfigScopeKindCLI, t.Name, parentID).
+				Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				return nil
+			}
+			pid := parentID
+			obj := models.ConfigScope{
+				ParentID:    &pid,
+				Name:        t.Name,
+				Kind:        models.ConfigScopeKindCLI,
+				Platform:    t.Platform,
+				PayloadKind: t.PayloadKind,
+				Enabled:     t.Enabled,
+			}
+			if err := normalizeCLIScope(&obj); err != nil {
+				return err
+			}
+			// Select Enabled so a disabled template is not stored as the
+			// column default (true).
+			if err := tx.Select("ParentID", "Name", "Kind", "Platform", "PayloadKind", "Enabled", "SortOrder", "Payload").
+				Create(&obj).Error; err != nil {
+				return err
+			}
+			feat := models.ConfigCLIFeature{
+				ScopeID:     obj.ID,
+				Name:        "body",
+				AddCommands: t.Body,
+			}
+			return tx.Create(&feat).Error
+		}); err != nil {
+			return err
 		}
 	}
 	return nil

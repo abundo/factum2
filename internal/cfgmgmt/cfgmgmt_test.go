@@ -2191,3 +2191,184 @@ func TestMatrixWalksParameterAncestor(t *testing.T) {
 		t.Fatalf("matrix from parameter missed interface: %+v (iface scope %d)", rows, ifaceScope.ID)
 	}
 }
+
+func cliChild(t *testing.T, db *gorm.DB, parentID uint, name string) models.ConfigScope {
+	t.Helper()
+	var s models.ConfigScope
+	if err := db.Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, parentID, name).First(&s).Error; err != nil {
+		t.Fatalf("cli %s under %d: %v", name, parentID, err)
+	}
+	return s
+}
+
+func TestSeedMigratesNullScopeTemplateToGlobalCLI(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-mig", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	tmpl := models.ConfigTemplate{
+		Name: "banner", Platform: "eos", PayloadKind: models.PayloadKindCLI,
+		Body: "banner motd {{.Name}}", Enabled: true,
+	}
+	mustCreate(t, db, &tmpl)
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+
+	cli := cliChild(t, db, root.ID, "banner")
+	if cli.Platform != "eos" || cli.PayloadKind != models.PayloadKindCLI || !cli.Enabled {
+		t.Errorf("cli = %+v", cli)
+	}
+	if cli.Payload.Context != nil {
+		t.Errorf("context = %+v, want nil", cli.Payload.Context)
+	}
+	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
+	var underCatalog int64
+	if err := db.Model(&models.ConfigScope{}).
+		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, catalog.ID, "banner").
+		Count(&underCatalog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if underCatalog != 0 {
+		t.Fatal("null-scope template must not become a child of _catalog")
+	}
+	feats, err := ListCLIFeatures(db, cli.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feats) != 1 || feats[0].Name != "body" || feats[0].AddCommands != tmpl.Body {
+		t.Errorf("features = %+v", feats)
+	}
+	var still models.ConfigTemplate
+	if err := db.First(&still, tmpl.ID).Error; err != nil {
+		t.Fatalf("template row deleted: %v", err)
+	}
+
+	out, err := RenderDevice(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCLI, sawTmpl bool
+	for _, s := range out.Sources {
+		if s.Source == "cli:banner" {
+			sawCLI = true
+			if s.Error != "" {
+				t.Fatalf("render error: %s", s.Error)
+			}
+			if !reflect.DeepEqual(s.Commands, []string{"banner motd pe-mig"}) {
+				t.Errorf("commands = %v", s.Commands)
+			}
+		}
+		if s.Source == "template:banner" {
+			sawTmpl = true
+		}
+	}
+	if !sawCLI {
+		t.Fatalf("migrated CLI missing from RenderDevice: %+v", out.Sources)
+	}
+	if sawTmpl {
+		t.Fatal("template should be skipped when a CLI twin exists")
+	}
+}
+
+func TestSeedMigratesScopedTemplateToCLI(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, deviceScope, _, _ := seedTree(t, db)
+	tmpl := models.ConfigTemplate{
+		Name: "qos", Platform: "eos", Body: "qos enable",
+		ScopeID: &folder.ID, Enabled: true,
+	}
+	mustCreate(t, db, &tmpl)
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+
+	cli := cliChild(t, db, folder.ID, "qos")
+	if cli.Payload.Context != nil {
+		t.Errorf("context = %+v, want nil", cli.Payload.Context)
+	}
+	feats, err := ListCLIFeatures(db, cli.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feats) != 1 || feats[0].Name != "body" || feats[0].AddCommands != "qos enable" {
+		t.Errorf("features = %+v", feats)
+	}
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var underGlobal int64
+	if err := db.Model(&models.ConfigScope{}).
+		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "qos").
+		Count(&underGlobal).Error; err != nil {
+		t.Fatal(err)
+	}
+	if underGlobal != 0 {
+		t.Fatal("scoped template must not become a child of global")
+	}
+
+	out, err := RenderDevice(db, *deviceScope.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range out.Sources {
+		if s.Source == "cli:qos" {
+			found = true
+			if !reflect.DeepEqual(s.Commands, []string{"qos enable"}) {
+				t.Errorf("commands = %v", s.Commands)
+			}
+		}
+		if s.Source == "template:qos" {
+			t.Fatal("template should be skipped when a CLI twin exists")
+		}
+	}
+	if !found {
+		t.Fatalf("scoped CLI missing from RenderDevice: %+v", out.Sources)
+	}
+}
+
+func TestSeedTemplateMigrationIdempotent(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigTemplate{
+		Name: "banner", Platform: "eos", Body: "banner motd hello", Enabled: true,
+	})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	cli := cliChild(t, db, root.ID, "banner")
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	if err := db.Model(&models.ConfigScope{}).
+		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "banner").
+		Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("cli count = %d, want 1", n)
+	}
+	var feats int64
+	if err := db.Model(&models.ConfigCLIFeature{}).Where("scope_id = ?", cli.ID).Count(&feats).Error; err != nil {
+		t.Fatal(err)
+	}
+	if feats != 1 {
+		t.Fatalf("feature count = %d, want 1", feats)
+	}
+	var tmpls int64
+	if err := db.Model(&models.ConfigTemplate{}).Where("name = ?", "banner").Count(&tmpls).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tmpls != 1 {
+		t.Fatalf("template count = %d, want 1 (not deleted)", tmpls)
+	}
+}
