@@ -7,7 +7,7 @@ Go package per service. The machinery lives in `internal/cfgmgmt`.
 
 ELINE uses the same **generic endpoints** + **CLI objects** path as every
 other capacity type. It still has NetBox L2VPN reconcile on save (and
-reverse-import from `factum-netbox sync`). Do not add
+reverse-import from `factum2-netbox sync`). Do not add
 `Service.EndpointA/B*` columns for a new type.
 
 Related code:
@@ -530,7 +530,7 @@ ELINE is a normal cfgmgmt type with extra NetBox and peer-render behaviour:
 - Edit the CLI feature in the tree to tweak CLI; leave `seed_checksum`
   mismatched so migrate will not clobber it. Change the embed file + Seed
   when the default for **new** databases should move.
-- Reverse-import: `factum-netbox sync` writes `service_endpoints` for every
+- Reverse-import: `factum2-netbox sync` writes `service_endpoints` for every
   L2VPN whose type matches a service type's `netbox_type` (evpl→ELINE,
   vpls→ELAN), using that type's endpoint roles. It does not create Service
   rows. Endpoint children are projected if a canonical tree node already

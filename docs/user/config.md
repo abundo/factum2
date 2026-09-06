@@ -44,8 +44,10 @@ tree nodes:
 | Service types | ELINE, ELAN, … — roles, schema, NetBox mapping |
 | Macros | Reusable CLI fragments (`include "name"`) |
 
-Operators with write permission add types and CLI objects here. Adding a
-capacity product is a database change, not a new Go package.
+Operators with write permission add variable defs, types, and macros
+here. CLI objects are added from the tree (translation under
+`_catalog/cli/<type>/<platform>`). Adding a capacity product is a
+database change, not a new Go package.
 
 ## How a push uses this
 
