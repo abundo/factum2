@@ -8,7 +8,11 @@ import {
   updateFeature,
   updateScope,
 } from '@/api/config'
+import { getDevice } from '@/api/devices'
+import { getService, putServiceEndpoints, updateServiceType } from '@/api/services'
+import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import SchemaFields from '@/components/SchemaFields.vue'
 import {
   cfgmgmtBaselineSchema,
   cfgmgmtPackSchema,
@@ -25,6 +29,7 @@ const props = defineProps({
   serviceTypes: { type: Array, default: () => [] },
   macros: { type: Array, default: () => [] },
   canWrite: { type: Boolean, default: false },
+  draftEndpoint: { type: Object, default: null },
 })
 
 const emit = defineEmits(['assign', 'delete-assignment', 'saved'])
@@ -57,7 +62,37 @@ const typeOptions = computed(() => [
 ])
 
 const isCLI = computed(() => props.selected?.kind === 'cli')
-const showAssignments = computed(() => !!props.selected && !isCLI.value)
+const isServiceNode = computed(
+  () => props.selected?.kind === 'service' || props.selected?.kind === 'service_endpoint',
+)
+const showAssignments = computed(
+  () => !!props.selected && !isCLI.value && props.selected?.kind !== 'service_ref',
+)
+
+const serviceRow = ref(null)
+const serviceLoading = ref(false)
+const schemaValues = ref({})
+const genericEndpoints = ref([])
+const genericSaving = ref(false)
+const pickerOpen = ref(false)
+const genericPickerIndex = ref(null)
+
+const serviceTypeOptions = computed(() => [
+  { label: 'Not set', value: '' },
+  ...props.serviceTypes.map((t) => ({
+    label: t.description ? `${t.name} — ${t.description}` : t.name,
+    value: t.name,
+  })),
+])
+const selectedServiceType = computed(() =>
+  props.serviceTypes.find((t) => t.name === serviceRow.value?.service_type),
+)
+const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
+const genericRoles = computed(() => selectedServiceType.value?.endpoint_roles ?? [])
+const limeOwned = computed(() => serviceRow.value?.source === 'lime')
+const serviceRowId = computed(
+  () => props.selected?.service_id || props.selected?.service_row_id || null,
+)
 
 const cliSchema = computed(() => {
   const typeId = optionValue(cliForm.value.service_type_id)
@@ -142,6 +177,161 @@ async function loadFeatures(scopeId) {
   }
 }
 
+function loadEndpointLabel(deviceId, interfaceId) {
+  if (!deviceId || !interfaceId) return Promise.resolve('')
+  return getDevice(deviceId)
+    .then((data) => {
+      const iface = (data.interfaces ?? []).find((i) => i.id === interfaceId)
+      return `${data.name} / ${iface?.name ?? '?'}`
+    })
+    .catch(() => '')
+}
+
+function addGenericEndpoint(roleName, extra = {}) {
+  genericEndpoints.value.push({
+    role: roleName,
+    device_id: extra.device_id ?? null,
+    interface_id: extra.interface_id ?? null,
+    fields: { ...(extra.fields ?? {}) },
+    label: extra.label ?? '',
+  })
+}
+
+function seedEndpointsForType(typeName) {
+  const st = props.serviceTypes.find((x) => x.name === typeName)
+  for (const role of st?.endpoint_roles ?? []) {
+    const n = role.min || 0
+    for (let i = 0; i < n; i++) {
+      addGenericEndpoint(role.name)
+    }
+  }
+}
+
+function loadService(id) {
+  if (!id) {
+    serviceRow.value = null
+    genericEndpoints.value = []
+    return
+  }
+  serviceLoading.value = true
+  getService(id)
+    .then((data) => {
+      serviceRow.value = { ...data }
+      schemaValues.value = { ...(data.fields ?? {}) }
+      if (schemaValues.value.bandwidth_mbps == null && data.bandwidth_mbps) {
+        schemaValues.value.bandwidth_mbps = data.bandwidth_mbps
+      }
+      if (schemaValues.value.max_mac_addresses == null && data.max_mac_addresses) {
+        schemaValues.value.max_mac_addresses = data.max_mac_addresses
+      }
+      genericEndpoints.value = (data.endpoints ?? []).map((ep) => ({
+        role: ep.role,
+        device_id: ep.device_id,
+        interface_id: ep.interface_id,
+        fields: { ...(ep.fields ?? {}) },
+        label: '',
+      }))
+      if (genericEndpoints.value.length === 0) {
+        const draft = props.draftEndpoint
+        if (draft && (!draft.service_id || draft.service_id === id)) {
+          addGenericEndpoint(draft.role, draft)
+        } else {
+          seedEndpointsForType(data.service_type)
+        }
+      }
+      genericEndpoints.value.forEach((ep, i) => {
+        loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
+          if (genericEndpoints.value[i]) genericEndpoints.value[i].label = label
+        })
+      })
+    })
+    .catch((err) => {
+      serviceRow.value = null
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Failed to load service.'),
+      })
+    })
+    .finally(() => {
+      serviceLoading.value = false
+    })
+}
+
+function saveServiceTypeFields() {
+  if (!serviceRow.value?.id) return
+  saving.value = true
+  updateServiceType(serviceRow.value.id, {
+    service_type: serviceRow.value.service_type ?? '',
+    bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
+    max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
+    fields: { ...schemaValues.value },
+  })
+    .then((data) => {
+      serviceRow.value = { ...serviceRow.value, ...data }
+      toast.add({ color: 'success', title: 'Successful', description: 'Service type saved' })
+      emit('saved')
+    })
+    .catch((err) =>
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Failed to save service type.'),
+      }),
+    )
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function saveServiceEndpoints() {
+  if (!serviceRow.value?.id) return
+  genericSaving.value = true
+  putServiceEndpoints(serviceRow.value.id, {
+    endpoints: genericEndpoints.value.map((ep) => ({
+      role: ep.role,
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    })),
+  })
+    .then(() => {
+      toast.add({ color: 'success', title: 'Successful', description: 'Endpoints saved' })
+      emit('saved')
+      return loadService(serviceRow.value.id)
+    })
+    .catch((err) =>
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Failed to save endpoints.'),
+      }),
+    )
+    .finally(() => {
+      genericSaving.value = false
+    })
+}
+
+function openGenericPicker(i) {
+  genericPickerIndex.value = i
+  pickerOpen.value = true
+}
+
+function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
+  const ep = genericEndpoints.value[genericPickerIndex.value]
+  if (!ep) return
+  ep.device_id = deviceId
+  ep.interface_id = interfaceId
+  ep.label = `${deviceName} / ${interfaceName}`
+}
+
+const pickerDeviceId = computed(
+  () => genericEndpoints.value[genericPickerIndex.value]?.device_id ?? null,
+)
+const pickerInterfaceId = computed(
+  () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
+)
+
 watch(
   () => props.selected,
   (node) => {
@@ -152,6 +342,12 @@ watch(
       features.value = []
       featureDrafts.value = {}
       openFeatureId.value = null
+    }
+    if (isServiceNode.value) {
+      loadService(serviceRowId.value)
+    } else {
+      serviceRow.value = null
+      genericEndpoints.value = []
     }
   },
   { immediate: true },
@@ -264,6 +460,116 @@ function toggleFeature(id) {
         <span v-if="selected.device_id"> · device #{{ selected.device_id }}</span>
         <span v-if="selected.interface_id"> · interface #{{ selected.interface_id }}</span>
       </div>
+
+      <template v-if="isServiceNode">
+        <div v-if="serviceLoading" class="text-muted-color text-sm">Loading service…</div>
+        <template v-else-if="serviceRow">
+          <div class="text-sm">
+            Service ID:
+            <RouterLink to="/service" class="underline">{{ serviceRow.service_id }}</RouterLink>
+            <span v-if="limeOwned" class="text-muted-color"> · Lime (commercial fields read-only)</span>
+          </div>
+          <div>
+            <label class="mb-1 block font-bold">Type</label>
+            <USelectMenu
+              v-model="serviceRow.service_type"
+              :items="serviceTypeOptions"
+              value-key="value"
+              label-key="label"
+              :disabled="!canWrite"
+              class="w-full"
+            />
+          </div>
+          <SchemaFields
+            v-if="schemaFields.length"
+            v-model="schemaValues"
+            :fields="schemaFields"
+            :disabled="!canWrite"
+          />
+          <div v-if="canWrite" class="flex justify-end">
+            <UButton
+              label="Save type"
+              :loading="saving"
+              @click="saveServiceTypeFields"
+            />
+          </div>
+          <h6 class="m-0">Endpoints</h6>
+          <p class="text-muted-color text-sm m-0">
+            Unsaved rows are not written until you save a complete set.
+          </p>
+          <div
+            v-for="(ep, i) in genericEndpoints"
+            :key="i"
+            class="border border-default rounded p-3 flex flex-col gap-2"
+          >
+            <div>
+              <label class="mb-1 block font-bold">Role</label>
+              <USelectMenu
+                v-model="ep.role"
+                :items="genericRoles.map((r) => ({ label: r.name, value: r.name }))"
+                value-key="value"
+                label-key="label"
+                :disabled="!canWrite"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block font-bold">Device / interface</label>
+              <div class="flex items-center gap-2">
+                <UInput :model-value="ep.label" disabled placeholder="Not selected" class="w-full" />
+                <UButton
+                  v-if="canWrite"
+                  icon="i-lucide-list-tree"
+                  variant="outline"
+                  color="neutral"
+                  @click="openGenericPicker(i)"
+                />
+              </div>
+            </div>
+            <template
+              v-for="field in genericRoles.find((r) => r.name === ep.role)?.fields ?? []"
+              :key="field.name"
+            >
+              <label class="mb-1 block font-bold">{{ field.name }}</label>
+              <UInput v-model="ep.fields[field.name]" :disabled="!canWrite" />
+            </template>
+            <div v-if="canWrite" class="flex justify-end">
+              <UButton
+                label="Remove"
+                variant="ghost"
+                color="error"
+                size="sm"
+                @click="genericEndpoints.splice(i, 1)"
+              />
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              v-for="role in genericRoles"
+              :key="role.name"
+              :label="`Add ${role.name}`"
+              variant="outline"
+              color="neutral"
+              size="sm"
+              :disabled="!canWrite"
+              @click="addGenericEndpoint(role.name)"
+            />
+          </div>
+          <div v-if="canWrite" class="flex justify-end">
+            <UButton
+              label="Save endpoints"
+              :loading="genericSaving"
+              @click="saveServiceEndpoints"
+            />
+          </div>
+        </template>
+        <DeviceInterfacePicker
+          v-model:open="pickerOpen"
+          :device-id="pickerDeviceId"
+          :interface-id="pickerInterfaceId"
+          @select="onPickerSelect"
+        />
+      </template>
 
       <template v-if="isCLI">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">

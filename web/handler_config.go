@@ -73,22 +73,42 @@ func (ctrl *Controller) ApiConfigScopeCreate(c *echo.Context) error {
 	if dto.Kind != nil {
 		kind = *dto.Kind
 	}
-	if dto.DeviceID != nil && kind == models.ConfigScopeKindDevice {
-		parent := uint(0)
-		if dto.ParentID != nil {
-			parent = *dto.ParentID
-		} else {
-			root, err := cfgmgmt.RootScope(ctrl.DB)
-			if err != nil {
-				return configWriteError(c, err)
-			}
-			parent = root.ID
+	parent := uint(0)
+	if dto.ParentID != nil {
+		parent = *dto.ParentID
+	} else {
+		root, err := cfgmgmt.RootScope(ctrl.DB)
+		if err != nil {
+			return configWriteError(c, err)
 		}
+		parent = root.ID
+	}
+	if dto.DeviceID != nil && kind == models.ConfigScopeKindDevice {
 		node, err := cfgmgmt.AttachDevice(ctrl.DB, parent, *dto.DeviceID)
 		if err != nil {
 			return configWriteError(c, err)
 		}
 		return c.JSON(http.StatusCreated, node)
+	}
+	if kind == models.ConfigScopeKindService {
+		if dto.Attach != nil && dto.ServiceID != nil && *dto.ServiceID != 0 {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "attach and service_id are mutually exclusive"})
+		}
+		if dto.Attach != nil {
+			node, err := cfgmgmt.CreateServiceFromTree(ctrl.DB, parent, dto.Attach)
+			if err != nil {
+				return configWriteError(c, err)
+			}
+			return c.JSON(http.StatusCreated, node)
+		}
+		if dto.ServiceID != nil && *dto.ServiceID != 0 {
+			node, err := cfgmgmt.AttachService(ctrl.DB, parent, *dto.ServiceID)
+			if err != nil {
+				return configWriteError(c, err)
+			}
+			return c.JSON(http.StatusCreated, node)
+		}
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service_id or attach is required"})
 	}
 	row := scopeFromDTO(&dto)
 	created, err := cfgmgmt.CreateScope(ctrl.DB, &row)

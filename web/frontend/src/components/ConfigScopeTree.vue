@@ -9,7 +9,7 @@ const props = defineProps({
   reloadKey: { type: Number, default: 0 },
   canWrite: { type: Boolean, default: false },
 })
-const emit = defineEmits(['contextmenu', 'select', 'move'])
+const emit = defineEmits(['contextmenu', 'select', 'move', 'rebind'])
 
 const el = ref(null)
 let tree
@@ -105,6 +105,8 @@ function kindLabel(kind, name) {
       return 'Service'
     case 'service_endpoint':
       return 'Endpoint'
+    case 'service_ref':
+      return 'Service'
     default:
       return kind || ''
   }
@@ -165,14 +167,34 @@ function buildTree(source) {
       cli: { icon: false },
       service: { icon: false },
       service_endpoint: { icon: false },
+      service_ref: { icon: false },
     },
     render: renderCell,
-    activate: (e) => emit('select', selectedPayload(e.node)),
+    activate: (e) => {
+      const data = e.node.data ?? {}
+      const kind = data.kind || e.node.type
+      if (kind === 'service_ref' && data.canonical_id) {
+        const canon = tree.findKey(String(data.canonical_id))
+        if (canon) {
+          canon.setActive()
+          return
+        }
+        emit('select', {
+          key: String(data.canonical_id),
+          id: data.canonical_id,
+          title: data.service_label,
+          kind: 'service',
+          service_id: data.service_row_id,
+        })
+        return
+      }
+      emit('select', selectedPayload(e.node))
+    },
     dnd: {
       dragStart: (e) => {
         if (!props.canWrite) return false
         const kind = e.node.data?.kind || e.node.type
-        if (kind === 'interface') return false
+        if (kind === 'interface' || kind === 'service_endpoint') return false
         if (isReservedFolderNode(e.node)) return false
         return true
       },
@@ -180,7 +202,16 @@ function buildTree(source) {
       drop: (e) => {
         const source = e.sourceNode
         const target = e.node
-        if (!source?.data?.id || !target) return
+        if (!source || !target) return
+        const srcKind = source.data?.kind || source.type
+        if (srcKind === 'service_ref') {
+          const tgtKind = target.data?.kind || target.type
+          if (tgtKind === 'interface' && target.data?.interface_id && target.data?.device_id) {
+            emit('rebind', { ref: selectedPayload(source), target: selectedPayload(target) })
+          }
+          return
+        }
+        if (!source.data?.id) return
         const mode = e.suggestedDropMode
         let parentId
         let sortOrder = null

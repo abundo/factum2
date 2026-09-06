@@ -34,7 +34,9 @@ import {
   updateVariable,
   upsertAssignment,
 } from '@/api/config'
+import { getCustomers } from '@/api/customers'
 import { getDevices } from '@/api/devices'
+import { getServiceEndpoints, getServices, putServiceEndpoints } from '@/api/services'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
@@ -63,7 +65,11 @@ const form = ref({})
 const formError = ref('')
 const confirm = ref(null)
 const attachDeviceId = ref(null)
+const attachServiceId = ref(null)
 const devices = ref([])
+const customers = ref([])
+const attachableServices = ref([])
+const draftEndpoint = ref(null)
 const scopesById = ref({})
 
 const assignments = ref([])
@@ -138,8 +144,24 @@ const netboxTypeOptions = [
 ]
 
 const deviceOptions = computed(() => devices.value.map((d) => ({ label: d.name, value: d.id })))
+const customerOptions = computed(() =>
+  customers.value.map((c) => ({ label: c.name, value: c.id })),
+)
+const attachServiceOptions = computed(() =>
+  attachableServices.value.map((s) => ({
+    label: `${s.service_id} (${s.service_type || 'typed'})`,
+    value: s.id,
+  })),
+)
+const capacityTypeOptions = computed(() =>
+  serviceTypes.value.map((t) => ({ label: t.name, value: t.name })),
+)
 const varOptions = computed(() => variables.value.map((v) => ({ label: v.name, value: v.name })))
 const typeOptions = computed(() => serviceTypes.value.map((t) => ({ label: t.name, value: t.id })))
+const categoryOptions = [
+  { label: 'CN', value: 'CN' },
+  { label: 'CI', value: 'CI' },
+]
 
 const packSchema = computed(() => {
   const typeId = optionValue(form.value?.service_type_id)
@@ -226,14 +248,24 @@ function itemsFor(node) {
     items.push({ id: 'sep' }, { id: 'add-folder', label: 'Add child folder' })
     items.push({ id: 'attach-device', label: 'Attach device' })
     items.push({ id: 'add-cli', label: 'Add CLI object' })
+    items.push({ id: 'create-service', label: 'Create service' })
+    items.push({ id: 'attach-service', label: 'Attach existing service' })
   }
   if (node.kind === 'device' || node.kind === 'interface') {
     items.push({ id: 'sep-cli' }, { id: 'add-cli', label: 'Add CLI object' })
+    items.push({ id: 'create-service', label: 'Create service' })
   }
   if (node.kind === 'device') {
+    items.push({ id: 'attach-service', label: 'Attach existing service' })
     items.push({ id: 'sep2' }, { id: 'detach', label: 'Detach', danger: true })
+  } else if (node.kind === 'service_ref') {
+    items.push({ id: 'sep-ref' }, { id: 'open-service', label: 'Open service' })
+    items.push({ id: 'remove-endpoint', label: 'Remove endpoint', danger: true })
+  } else if (node.kind === 'service') {
+    items.push({ id: 'sep2' }, { id: 'del', label: 'Detach from tree', danger: true })
   } else if (
     node.kind !== 'interface' &&
+    node.kind !== 'service_endpoint' &&
     (node.kind !== 'folder' || node.title !== 'global' || node.parent_id)
   ) {
     items.push({ id: 'sep2' }, { id: 'del', label: 'Delete', danger: true })
@@ -252,7 +284,42 @@ function closeMenu() {
 }
 
 function isLeafKind(kind) {
-  return kind === 'parameter' || kind === 'cli'
+  return (
+    kind === 'parameter' ||
+    kind === 'cli' ||
+    kind === 'service' ||
+    kind === 'service_endpoint' ||
+    kind === 'service_ref'
+  )
+}
+
+function servicesFolderId() {
+  const rows = Object.values(scopesById.value)
+  const root = rows.find((s) => s.kind === 'folder' && s.name === 'global' && !s.parent_id)
+  if (!root) return null
+  const folder = rows.find(
+    (s) => s.kind === 'folder' && s.name === '_services' && s.parent_id === root.id,
+  )
+  return folder?.id ?? null
+}
+
+function serviceParentId(node) {
+  if (!node) return servicesFolderId()
+  if (isOrgKind(node.kind)) return node.id
+  if (node.kind === 'device') {
+    const p = scopesById.value[node.parent_id]
+    if (p && isOrgKind(p.kind)) return p.id
+    return servicesFolderId()
+  }
+  if (node.kind === 'interface') {
+    return serviceParentId(scopesById.value[node.parent_id])
+  }
+  return servicesFolderId()
+}
+
+function firstRoleForType(typeName) {
+  const st = serviceTypes.value.find((t) => t.name === typeName)
+  return st?.endpoint_roles?.[0]?.name || 'endpoint'
 }
 
 function nearestMatrixNode(node) {
@@ -338,12 +405,117 @@ async function runMenu(id) {
     dialog.value = 'cli'
     return
   }
+  if (id === 'create-service') {
+    form.value = {
+      parent_id: serviceParentId(node),
+      category: 'CN',
+      service_type: serviceTypes.value[0]?.name || 'ELINE',
+      company: null,
+      from_interface: node?.kind === 'interface' ? node : null,
+    }
+    if (!customers.value.length) {
+      getCustomers()
+        .then((rows) => {
+          customers.value = rows ?? []
+        })
+        .catch(() => {
+          customers.value = []
+        })
+    }
+    dialog.value = 'create-service'
+    return
+  }
+  if (id === 'attach-service') {
+    form.value = { parent_id: serviceParentId(node) }
+    attachServiceId.value = null
+    loadAttachableServices()
+    dialog.value = 'attach-service'
+    return
+  }
+  if (id === 'open-service' && node?.canonical_id) {
+    selected.value = {
+      key: String(node.canonical_id),
+      id: node.canonical_id,
+      title: node.service_label || node.title,
+      kind: 'service',
+      service_id: node.service_row_id,
+    }
+    loadNodeDetails(selected.value)
+    return
+  }
+  if (id === 'remove-endpoint' && node) {
+    confirm.value = { kind: 'remove-endpoint', node, label: node.title }
+    return
+  }
   if (id === 'del' && node?.id) {
-    confirm.value = { kind: 'scope', id: node.id, label: node.title }
+    confirm.value = {
+      kind: node.kind === 'service' ? 'detach-service' : 'scope',
+      id: node.id,
+      label: node.title,
+    }
   }
   if (id === 'detach' && node?.id) {
     confirm.value = { kind: 'detach', id: node.id, label: node.title }
   }
+}
+
+async function loadAttachableServices() {
+  try {
+    const rows = await getServices()
+    const attached = new Set()
+    for (const s of Object.values(scopesById.value)) {
+      if (s.kind === 'service' && s.service_id) attached.add(s.service_id)
+    }
+    attachableServices.value = (rows ?? []).filter((s) => {
+      if (!s.service_type) return false
+      const cat = (s.service_id || '').slice(0, 2)
+      if (cat === 'VL' || cat === 'VI' || cat === 'LF' || cat === 'LI') return false
+      return !attached.has(s.id)
+    })
+  } catch {
+    attachableServices.value = []
+  }
+}
+
+function endpointMatchesRef(ep, node) {
+  if (ep.role !== node.role) return false
+  if (ep.device_id !== node.device_id) return false
+  if (ep.interface_id !== node.interface_id) return false
+  if (node.disc && node.disc !== '0' && /^\d+$/.test(node.disc)) {
+    return String(ep.fields?.vlan ?? '') === node.disc
+  }
+  return true
+}
+
+function onRebind({ ref, target }) {
+  if (!ref?.service_row_id || !target?.interface_id || !target?.device_id) return
+  getServiceEndpoints(ref.service_row_id)
+    .then((rows) => {
+      const next = (rows ?? []).map((ep) => {
+        if (!endpointMatchesRef(ep, ref)) return ep
+        return {
+          role: ep.role,
+          device_id: target.device_id,
+          interface_id: target.interface_id,
+          fields: ep.fields || {},
+        }
+      })
+      return putServiceEndpoints(ref.service_row_id, {
+        endpoints: next.map((ep) => ({
+          role: ep.role,
+          device_id: ep.device_id,
+          interface_id: ep.interface_id,
+          fields: ep.fields || {},
+        })),
+      })
+    })
+    .then(() => {
+      reloadKey.value += 1
+      loadScopesIndex()
+    })
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Rebind failed.') }),
+    )
 }
 
 function onMove({ id, parent_id, sort_order }) {
@@ -396,6 +568,52 @@ function saveDialog() {
       platform: optionValue(form.value.platform) ?? '',
       payload_kind: 'cli',
     })
+  } else if (dialog.value === 'create-service') {
+    const category = optionValue(form.value.category) || 'CN'
+    const serviceType = optionValue(form.value.service_type)
+    const company = optionValue(form.value.company)
+    if (!serviceType || !company) {
+      saving.value = false
+      return
+    }
+    const fromIface = form.value.from_interface
+    req = createScope({
+      parent_id: form.value.parent_id,
+      kind: 'service',
+      attach: {
+        category,
+        service_type: serviceType,
+        company,
+      },
+    }).then((node) => {
+      if (fromIface?.device_id && fromIface?.interface_id) {
+        draftEndpoint.value = {
+          role: firstRoleForType(serviceType),
+          device_id: fromIface.device_id,
+          interface_id: fromIface.interface_id,
+          fields: {},
+          service_id: node.service_id,
+        }
+      }
+      selected.value = {
+        key: String(node.id),
+        id: node.id,
+        title: node.name,
+        kind: 'service',
+        service_id: node.service_id,
+      }
+      return node
+    })
+  } else if (dialog.value === 'attach-service') {
+    if (!attachServiceId.value) {
+      saving.value = false
+      return
+    }
+    req = createScope({
+      parent_id: form.value.parent_id,
+      kind: 'service',
+      service_id: attachServiceId.value,
+    })
   }
   if (!req) {
     saving.value = false
@@ -420,8 +638,22 @@ function performDelete() {
   if (!c) return
   saving.value = true
   let req
-  if (c.kind === 'scope') req = deleteScope(c.id)
+  if (c.kind === 'scope' || c.kind === 'detach-service') req = deleteScope(c.id)
   if (c.kind === 'detach') req = detachScope(c.id)
+  if (c.kind === 'remove-endpoint' && c.node) {
+    const node = c.node
+    req = getServiceEndpoints(node.service_row_id).then((rows) => {
+        const next = (rows ?? []).filter((ep) => !endpointMatchesRef(ep, node))
+        return putServiceEndpoints(node.service_row_id, {
+          endpoints: next.map((ep) => ({
+            role: ep.role,
+            device_id: ep.device_id,
+            interface_id: ep.interface_id,
+            fields: ep.fields || {},
+          })),
+        })
+      })
+  }
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
   if (c.kind === 'type') req = deleteServiceType(c.id).then(loadTypes)
   if (c.kind === 'pack') req = deletePlatformPack(c.id).then(loadPacks)
@@ -436,7 +668,12 @@ function performDelete() {
   req
     .then(() => {
       confirm.value = null
-      if (c.kind === 'scope' || c.kind === 'detach') {
+      if (
+        c.kind === 'scope' ||
+        c.kind === 'detach' ||
+        c.kind === 'detach-service' ||
+        c.kind === 'remove-endpoint'
+      ) {
         reloadKey.value += 1
         loadScopesIndex()
       }
@@ -823,6 +1060,7 @@ async function loadScopesIndex() {
 }
 
 function onInspectorSaved() {
+  draftEndpoint.value = null
   reloadKey.value += 1
   loadScopesIndex()
   if (selected.value?.id) loadNodeDetails(selected.value)
@@ -899,8 +1137,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               />
             </div>
             <p class="text-muted-color text-sm mb-2 shrink-0">
-              Right-click to add a folder, attach a device, or add a CLI object. Select a node to
-              inspect it.
+              Right-click to add a folder, attach a device, add a CLI object, or create/attach a
+              service. Select a node to inspect it.
             </p>
             <ConfigScopeTree
               ref="treeRef"
@@ -910,6 +1148,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
               @contextmenu="onContextMenu"
               @select="onSelect"
               @move="onMove"
+              @rebind="onRebind"
             />
           </div>
           <ConfigNodeInspector
@@ -921,6 +1160,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             :service-types="serviceTypes"
             :macros="macros"
             :can-write="authStore.canWrite"
+            :draft-endpoint="draftEndpoint"
             @assign="openAssign"
             @delete-assignment="onDeleteAssignment"
             @saved="onInspectorSaved"
@@ -1316,6 +1556,77 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   </UModal>
 
   <UModal
+    :open="dialog === 'create-service'"
+    title="Create service"
+    @update:open="(v) => !v && (dialog = null)"
+  >
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <div>
+          <label class="block font-bold mb-2">Category</label>
+          <USelectMenu
+            v-model="form.category"
+            :items="categoryOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Service type</label>
+          <USelectMenu
+            v-model="form.service_type"
+            :items="capacityTypeOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Company</label>
+          <USelectMenu
+            v-model="form.company"
+            :items="customerOptions"
+            value-key="value"
+            label-key="label"
+            placeholder="Select a customer"
+            class="w-full"
+          />
+        </div>
+        <p v-if="form.from_interface" class="text-muted-color text-sm m-0">
+          The first endpoint will be pre-filled from this interface and is not saved until you
+          complete the set.
+        </p>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Create" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal
+    :open="dialog === 'attach-service'"
+    title="Attach existing service"
+    @update:open="(v) => !v && (dialog = null)"
+  >
+    <template #body>
+      <label class="block font-bold mb-2">Service</label>
+      <USelectMenu
+        v-model="attachServiceId"
+        :items="attachServiceOptions"
+        value-key="value"
+        label-key="label"
+        placeholder="Select a CN/CI service"
+      />
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Attach" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal
     :open="dialog === 'assign'"
     :title="form.id ? 'Edit assignment' : 'Assignment'"
     @update:open="(v) => !v && (dialog = null)"
@@ -1619,19 +1930,31 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
   <UModal
     :open="!!confirm"
-    :title="confirm?.kind === 'detach' ? 'Confirm detach' : 'Confirm delete'"
+    :title="
+      confirm?.kind === 'detach' || confirm?.kind === 'detach-service'
+        ? 'Confirm detach'
+        : 'Confirm delete'
+    "
     @update:open="(v) => !v && (confirm = null)"
   >
     <template #body>
       <span v-if="confirm?.kind === 'detach'">
         Detach {{ confirm?.label }} from the tree? The device remains in inventory.
       </span>
+      <span v-else-if="confirm?.kind === 'detach-service'">
+        Detach {{ confirm?.label }} from the tree? The service remains in inventory.
+      </span>
+      <span v-else-if="confirm?.kind === 'remove-endpoint'">
+        Remove endpoint {{ confirm?.label }} from the service?
+      </span>
       <span v-else> Delete {{ confirm?.label }}? </span>
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="confirm = null" />
       <UButton
-        :label="confirm?.kind === 'detach' ? 'Detach' : 'Delete'"
+        :label="
+          confirm?.kind === 'detach' || confirm?.kind === 'detach-service' ? 'Detach' : 'Delete'
+        "
         color="error"
         :loading="saving"
         @click="performDelete"

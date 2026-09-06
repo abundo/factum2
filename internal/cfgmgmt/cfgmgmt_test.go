@@ -2891,3 +2891,316 @@ func TestSeedMigratesDisabledTemplate(t *testing.T) {
 		}
 	}
 }
+
+func walkTree(nodes []ScopeTreeNode, fn func(ScopeTreeNode)) {
+	for _, n := range nodes {
+		fn(n)
+		walkTree(n.Children, fn)
+	}
+}
+
+func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-partial", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	mustCreate(t, db, &ifc)
+	svc := models.Service{ServiceID: "CN00901", ServiceType: "ELINE"}
+	mustCreate(t, db, &svc)
+	if _, err := AttachService(db, folder.ID, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	partial := []models.ServiceEndpoint{{
+		Role: "a", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0),
+	}}
+	st, err := LookupServiceType(db, "ELINE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEndpoints(db, st, partial); err == nil {
+		t.Fatal("expected ValidateEndpoints to reject a-only ELINE")
+	}
+	if err := ReplaceEndpoints(db, svc.ID, partial); err != nil {
+		t.Fatalf("ReplaceEndpoints rejected partial ELINE: %v", err)
+	}
+	got, err := ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Role != "a" {
+		t.Fatalf("stored = %+v, want one role a", got)
+	}
+}
+
+func TestELANSamePortDifferentVLANTwoRefs(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, ifaceScope, iface := seedTree(t, db)
+	svc := models.Service{ServiceID: "CN00902", ServiceType: "ELAN"}
+	mustCreate(t, db, &svc)
+	if _, err := AttachService(db, folder.ID, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	eps := []models.ServiceEndpoint{
+		{Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(100, 0, 0)},
+		{Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(200, 0, 0)},
+	}
+	if EndpointIdentity(eps[0]) == EndpointIdentity(eps[1]) {
+		t.Fatal("expected distinct endpointIdentity for VLAN 100 vs 200")
+	}
+	if err := ReplaceEndpoints(db, svc.ID, eps); err != nil {
+		t.Fatal(err)
+	}
+	canon, err := scopeByServiceID(db, svc.ID)
+	if err != nil || canon == nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	var kids []models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ?", canon.ID, models.ConfigScopeKindServiceEndpoint).
+		Find(&kids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(kids) != 2 {
+		t.Fatalf("endpoint children = %d, want 2", len(kids))
+	}
+	seen := map[string]bool{}
+	for i := range kids {
+		seen[identityFromEndpointScope(&kids[i])] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("child identities = %v", seen)
+	}
+	tree, err := ScopeTree(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs []ScopeTreeNode
+	walkTree(tree, func(n ScopeTreeNode) {
+		if n.Type == models.ConfigScopeKindServiceRef && n.Data.ParentID != nil && *n.Data.ParentID == ifaceScope.ID {
+			refs = append(refs, n)
+		}
+	})
+	if len(refs) != 2 {
+		t.Fatalf("refs under interface = %d, want 2 (%+v)", len(refs), refs)
+	}
+	if refs[0].Key == refs[1].Key {
+		t.Fatalf("ref keys collided: %s", refs[0].Key)
+	}
+}
+
+func TestCreateServiceFromTreeZeroEndpoints(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cust := models.Customer{Name: "TreeCo"}
+	mustCreate(t, db, &cust)
+	dto := &models.ServiceDTO{
+		Category:    "CN",
+		ServiceType: "ELINE",
+		CustomerID:  cust.ID,
+		Fields:      jsonRaw(t, map[string]any{"bandwidth_mbps": 100}),
+	}
+	node, err := CreateServiceFromTree(db, root.ID, dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Kind != models.ConfigScopeKindService || node.ServiceID == nil {
+		t.Fatalf("node = %+v", node)
+	}
+	var svc models.Service
+	if err := db.First(&svc, *node.ServiceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if svc.ServiceID != "CN00001" {
+		t.Errorf("service_id = %s, want CN00001", svc.ServiceID)
+	}
+	if svc.ServiceType != "ELINE" {
+		t.Errorf("type = %s", svc.ServiceType)
+	}
+	if svc.BandwidthMbps != 100 {
+		t.Errorf("bandwidth = %d, want 100", svc.BandwidthMbps)
+	}
+	eps, err := ListEndpoints(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 0 {
+		t.Fatalf("endpoints = %d, want 0", len(eps))
+	}
+	var kids int64
+	if err := db.Model(&models.ConfigScope{}).
+		Where("parent_id = ? AND kind = ?", node.ID, models.ConfigScopeKindServiceEndpoint).
+		Count(&kids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if kids != 0 {
+		t.Fatalf("endpoint children = %d, want 0", kids)
+	}
+}
+
+func TestCreateServiceFromTreeInterfaceParent(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, ifaceScope, _ := seedTree(t, db)
+	parentID, err := CanonicalServiceParentID(db, &ifaceScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parentID != folder.ID {
+		t.Fatalf("parent = %d, want device folder %d", parentID, folder.ID)
+	}
+}
+
+func TestAttachServiceProjectsEndpointChildren(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-attach", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	mustCreate(t, db, &ifc)
+	svc := models.Service{ServiceID: "CN00903", ServiceType: "ELAN", Source: "lime"}
+	mustCreate(t, db, &svc)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID,
+		Fields: EncodeEndpointFields(50, 0, 0),
+	})
+	node, err := AttachService(db, folder.ID, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Name != "CN00903" {
+		t.Errorf("name = %s", node.Name)
+	}
+	var kids []models.ConfigScope
+	if err := db.Where("parent_id = ? AND kind = ?", node.ID, models.ConfigScopeKindServiceEndpoint).
+		Find(&kids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(kids) != 1 {
+		t.Fatalf("children = %d, want 1", len(kids))
+	}
+	if kids[0].Payload.Role != "endpoint" {
+		t.Errorf("role = %s", kids[0].Payload.Role)
+	}
+}
+
+func TestAttachServiceRejectsOptical(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{ServiceID: "VL00001"}
+	mustCreate(t, db, &svc)
+	_, err = AttachService(db, folder.ID, svc.ID)
+	wantStatus(t, err, 400)
+}
+
+func TestSeedPlacesTypedServicesUnderServicesFolder(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "pe-seed-svc", Platform: "eos"}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	mustCreate(t, db, &ifc)
+	eline := models.Service{ServiceID: "CN00910", ServiceType: "ELINE"}
+	mustCreate(t, db, &eline)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: eline.ID, Role: "a", DeviceID: dev.ID, InterfaceID: ifc.ID,
+		Fields: EncodeEndpointFields(10, 0, 0),
+	})
+	lime := models.Service{ServiceID: "CN00911", ServiceType: "ELAN", Source: "lime"}
+	mustCreate(t, db, &lime)
+	vl := models.Service{ServiceID: "VL00002"}
+	mustCreate(t, db, &vl)
+	lf := models.Service{ServiceID: "LF00002"}
+	mustCreate(t, db, &lf)
+	untyped := models.Service{ServiceID: "CN00912"}
+	mustCreate(t, db, &untyped)
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	elineNode, err := scopeByServiceID(db, eline.ID)
+	if err != nil || elineNode == nil {
+		t.Fatalf("ELINE not placed: %v", err)
+	}
+	if elineNode.ParentID == nil || *elineNode.ParentID != folder.ID {
+		t.Errorf("ELINE parent = %v, want _services %d", elineNode.ParentID, folder.ID)
+	}
+	if elineNode.Name != "CN00910" {
+		t.Errorf("ELINE name = %s", elineNode.Name)
+	}
+	var kids int64
+	if err := db.Model(&models.ConfigScope{}).
+		Where("parent_id = ? AND kind = ?", elineNode.ID, models.ConfigScopeKindServiceEndpoint).
+		Count(&kids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if kids != 1 {
+		t.Fatalf("ELINE endpoint children = %d, want 1", kids)
+	}
+	limeNode, err := scopeByServiceID(db, lime.ID)
+	if err != nil || limeNode == nil {
+		t.Fatalf("Lime ELAN not placed: %v", err)
+	}
+	if got, _ := scopeByServiceID(db, vl.ID); got != nil {
+		t.Fatal("VL should not be placed")
+	}
+	if got, _ := scopeByServiceID(db, lf.ID); got != nil {
+		t.Fatal("LF should not be placed")
+	}
+	if got, _ := scopeByServiceID(db, untyped.ID); got != nil {
+		t.Fatal("untyped CN should not be placed")
+	}
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	again, err := scopeByServiceID(db, eline.ID)
+	if err != nil || again == nil || again.ID != elineNode.ID {
+		t.Fatal("second Seed recreated the service node")
+	}
+}
+
+func TestDeleteServiceScopeDetachesInventory(t *testing.T) {
+	db := newTestDB(t)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{ServiceID: "CN00920", ServiceType: "ELINE"}
+	mustCreate(t, db, &svc)
+	node, err := AttachService(db, folder.ID, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteScope(db, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GetScope(db, node.ID); err == nil {
+		t.Fatal("canonical still present")
+	}
+	var still models.Service
+	if err := db.First(&still, svc.ID).Error; err != nil {
+		t.Fatalf("inventory deleted: %v", err)
+	}
+}
+
+func TestCreateServiceFromTreeRejectsOptical(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateServiceFromTree(db, root.ID, &models.ServiceDTO{Category: "VL", ServiceType: "ELINE"})
+	wantStatus(t, err, 400)
+}

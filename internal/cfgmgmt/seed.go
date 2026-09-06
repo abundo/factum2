@@ -27,6 +27,7 @@ func packChecksum(body string) string {
 // global); original template rows stay. Packs are upserted as translation
 // CLI objects under _catalog/cli/<type>/; the CLI checksum (features +
 // context) is the writer that decides whether embed refresh is allowed.
+// Typed CN/CI services without a tree node are placed under _services.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
@@ -53,7 +54,61 @@ func Seed(db *gorm.DB) error {
 	if err := moveAssignmentsOntoParameterChildren(db); err != nil {
 		return err
 	}
+	if err := migrateServicesToTree(db); err != nil {
+		return err
+	}
 	return ensureScopeUniqueIndexes(db)
+}
+
+// migrateServicesToTree places each typed CN/CI inventory row under _services
+// when it has no kind=service scope yet. VL/VI/LF/LI and untyped rows are
+// skipped. Later Lime/NetBox sync does not call this; operators attach new
+// rows themselves.
+func migrateServicesToTree(db *gorm.DB) error {
+	types, err := ListServiceTypes(db)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(types))
+	for _, t := range types {
+		known[t.Name] = true
+	}
+	var svcs []models.Service
+	if err := db.Find(&svcs).Error; err != nil {
+		return err
+	}
+	if len(svcs) == 0 {
+		return nil
+	}
+	folder, err := servicesFolder(db)
+	if err != nil {
+		return err
+	}
+	for i := range svcs {
+		svc := &svcs[i]
+		if !known[svc.ServiceType] {
+			continue
+		}
+		if models.OpticalServiceCategories[models.CategoryFromServiceID(svc.ServiceID)] {
+			continue
+		}
+		existing, err := scopeByServiceID(db, svc.ID)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if _, err := insertCanonicalService(tx, folder.ID, svc); err != nil {
+				return err
+			}
+			return projectEndpointScopes(tx, svc.ID)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // copyAssignmentsOntoParameterChildren copies assignments on non-parameter
