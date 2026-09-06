@@ -813,19 +813,43 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			continue
 		}
 
-		pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, svc.ServiceType, device.Platform)
+		cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, svc.ServiceType, device.Platform)
 		if err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
 		}
-		if err := cfgmgmt.RequireCLIPack(pack); err != nil {
+		var pack *models.PlatformPack
+		if cliObj == nil {
+			pack, err = cfgmgmt.LookupPlatformPack(ctrl.DB, svc.ServiceType, device.Platform)
+			if err != nil {
+				results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
+				continue
+			}
+		}
+		if cliObj == nil && pack == nil {
+			results = append(results, ApiServiceElinePushResult{
+				Device: device.Name,
+				Error:  cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, device.Platform),
+			})
+			continue
+		}
+		if cliObj != nil {
+			if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
+				results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
+				continue
+			}
+		} else if err := cfgmgmt.RequireCLIPack(pack); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue
+		}
+		cannotApply := "platform pack exists but this platform cannot apply CLI sessions yet"
+		if cliObj != nil {
+			cannotApply = "CLI object exists but this platform cannot apply CLI sessions yet"
 		}
 		if !isSupportedDriverPlatform(&device) {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
-				Error:  "platform pack exists but this platform cannot apply CLI sessions yet",
+				Error:  cannotApply,
 			})
 			continue
 		}
@@ -838,7 +862,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		if !ok {
 			results = append(results, ApiServiceElinePushResult{
 				Device: device.Name,
-				Error:  "platform pack exists but this platform cannot apply CLI sessions yet",
+				Error:  cannotApply,
 			})
 			continue
 		}
@@ -847,6 +871,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		var firstData *cfgmgmt.GenericRenderData
 		label := device.Name
 		pushErr := ""
+		cleanupDone := false
 		for i := range byDev[deviceID] {
 			ep := &byDev[deviceID][i]
 			var iface *models.Interface
@@ -867,19 +892,29 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			}
 			if firstData == nil {
 				firstData = data
-				cl, err := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
-				if err != nil {
-					pushErr = err.Error()
-					break
-				}
-				cmds = append(cmds, cl...)
 			}
-			body, err := cfgmgmt.RenderPackApplyBody(ctrl.DB, pack, data)
+			var part []string
+			if cliObj != nil {
+				part, err = cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
+			} else {
+				body, bodyErr := cfgmgmt.RenderPackApplyBody(ctrl.DB, pack, data)
+				err = bodyErr
+				part = body
+				if err == nil && !cleanupDone {
+					cl, clErr := cfgmgmt.RenderPackCleanupIfPresent(ctrl.DB, pack, data)
+					if clErr != nil {
+						err = clErr
+					} else {
+						part = append(cl, body...)
+					}
+				}
+			}
 			if err != nil {
 				pushErr = err.Error()
 				break
 			}
-			cmds = append(cmds, body...)
+			cmds = append(cmds, part...)
+			cleanupDone = true
 		}
 		if pushErr != "" {
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: pushErr})
