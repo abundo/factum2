@@ -34,6 +34,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.Customer{},
 		&models.Service{},
 		&models.ConfigScope{},
+		&models.ConfigCLIFeature{},
 		&models.ConfigVariableDef{},
 		&models.ConfigAssignment{},
 		&models.ServiceType{},
@@ -121,6 +122,105 @@ func TestInventoryMapsAndRolesForCount(t *testing.T) {
 	elanRoles := EndpointRolesForCount(&types[1], 3)
 	if len(elanRoles) != 3 || elanRoles[0] != "endpoint" || elanRoles[2] != "endpoint" {
 		t.Errorf("ELAN roles = %v, want 3x endpoint", elanRoles)
+	}
+}
+
+func scopeChild(t *testing.T, db *gorm.DB, parentID uint, name string) models.ConfigScope {
+	t.Helper()
+	var s models.ConfigScope
+	if err := db.Where("parent_id = ? AND name = ?", parentID, name).First(&s).Error; err != nil {
+		t.Fatalf("scope %s under %d: %v", name, parentID, err)
+	}
+	return s
+}
+
+func TestSeedReservedFolders(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
+	if catalog.Kind != models.ConfigScopeKindFolder {
+		t.Errorf("catalog kind = %s, want folder", catalog.Kind)
+	}
+	cli := scopeChild(t, db, catalog.ID, models.ConfigCatalogCLIName)
+	if cli.Kind != models.ConfigScopeKindFolder {
+		t.Errorf("cli kind = %s, want folder", cli.Kind)
+	}
+	services := scopeChild(t, db, root.ID, models.ConfigServicesFolderName)
+	if services.Kind != models.ConfigScopeKindFolder {
+		t.Errorf("services kind = %s, want folder", services.Kind)
+	}
+	catalogID, cliID, servicesID := catalog.ID, cli.ID, services.ID
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	catalog2 := scopeChild(t, db, root.ID, models.ConfigCatalogName)
+	cli2 := scopeChild(t, db, catalog2.ID, models.ConfigCatalogCLIName)
+	services2 := scopeChild(t, db, root.ID, models.ConfigServicesFolderName)
+	if catalog2.ID != catalogID || cli2.ID != cliID || services2.ID != servicesID {
+		t.Fatal("second Seed recreated reserved folders")
+	}
+	var n int64
+	if err := db.Model(&models.ConfigScope{}).Where("parent_id = ? AND name = ?", root.ID, models.ConfigCatalogName).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("catalog count = %d, want 1", n)
+	}
+}
+
+func TestValidScopeKind(t *testing.T) {
+	for _, k := range []string{
+		models.ConfigScopeKindFolder,
+		models.ConfigScopeKindSite,
+		models.ConfigScopeKindLocation,
+		models.ConfigScopeKindDevice,
+		models.ConfigScopeKindInterface,
+		models.ConfigScopeKindParameter,
+		models.ConfigScopeKindCLI,
+		models.ConfigScopeKindService,
+		models.ConfigScopeKindServiceEndpoint,
+	} {
+		if !ValidScopeKind(k) {
+			t.Errorf("ValidScopeKind(%q) = false, want true", k)
+		}
+	}
+	for _, k := range []string{"service_ref", "garbage", ""} {
+		if ValidScopeKind(k) {
+			t.Errorf("ValidScopeKind(%q) = true, want false", k)
+		}
+	}
+}
+
+func TestConfigCLIFeatureInsert(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := models.ConfigScope{
+		ParentID:    &root.ID,
+		Name:        "eos",
+		Kind:        models.ConfigScopeKindCLI,
+		Platform:    "eos",
+		PayloadKind: models.PayloadKindCLI,
+		Enabled:     true,
+	}
+	mustCreate(t, db, &cli)
+	feat := models.ConfigCLIFeature{
+		ScopeID:     cli.ID,
+		Name:        "apply",
+		AddCommands: "interface Ethernet1",
+	}
+	mustCreate(t, db, &feat)
+	var got models.ConfigCLIFeature
+	if err := db.First(&got, feat.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.ScopeID != cli.ID || got.Name != "apply" || got.AddCommands != "interface Ethernet1" {
+		t.Errorf("got %+v", got)
 	}
 }
 
