@@ -66,7 +66,8 @@ type NetboxWebhookPayload struct {
 // are not "resync one named device" — they have no name lookup, and a
 // deleted cable/site cannot be re-fetched.
 //
-// Tenants are not applied here: customer→tenant sync is factum→Netbox.
+// Tenants and contacts are not applied here: customer→tenant and
+// contact→contact sync are factum→Netbox.
 //
 // Netbox has no session/token auth for outgoing webhooks; instead it signs
 // the request body with HMAC-SHA512 and sends the hex digest in

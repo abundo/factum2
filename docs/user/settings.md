@@ -34,8 +34,9 @@ name, URL, group, optional icon.
 ## Settings → Sources
 
 Enable and credential **BECS**, **NetBox**, and **Lime**. NetBox also has
-a webhook secret (HMAC on `POST /api/netbox-webhook`) and an option to
-sync Factum customers to NetBox tenants.
+a webhook secret (HMAC on `POST /api/netbox-webhook`) and options to
+sync Factum customers to NetBox tenants and Factum contacts to NetBox
+contacts (assigned onto the matching tenant when that tenant exists).
 
 A source that is disabled is skipped by [jobs](jobs.md). Credentials are
 used by the corresponding sync tool, which may run on the primary

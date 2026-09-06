@@ -163,12 +163,20 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
-	// Customer-to-tenant sync is one-directional (factum -> netbox) and
-	// unrelated to the device name filter above, so it only runs on a
-	// full sync - a single-device sync (e.g. the netbox webhook) has no
-	// reason to also push every customer.
+	// Customer-to-tenant and contact-to-contact sync are one-directional
+	// (factum -> netbox) and unrelated to the device name filter above,
+	// so they only run on a full sync - a single-device sync (e.g. the
+	// netbox webhook) has no reason to also push every customer/contact.
+	// Contacts run after customers so a tenant created this pass can
+	// receive CustomerContact assignments in the same job.
 	if fullSync && settings.NetboxSyncCustomersEnabled != nil && *settings.NetboxSyncCustomersEnabled {
 		if err := syncCustomersToNetbox(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+	}
+	if fullSync && settings.NetboxSyncContactsEnabled != nil && *settings.NetboxSyncContactsEnabled {
+		if err := syncContactsToNetbox(db, &contactClient{nb}, reporter); err != nil {
 			reporter.EmitErr(err)
 			return err
 		}

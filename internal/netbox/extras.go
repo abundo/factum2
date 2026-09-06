@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/abundo/netboxtool"
 )
@@ -25,11 +26,26 @@ type restListPage[T any] struct {
 	Results []T     `json:"results"`
 }
 
-// restListAll walks a paginated extras REST list endpoint and returns every
-// result. listPath is the path without a query (e.g. "/api/extras/webhooks/").
-func restListAll[T any](c *extrasClient, listPath string) ([]T, error) {
+type restGetter interface {
+	RestGet(endpoint string, out any) error
+}
+
+// restListAll walks a paginated REST list endpoint and returns every result.
+// listPath may include a query (e.g. "/api/tenancy/contact-assignments/?role_id=1");
+// limit is always set, and later pages reuse Netbox's next-page query string
+// against the path only.
+func restListAll[T any](c restGetter, listPath string) ([]T, error) {
+	pathOnly, _, _ := strings.Cut(listPath, "?")
+	u, err := url.Parse(listPath)
+	if err != nil {
+		return nil, fmt.Errorf("netbox %s: parse list url: %w", listPath, err)
+	}
+	q := u.Query()
+	q.Set("limit", strconv.Itoa(extrasPageSize))
+	u.RawQuery = q.Encode()
+	endpoint := u.String()
+
 	var all []T
-	endpoint := listPath + "?limit=" + strconv.Itoa(extrasPageSize)
 	for endpoint != "" {
 		var page restListPage[T]
 		if err := c.RestGet(endpoint, &page); err != nil {
@@ -43,7 +59,7 @@ func restListAll[T any](c *extrasClient, listPath string) ([]T, error) {
 		if err != nil {
 			return nil, fmt.Errorf("netbox %s: parse next page url: %w", listPath, err)
 		}
-		endpoint = listPath + "?" + next.RawQuery
+		endpoint = pathOnly + "?" + next.RawQuery
 	}
 	return all, nil
 }

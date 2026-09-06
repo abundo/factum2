@@ -231,6 +231,29 @@ func TestApiNetboxWebhook_TenantIgnored(t *testing.T) {
 	}
 }
 
+func TestApiNetboxWebhook_ContactIgnored(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+		"event":       "updated",
+		"object_type": "tenancy.contact",
+		"data":        map[string]any{"id": 1, "name": "Ada"},
+	})
+	if err := (&Controller{DB: db}).ApiNetboxWebhook(c); err != nil {
+		t.Fatalf("ApiNetboxWebhook: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ignored" {
+		t.Errorf("status = %v, want ignored", body["status"])
+	}
+}
+
 func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)

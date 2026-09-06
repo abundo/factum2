@@ -205,8 +205,8 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("parents", "text", dev)
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
-	add("source", "text", []string{"tenancy.tenant"})
-	add("source_id", "text", []string{"tenancy.tenant"})
+	add("source", "text", []string{"tenancy.tenant", "tenancy.contact"})
+	add("source_id", "text", []string{"tenancy.tenant", "tenancy.contact"})
 	return out
 }
 
@@ -441,6 +441,30 @@ func TestCheckDB_OpticalKindAliasSatisfiesOpticalRole(t *testing.T) {
 	s.OpticalEnabled = boolPtr(true)
 	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
 		t.Fatalf("optical_kind should satisfy optical_role: %v", err)
+	}
+}
+
+func TestCheckDB_SourceMissingContactObjectType(t *testing.T) {
+	fields := allDeviceCFs()
+	fields["source"].ObjectTypes = []string{"tenancy.tenant"}
+	fields["source_id"].ObjectTypes = []string{"tenancy.tenant"}
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
+		fields: fields,
+	}
+	s := baseSettings()
+	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
+		t.Fatal("missing tenancy.contact on source/source_id must fail without --update")
+	}
+	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("should add tenancy.contact with --update: %v", err)
+	}
+	if !contains(api.fields["source"].ObjectTypes, "tenancy.contact") {
+		t.Fatalf("source object_types = %v, want tenancy.contact added", api.fields["source"].ObjectTypes)
+	}
+	if !contains(api.fields["source_id"].ObjectTypes, "tenancy.contact") {
+		t.Fatalf("source_id object_types = %v, want tenancy.contact added", api.fields["source_id"].ObjectTypes)
 	}
 }
 

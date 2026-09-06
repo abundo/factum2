@@ -13,14 +13,24 @@ const sourceTabItems = [
 
 <template>
   <div v-if="forbidden" class="card">
-    <UAlert color="error" variant="subtle" title="You need administrator permissions to view settings." />
+    <UAlert
+      color="error"
+      variant="subtle"
+      title="You need administrator permissions to view settings."
+    />
   </div>
   <div v-else-if="loadError" class="card">
     <UAlert color="error" variant="subtle" title="Failed to load settings." />
   </div>
   <div v-else class="card">
     <div class="flex justify-end mb-6">
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" :disabled="loading" @click="save" />
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="saving"
+        :disabled="loading"
+        @click="save"
+      />
     </div>
 
     <div v-if="loading" class="flex justify-center p-4">
@@ -85,6 +95,15 @@ const sourceTabItems = [
               />
               <label for="netbox_sync_customers_enabled" class="font-bold"
                 >Sync customers to Netbox as tenants</label
+              >
+            </div>
+            <div class="flex items-center gap-2">
+              <USwitch
+                v-model="settings.netbox_sync_contacts_enabled"
+                id="netbox_sync_contacts_enabled"
+              />
+              <label for="netbox_sync_contacts_enabled" class="font-bold"
+                >Sync contacts to Netbox</label
               >
             </div>
           </div>

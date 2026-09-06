@@ -441,6 +441,11 @@ type Settings struct {
 	// push factum customers to Netbox as tenants (custom fields
 	// source/source_id identify which customer a tenant came from).
 	NetboxSyncCustomersEnabled *bool `gorm:"column:netbox_sync_customers_enabled" form:"netbox_sync_customers_enabled" json:"netbox_sync_customers_enabled"`
+	// NetboxSyncContactsEnabled, when set, makes FactumSyncNetbox also
+	// push factum contacts to Netbox as contacts (same source/source_id
+	// custom fields as tenants). CustomerContact links become contact
+	// assignments on the matching tenant when that tenant exists.
+	NetboxSyncContactsEnabled *bool `gorm:"column:netbox_sync_contacts_enabled" form:"netbox_sync_contacts_enabled" json:"netbox_sync_contacts_enabled"`
 
 	// Oxidized
 	OxidizedApiURL  string `gorm:"column:oxidized_api_url" form:"oxidized_api_url" json:"oxidized_api_url"`

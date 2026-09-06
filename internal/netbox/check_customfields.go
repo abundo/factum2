@@ -77,10 +77,10 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 		{name: "role", objectTypes: []string{"dcim.interface"}, typ: cfTypeSelect},
 		{name: "orgno", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Organisationnr"},
-		{name: "source", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
+		{name: "source", objectTypes: []string{"tenancy.tenant", "tenancy.contact"}, typ: cfTypeText,
 			label: "Source system", group: "sync",
 			description: "Identifies where the data comes from"},
-		{name: "source_id", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
+		{name: "source_id", objectTypes: []string{"tenancy.tenant", "tenancy.contact"}, typ: cfTypeText,
 			label: "Source system ID", group: "sync",
 			description: "ID of the data in the source system"},
 	}

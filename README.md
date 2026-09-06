@@ -323,8 +323,8 @@ removes the matching netbox-sourced factum row by the payload's id —
 NetBox has already deleted the object, so it cannot be re-fetched. Cable
 and site create/update re-fetch that one object and upsert the local
 Connection/Site row; their deletions remove the row by the payload's id
-the same way. Tenant events are ignored — customer→tenant sync is
-factum→NetBox.
+the same way. Tenant and contact events are ignored — customer→tenant
+and contact→contact sync are factum→NetBox.
 
 The endpoint isn't a logged-in user or a `factum.token` service client, so
 it authenticates differently: it verifies NetBox's HMAC-SHA512
