@@ -59,6 +59,7 @@ nav:
 exclude_docs: |
   *.go
   cfgmgmt-service-design.md
+  cfgmgmt-tree-objects.md
   wdm-roadm-optical-model.md
   generated/**
   generated/sbom.md

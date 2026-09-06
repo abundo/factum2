@@ -115,6 +115,8 @@ Translation CLI lives under `_catalog/cli/<type>/<platform>`; baseline
 CLI is a child of `global` or a site/device, never `_catalog`. How to
 design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
+Architecture of the tree (parameter / CLI / service objects):
+[docs/cfgmgmt-tree-objects.md](docs/cfgmgmt-tree-objects.md).
 
 **L2VPN path (device → Netbox → factum Service):**
 `factum2-device-sync` writes on-device services using cfgmgmt mappings

@@ -15,6 +15,8 @@ Markdown in `docs/user/` (install guides in `docs/install/`). See
 for architecture notes. To add a capacity service type (catalog type, CLI objects,
 parameter objects, instantiate in the tree), see
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
+The config-tree architecture is
+[docs/cfgmgmt-tree-objects.md](docs/cfgmgmt-tree-objects.md).
 
 ## Prerequisites
 

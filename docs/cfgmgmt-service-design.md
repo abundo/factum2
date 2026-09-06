@@ -19,6 +19,7 @@ Related code:
 | HTTP | `web/handler_config.go`, `web/handler_service.go` |
 | GUI | Config page (tree + inspector + catalog), service edit dialog (push) |
 | Seeded ELINE CLI | `internal/drivers/templates/*.tmpl` (seed source for `_catalog/cli/ELINE/<platform>`) |
+| Architecture | [cfgmgmt-tree-objects.md](cfgmgmt-tree-objects.md) |
 
 ---
 
