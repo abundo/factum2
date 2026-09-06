@@ -25,6 +25,7 @@ const nodeColumns = [
   { id: 'enabled', header: 'Enabled' },
   { id: 'connected', header: 'Connected' },
   { accessorKey: 'hostname', header: 'Hostname' },
+  { accessorKey: 'version', header: 'Version' },
   { id: 'roles', header: 'Roles' },
   { id: 'last_seen', header: 'Last seen' },
   { accessorKey: 'last_error', header: 'Last error' },
@@ -227,6 +228,7 @@ onUnmounted(() => {
           variant="subtle"
         />
       </template>
+      <template #version-cell="{ row }">{{ row.original.version || '-' }}</template>
       <template #roles-cell="{ row }">
         <div class="flex flex-wrap gap-1">
           <UBadge v-for="role in row.original.roles" :key="role" :label="role" variant="subtle" />

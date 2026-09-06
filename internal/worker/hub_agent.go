@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/gorilla/websocket"
 )
@@ -41,9 +42,9 @@ var hubUpgrader = websocket.Upgrader{
 }
 
 // runHubListener runs the agent-side half of the hub transport: accepts the
-// primary's connection, validates its bearer token, and reports this
-// instance's hostname/roles. Started unconditionally by Start (worker.go) -
-// worker.listen is required post-cutover.
+// primary's connection, validates its bearer token and build identity, and
+// reports this instance's hostname/roles/version. Started unconditionally
+// by Start (worker.go) - worker.listen is required post-cutover.
 func (w *Worker) runHubListener(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(HubPath, w.handleHubConn)
@@ -102,6 +103,11 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if err := checkHubVersion(r.Header.Get(hubVersionHeader), r.Header.Get(hubCommitHeader)); err != nil {
+		slog.Error("worker hub: rejected connection, version mismatch", "remote", r.RemoteAddr, "err", err)
+		http.Error(rw, err.Error(), http.StatusConflict)
+		return
+	}
 
 	conn, err := hubUpgrader.Upgrade(rw, r, nil)
 	if err != nil {
@@ -125,7 +131,12 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		hostname = "unknown"
 	}
-	helloPayload, err := json.Marshal(HelloMsg{Hostname: hostname, Roles: commandNames(w.cfg.Commands)})
+	helloPayload, err := json.Marshal(HelloMsg{
+		Hostname: hostname,
+		Roles:    commandNames(w.cfg.Commands),
+		Version:  buildinfo.Version,
+		Commit:   buildinfo.Commit,
+	})
 	if err != nil {
 		slog.Error("worker hub: marshal hello", "err", err)
 		return

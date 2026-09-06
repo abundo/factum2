@@ -22,6 +22,7 @@ type WorkerStatusEntry struct {
 	Connected bool      `json:"connected"`
 	Hostname  string    `json:"hostname"`
 	Roles     []string  `json:"roles"`
+	Version   string    `json:"version,omitempty"`
 	LastSeen  time.Time `json:"last_seen"`
 	LastError string    `json:"last_error,omitempty"`
 }
@@ -48,6 +49,7 @@ func (ctrl *Controller) ApiWorkerStatus(c *echo.Context) error {
 			Connected: status.Connected,
 			Hostname:  status.Hostname,
 			Roles:     status.Roles,
+			Version:   status.Version,
 			LastSeen:  status.LastSeen,
 			LastError: status.LastError,
 		})

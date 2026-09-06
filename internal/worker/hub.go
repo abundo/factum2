@@ -63,10 +63,14 @@ type Envelope struct {
 
 // HelloMsg is sent by the agent immediately after the connection is
 // established - the agent is always the one who knows its own
-// hostname/roles, regardless of which side dialed.
+// hostname/roles, regardless of which side dialed. Version/Commit are
+// buildinfo identity; the primary refuses to register the node unless they
+// match its own process (see checkHubVersion).
 type HelloMsg struct {
 	Hostname string   `json:"hostname"`
 	Roles    []string `json:"roles"`
+	Version  string   `json:"version"`
+	Commit   string   `json:"commit"`
 }
 
 // CommandMsg is sent by the primary (RemoteManager) to run a predefined
@@ -163,6 +167,7 @@ type NodeStatus struct {
 	Connected bool
 	Hostname  string
 	Roles     []string
+	Version   string
 	LastSeen  time.Time
 	LastError string
 }
@@ -990,8 +995,6 @@ func (m *RemoteManager) dialLoop(nodeCtx context.Context, node models.WorkerNode
 // whether a hello was ever received on this connection, so dialLoop only
 // resets its backoff after a real connection, not a bare dial failure.
 func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerNode) (connected bool, err error) {
-	header := http.Header{"Authorization": {"Bearer " + node.Token}}
-
 	dialer, dialerErr := hubDialer(node)
 	if dialerErr != nil {
 		m.setStatus(node.Name, NodeStatus{Connected: false, LastError: dialerErr.Error(), LastSeen: time.Now()})
@@ -1001,10 +1004,11 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 		slog.Warn("worker hub: TLS certificate verification disabled", "node", node.Name, "address", node.Address)
 	}
 
-	conn, _, dialErr := dialer.DialContext(nodeCtx, hubWebSocketURL(node.Address), header)
+	conn, resp, dialErr := dialer.DialContext(nodeCtx, hubWebSocketURL(node.Address), hubHandshakeHeaders(node.Token))
 	if dialErr != nil {
-		m.setStatus(node.Name, NodeStatus{Connected: false, LastError: dialErr.Error(), LastSeen: time.Now()})
-		return false, dialErr
+		err := hubDialError(dialErr, resp)
+		m.setStatus(node.Name, NodeStatus{Connected: false, LastError: err.Error(), LastSeen: time.Now()})
+		return false, err
 	}
 	defer conn.Close()
 	conn.SetReadLimit(int64(hubMaxMessageSize))
@@ -1057,6 +1061,18 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 				slog.Error("worker hub: invalid hello envelope, discarding", "node", node.Name, "err", unmarshalErr)
 				continue
 			}
+			if verErr := checkHubVersion(hello.Version, hello.Commit); verErr != nil {
+				slog.Error("worker hub: version mismatch", "node", node.Name, "err", verErr)
+				m.setStatus(node.Name, NodeStatus{
+					Connected: false,
+					Hostname:  hello.Hostname,
+					Roles:     hello.Roles,
+					Version:   hello.Version,
+					LastSeen:  time.Now(),
+					LastError: verErr.Error(),
+				})
+				return false, verErr
+			}
 			connected = true
 			nc.roles = hello.Roles
 			m.mu.Lock()
@@ -1066,6 +1082,7 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 				Connected: true,
 				Hostname:  hello.Hostname,
 				Roles:     hello.Roles,
+				Version:   hello.Version,
 				LastSeen:  time.Now(),
 			})
 		case EnvelopeLog:

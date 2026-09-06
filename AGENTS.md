@@ -476,11 +476,18 @@ effect within one `RemoteManager` reconcile pass (~10s), not a code change.
 
 **Wire protocol** (`internal/worker/hub.go`): every message is an
 `Envelope{Type, Payload}` - `hello` (agent -> primary, once per connection,
-reports `Hostname`/`Roles`), `command` (primary -> agent, a predefined
+reports `Hostname`/`Roles`/`Version`/`Commit`), `command` (primary -> agent, a predefined
 command to run), `log` (agent -> primary, streamed stdout/stderr/exit),
 `event` (structured job lines), `request` (agent -> primary HTTP-subset
 RPC: method/path/body), `response` (primary -> agent: status/body, or
-`Error` for transport failure → unix 502). `RemoteManager` (primary side,
+`Error` for transport failure → unix 502). Both sides require matching
+`buildinfo.Version` and `buildinfo.Commit`: the primary sends them as
+`X-Factum-Version` / `X-Factum-Commit` on the WSS handshake (the agent
+rejects a mismatch with HTTP 409 before Upgrade); the agent repeats them
+in hello (the primary refuses to register the node, and the mismatch
+surfaces as `LastError` on `/sync/status`). Unstamped `go run`/`go test`
+builds both report `dev`/`none` and therefore match each other.
+`RemoteManager` (primary side,
 `web.Controller.RemoteManager`, instantiated once in `web.GUI()`) holds one
 supervised, auto-reconnecting connection per enabled `WorkerNode`.
 `web.GUI()` registers routes, calls `remoteManager.SetAPIHandler(e)`,

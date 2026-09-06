@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abundo/factum2/internal/buildinfo"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
@@ -248,6 +249,9 @@ func assertConnectOnceHello(t *testing.T, node models.WorkerNode) {
 		if st.Connected {
 			if len(st.Roles) != 1 || st.Roles[0] != "dns" {
 				t.Fatalf("roles %v, want [dns]", st.Roles)
+			}
+			if st.Version != buildinfo.Version {
+				t.Fatalf("version %q, want %q", st.Version, buildinfo.Version)
 			}
 			cancel()
 			select {
