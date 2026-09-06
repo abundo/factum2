@@ -1615,6 +1615,86 @@ func TestGrandfatherIllegalParentNameUpdate(t *testing.T) {
 	wantStatus(t, err, 400)
 }
 
+func TestKindChangeAssertsParentMatrix(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, deviceScope, _, _ := seedTree(t, db)
+	param, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folderKind := models.ConfigScopeKindFolder
+	_, err = UpdateScope(db, param.ID, &models.ConfigScopeDTO{Kind: &folderKind})
+	wantStatus(t, err, 400)
+	got, err := GetScope(db, param.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != models.ConfigScopeKindParameter {
+		t.Fatalf("kind = %s, want parameter (rejected kind change must not persist)", got.Kind)
+	}
+
+	illegal := models.ConfigScope{
+		ParentID: &deviceScope.ID, Name: "under-device", Kind: models.ConfigScopeKindFolder,
+	}
+	mustCreate(t, db, &illegal)
+	paramKind := models.ConfigScopeKindParameter
+	updated, err := UpdateScope(db, illegal.ID, &models.ConfigScopeDTO{Kind: &paramKind})
+	if err != nil {
+		t.Fatalf("folder→parameter under device: %v", err)
+	}
+	if updated.Kind != models.ConfigScopeKindParameter {
+		t.Fatalf("kind = %s, want parameter", updated.Kind)
+	}
+
+	child, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &folder.ID, Name: "from-folder", Kind: models.ConfigScopeKindFolder,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := UpdateScope(db, child.ID, &models.ConfigScopeDTO{
+		ParentID: &deviceScope.ID, Kind: &paramKind,
+	})
+	if err != nil {
+		t.Fatalf("combined parent+kind to parameter under device: %v", err)
+	}
+	if moved.Kind != models.ConfigScopeKindParameter {
+		t.Fatalf("kind = %s, want parameter", moved.Kind)
+	}
+	if moved.ParentID == nil || *moved.ParentID != deviceScope.ID {
+		t.Fatalf("parent = %v, want device %d", moved.ParentID, deviceScope.ID)
+	}
+}
+
+func TestCannotReparentReservedFolders(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "lab-reserved", Kind: models.ConfigScopeKindFolder,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
+	services := scopeChild(t, db, root.ID, models.ConfigServicesFolderName)
+	_, err = MoveScope(db, catalog.ID, folder.ID, nil)
+	wantStatus(t, err, 400)
+	_, err = MoveScope(db, services.ID, folder.ID, nil)
+	wantStatus(t, err, 400)
+	still, err := GetScope(db, catalog.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if still.ParentID == nil || *still.ParentID != root.ID {
+		t.Fatalf("catalog parent = %v, want global", still.ParentID)
+	}
+}
+
 func TestDetachDeviceKeepsDCIMRemovesSubtree(t *testing.T) {
 	db := newTestDB(t)
 	_, folder, deviceScope, ifaceScope, iface := seedTree(t, db)
