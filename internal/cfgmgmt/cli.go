@@ -127,9 +127,10 @@ func assertCLIUnique(db *gorm.DB, s *models.ConfigScope, excludeID uint) error {
 	return nil
 }
 
-// LookupCLIObject returns the kind=cli translator for a service type and
-// platform. sros-md falls back to sros when no dedicated object exists.
-func LookupCLIObject(db *gorm.DB, serviceTypeID uint, platform string) (*models.ConfigScope, error) {
+// lookupCLIObjectByTypeID returns the kind=cli translator for a service type
+// id and platform. sros-md falls back to sros when no dedicated object exists
+// unless fallback is false (seed upserts one object per pack row).
+func lookupCLIObjectByTypeID(db *gorm.DB, serviceTypeID uint, platform string, fallback bool) (*models.ConfigScope, error) {
 	if serviceTypeID == 0 {
 		return nil, nil
 	}
@@ -143,7 +144,7 @@ func LookupCLIObject(db *gorm.DB, serviceTypeID uint, platform string) (*models.
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	if plat == "sros-md" {
+	if fallback && plat == "sros-md" {
 		err = db.Where("kind = ? AND service_type_id = ? AND platform = ?",
 			models.ConfigScopeKindCLI, serviceTypeID, "sros").First(&obj).Error
 		if err == nil {
@@ -271,6 +272,10 @@ func renderBlob(db *gorm.DB, body string, data any) ([]string, error) {
 // RenderCLIFeature executes remove then add for one feature and applies the
 // opt-in wrap policy. UpdateCommands is unused in v1.
 func RenderCLIFeature(db *gorm.DB, ctx *models.CLIContext, feat *models.ConfigCLIFeature, data any) ([]string, error) {
+	return renderCLIFeature(db, ctx, feat, data, true)
+}
+
+func renderCLIFeature(db *gorm.DB, ctx *models.CLIContext, feat *models.ConfigCLIFeature, data any, includeRemove bool) ([]string, error) {
 	if feat == nil {
 		return nil, nil
 	}
@@ -279,9 +284,13 @@ func RenderCLIFeature(db *gorm.DB, ctx *models.CLIContext, feat *models.ConfigCL
 			return nil, err
 		}
 	}
-	removeCmds, err := renderBlob(db, feat.RemoveCommands, data)
-	if err != nil {
-		return nil, err
+	var removeCmds []string
+	if includeRemove {
+		cmds, err := renderBlob(db, feat.RemoveCommands, data)
+		if err != nil {
+			return nil, err
+		}
+		removeCmds = cmds
 	}
 	addCmds, err := renderBlob(db, feat.AddCommands, data)
 	if err != nil {
@@ -322,6 +331,17 @@ func RenderCLIFeature(db *gorm.DB, ctx *models.CLIContext, feat *models.ConfigCL
 }
 
 func RenderCLIObject(db *gorm.DB, obj *models.ConfigScope, data any) ([]string, error) {
+	return renderCLIObject(db, obj, data, true)
+}
+
+// RenderCLITranslation renders a service-translation CLI object. includeRemove
+// is true for the first endpoint on a device (cleanup once) and false after.
+func RenderCLITranslation(db *gorm.DB, obj *models.ConfigScope, data any, includeRemove bool) ([]string, error) {
+	return renderCLIObject(db, obj, data, includeRemove)
+}
+
+// RenderCLIObjectRemove renders only feature remove blobs (wrapped per policy).
+func RenderCLIObjectRemove(db *gorm.DB, obj *models.ConfigScope, data any) ([]string, error) {
 	if obj == nil {
 		return nil, nil
 	}
@@ -332,7 +352,65 @@ func RenderCLIObject(db *gorm.DB, obj *models.ConfigScope, data any) ([]string, 
 	var out []string
 	ctx := obj.Payload.Context
 	for i := range feats {
-		cmds, err := RenderCLIFeature(db, ctx, &feats[i], data)
+		cmds, err := renderCLIFeatureRemove(db, ctx, &feats[i], data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cmds...)
+	}
+	return out, nil
+}
+
+func renderCLIFeatureRemove(db *gorm.DB, ctx *models.CLIContext, feat *models.ConfigCLIFeature, data any) ([]string, error) {
+	if feat == nil {
+		return nil, nil
+	}
+	if ctx != nil {
+		if _, err := CompileContextPattern(ctx.Pattern); err != nil {
+			return nil, err
+		}
+	}
+	removeCmds, err := renderBlob(db, feat.RemoveCommands, data)
+	if err != nil {
+		return nil, err
+	}
+	if len(removeCmds) == 0 {
+		return nil, nil
+	}
+	enter := contextEnter(ctx)
+	if enter == "" || feat.RemoveAtRoot {
+		return removeCmds, nil
+	}
+	enterCmds, err := renderBlob(db, ctx.Enter, data)
+	if err != nil {
+		return nil, err
+	}
+	var exitCmds []string
+	if ctx != nil && strings.TrimSpace(ctx.Exit) != "" {
+		exitCmds, err = renderBlob(db, ctx.Exit, data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out := make([]string, 0, len(enterCmds)+len(removeCmds)+len(exitCmds))
+	out = append(out, enterCmds...)
+	out = append(out, removeCmds...)
+	out = append(out, exitCmds...)
+	return out, nil
+}
+
+func renderCLIObject(db *gorm.DB, obj *models.ConfigScope, data any, includeRemove bool) ([]string, error) {
+	if obj == nil {
+		return nil, nil
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	ctx := obj.Payload.Context
+	for i := range feats {
+		cmds, err := renderCLIFeature(db, ctx, &feats[i], data, includeRemove)
 		if err != nil {
 			return nil, err
 		}

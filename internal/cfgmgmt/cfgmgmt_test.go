@@ -286,6 +286,42 @@ func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	if err != nil || md == nil {
 		t.Fatalf("sros-md pack: %v", err)
 	}
+	for _, plat := range []string{"eos", "ios-xr", "sros", "sros-md"} {
+		obj, err := LookupCLIObject(db, "ELINE", plat)
+		if err != nil || obj == nil {
+			t.Fatalf("CLI %s: %v %#v", plat, err, obj)
+		}
+		if obj.Name != plat || obj.Platform != plat || obj.PayloadKind != models.PayloadKindCLI {
+			t.Errorf("CLI %s = %+v", plat, obj)
+		}
+		if obj.Payload.Context != nil {
+			t.Errorf("CLI %s context = %+v, want empty", plat, obj.Payload.Context)
+		}
+		if obj.SeedChecksum == "" {
+			t.Errorf("CLI %s missing seed checksum", plat)
+		}
+		feats, err := ListCLIFeatures(db, obj.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(feats) != 1 || feats[0].Name != "apply" {
+			t.Fatalf("CLI %s features = %+v", plat, feats)
+		}
+		if strings.TrimSpace(feats[0].AddCommands) == "" || strings.TrimSpace(feats[0].RemoveCommands) == "" {
+			t.Errorf("CLI %s apply feature missing add/remove", plat)
+		}
+		if strings.Contains(feats[0].AddCommands, `template "cleanup"`) {
+			t.Errorf("CLI %s add still invokes cleanup", plat)
+		}
+	}
+	root, err = RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
+	cliFolder := scopeChild(t, db, catalog.ID, models.ConfigCatalogCLIName)
+	elineFolder := scopeChild(t, db, cliFolder.ID, "ELINE")
+	_ = cliChild(t, db, elineFolder.ID, "eos")
 }
 
 func TestSeedAddsMissingSchemaFields(t *testing.T) {
@@ -1939,11 +1975,19 @@ func TestLookupCLIObjectSROSMDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var eline models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+	elineMD, err := LookupCLIObject(db, "ELINE", "sros-md")
+	if err != nil || elineMD == nil {
+		t.Fatalf("seeded sros-md: %v %#v", err, elineMD)
+	}
+	if elineMD.Platform != "sros-md" {
+		t.Fatalf("platform = %s, want sros-md", elineMD.Platform)
+	}
+
+	var elan models.ServiceType
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
 		t.Fatal(err)
 	}
-	obj, err := LookupCLIObject(db, eline.ID, "sros-md")
+	obj, err := LookupCLIObject(db, "ELAN", "sros-md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1953,10 +1997,10 @@ func TestLookupCLIObjectSROSMDFallback(t *testing.T) {
 	sros := models.ConfigScope{
 		ParentID: &root.ID, Name: "sros", Kind: models.ConfigScopeKindCLI,
 		Platform: "sros", PayloadKind: models.PayloadKindCLI, Enabled: true,
-		ServiceTypeID: &eline.ID,
+		ServiceTypeID: &elan.ID,
 	}
 	mustCreate(t, db, &sros)
-	got, err := LookupCLIObject(db, eline.ID, "sros-md")
+	got, err := LookupCLIObject(db, "ELAN", "sros-md")
 	if err != nil || got == nil {
 		t.Fatalf("fallback: %v %#v", err, got)
 	}
@@ -1966,10 +2010,10 @@ func TestLookupCLIObjectSROSMDFallback(t *testing.T) {
 	md := models.ConfigScope{
 		ParentID: &root.ID, Name: "sros-md", Kind: models.ConfigScopeKindCLI,
 		Platform: "sros-md", PayloadKind: models.PayloadKindCLI, Enabled: true,
-		ServiceTypeID: &eline.ID,
+		ServiceTypeID: &elan.ID,
 	}
 	mustCreate(t, db, &md)
-	got, err = LookupCLIObject(db, eline.ID, "sros-md")
+	got, err = LookupCLIObject(db, "ELAN", "sros-md")
 	if err != nil || got == nil {
 		t.Fatalf("dedicated: %v %#v", err, got)
 	}
@@ -2080,13 +2124,13 @@ func TestRenderDeviceTwinIgnoresTranslationAndOtherPlatform(t *testing.T) {
 		Name: "banner", Platform: "eos", Body: "banner from-template",
 		ScopeID: &root.ID, Enabled: true,
 	})
-	var eline models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+	var elan models.ServiceType
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, err = CreateScope(db, &models.ConfigScope{
 		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
-		Platform: "eos", ServiceTypeID: &eline.ID,
+		Platform: "eos", ServiceTypeID: &elan.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2148,6 +2192,273 @@ func TestRenderDeviceTwinIgnoresTranslationAndOtherPlatform(t *testing.T) {
 	}
 	if sawCLI {
 		t.Fatal("disabled CLI should not emit commands")
+	}
+}
+
+func elineRenderIntent() GenericRenderData {
+	return GenericRenderData{
+		Name:             "CN00570",
+		Description:      "ID=CN00570 Acme AB",
+		LocalIface:       "Ethernet1",
+		LocalVLAN:        100,
+		ServiceNumericID: 1000570,
+		SDPID:            28,
+		Remote: &ELINERemote{
+			NeighborIP:   "172.27.250.28",
+			PseudowireID: 1000570,
+			MTU:          9100,
+			ControlWord:  true,
+			DeviceName:   "pe2",
+			RemoteIface:  "Ethernet2",
+			RemoteVLAN:   200,
+		},
+	}
+}
+
+func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
+	db := newTestDB(t)
+	intent := elineRenderIntent()
+	for _, plat := range []string{"eos", "ios-xr", "sros"} {
+		pack, err := LookupPlatformPack(db, "ELINE", plat)
+		if err != nil || pack == nil {
+			t.Fatalf("%s pack: %v", plat, err)
+		}
+		want, err := Render(db, pack.ApplyTemplate, "", intent)
+		if err != nil {
+			t.Fatalf("%s embed: %v", plat, err)
+		}
+		obj, err := LookupCLIObject(db, "ELINE", plat)
+		if err != nil || obj == nil {
+			t.Fatalf("%s CLI: %v %#v", plat, err, obj)
+		}
+		got, err := RenderCLIObject(db, obj, intent)
+		if err != nil {
+			t.Fatalf("%s CLI render: %v", plat, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s CLI cmds =\n%v\nwant pack/embed\n%v", plat, got, want)
+		}
+	}
+}
+
+func TestSeedLeavesEditedCLIFeature(t *testing.T) {
+	db := newTestDB(t)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	feats[0].AddCommands = "edited-add {{.Name}}"
+	if err := db.Save(&feats[0]).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	again, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(again) != 1 {
+		t.Fatalf("after seed: %v %+v", err, again)
+	}
+	if again[0].AddCommands != "edited-add {{.Name}}" {
+		t.Errorf("feature overwritten: %q", again[0].AddCommands)
+	}
+}
+
+func TestSeedLeavesEditedCLIContext(t *testing.T) {
+	db := newTestDB(t)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	wantAdd := feats[0].AddCommands
+	wantRemove := feats[0].RemoveCommands
+	obj.Payload.Context = &models.CLIContext{Enter: "interface {{.LocalIface}}"}
+	if err := db.Save(obj).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	again, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || again == nil {
+		t.Fatalf("after seed: %v %#v", err, again)
+	}
+	if again.Payload.Context == nil || again.Payload.Context.Enter != "interface {{.LocalIface}}" {
+		t.Errorf("context reset: %+v", again.Payload.Context)
+	}
+	feats2, err := ListCLIFeatures(db, again.ID)
+	if err != nil || len(feats2) != 1 {
+		t.Fatalf("features after seed: %v %+v", err, feats2)
+	}
+	if feats2[0].AddCommands != wantAdd || feats2[0].RemoveCommands != wantRemove {
+		t.Fatal("features reset after context edit")
+	}
+}
+
+func TestRenderGenericUsesCLIObjectWhenPresent(t *testing.T) {
+	db := newTestDB(t)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	feats[0].AddCommands = "cli-marker {{.Name}}"
+	feats[0].RemoveCommands = "no cli-marker {{.Name}}"
+	if err := db.Save(&feats[0]).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cust := models.Customer{Name: "Acme AB"}
+	mustCreate(t, db, &cust)
+	pe1 := models.Device{Name: "pe-cli-use", Platform: "eos", NetboxID: 801}
+	pe2 := models.Device{Name: "pe-cli-use-b", Platform: "eos", NetboxID: 802}
+	mustCreate(t, db, &pe1)
+	mustCreate(t, db, &pe2)
+	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 811}
+	ifb := models.Interface{DeviceID: pe2.ID, Name: "Ethernet2", Type: "1000base-t", NetboxID: 821}
+	mustCreate(t, db, &ifa)
+	mustCreate(t, db, &ifb)
+	lo1 := models.Interface{DeviceID: pe1.ID, Name: "Loopback0", Type: "virtual", NetboxID: 812}
+	lo2 := models.Interface{DeviceID: pe2.ID, Name: "Loopback0", Type: "virtual", NetboxID: 822}
+	mustCreate(t, db, &lo1)
+	mustCreate(t, db, &lo2)
+	mustCreate(t, db, &models.Address{InterfaceID: lo1.ID, Address: "10.0.0.1/32"})
+	mustCreate(t, db, &models.Address{InterfaceID: lo2.ID, Address: "10.0.0.2/32"})
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00570", ServiceType: "ELINE", PseudowireID: 1000570}
+	mustCreate(t, db, &svc)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "a", DeviceID: pe1.ID, InterfaceID: ifa.ID,
+		Fields: EncodeEndpointFields(100, 0, 0),
+	})
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "b", DeviceID: pe2.ID, InterfaceID: ifb.ID,
+		Fields: EncodeEndpointFields(200, 0, 0),
+	})
+
+	out, err := RenderService(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	for _, src := range out {
+		if src.Error != "" {
+			t.Fatalf("render error: %s", src.Error)
+		}
+		joined += strings.Join(src.Commands, "\n") + "\n"
+	}
+	if !strings.Contains(joined, "cli-marker CN00570") {
+		t.Errorf("CLI object not used: %s", joined)
+	}
+	if strings.Contains(joined, "neighbor 10.0.0.2") {
+		t.Errorf("pack body leaked while CLI object exists: %s", joined)
+	}
+}
+
+func TestRenderGenericFallsBackToPackWhenNoCLI(t *testing.T) {
+	db := newTestDB(t)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	if err := DeleteScope(db, obj.ID); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := LookupCLIObject(db, "ELINE", "eos"); err != nil || again != nil {
+		t.Fatalf("CLI still present: %v %#v", err, again)
+	}
+
+	cust := models.Customer{Name: "Acme AB"}
+	mustCreate(t, db, &cust)
+	pe1 := models.Device{Name: "pe-pack-fb", Platform: "eos", NetboxID: 901}
+	pe2 := models.Device{Name: "pe-pack-fb-b", Platform: "eos", NetboxID: 902}
+	mustCreate(t, db, &pe1)
+	mustCreate(t, db, &pe2)
+	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 911}
+	ifb := models.Interface{DeviceID: pe2.ID, Name: "Ethernet2", Type: "1000base-t", NetboxID: 921}
+	mustCreate(t, db, &ifa)
+	mustCreate(t, db, &ifb)
+	lo1 := models.Interface{DeviceID: pe1.ID, Name: "Loopback0", Type: "virtual", NetboxID: 912}
+	lo2 := models.Interface{DeviceID: pe2.ID, Name: "Loopback0", Type: "virtual", NetboxID: 922}
+	mustCreate(t, db, &lo1)
+	mustCreate(t, db, &lo2)
+	mustCreate(t, db, &models.Address{InterfaceID: lo1.ID, Address: "10.0.0.1/32"})
+	mustCreate(t, db, &models.Address{InterfaceID: lo2.ID, Address: "10.0.0.2/32"})
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00571", ServiceType: "ELINE", PseudowireID: 1000571}
+	mustCreate(t, db, &svc)
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "a", DeviceID: pe1.ID, InterfaceID: ifa.ID,
+		Fields: EncodeEndpointFields(100, 0, 0),
+	})
+	mustCreate(t, db, &models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: "b", DeviceID: pe2.ID, InterfaceID: ifb.ID,
+		Fields: EncodeEndpointFields(200, 0, 0),
+	})
+
+	out, err := RenderService(db, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	for _, src := range out {
+		if src.Error != "" {
+			t.Fatalf("pack fallback error: %s", src.Error)
+		}
+		joined += strings.Join(src.Commands, "\n") + "\n"
+	}
+	if !strings.Contains(joined, "neighbor 10.0.0.2") {
+		t.Errorf("missing pack neighbor in %s", joined)
+	}
+}
+
+func TestRequireCLIObjectPayloadKind(t *testing.T) {
+	if err := RequireCLIObject(nil); err == nil {
+		t.Fatal("expected error for nil")
+	}
+	cli := &models.ConfigScope{PayloadKind: models.PayloadKindCLI}
+	if err := RequireCLIObject(cli); err != nil {
+		t.Fatal(err)
+	}
+	empty := &models.ConfigScope{}
+	if err := RequireCLIObject(empty); err != nil {
+		t.Fatalf("empty payload_kind should default to cli: %v", err)
+	}
+	nc := &models.ConfigScope{PayloadKind: models.PayloadKindNETCONF}
+	if err := RequireCLIObject(nc); err == nil {
+		t.Fatal("expected netconf reject")
+	}
+}
+
+func TestExtractDefineBodyNestedRange(t *testing.T) {
+	src := "{{define \"cleanup\"}}\nbefore\n{{range .StaleSubinterfaces}}\nno interface {{.Iface}}.{{.VLAN}}\n{{end}}\nafter\n{{end}}\nbody"
+	got := extractDefineBody(src, "cleanup")
+	want := "\nbefore\n{{range .StaleSubinterfaces}}\nno interface {{.Iface}}.{{.VLAN}}\n{{end}}\nafter\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestCLIObjectChecksumIncludesContext(t *testing.T) {
+	feats := []models.ConfigCLIFeature{{
+		Name: "apply", AddCommands: "add", RemoveCommands: "remove",
+	}}
+	a := CLIObjectChecksum("eos", "cli", nil, feats)
+	b := CLIObjectChecksum("eos", "cli", &models.CLIContext{Enter: "interface X"}, feats)
+	if a == b {
+		t.Fatal("setting enter should change checksum")
+	}
+	c := CLIObjectChecksum("eos", "cli", nil, feats)
+	if a != c {
+		t.Fatal("checksum not stable")
 	}
 }
 
@@ -2398,13 +2709,13 @@ func TestSeedMigratesSameNameTemplatesPerPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var eline models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+	var elan models.ServiceType
+	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, err = CreateScope(db, &models.ConfigScope{
 		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
-		Platform: "eos", ServiceTypeID: &eline.ID,
+		Platform: "eos", ServiceTypeID: &elan.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

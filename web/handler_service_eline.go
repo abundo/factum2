@@ -494,6 +494,33 @@ func (ctrl *Controller) applyELINEToDevice(device *models.Device, creds deviceCr
 }
 
 func (ctrl *Controller) applyELINECmds(drv drivers.DriverClient, device *models.Device, intent *drivers.ELINEIntent) error {
+	cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, "ELINE", device.Platform)
+	if err != nil {
+		return err
+	}
+	if cliObj != nil {
+		if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
+			return err
+		}
+		if prep, ok := drv.(drivers.ELINEPrepareChecker); ok {
+			if err := prep.PrepareELINEApply(intent); err != nil {
+				return err
+			}
+		}
+		data, err := drivers.ELINETemplateData(intent, strings.ToLower(device.Platform))
+		if err != nil {
+			return err
+		}
+		cmds, err := cfgmgmt.RenderCLIObject(ctrl.DB, cliObj, data)
+		if err != nil {
+			return err
+		}
+		applier, ok := drv.(drivers.CLISessionApplier)
+		if !ok {
+			return fmt.Errorf("CLI object exists but this platform cannot apply CLI sessions yet")
+		}
+		return applier.ApplyCLISession(intent.Name, cmds)
+	}
 	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
 	if err != nil {
 		return err
@@ -551,6 +578,24 @@ func (ctrl *Controller) removeELINEFromDevice(device *models.Device, creds devic
 }
 
 func (ctrl *Controller) removeELINECmds(drv drivers.DriverClient, device *models.Device, removal *drivers.ELINERemoval) error {
+	cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, "ELINE", device.Platform)
+	if err != nil {
+		return err
+	}
+	if cliObj != nil {
+		if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
+			return err
+		}
+		cmds, err := cfgmgmt.RenderCLIObjectRemove(ctrl.DB, cliObj, removal)
+		if err != nil {
+			return err
+		}
+		applier, ok := drv.(drivers.CLISessionApplier)
+		if !ok {
+			return fmt.Errorf("CLI object exists but this platform cannot apply CLI sessions yet")
+		}
+		return applier.ApplyCLISession(removal.Name, cmds)
+	}
 	pack, err := cfgmgmt.LookupPlatformPack(ctrl.DB, "ELINE", device.Platform)
 	if err != nil {
 		return err
