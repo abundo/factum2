@@ -1163,6 +1163,51 @@ func TestMoveAssignmentsThenListWinning(t *testing.T) {
 	}
 }
 
+func TestMoveKeepsUnmatchedOriginalAndNamedExtra(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	copied := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &copied)
+	orphan := models.ConfigVariableDef{Name: "asn", Type: models.VarTypeInt}
+	mustCreate(t, db, &orphan)
+	extra := models.ConfigVariableDef{Name: "ntp_server", Type: models.VarTypeInt}
+	mustCreate(t, db, &extra)
+
+	child, err := ensureParametersChild(db, folder.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: copied.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: copied.ID, ScopeID: child.ID, Value: jsonRaw(t, 1500)})
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: orphan.ID, ScopeID: folder.ID, Value: jsonRaw(t, 65000)})
+
+	ntp, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &folder.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: extra.ID, ScopeID: ntp.ID, Value: jsonRaw(t, 1234)})
+
+	if err := moveAssignmentsOntoParameterChildren(db); err != nil {
+		t.Fatal(err)
+	}
+	if assignmentAtScope(t, db, copied.ID, folder.ID) != nil {
+		t.Fatal("matched original should be deleted")
+	}
+	if assignmentAtScope(t, db, copied.ID, child.ID) == nil {
+		t.Fatal("child copy should remain")
+	}
+	got := assignmentAtScope(t, db, orphan.ID, folder.ID)
+	if got == nil || intValue(t, got.Value) != 65000 {
+		t.Fatalf("unmatched original = %+v, want 65000 on folder", got)
+	}
+	named := assignmentAtScope(t, db, extra.ID, ntp.ID)
+	if named == nil || intValue(t, named.Value) != 1234 {
+		t.Fatalf("named extra assignment = %+v, want 1234", named)
+	}
+}
+
 func TestUpsertFolderRemapsToChildAndResolve(t *testing.T) {
 	db := newTestDB(t)
 	_, folder, _, _, _ := seedTree(t, db)

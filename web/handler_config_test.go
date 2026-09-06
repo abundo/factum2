@@ -2,12 +2,14 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/models"
+	"gorm.io/gorm"
 )
 
 func TestConfigScopeCreateAndTree(t *testing.T) {
@@ -628,7 +630,7 @@ func TestConfigVariableGet_RejectsSQLInjectionInID(t *testing.T) {
 	}
 }
 
-func TestConfigAssignmentListWinningRowsAfterCopy(t *testing.T) {
+func TestConfigAssignmentListWinningRowsAfterMove(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
 
@@ -677,8 +679,8 @@ func TestConfigAssignmentListWinningRowsAfterCopy(t *testing.T) {
 	}
 	var orig models.ConfigAssignment
 	err = db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error
-	if err == nil {
-		t.Fatal("original assignment still on folder after MOVE")
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("original after MOVE: %v, want not found", err)
 	}
 }
 
@@ -738,8 +740,8 @@ func TestConfigAssignmentPutFolderRemapsToChild(t *testing.T) {
 		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
 	}
 	var orig models.ConfigAssignment
-	if err := db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error; err == nil {
-		t.Fatal("PUT folder wrote an original on the folder")
+	if err := db.Where("variable_def_id = ? AND scope_id = ?", def.ID, folder.ID).First(&orig).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("original after PUT folder: %v, want not found", err)
 	}
 }
 
