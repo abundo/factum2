@@ -71,6 +71,7 @@ func CreateScope(db *gorm.DB, s *models.ConfigScope) (*models.ConfigScope, error
 	if err := assertScopeUnique(db, s, 0); err != nil {
 		return nil, err
 	}
+	s.Enabled = true
 	if err := db.Create(s).Error; err != nil {
 		return nil, err
 	}
@@ -206,7 +207,100 @@ func DeleteScope(db *gorm.DB, id uint) error {
 	if n > 0 {
 		return statusErr(409, "scope has children")
 	}
-	return db.Delete(existing).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if existing.Kind == models.ConfigScopeKindParameter {
+			if err := deleteParameterAssignments(tx, existing); err != nil {
+				return err
+			}
+		}
+		return tx.Delete(existing).Error
+	})
+}
+
+func isOrganizationalScope(s *models.ConfigScope) bool {
+	if s == nil {
+		return false
+	}
+	switch s.Kind {
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+		models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
+		return true
+	}
+	return false
+}
+
+func findParametersChild(db *gorm.DB, parentID uint) (*models.ConfigScope, error) {
+	var s models.ConfigScope
+	err := db.Where("parent_id = ? AND kind = ? AND name = ?", parentID, models.ConfigScopeKindParameter, models.ConfigParametersChildName).
+		First(&s).Error
+	if err == nil {
+		return &s, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func ensureParametersChild(db *gorm.DB, parentID uint) (*models.ConfigScope, error) {
+	existing, err := findParametersChild(db, parentID)
+	if err != nil || existing != nil {
+		return existing, err
+	}
+	s := models.ConfigScope{
+		ParentID:  &parentID,
+		Name:      models.ConfigParametersChildName,
+		Kind:      models.ConfigScopeKindParameter,
+		SortOrder: 0,
+		Enabled:   true,
+	}
+	if err := db.Create(&s).Error; err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// reservedParametersParent returns the organizational parent when s is the
+// reserved migrated "parameters" child; otherwise nil.
+func reservedParametersParent(db *gorm.DB, s *models.ConfigScope) (*models.ConfigScope, error) {
+	if s == nil || s.Kind != models.ConfigScopeKindParameter || s.Name != models.ConfigParametersChildName || s.ParentID == nil {
+		return nil, nil
+	}
+	parent, err := GetScope(db, *s.ParentID)
+	if err != nil {
+		if se := AsStatusError(err); se != nil && se.Status == 404 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !isOrganizationalScope(parent) {
+		return nil, nil
+	}
+	return parent, nil
+}
+
+func deleteParameterAssignments(db *gorm.DB, scope *models.ConfigScope) error {
+	parent, err := reservedParametersParent(db, scope)
+	if err != nil {
+		return err
+	}
+	var childRows []models.ConfigAssignment
+	if err := db.Where("scope_id = ?", scope.ID).Find(&childRows).Error; err != nil {
+		return err
+	}
+	if err := db.Where("scope_id = ?", scope.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
+		return err
+	}
+	if parent == nil {
+		return nil
+	}
+	for _, a := range childRows {
+		if err := db.Where("variable_def_id = ? AND scope_id = ?", a.VariableDefID, parent.ID).
+			Delete(&models.ConfigAssignment{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AttachDevice creates or updates a device-kind node under parentID and
@@ -396,26 +490,9 @@ func DescendantScopes(db *gorm.DB, rootID uint) ([]models.ConfigScope, error) {
 	return out, nil
 }
 
-func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.ConfigAssignment, error) {
-	def := models.ConfigVariableDef{}
-	if err := db.First(&def, defID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, statusErr(404, "variable not found")
-		}
-		return nil, err
-	}
-	if _, err := GetScope(db, scopeID); err != nil {
-		return nil, err
-	}
-	v, err := TypeCheckRaw(&def, value)
-	if err != nil {
-		return nil, statusErr(400, err.Error())
-	}
-	if def.Required && v == nil {
-		return nil, statusErr(400, "required variable cannot be null")
-	}
+func upsertAssignmentAt(db *gorm.DB, defID, scopeID uint, value []byte) (*models.ConfigAssignment, error) {
 	var existing models.ConfigAssignment
-	err = db.Where("variable_def_id = ? AND scope_id = ?", defID, scopeID).First(&existing).Error
+	err := db.Where("variable_def_id = ? AND scope_id = ?", defID, scopeID).First(&existing).Error
 	if err == nil {
 		existing.Value = value
 		if err := db.Save(&existing).Error; err != nil {
@@ -433,16 +510,160 @@ func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.C
 	return &row, nil
 }
 
+func existingSecretAssignment(db *gorm.DB, def *models.ConfigVariableDef, scope *models.ConfigScope) (*models.ConfigAssignment, error) {
+	ids := []uint{scope.ID}
+	if isOrganizationalScope(scope) {
+		child, err := findParametersChild(db, scope.ID)
+		if err != nil {
+			return nil, err
+		}
+		if child != nil {
+			ids = []uint{child.ID, scope.ID}
+		}
+	} else if parent, err := reservedParametersParent(db, scope); err != nil {
+		return nil, err
+	} else if parent != nil {
+		ids = []uint{scope.ID, parent.ID}
+	}
+	for _, id := range ids {
+		existing, err := assignmentAt(db, def.ID, id)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+	return nil, nil
+}
+
+func dualWriteScopeIDs(db *gorm.DB, scope *models.ConfigScope) (primary uint, also *uint, err error) {
+	if isOrganizationalScope(scope) {
+		child, err := ensureParametersChild(db, scope.ID)
+		if err != nil {
+			return 0, nil, err
+		}
+		orig := scope.ID
+		return child.ID, &orig, nil
+	}
+	parent, err := reservedParametersParent(db, scope)
+	if err != nil {
+		return 0, nil, err
+	}
+	if parent != nil {
+		pid := parent.ID
+		return scope.ID, &pid, nil
+	}
+	return scope.ID, nil, nil
+}
+
+func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.ConfigAssignment, error) {
+	def := models.ConfigVariableDef{}
+	if err := db.First(&def, defID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, statusErr(404, "variable not found")
+		}
+		return nil, err
+	}
+	scope, err := GetScope(db, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	if isSecretDef(&def) && SecretDefaultUnchanged(value) {
+		existing, err := existingSecretAssignment(db, &def, scope)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, statusErr(400, "secret value is required")
+		}
+		return existing, nil
+	}
+	v, err := TypeCheckRaw(&def, value)
+	if err != nil {
+		return nil, statusErr(400, err.Error())
+	}
+	if def.Required && v == nil {
+		return nil, statusErr(400, "required variable cannot be null")
+	}
+	var out *models.ConfigAssignment
+	err = db.Transaction(func(tx *gorm.DB) error {
+		primaryID, alsoID, err := dualWriteScopeIDs(tx, scope)
+		if err != nil {
+			return err
+		}
+		row, err := upsertAssignmentAt(tx, defID, primaryID, value)
+		if err != nil {
+			return err
+		}
+		out = row
+		if alsoID != nil && *alsoID != primaryID {
+			if _, err := upsertAssignmentAt(tx, defID, *alsoID, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func ListAssignments(db *gorm.DB, scopeID uint) ([]models.ConfigAssignment, error) {
-	q := db.Model(&models.ConfigAssignment{})
-	if scopeID != 0 {
-		q = q.Where("scope_id = ?", scopeID)
+	if scopeID == 0 {
+		var rows []models.ConfigAssignment
+		if err := db.Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		return rows, nil
+	}
+	scope, err := GetScope(db, scopeID)
+	if err == nil && isOrganizationalScope(scope) {
+		return winningAssignments(db, scope)
 	}
 	var rows []models.ConfigAssignment
-	if err := q.Find(&rows).Error; err != nil {
+	if err := db.Where("scope_id = ?", scopeID).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
+}
+
+func winningAssignments(db *gorm.DB, scope *models.ConfigScope) ([]models.ConfigAssignment, error) {
+	var originals []models.ConfigAssignment
+	if err := db.Where("scope_id = ?", scope.ID).Find(&originals).Error; err != nil {
+		return nil, err
+	}
+	child, err := findParametersChild(db, scope.ID)
+	if err != nil {
+		return nil, err
+	}
+	byDef := map[uint]models.ConfigAssignment{}
+	order := make([]uint, 0, len(originals))
+	for _, a := range originals {
+		if _, ok := byDef[a.VariableDefID]; ok {
+			continue
+		}
+		byDef[a.VariableDefID] = a
+		order = append(order, a.VariableDefID)
+	}
+	if child != nil {
+		var copies []models.ConfigAssignment
+		if err := db.Where("scope_id = ?", child.ID).Find(&copies).Error; err != nil {
+			return nil, err
+		}
+		for _, a := range copies {
+			if _, ok := byDef[a.VariableDefID]; !ok {
+				order = append(order, a.VariableDefID)
+			}
+			byDef[a.VariableDefID] = a
+		}
+	}
+	out := make([]models.ConfigAssignment, 0, len(order))
+	for _, id := range order {
+		out = append(out, byDef[id])
+	}
+	return out, nil
 }
 
 func DeleteAssignment(db *gorm.DB, id uint) error {
@@ -453,7 +674,26 @@ func DeleteAssignment(db *gorm.DB, id uint) error {
 		}
 		return err
 	}
-	return db.Delete(&row).Error
+	scope, err := GetScope(db, row.ScopeID)
+	if err != nil {
+		if se := AsStatusError(err); se != nil && se.Status == 404 {
+			return db.Delete(&row).Error
+		}
+		return err
+	}
+	parent, err := reservedParametersParent(db, scope)
+	if err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if parent != nil {
+			if err := tx.Where("variable_def_id = ? AND scope_id = ?", row.VariableDefID, parent.ID).
+				Delete(&models.ConfigAssignment{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(&row).Error
+	})
 }
 
 // MatrixRows are interfaces under a scope subtree, with one variable resolved.

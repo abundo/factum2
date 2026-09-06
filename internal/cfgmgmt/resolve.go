@@ -162,28 +162,92 @@ func interfacePlatform(db *gorm.DB, interfaceID uint) string {
 	return dev.Platform
 }
 
-func resolveDefAt(db *gorm.DB, def *models.ConfigVariableDef, start *models.ConfigScope) (any, *models.ConfigScope, error) {
+func assignmentValueAt(db *gorm.DB, def *models.ConfigVariableDef, scope *models.ConfigScope) (any, bool, error) {
+	a, err := assignmentAt(db, def.ID, scope.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if a == nil {
+		return nil, false, nil
+	}
+	v, err := TypeCheckRaw(def, a.Value)
+	if err != nil {
+		return nil, false, statusErr(400, err.Error())
+	}
+	if v == nil {
+		return nil, false, nil
+	}
+	return v, true, nil
+}
+
+func parameterChildren(db *gorm.DB, parentID uint) ([]models.ConfigScope, error) {
+	var rows []models.ConfigScope
+	err := db.Where("parent_id = ? AND kind = ?", parentID, models.ConfigScopeKindParameter).
+		Order("sort_order DESC, name DESC").
+		Find(&rows).Error
+	return rows, err
+}
+
+func parameterObjectAllowed(p *models.ConfigScope, platform string) bool {
+	if p == nil || !p.Enabled {
+		return false
+	}
+	return objectPlatformsAllowed(p.Payload.Platforms, platform)
+}
+
+// objectPlatformsAllowed is the parameter-object platform filter. An empty
+// list matches every device. sros-md also matches an object that lists sros.
+func objectPlatformsAllowed(plats []string, platform string) bool {
+	if len(plats) == 0 {
+		return true
+	}
+	if platform == "" {
+		return true
+	}
+	p := NormalizePlatform(platform)
+	for _, x := range plats {
+		n := NormalizePlatform(x)
+		if n == p {
+			return true
+		}
+		if p == "sros-md" && n == "sros" {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveDefAt(db *gorm.DB, def *models.ConfigVariableDef, start *models.ConfigScope, platform string) (any, *models.ConfigScope, error) {
 	chain, err := WalkParents(db, start)
 	if err != nil {
 		return nil, nil, err
 	}
 	for i := range chain {
-		s := &chain[i]
-		a, err := assignmentAt(db, def.ID, s.ID)
+		node := &chain[i]
+		params, err := parameterChildren(db, node.ID)
 		if err != nil {
 			return nil, nil, err
 		}
-		if a == nil {
-			continue
+		for j := range params {
+			p := &params[j]
+			if !parameterObjectAllowed(p, platform) {
+				continue
+			}
+			v, ok, err := assignmentValueAt(db, def, p)
+			if err != nil {
+				return nil, nil, err
+			}
+			if ok {
+				return v, p, nil
+			}
 		}
-		v, err := TypeCheckRaw(def, a.Value)
+		v, ok, err := assignmentValueAt(db, def, node)
 		if err != nil {
-			return nil, nil, statusErr(400, err.Error())
+			return nil, nil, err
 		}
-		if v == nil {
-			continue
+		if ok {
+			return v, node, nil
 		}
-		return v, s, nil
 	}
 	if len(def.DefaultValue) > 0 && string(def.DefaultValue) != "null" {
 		v, err := TypeCheckRaw(def, def.DefaultValue)
@@ -214,7 +278,7 @@ func Resolve(db *gorm.DB, interfaceID uint, varName string) (any, *models.Config
 	if err != nil {
 		return nil, nil, err
 	}
-	return resolveDefAt(db, def, start)
+	return resolveDefAt(db, def, start, interfacePlatform(db, interfaceID))
 }
 
 // ResolveAll returns every variable def resolved at interfaceID. Required
@@ -358,7 +422,7 @@ func ResolveMapForDevice(db *gorm.DB, deviceID uint) (map[string]any, error) {
 		if !platformAllowed(def, device.Platform) {
 			continue
 		}
-		v, _, err := resolveDefAt(db, def, start)
+		v, _, err := resolveDefAt(db, def, start, device.Platform)
 		if err != nil || v == nil {
 			continue
 		}

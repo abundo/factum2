@@ -2,6 +2,7 @@ package cfgmgmt
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -1050,5 +1051,306 @@ func TestWalkParentsDepthError(t *testing.T) {
 	_, err = WalkParents(db, &last)
 	if err == nil || err.Error() != "scope parent chain too deep" {
 		t.Fatalf("err = %v, want depth error", err)
+	}
+}
+
+func assignmentAtScope(t *testing.T, db *gorm.DB, defID, scopeID uint) *models.ConfigAssignment {
+	t.Helper()
+	var a models.ConfigAssignment
+	err := db.Where("variable_def_id = ? AND scope_id = ?", defID, scopeID).First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &a
+}
+
+func intValue(t *testing.T, raw json.RawMessage) int64 {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	n, ok := asInt(v)
+	if !ok {
+		t.Fatalf("not int: %#v", v)
+	}
+	return n
+}
+
+func TestCopyAssignmentsThenListWinning(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	child, err := findParametersChild(db, folder.ID)
+	if err != nil || child == nil {
+		t.Fatalf("parameters child: %v %#v", err, child)
+	}
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	cp := assignmentAtScope(t, db, def.ID, child.ID)
+	if orig == nil || cp == nil {
+		t.Fatal("COPY should leave original and insert child copy")
+	}
+	if intValue(t, orig.Value) != 1500 || intValue(t, cp.Value) != 1500 {
+		t.Fatalf("values orig=%s copy=%s", orig.Value, cp.Value)
+	}
+	var n int64
+	if err := db.Model(&models.ConfigAssignment{}).Where("variable_def_id = ?", def.ID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("assignment count = %d, want 2 (COPY is idempotent)", n)
+	}
+	rows, err := ListAssignments(db, folder.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("GET folder rows = %d, want 1", len(rows))
+	}
+	if rows[0].ScopeID != child.ID {
+		t.Fatalf("winner scope_id = %d, want child %d", rows[0].ScopeID, child.ID)
+	}
+}
+
+func TestUpsertFolderDualWriteAndResolve(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	row, err := UpsertAssignment(db, def.ID, folder.ID, jsonRaw(t, 9100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := findParametersChild(db, folder.ID)
+	if err != nil || child == nil {
+		t.Fatal(err)
+	}
+	if row.ScopeID != child.ID {
+		t.Fatalf("PUT folder returned scope %d, want child %d", row.ScopeID, child.ID)
+	}
+	v, src, err := resolveDefAt(db, &def, &folder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != child.ID {
+		t.Fatalf("resolve source = %+v, want child %d", src, child.ID)
+	}
+	if n, _ := asInt(v); n != 9100 {
+		t.Errorf("resolve value = %v, want 9100", v)
+	}
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	if orig == nil || intValue(t, orig.Value) != 9100 {
+		t.Fatalf("original not dual-written: %+v", orig)
+	}
+}
+
+func TestUpsertReservedParametersChildUpdatesOriginal(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	child, err := findParametersChild(db, folder.ID)
+	if err != nil || child == nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, child.ID, jsonRaw(t, 9200)); err != nil {
+		t.Fatal(err)
+	}
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	cp := assignmentAtScope(t, db, def.ID, child.ID)
+	if orig == nil || intValue(t, orig.Value) != 9200 {
+		t.Fatalf("original = %+v, want 9200", orig)
+	}
+	if cp == nil || intValue(t, cp.Value) != 9200 {
+		t.Fatalf("child = %+v, want 9200", cp)
+	}
+}
+
+func TestDeleteWinnerRemovesOriginalAndResolve(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ListAssignments(db, folder.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d err=%v", len(rows), err)
+	}
+	if err := DeleteAssignment(db, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = ListAssignments(db, folder.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("GET folder after delete = %d, want 0", len(rows))
+	}
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("original still present after dual-delete")
+	}
+	v, src, err := resolveDefAt(db, &def, &folder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != nil || src != nil {
+		t.Fatalf("resolve after delete value=%v source=%+v", v, src)
+	}
+}
+
+func TestUpsertSecretUnchanged(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "pw", Type: models.VarTypeSecret, Secret: true}
+	mustCreate(t, db, &def)
+	if _, err := UpsertAssignment(db, def.ID, folder.ID, jsonRaw(t, "s3cret")); err != nil {
+		t.Fatal(err)
+	}
+	child, err := findParametersChild(db, folder.ID)
+	if err != nil || child == nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, folder.ID, jsonRaw(t, "***")); err != nil {
+		t.Fatal(err)
+	}
+	cp := assignmentAtScope(t, db, def.ID, child.ID)
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	if cp == nil || orig == nil {
+		t.Fatal("expected both rows")
+	}
+	var cv, ov any
+	if err := json.Unmarshal(cp.Value, &cv); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(orig.Value, &ov); err != nil {
+		t.Fatal(err)
+	}
+	if cv != "s3cret" || ov != "s3cret" {
+		t.Fatalf("stored child=%#v orig=%#v, want s3cret (*** must not persist)", cv, ov)
+	}
+}
+
+func TestUpsertNamedParameterObjectDoesNotWriteParent(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	ntp, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &folder.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, ntp.ID, jsonRaw(t, 1234)); err != nil {
+		t.Fatal(err)
+	}
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("extra named parameter PUT wrote the parent original")
+	}
+	if child, _ := findParametersChild(db, folder.ID); child != nil {
+		if assignmentAtScope(t, db, def.ID, child.ID) != nil {
+			t.Fatal("extra named parameter PUT wrote the reserved parameters child")
+		}
+	}
+	got := assignmentAtScope(t, db, def.ID, ntp.ID)
+	if got == nil || intValue(t, got.Value) != 1234 {
+		t.Fatalf("ntp assignment = %+v", got)
+	}
+}
+
+func TestDeleteReservedParametersScopeDeletesOriginals(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	if err := Seed(db); err != nil {
+		t.Fatal(err)
+	}
+	child, err := findParametersChild(db, folder.ID)
+	if err != nil || child == nil {
+		t.Fatal(err)
+	}
+	if err := DeleteScope(db, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if assignmentAtScope(t, db, def.ID, folder.ID) != nil {
+		t.Fatal("original survived DeleteScope of reserved parameters child")
+	}
+	if assignmentAtScope(t, db, def.ID, child.ID) != nil {
+		t.Fatal("child assignment survived DeleteScope")
+	}
+}
+
+func TestDeleteNamedParameterScopeLeavesParentOriginal(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	ntp, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &folder.ID, Name: "ntp", Kind: models.ConfigScopeKindParameter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertAssignment(db, def.ID, ntp.ID, jsonRaw(t, 1234)); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteScope(db, ntp.ID); err != nil {
+		t.Fatal(err)
+	}
+	orig := assignmentAtScope(t, db, def.ID, folder.ID)
+	if orig == nil || intValue(t, orig.Value) != 1500 {
+		t.Fatalf("parent original = %+v, want 1500", orig)
+	}
+	if assignmentAtScope(t, db, def.ID, ntp.ID) != nil {
+		t.Fatal("named parameter assignments not deleted")
+	}
+}
+
+func TestResolvePrefersParameterChild(t *testing.T) {
+	db := newTestDB(t)
+	_, folder, _, _, _ := seedTree(t, db)
+	def := models.ConfigVariableDef{Name: "mtu", Type: models.VarTypeInt}
+	mustCreate(t, db, &def)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: folder.ID, Value: jsonRaw(t, 1500)})
+	child := models.ConfigScope{
+		ParentID: &folder.ID, Name: models.ConfigParametersChildName,
+		Kind: models.ConfigScopeKindParameter, Enabled: true,
+	}
+	mustCreate(t, db, &child)
+	mustCreate(t, db, &models.ConfigAssignment{VariableDefID: def.ID, ScopeID: child.ID, Value: jsonRaw(t, 9000)})
+	v, src, err := resolveDefAt(db, &def, &folder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src == nil || src.ID != child.ID {
+		t.Fatalf("source = %+v, want child", src)
+	}
+	if n, _ := asInt(v); n != 9000 {
+		t.Errorf("value = %v, want child 9000", v)
 	}
 }

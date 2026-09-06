@@ -62,7 +62,7 @@ func (ctrl *Controller) ApiConfigScopeCreate(c *echo.Context) error {
 	row := models.ConfigScope{
 		ParentID: dto.ParentID, Name: dto.Name, Kind: dto.Kind,
 		SiteID: dto.SiteID, DeviceID: dto.DeviceID, InterfaceID: dto.InterfaceID,
-		SortOrder: dto.SortOrder,
+		SortOrder: dto.SortOrder, Payload: dto.Payload,
 	}
 	created, err := cfgmgmt.CreateScope(ctrl.DB, &row)
 	if err != nil {

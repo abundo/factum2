@@ -15,10 +15,11 @@ const (
 	ConfigScopeKindService         = "service"
 	ConfigScopeKindServiceEndpoint = "service_endpoint"
 
-	ConfigRootName           = "global"
-	ConfigCatalogName        = "_catalog"
-	ConfigCatalogCLIName     = "cli"
-	ConfigServicesFolderName = "_services"
+	ConfigRootName            = "global"
+	ConfigCatalogName         = "_catalog"
+	ConfigCatalogCLIName      = "cli"
+	ConfigServicesFolderName  = "_services"
+	ConfigParametersChildName = "parameters"
 
 	VarTypeString       = "string"
 	VarTypeInt          = "int"

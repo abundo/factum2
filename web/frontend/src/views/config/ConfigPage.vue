@@ -516,11 +516,14 @@ function saveAssign() {
   } catch {
     value = form.value.value_text
   }
-  upsertAssignment({
+  const payload = {
     variable_def_id: form.value.variable_def_id,
     scope_id: selected.value.id,
-    value,
-  })
+  }
+  if (value !== '***') {
+    payload.value = value
+  }
+  upsertAssignment(payload)
     .then(() => {
       dialog.value = null
       return loadNodeDetails(selected.value)
