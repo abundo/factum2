@@ -826,6 +826,13 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 				continue
 			}
 		}
+		if cliObj == nil && pack == nil {
+			results = append(results, ApiServiceElinePushResult{
+				Device: device.Name,
+				Error:  cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, device.Platform),
+			})
+			continue
+		}
 		if cliObj != nil {
 			if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
 				results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})

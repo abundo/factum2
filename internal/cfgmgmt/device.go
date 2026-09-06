@@ -392,23 +392,26 @@ func elineDescription(serviceID, customer string) string {
 }
 
 func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps []models.ServiceEndpoint) []RenderedSource {
+	lookupErr := func(msg string) []RenderedSource {
+		return []RenderedSource{{
+			Source: "service:" + svc.ServiceID, Kind: "service",
+			Platform: NormalizePlatform(device.Platform),
+			Error:    msg,
+		}}
+	}
 	cli, err := LookupCLIObject(db, svc.ServiceType, device.Platform)
 	if err != nil {
-		cli = nil
+		return lookupErr(err.Error())
 	}
 	var pack *models.PlatformPack
 	if cli == nil {
 		pack, err = LookupPlatformPack(db, svc.ServiceType, device.Platform)
 		if err != nil {
-			pack = nil
+			return lookupErr(err.Error())
 		}
 	}
 	if cli == nil && pack == nil {
-		return []RenderedSource{{
-			Source: "service:" + svc.ServiceID, Kind: "service",
-			Platform: NormalizePlatform(device.Platform),
-			Error:    "no CLI object for " + svc.ServiceType + "/" + device.Platform,
-		}}
+		return lookupErr(MissingCLIObjectMessage(svc.ServiceType, device.Platform))
 	}
 	platform := NormalizePlatform(device.Platform)
 	payloadKind := models.PayloadKindCLI

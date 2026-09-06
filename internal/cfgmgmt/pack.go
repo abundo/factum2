@@ -158,6 +158,12 @@ func RequireCLIPack(pack *models.PlatformPack) error {
 	return nil
 }
 
+// MissingCLIObjectMessage is the preview/push error when neither a
+// translation CLI object nor a pack exists for type+platform.
+func MissingCLIObjectMessage(typeName, platform string) string {
+	return "no CLI object for " + typeName + "/" + platform
+}
+
 // RequireCLIObject gates push on the payload_kind column (not JSON).
 func RequireCLIObject(obj *models.ConfigScope) error {
 	if obj == nil {

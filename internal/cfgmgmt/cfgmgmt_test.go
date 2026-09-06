@@ -2265,6 +2265,7 @@ func TestSeedLeavesEditedCLIFeature(t *testing.T) {
 	if again[0].AddCommands != "edited-add {{.Name}}" {
 		t.Errorf("feature overwritten: %q", again[0].AddCommands)
 	}
+	assertELINEEosPackUntouched(t, db)
 }
 
 func TestSeedLeavesEditedCLIContext(t *testing.T) {
@@ -2299,6 +2300,21 @@ func TestSeedLeavesEditedCLIContext(t *testing.T) {
 	}
 	if feats2[0].AddCommands != wantAdd || feats2[0].RemoveCommands != wantRemove {
 		t.Fatal("features reset after context edit")
+	}
+	assertELINEEosPackUntouched(t, db)
+}
+
+func assertELINEEosPackUntouched(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	pack, err := LookupPlatformPack(db, "ELINE", "eos")
+	if err != nil || pack == nil {
+		t.Fatalf("pack: %v %#v", err, pack)
+	}
+	if pack.ApplyTemplate != templates.EOSEline {
+		t.Error("pack body refreshed after CLI edit")
+	}
+	if pack.SeedChecksum != packChecksum(templates.EOSEline) {
+		t.Error("pack checksum refreshed after CLI edit")
 	}
 }
 
@@ -2459,6 +2475,48 @@ func TestCLIObjectChecksumIncludesContext(t *testing.T) {
 	c := CLIObjectChecksum("eos", "cli", nil, feats)
 	if a != c {
 		t.Fatal("checksum not stable")
+	}
+	// Empty UpdateCommands still contributes "\nupdate\n" (documented concat).
+	raw := "eos\ncli\nnull\napply\nremove_at_root=false\nadd\nadd\nupdate\n\nremove\nremove\n"
+	if a != packChecksum(raw) {
+		t.Fatalf("checksum = %s, want %s", a, packChecksum(raw))
+	}
+	rooted := []models.ConfigCLIFeature{{
+		Name: "apply", AddCommands: "add", RemoveCommands: "remove", RemoveAtRoot: true,
+	}}
+	if CLIObjectChecksum("eos", "cli", nil, rooted) == a {
+		t.Fatal("RemoveAtRoot should change checksum")
+	}
+	updated := []models.ConfigCLIFeature{{
+		Name: "apply", AddCommands: "add", UpdateCommands: "set", RemoveCommands: "remove",
+	}}
+	if CLIObjectChecksum("eos", "cli", nil, updated) == a {
+		t.Fatal("non-empty UpdateCommands should change checksum")
+	}
+}
+
+func TestRenderGenericSurfacesLookupError(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "pe-lookup", Platform: "eos", NetboxID: 701}
+	mustCreate(t, db, &dev)
+	svc := models.Service{ServiceID: "CN00999", ServiceType: "NO-SUCH-TYPE"}
+	mustCreate(t, db, &svc)
+	out := renderGenericForDevice(db, &svc, &dev, nil)
+	if len(out) != 1 || !strings.Contains(out[0].Error, `unknown service type "NO-SUCH-TYPE"`) {
+		t.Fatalf("sources = %+v, want lookup error", out)
+	}
+}
+
+func TestRenderGenericMissingTranslator(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "pe-elan", Platform: "eos", NetboxID: 702}
+	mustCreate(t, db, &dev)
+	svc := models.Service{ServiceID: "CN00998", ServiceType: "ELAN"}
+	mustCreate(t, db, &svc)
+	out := renderGenericForDevice(db, &svc, &dev, nil)
+	want := MissingCLIObjectMessage("ELAN", "eos")
+	if len(out) != 1 || out[0].Error != want {
+		t.Fatalf("sources = %+v, want %q", out, want)
 	}
 }
 
