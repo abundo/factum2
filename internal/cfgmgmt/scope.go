@@ -961,8 +961,7 @@ func existingSecretAssignment(db *gorm.DB, def *models.ConfigVariableDef, scope 
 
 // dualWriteScopeIDs remaps a folder/device/interface (or the reserved
 // parameters child) onto that child as the primary write target. also is
-// the organizational original, written only if the row still exists —
-// MOVE deleted those originals.
+// the organizational original, updated only when that row already exists.
 func dualWriteScopeIDs(db *gorm.DB, scope *models.ConfigScope) (primary uint, also *uint, err error) {
 	if isOrganizationalScope(scope) {
 		child, err := ensureParametersChild(db, scope.ID)
@@ -1024,8 +1023,6 @@ func UpsertAssignment(db *gorm.DB, defID, scopeID uint, value []byte) (*models.C
 		}
 		out = row
 		if alsoID != nil && *alsoID != primaryID {
-			// MOVE deleted originals; do not recreate them. A leftover
-			// original (pre-migrate row) is still updated if present.
 			existing, err := assignmentAt(tx, defID, *alsoID)
 			if err != nil {
 				return err
