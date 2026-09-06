@@ -156,7 +156,7 @@ const cfgmgmtVarsNote = {
 
 export const cfgmgmtPackSchema = {
   notes:
-    'Rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. ELINE-only fields (.Remote, .PeerLocal*, .SDPID, .StaleSubinterfaces) are zero on other types. Teardown goes in {{define "cleanup"}} or the cleanup field.',
+    'CLI object feature blob, rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. ELINE-only fields (.Remote, .PeerLocal*, .SDPID, .StaleSubinterfaces) are zero on other types. Teardown goes in the feature remove blob (or {{define "cleanup"}} inside add).',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Service.ServiceID (e.g. CN00012)' },
@@ -236,14 +236,14 @@ export const cfgmgmtPackSchema = {
 
 export const cfgmgmtMacroSchema = {
   notes:
-    'Inserted with {{include "name"}} from a pack or baseline template. Same data as the caller (packs pass GenericRenderData; baseline templates pass .Name / .Device / .Vars). Nested at most 8 deep.',
+    'Inserted with {{include "name"}} from a CLI feature. Same data as the caller (service-translation CLI objects pass GenericRenderData; baseline CLI objects pass .Name / .Device / .Vars). Nested at most 8 deep.',
   functions: cfgmgmtFunctions,
   variables: cfgmgmtPackSchema.variables,
 }
 
 export const cfgmgmtBaselineSchema = {
   notes:
-    'Golden/baseline CLI for a device. Rendered with .Name, .Device, and .Vars. Interface-parented objects also see .Interface and .LocalIface. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
+    'Golden/baseline CLI object for a device. Rendered with .Name, .Device, and .Vars. Interface-parented objects also see .Interface and .LocalIface. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Device name' },

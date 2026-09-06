@@ -88,6 +88,8 @@ function isReservedFolderNode(node) {
 function kindLabel(kind, name) {
   switch (kind) {
     case 'folder':
+      if (name === '_catalog') return 'Catalog'
+      if (name === '_services') return 'Services'
       return 'Folder'
     case 'site':
       return 'Site'

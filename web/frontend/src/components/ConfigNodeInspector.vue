@@ -62,12 +62,21 @@ const typeOptions = computed(() => [
 ])
 
 const isCLI = computed(() => props.selected?.kind === 'cli')
+const isParameter = computed(() => props.selected?.kind === 'parameter')
 const isServiceNode = computed(
   () => props.selected?.kind === 'service' || props.selected?.kind === 'service_endpoint',
 )
-const showAssignments = computed(
-  () => !!props.selected && !isCLI.value && props.selected?.kind !== 'service_ref',
-)
+const showAssignments = computed(() => {
+  const kind = props.selected?.kind
+  return (
+    kind === 'parameter' ||
+    kind === 'folder' ||
+    kind === 'site' ||
+    kind === 'location' ||
+    kind === 'device' ||
+    kind === 'interface'
+  )
+})
 
 const serviceRow = ref(null)
 const serviceLoading = ref(false)
@@ -714,6 +723,13 @@ function toggleFeature(id) {
       </template>
 
       <template v-if="showAssignments">
+        <p v-if="isParameter" class="text-muted-color text-sm m-0">
+          Assignments on this object apply to the parent scope and its descendants.
+        </p>
+        <p v-else class="text-muted-color text-sm m-0">
+          Prefer assigning on a parameter object. Saving here still remaps onto the reserved
+          parameters child.
+        </p>
         <div class="flex items-center justify-between">
           <h6 class="m-0">Assignments</h6>
           <UButton

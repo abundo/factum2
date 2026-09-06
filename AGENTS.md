@@ -105,7 +105,7 @@ DNS/Icinga/LibreNMS/Oxidized below, nothing about Netbox or Lime sync is
 meant to run off the primary host.
 
 **Capacity service types (cfgmgmt):** CN/CI types (ELINE, ELAN, L3VPN, …)
-are a `ServiceType` + per-NOS `PlatformPack` in the DB, not a new Go
+are a `ServiceType` + per-NOS CLI objects in the DB, not a new Go
 package. Endpoints live in `service_endpoints`. Each type can carry
 `sync_source` / `netbox_type` so device-sync and NetBox reverse-import
 are not ELINE-hardcoded. How to design one:

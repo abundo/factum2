@@ -12,8 +12,8 @@ Operator documentation is in the GUI at **Documentation** (`/doc`) and on
 [GitHub Pages](https://abundo.github.io/factum2/). Those pages share the
 Markdown in `docs/user/` (install guides in `docs/install/`). See
 [DEV.md](DEV.md) for setup/build/run details and [AGENTS.md](AGENTS.md)
-for architecture notes. To add a capacity service type (roles, platform
-packs, CLI templates), see
+for architecture notes. To add a capacity service type (catalog type, CLI objects,
+parameter objects, instantiate in the tree), see
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
 
 ## Prerequisites
