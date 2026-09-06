@@ -39,8 +39,6 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.ConfigVariableDef{},
 		&models.ConfigAssignment{},
 		&models.ServiceType{},
-		&models.PlatformPack{},
-		&models.ConfigTemplate{},
 		&models.ConfigMacro{},
 		&models.ServiceEndpoint{},
 	); err != nil {
@@ -225,7 +223,7 @@ func TestConfigCLIFeatureInsert(t *testing.T) {
 	}
 }
 
-func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
+func TestSeedCreatesRootAndELINECLI(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)
 	if err != nil {
@@ -274,17 +272,6 @@ func TestSeedCreatesRootAndELINEPacks(t *testing.T) {
 	}
 	if l3.SyncSource != models.SyncSourceL3VPN || l3.NetboxType != models.NetboxTypeVRF {
 		t.Errorf("L3VPN mapping = %s/%s, want l3vpn/vrf", l3.SyncSource, l3.NetboxType)
-	}
-	pack, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil || pack == nil {
-		t.Fatalf("eos pack: %v %#v", err, pack)
-	}
-	if pack.ApplyTemplate != templates.EOSEline {
-		t.Error("seeded eos pack body does not match embed")
-	}
-	md, err := LookupPlatformPack(db, "ELINE", "sros-md")
-	if err != nil || md == nil {
-		t.Fatalf("sros-md pack: %v", err)
 	}
 	for _, plat := range []string{"eos", "ios-xr", "sros", "sros-md"} {
 		obj, err := LookupCLIObject(db, "ELINE", plat)
@@ -358,28 +345,6 @@ func TestSeedAddsMissingSchemaFields(t *testing.T) {
 	}
 	if !schemaHas(elan.Schema, "custom") {
 		t.Errorf("ELAN operator schema field was dropped: %+v", elan.Schema)
-	}
-}
-
-func TestSeedDoesNotOverwritePack(t *testing.T) {
-	db := newTestDB(t)
-	pack, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pack.ApplyTemplate = "edited"
-	if err := db.Save(pack).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	again, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.ApplyTemplate != "edited" {
-		t.Errorf("pack was overwritten")
 	}
 }
 
@@ -755,12 +720,8 @@ func TestUpsertTypedListAndMap(t *testing.T) {
 	}
 }
 
-func TestRenderELINEPackMatchesEmbed(t *testing.T) {
+func TestRenderELINECLIMatchesEmbed(t *testing.T) {
 	db := newTestDB(t)
-	pack, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil || pack == nil {
-		t.Fatalf("pack: %v", err)
-	}
 	intent := GenericRenderData{
 		Name:        "CN00570",
 		Description: "ID=CN00570 Acme AB",
@@ -777,30 +738,38 @@ func TestRenderELINEPackMatchesEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("embed render: %v", err)
 	}
-	got, err := Render(db, pack.ApplyTemplate, "", intent)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	got, err := RenderCLIObject(db, obj, intent)
 	if err != nil {
-		t.Fatalf("pack render: %v", err)
+		t.Fatalf("CLI render: %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("pack cmds =\n%v\nwant\n%v", got, want)
+		t.Errorf("CLI cmds =\n%v\nwant embed\n%v", got, want)
 	}
-	bodyOnly, err := RenderPackApplyBody(db, pack, intent)
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	add, err := Render(db, feats[0].AddCommands, "", intent)
 	if err != nil {
-		t.Fatalf("apply body: %v", err)
+		t.Fatalf("add blob: %v", err)
 	}
-	for _, line := range bodyOnly {
+	for _, line := range add {
 		if strings.Contains(line, "no pseudowire") || strings.Contains(line, "no patch") {
-			t.Fatalf("apply body still includes cleanup: %v", bodyOnly)
+			t.Fatalf("add blob still includes cleanup: %v", add)
 		}
 	}
 	foundIface := false
-	for _, line := range bodyOnly {
+	for _, line := range add {
 		if line == "interface Ethernet1" {
 			foundIface = true
 		}
 	}
 	if !foundIface {
-		t.Fatalf("apply body missing interface config: %v", bodyOnly)
+		t.Fatalf("add blob missing interface config: %v", add)
 	}
 }
 
@@ -861,7 +830,7 @@ func TestRenderELINEFromServiceEndpoints(t *testing.T) {
 	}
 }
 
-func TestRenderDeviceIncludesGlobalTemplate(t *testing.T) {
+func TestRenderDeviceIncludesGlobalCLI(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)
 	if err != nil {
@@ -874,14 +843,16 @@ func TestRenderDeviceIncludesGlobalTemplate(t *testing.T) {
 	if _, err := UpsertAssignment(db, def.ID, root.ID, jsonRaw(t, "blue")); err != nil {
 		t.Fatal(err)
 	}
-	tmpl := models.ConfigTemplate{
-		Name:     "banner",
-		Platform: "eos",
-		Body:     "banner motd {{.Name}} {{index .Vars \"color\"}}",
-		ScopeID:  &root.ID,
-		Enabled:  true,
+	cli, err := CreateScope(db, &models.ConfigScope{
+		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	mustCreate(t, db, &tmpl)
+	mustCreate(t, db, &models.ConfigCLIFeature{
+		ScopeID: cli.ID, Name: "body",
+		AddCommands: "banner motd {{.Name}} {{index .Vars \"color\"}}",
+	})
 
 	out, err := RenderDevice(db, dev.ID)
 	if err != nil {
@@ -889,7 +860,7 @@ func TestRenderDeviceIncludesGlobalTemplate(t *testing.T) {
 	}
 	found := false
 	for _, s := range out.Sources {
-		if s.Source == "template:banner" {
+		if s.Source == "cli:banner" {
 			found = true
 			if s.Error != "" {
 				t.Fatalf("render error: %s", s.Error)
@@ -900,7 +871,7 @@ func TestRenderDeviceIncludesGlobalTemplate(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("baseline template missing from RenderDevice: %+v", out.Sources)
+		t.Fatalf("baseline CLI missing from RenderDevice: %+v", out.Sources)
 	}
 }
 
@@ -1063,29 +1034,35 @@ func TestPlatformsFilter(t *testing.T) {
 	}
 }
 
-func TestSeedUpdatesUntouchedPack(t *testing.T) {
+func TestSeedUpdatesUntouchedCLI(t *testing.T) {
 	db := newTestDB(t)
-	pack, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil {
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	feats, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(feats) != 1 {
+		t.Fatalf("features: %v %+v", err, feats)
+	}
+	feats[0].AddCommands = "old-seed-body"
+	feats[0].RemoveCommands = ""
+	if err := db.Save(&feats[0]).Error; err != nil {
 		t.Fatal(err)
 	}
-	pack.ApplyTemplate = "old-seed-body"
-	pack.SeedChecksum = packChecksum("old-seed-body")
-	if err := db.Save(pack).Error; err != nil {
+	obj.SeedChecksum = currentCLIChecksum(obj, []models.ConfigCLIFeature{feats[0]})
+	if err := db.Save(obj).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := Seed(db); err != nil {
 		t.Fatal(err)
 	}
-	again, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil {
-		t.Fatal(err)
+	again, err := ListCLIFeatures(db, obj.ID)
+	if err != nil || len(again) != 1 {
+		t.Fatalf("after seed: %v %+v", err, again)
 	}
-	if again.ApplyTemplate != templates.EOSEline {
-		t.Fatal("untouched pack was not refreshed from embed")
-	}
-	if again.SeedChecksum != packChecksum(templates.EOSEline) {
-		t.Fatal("checksum not updated")
+	wantAdd, wantRemove := packToCLIBlobs(templates.EOSEline, "")
+	if again[0].AddCommands != wantAdd || again[0].RemoveCommands != wantRemove {
+		t.Fatal("untouched CLI was not refreshed from embed")
 	}
 }
 
@@ -2067,134 +2044,6 @@ func TestRenderDeviceIncludesBaselineCLI(t *testing.T) {
 	}
 }
 
-func TestRenderDevicePrefersCLIOverTemplate(t *testing.T) {
-	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dev := models.Device{Name: "pe-twin", Platform: "eos"}
-	mustCreate(t, db, &dev)
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "eos", Body: "banner from-template",
-		ScopeID: &root.ID, Enabled: true,
-	})
-	cli, err := CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustCreate(t, db, &models.ConfigCLIFeature{
-		ScopeID: cli.ID, Name: "body", AddCommands: "banner from-cli",
-	})
-	out, err := RenderDevice(db, dev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawCLI, sawTmpl bool
-	for _, s := range out.Sources {
-		if s.Source == "cli:banner" {
-			sawCLI = true
-			if !reflect.DeepEqual(s.Commands, []string{"banner from-cli"}) {
-				t.Errorf("cli commands = %v", s.Commands)
-			}
-		}
-		if s.Source == "template:banner" {
-			sawTmpl = true
-		}
-	}
-	if !sawCLI {
-		t.Fatal("CLI twin missing")
-	}
-	if sawTmpl {
-		t.Fatal("template should be skipped when a CLI twin exists")
-	}
-}
-
-func TestRenderDeviceTwinIgnoresTranslationAndOtherPlatform(t *testing.T) {
-	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dev := models.Device{Name: "pe-twin-filter", Platform: "eos"}
-	mustCreate(t, db, &dev)
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "eos", Body: "banner from-template",
-		ScopeID: &root.ID, Enabled: true,
-	})
-	var elan models.ServiceType
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	_, err = CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
-		Platform: "eos", ServiceTypeID: &elan.ID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "sros",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := RenderDevice(db, dev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawTmpl, sawCLI bool
-	for _, s := range out.Sources {
-		if s.Source == "template:banner" {
-			sawTmpl = true
-			if !reflect.DeepEqual(s.Commands, []string{"banner from-template"}) {
-				t.Errorf("template commands = %v", s.Commands)
-			}
-		}
-		if s.Source == "cli:banner" {
-			sawCLI = true
-		}
-	}
-	if !sawTmpl {
-		t.Fatal("eos template hidden by translation or sros CLI twin")
-	}
-	if sawCLI {
-		t.Fatal("translation/sros CLI should not render as baseline on eos")
-	}
-
-	disabled, err := CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "eos",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	off := false
-	if _, err := UpdateScope(db, disabled.ID, &models.ConfigScopeDTO{Enabled: &off}); err != nil {
-		t.Fatal(err)
-	}
-	out, err = RenderDevice(db, dev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sawTmpl, sawCLI = false, false
-	for _, s := range out.Sources {
-		if s.Source == "template:banner" {
-			sawTmpl = true
-		}
-		if s.Source == "cli:banner" {
-			sawCLI = true
-		}
-	}
-	if sawTmpl {
-		t.Fatal("disabled baseline CLI should still hide the matching template")
-	}
-	if sawCLI {
-		t.Fatal("disabled CLI should not emit commands")
-	}
-}
-
 func elineRenderIntent() GenericRenderData {
 	return GenericRenderData{
 		Name:             "CN00570",
@@ -2218,12 +2067,13 @@ func elineRenderIntent() GenericRenderData {
 func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
 	db := newTestDB(t)
 	intent := elineRenderIntent()
-	for _, plat := range []string{"eos", "ios-xr", "sros"} {
-		pack, err := LookupPlatformPack(db, "ELINE", plat)
-		if err != nil || pack == nil {
-			t.Fatalf("%s pack: %v", plat, err)
-		}
-		want, err := Render(db, pack.ApplyTemplate, "", intent)
+	embeds := map[string]string{
+		"eos":    templates.EOSEline,
+		"ios-xr": templates.IOSXREline,
+		"sros":   templates.SROSEline,
+	}
+	for plat, body := range embeds {
+		want, err := Render(db, body, "", intent)
 		if err != nil {
 			t.Fatalf("%s embed: %v", plat, err)
 		}
@@ -2236,7 +2086,7 @@ func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
 			t.Fatalf("%s CLI render: %v", plat, err)
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s CLI cmds =\n%v\nwant pack/embed\n%v", plat, got, want)
+			t.Errorf("%s CLI cmds =\n%v\nwant embed\n%v", plat, got, want)
 		}
 	}
 }
@@ -2265,7 +2115,6 @@ func TestSeedLeavesEditedCLIFeature(t *testing.T) {
 	if again[0].AddCommands != "edited-add {{.Name}}" {
 		t.Errorf("feature overwritten: %q", again[0].AddCommands)
 	}
-	assertELINEEosPackUntouched(t, db)
 }
 
 func TestSeedLeavesEditedCLIContext(t *testing.T) {
@@ -2300,21 +2149,6 @@ func TestSeedLeavesEditedCLIContext(t *testing.T) {
 	}
 	if feats2[0].AddCommands != wantAdd || feats2[0].RemoveCommands != wantRemove {
 		t.Fatal("features reset after context edit")
-	}
-	assertELINEEosPackUntouched(t, db)
-}
-
-func assertELINEEosPackUntouched(t *testing.T, db *gorm.DB) {
-	t.Helper()
-	pack, err := LookupPlatformPack(db, "ELINE", "eos")
-	if err != nil || pack == nil {
-		t.Fatalf("pack: %v %#v", err, pack)
-	}
-	if pack.ApplyTemplate != templates.EOSEline {
-		t.Error("pack body refreshed after CLI edit")
-	}
-	if pack.SeedChecksum != packChecksum(templates.EOSEline) {
-		t.Error("pack checksum refreshed after CLI edit")
 	}
 }
 
@@ -2380,7 +2214,7 @@ func TestRenderGenericUsesCLIObjectWhenPresent(t *testing.T) {
 	}
 }
 
-func TestRenderGenericFallsBackToPackWhenNoCLI(t *testing.T) {
+func TestRenderGenericErrorsWhenELINECLIDeleted(t *testing.T) {
 	db := newTestDB(t)
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
@@ -2393,46 +2227,14 @@ func TestRenderGenericFallsBackToPackWhenNoCLI(t *testing.T) {
 		t.Fatalf("CLI still present: %v %#v", err, again)
 	}
 
-	cust := models.Customer{Name: "Acme AB"}
-	mustCreate(t, db, &cust)
-	pe1 := models.Device{Name: "pe-pack-fb", Platform: "eos", NetboxID: 901}
-	pe2 := models.Device{Name: "pe-pack-fb-b", Platform: "eos", NetboxID: 902}
-	mustCreate(t, db, &pe1)
-	mustCreate(t, db, &pe2)
-	ifa := models.Interface{DeviceID: pe1.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 911}
-	ifb := models.Interface{DeviceID: pe2.ID, Name: "Ethernet2", Type: "1000base-t", NetboxID: 921}
-	mustCreate(t, db, &ifa)
-	mustCreate(t, db, &ifb)
-	lo1 := models.Interface{DeviceID: pe1.ID, Name: "Loopback0", Type: "virtual", NetboxID: 912}
-	lo2 := models.Interface{DeviceID: pe2.ID, Name: "Loopback0", Type: "virtual", NetboxID: 922}
-	mustCreate(t, db, &lo1)
-	mustCreate(t, db, &lo2)
-	mustCreate(t, db, &models.Address{InterfaceID: lo1.ID, Address: "10.0.0.1/32"})
-	mustCreate(t, db, &models.Address{InterfaceID: lo2.ID, Address: "10.0.0.2/32"})
-	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00571", ServiceType: "ELINE", PseudowireID: 1000571}
+	dev := models.Device{Name: "pe-no-cli", Platform: "eos", NetboxID: 901}
+	mustCreate(t, db, &dev)
+	svc := models.Service{ServiceID: "CN00571", ServiceType: "ELINE", PseudowireID: 1000571}
 	mustCreate(t, db, &svc)
-	mustCreate(t, db, &models.ServiceEndpoint{
-		ServiceID: svc.ID, Role: "a", DeviceID: pe1.ID, InterfaceID: ifa.ID,
-		Fields: EncodeEndpointFields(100, 0, 0),
-	})
-	mustCreate(t, db, &models.ServiceEndpoint{
-		ServiceID: svc.ID, Role: "b", DeviceID: pe2.ID, InterfaceID: ifb.ID,
-		Fields: EncodeEndpointFields(200, 0, 0),
-	})
-
-	out, err := RenderService(db, svc.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var joined string
-	for _, src := range out {
-		if src.Error != "" {
-			t.Fatalf("pack fallback error: %s", src.Error)
-		}
-		joined += strings.Join(src.Commands, "\n") + "\n"
-	}
-	if !strings.Contains(joined, "neighbor 10.0.0.2") {
-		t.Errorf("missing pack neighbor in %s", joined)
+	out := renderGenericForDevice(db, &svc, &dev, nil)
+	want := MissingCLIObjectMessage("ELINE", "eos")
+	if len(out) != 1 || out[0].Error != want {
+		t.Fatalf("sources = %+v, want %q", out, want)
 	}
 }
 
@@ -2570,325 +2372,57 @@ func cliChild(t *testing.T, db *gorm.DB, parentID uint, name string) models.Conf
 	return s
 }
 
-func cliChildByPlatform(t *testing.T, db *gorm.DB, parentID uint, name, platform string) models.ConfigScope {
+type leftoverPackRow struct {
+	ID            uint `gorm:"primaryKey"`
+	ServiceTypeID uint
+	Platform      string
+}
+
+func (leftoverPackRow) TableName() string { return "platform_packs" }
+
+func createLeftoverPackTable(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	var rows []models.ConfigScope
-	if err := db.Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, parentID, name).Find(&rows).Error; err != nil {
-		t.Fatalf("list cli %s under %d: %v", name, parentID, err)
-	}
-	for i := range rows {
-		s := &rows[i]
-		if isTranslationCLI(s) {
-			continue
-		}
-		if NormalizePlatform(s.Platform) == NormalizePlatform(platform) {
-			return *s
-		}
-	}
-	t.Fatalf("baseline cli %s/%s under %d not found in %+v", name, platform, parentID, rows)
-	return models.ConfigScope{}
-}
-
-func TestSeedMigratesNullScopeTemplateToGlobalCLI(t *testing.T) {
-	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
+	if err := db.AutoMigrate(&leftoverPackRow{}); err != nil {
 		t.Fatal(err)
-	}
-	dev := models.Device{Name: "pe-mig", Platform: "eos"}
-	mustCreate(t, db, &dev)
-	tmpl := models.ConfigTemplate{
-		Name: "banner", Platform: "eos", PayloadKind: models.PayloadKindCLI,
-		Body: "banner motd {{.Name}}", Enabled: true,
-	}
-	mustCreate(t, db, &tmpl)
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-
-	cli := cliChild(t, db, root.ID, "banner")
-	if cli.Platform != "eos" || cli.PayloadKind != models.PayloadKindCLI || !cli.Enabled {
-		t.Errorf("cli = %+v", cli)
-	}
-	if cli.Payload.Context != nil {
-		t.Errorf("context = %+v, want nil", cli.Payload.Context)
-	}
-	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
-	var underCatalog int64
-	if err := db.Model(&models.ConfigScope{}).
-		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, catalog.ID, "banner").
-		Count(&underCatalog).Error; err != nil {
-		t.Fatal(err)
-	}
-	if underCatalog != 0 {
-		t.Fatal("null-scope template must not become a child of _catalog")
-	}
-	feats, err := ListCLIFeatures(db, cli.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(feats) != 1 || feats[0].Name != "body" || feats[0].AddCommands != tmpl.Body {
-		t.Errorf("features = %+v", feats)
-	}
-	var still models.ConfigTemplate
-	if err := db.First(&still, tmpl.ID).Error; err != nil {
-		t.Fatalf("template row deleted: %v", err)
-	}
-
-	out, err := RenderDevice(db, dev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawCLI, sawTmpl bool
-	for _, s := range out.Sources {
-		if s.Source == "cli:banner" {
-			sawCLI = true
-			if s.Error != "" {
-				t.Fatalf("render error: %s", s.Error)
-			}
-			if !reflect.DeepEqual(s.Commands, []string{"banner motd pe-mig"}) {
-				t.Errorf("commands = %v", s.Commands)
-			}
-		}
-		if s.Source == "template:banner" {
-			sawTmpl = true
-		}
-	}
-	if !sawCLI {
-		t.Fatalf("migrated CLI missing from RenderDevice: %+v", out.Sources)
-	}
-	if sawTmpl {
-		t.Fatal("template should be skipped when a CLI twin exists")
 	}
 }
 
-func TestSeedMigratesScopedTemplateToCLI(t *testing.T) {
+func TestDropPacksRefusesWithoutCLITwin(t *testing.T) {
 	db := newTestDB(t)
-	_, folder, deviceScope, _, _ := seedTree(t, db)
-	tmpl := models.ConfigTemplate{
-		Name: "qos", Platform: "eos", Body: "qos enable",
-		ScopeID: &folder.ID, Enabled: true,
-	}
-	mustCreate(t, db, &tmpl)
-	if err := Seed(db); err != nil {
+	createLeftoverPackTable(t, db)
+	var eline models.ServiceType
+	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
 		t.Fatal(err)
 	}
-
-	cli := cliChild(t, db, folder.ID, "qos")
-	if cli.Payload.Context != nil {
-		t.Errorf("context = %+v, want nil", cli.Payload.Context)
+	mustCreate(t, db, &leftoverPackRow{ServiceTypeID: eline.ID, Platform: "custom-nos"})
+	err := AssertPacksHaveCLITwins(db)
+	if err == nil {
+		t.Fatal("expected refuse when a pack has no CLI twin")
 	}
-	feats, err := ListCLIFeatures(db, cli.ID)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(err.Error(), "cannot drop platform_packs") || !strings.Contains(err.Error(), "custom-nos") {
+		t.Fatalf("err = %v", err)
 	}
-	if len(feats) != 1 || feats[0].Name != "body" || feats[0].AddCommands != "qos enable" {
-		t.Errorf("features = %+v", feats)
-	}
-	root, err := RootScope(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var underGlobal int64
-	if err := db.Model(&models.ConfigScope{}).
-		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "qos").
-		Count(&underGlobal).Error; err != nil {
-		t.Fatal(err)
-	}
-	if underGlobal != 0 {
-		t.Fatal("scoped template must not become a child of global")
-	}
-
-	out, err := RenderDevice(db, *deviceScope.DeviceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, s := range out.Sources {
-		if s.Source == "cli:qos" {
-			found = true
-			if !reflect.DeepEqual(s.Commands, []string{"qos enable"}) {
-				t.Errorf("commands = %v", s.Commands)
-			}
-		}
-		if s.Source == "template:qos" {
-			t.Fatal("template should be skipped when a CLI twin exists")
-		}
-	}
-	if !found {
-		t.Fatalf("scoped CLI missing from RenderDevice: %+v", out.Sources)
+	if !db.Migrator().HasTable("platform_packs") {
+		t.Fatal("assert must not drop platform_packs")
 	}
 }
 
-func TestSeedTemplateMigrationIdempotent(t *testing.T) {
+func TestDropPacksWhenTwinsExist(t *testing.T) {
 	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
+	createLeftoverPackTable(t, db)
+	obj, err := LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI: %v %#v", err, obj)
+	}
+	mustCreate(t, db, &leftoverPackRow{ServiceTypeID: *obj.ServiceTypeID, Platform: "eos"})
+	if err := AssertPacksHaveCLITwins(db); err != nil {
+		t.Fatalf("assert: %v", err)
+	}
+	if err := DropPackAndTemplateTables(db); err != nil {
 		t.Fatal(err)
 	}
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "eos", Body: "banner motd hello", Enabled: true,
-	})
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	cli := cliChild(t, db, root.ID, "banner")
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	var n int64
-	if err := db.Model(&models.ConfigScope{}).
-		Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "banner").
-		Count(&n).Error; err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("cli count = %d, want 1", n)
-	}
-	var feats int64
-	if err := db.Model(&models.ConfigCLIFeature{}).Where("scope_id = ?", cli.ID).Count(&feats).Error; err != nil {
-		t.Fatal(err)
-	}
-	if feats != 1 {
-		t.Fatalf("feature count = %d, want 1", feats)
-	}
-	var tmpls int64
-	if err := db.Model(&models.ConfigTemplate{}).Where("name = ?", "banner").Count(&tmpls).Error; err != nil {
-		t.Fatal(err)
-	}
-	if tmpls != 1 {
-		t.Fatalf("template count = %d, want 1 (not deleted)", tmpls)
-	}
-}
-
-func TestSeedMigratesSameNameTemplatesPerPlatform(t *testing.T) {
-	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var elan models.ServiceType
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	_, err = CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
-		Platform: "eos", ServiceTypeID: &elan.ID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srosCLI, err := CreateScope(db, &models.ConfigScope{
-		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI, Platform: "sros",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustCreate(t, db, &models.ConfigCLIFeature{
-		ScopeID: srosCLI.ID, Name: "body", AddCommands: "banner from-existing-sros",
-	})
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "eos", Body: "banner from-eos-template", Enabled: true,
-	})
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "sros", Body: "banner from-sros-template", Enabled: true,
-	})
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "ntp", Platform: "eos", Body: "ntp server 1.1.1.1", Enabled: true,
-	})
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "ntp", Platform: "sros", Body: "ntp server 9.9.9.9", Enabled: true,
-	})
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-
-	eosNTP := cliChildByPlatform(t, db, root.ID, "ntp", "eos")
-	srosNTP := cliChildByPlatform(t, db, root.ID, "ntp", "sros")
-	eosNTPFeats, err := ListCLIFeatures(db, eosNTP.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srosNTPFeats, err := ListCLIFeatures(db, srosNTP.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(eosNTPFeats) != 1 || eosNTPFeats[0].AddCommands != "ntp server 1.1.1.1" {
-		t.Errorf("eos ntp features = %+v", eosNTPFeats)
-	}
-	if len(srosNTPFeats) != 1 || srosNTPFeats[0].AddCommands != "ntp server 9.9.9.9" {
-		t.Errorf("sros ntp features = %+v", srosNTPFeats)
-	}
-
-	eosCLI := cliChildByPlatform(t, db, root.ID, "banner", "eos")
-	srosGot := cliChildByPlatform(t, db, root.ID, "banner", "sros")
-	if srosGot.ID != srosCLI.ID {
-		t.Fatalf("sros cli id = %d, want pre-existing %d", srosGot.ID, srosCLI.ID)
-	}
-	eosFeats, err := ListCLIFeatures(db, eosCLI.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(eosFeats) != 1 || eosFeats[0].AddCommands != "banner from-eos-template" {
-		t.Errorf("eos features = %+v", eosFeats)
-	}
-	srosFeats, err := ListCLIFeatures(db, srosGot.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(srosFeats) != 1 || srosFeats[0].AddCommands != "banner from-existing-sros" {
-		t.Errorf("sros features overwritten: %+v", srosFeats)
-	}
-
-	var kids []models.ConfigScope
-	if err := db.Where("kind = ? AND parent_id = ? AND name = ?", models.ConfigScopeKindCLI, root.ID, "banner").
-		Find(&kids).Error; err != nil {
-		t.Fatal(err)
-	}
-	var nEos, nSros, nTrans int
-	for i := range kids {
-		if isTranslationCLI(&kids[i]) {
-			nTrans++
-			continue
-		}
-		switch NormalizePlatform(kids[i].Platform) {
-		case "eos":
-			nEos++
-		case "sros":
-			nSros++
-		}
-	}
-	if nEos != 1 || nSros != 1 || nTrans != 1 {
-		t.Fatalf("banner children eos=%d sros=%d trans=%d (from %+v), want 1 each", nEos, nSros, nTrans, kids)
-	}
-}
-
-func TestSeedMigratesDisabledTemplate(t *testing.T) {
-	db := newTestDB(t)
-	root, err := RootScope(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dev := models.Device{Name: "pe-off", Platform: "eos"}
-	mustCreate(t, db, &dev)
-	mustCreate(t, db, &models.ConfigTemplate{
-		Name: "banner", Platform: "eos", Body: "banner motd dark", Enabled: false,
-	})
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	cli := cliChild(t, db, root.ID, "banner")
-	if cli.Enabled {
-		t.Fatal("disabled template must copy Enabled=false")
-	}
-	out, err := RenderDevice(db, dev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range out.Sources {
-		if s.Source == "cli:banner" || s.Source == "template:banner" {
-			t.Fatalf("disabled twin still emitted %s: %+v", s.Source, out.Sources)
-		}
+	if db.Migrator().HasTable("platform_packs") {
+		t.Fatal("platform_packs still present after drop")
 	}
 }
 

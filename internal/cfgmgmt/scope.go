@@ -1507,15 +1507,3 @@ func Matrix(db *gorm.DB, scopeID uint, varName string) ([]MatrixRow, error) {
 	})
 	return rows, nil
 }
-
-func ancestorIDs(db *gorm.DB, s *models.ConfigScope) (map[uint]bool, error) {
-	chain, err := WalkParents(db, s)
-	if err != nil {
-		return nil, err
-	}
-	ids := make(map[uint]bool, len(chain))
-	for _, n := range chain {
-		ids[n.ID] = true
-	}
-	return ids, nil
-}

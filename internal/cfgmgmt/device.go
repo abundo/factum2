@@ -107,8 +107,9 @@ func IsSROS(platform string) bool {
 	return p == "sros" || p == "sros-md"
 }
 
-// GenericRenderData is the template context for platform packs. ELINE packs
-// use the extra Peer/Remote/SDPID/Stale fields; other types leave them zero.
+// GenericRenderData is the template context for service-translation CLI
+// objects. ELINE uses the extra Peer/Remote/SDPID/Stale fields; other types
+// leave them zero.
 type GenericRenderData struct {
 	Name               string
 	Description        string
@@ -322,10 +323,10 @@ func loopbackIfaceName(platform string) string {
 	return "Loopback0"
 }
 
-// RenderedSource is one template or service's rendered CLI (or other payload).
+// RenderedSource is one CLI object or service's rendered CLI (or other payload).
 type RenderedSource struct {
 	Source      string   `json:"source"`
-	Kind        string   `json:"kind"` // cli | template | service
+	Kind        string   `json:"kind"` // cli | service
 	Platform    string   `json:"platform"`
 	PayloadKind string   `json:"payload_kind"`
 	Commands    []string `json:"commands"`
@@ -337,32 +338,6 @@ type DeviceRender struct {
 	Name     string           `json:"name"`
 	Platform string           `json:"platform"`
 	Sources  []RenderedSource `json:"sources"`
-}
-
-func platformMatch(tmplPlatform, devicePlatform string) bool {
-	if strings.TrimSpace(tmplPlatform) == "" {
-		return true
-	}
-	return NormalizePlatform(tmplPlatform) == NormalizePlatform(devicePlatform)
-}
-
-func deviceScopeChain(db *gorm.DB, deviceID uint) (map[uint]bool, error) {
-	s, err := scopeByDeviceID(db, deviceID)
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		root, err := RootScope(db)
-		if err != nil {
-			return nil, err
-		}
-		ids, err := ancestorIDs(db, root)
-		if err != nil {
-			return nil, err
-		}
-		return ids, nil
-	}
-	return ancestorIDs(db, s)
 }
 
 func loopbackAddr(db *gorm.DB, device *models.Device) string {
@@ -403,32 +378,16 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 	if err != nil {
 		return lookupErr(err.Error())
 	}
-	var pack *models.PlatformPack
 	if cli == nil {
-		pack, err = LookupPlatformPack(db, svc.ServiceType, device.Platform)
-		if err != nil {
-			return lookupErr(err.Error())
-		}
-	}
-	if cli == nil && pack == nil {
 		return lookupErr(MissingCLIObjectMessage(svc.ServiceType, device.Platform))
 	}
 	platform := NormalizePlatform(device.Platform)
+	if cli.Platform != "" {
+		platform = cli.Platform
+	}
 	payloadKind := models.PayloadKindCLI
-	if cli != nil {
-		if cli.Platform != "" {
-			platform = cli.Platform
-		}
-		if cli.PayloadKind != "" {
-			payloadKind = cli.PayloadKind
-		}
-	} else {
-		if pack.Platform != "" {
-			platform = pack.Platform
-		}
-		if pack.PayloadKind != "" {
-			payloadKind = pack.PayloadKind
-		}
+	if cli.PayloadKind != "" {
+		payloadKind = cli.PayloadKind
 	}
 	var out []RenderedSource
 	cleanupDone := false
@@ -444,25 +403,9 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 			out = append(out, RenderedSource{Source: "service:" + svc.ServiceID, Kind: "service", Error: err.Error()})
 			continue
 		}
-		var cmds []string
-		if cli != nil {
-			cmds, err = renderCLIObject(db, cli, data, !cleanupDone)
-			if err == nil {
-				cleanupDone = true
-			}
-		} else {
-			body, bodyErr := RenderPackApplyBody(db, pack, data)
-			err = bodyErr
-			cmds = body
-			if err == nil && !cleanupDone {
-				cl, clErr := RenderPackCleanupIfPresent(db, pack, data)
-				if clErr != nil {
-					err = clErr
-				} else {
-					cmds = append(cl, body...)
-					cleanupDone = true
-				}
-			}
+		cmds, err := renderCLIObject(db, cli, data, !cleanupDone)
+		if err == nil {
+			cleanupDone = true
 		}
 		src := RenderedSource{
 			Source: "service:" + svc.ServiceID + ":" + ep.Role + ":" + strconv.FormatUint(uint64(ep.ID), 10),
@@ -476,7 +419,7 @@ func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Dev
 	return out
 }
 
-// RenderDevice returns baseline templates + terminating services for a device.
+// RenderDevice returns baseline CLI + terminating services for a device.
 // It does not talk to the device.
 func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 	device, err := loadDevice(db, deviceID)
@@ -485,10 +428,6 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 	}
 	result := &DeviceRender{DeviceID: device.ID, Name: device.Name, Platform: device.Platform}
 
-	scopeIDs, err := deviceScopeChain(db, deviceID)
-	if err != nil {
-		return nil, err
-	}
 	vars, err := ResolveMapForDevice(db, device.ID)
 	if err != nil {
 		return nil, err
@@ -498,44 +437,6 @@ func RenderDevice(db *gorm.DB, deviceID uint) (*DeviceRender, error) {
 		return nil, err
 	}
 	result.Sources = append(result.Sources, cliSources...)
-	var tmpls []models.ConfigTemplate
-	if err := db.Where("enabled = ?", true).Find(&tmpls).Error; err != nil {
-		return nil, err
-	}
-	for i := range tmpls {
-		t := &tmpls[i]
-		if !platformMatch(t.Platform, device.Platform) {
-			continue
-		}
-		if t.ScopeID != nil && !scopeIDs[*t.ScopeID] {
-			continue
-		}
-		twin, err := hasCLITwin(db, t.Name, t.ScopeID, t.Platform, device.Platform)
-		if err != nil {
-			return nil, err
-		}
-		if twin {
-			continue
-		}
-		kind := t.PayloadKind
-		if kind == "" {
-			kind = models.PayloadKindCLI
-		}
-		data := map[string]any{
-			"Device": DCIMFromDevice(device),
-			"Vars":   vars,
-			"Name":   device.Name,
-		}
-		cmds, err := Render(db, t.Body, "", data)
-		src := RenderedSource{
-			Source: "template:" + t.Name, Kind: "template",
-			Platform: t.Platform, PayloadKind: kind, Commands: cmds,
-		}
-		if err != nil {
-			src.Error = err.Error()
-		}
-		result.Sources = append(result.Sources, src)
-	}
 
 	var eps []models.ServiceEndpoint
 	if err := db.Where("device_id = ?", deviceID).Find(&eps).Error; err != nil {

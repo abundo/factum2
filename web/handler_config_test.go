@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/models"
+	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
 )
 
@@ -1111,5 +1113,43 @@ func TestConfigCLIFeatureCRUD(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("feature on folder status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigLegacyPackAndTemplateRoutesGone(t *testing.T) {
+	ctrl := &Controller{}
+	e := echo.New()
+	e.GET("/api/config/platform-packs", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.POST("/api/config/platform-packs", ctrl.ApiConfigLegacyGone)
+	e.PUT("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.DELETE("/api/config/platform-packs/:id", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/templates", ctrl.ApiConfigLegacyGone)
+	e.GET("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+	e.POST("/api/config/templates", ctrl.ApiConfigLegacyGone)
+	e.PUT("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+	e.DELETE("/api/config/templates/:id", ctrl.ApiConfigLegacyGone)
+
+	paths := []struct {
+		method, path string
+	}{
+		{http.MethodGet, "/api/config/platform-packs"},
+		{http.MethodGet, "/api/config/platform-packs/1"},
+		{http.MethodPost, "/api/config/platform-packs"},
+		{http.MethodPut, "/api/config/platform-packs/1"},
+		{http.MethodDelete, "/api/config/platform-packs/1"},
+		{http.MethodGet, "/api/config/templates"},
+		{http.MethodGet, "/api/config/templates/1"},
+		{http.MethodPost, "/api/config/templates"},
+		{http.MethodPut, "/api/config/templates/1"},
+		{http.MethodDelete, "/api/config/templates/1"},
+	}
+	for _, tc := range paths {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusGone {
+			t.Errorf("%s %s status = %d, want 410, body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
 	}
 }

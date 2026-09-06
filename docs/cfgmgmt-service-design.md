@@ -585,8 +585,7 @@ applied.
 | PUT | `/api/service/:id/type` | Set type on an instance (incl. Lime) |
 | GET/PUT | `/api/service/:id/endpoints` | Endpoints (including ELINE) |
 | POST | `/api/service/:id/push` | Apply CLI (service translation only) |
-| GET/POST | `/api/config/platform-packs` | Legacy pack table (still writable; GUI tab removed) |
-| GET/POST | `/api/config/templates` | Legacy baseline templates (still writable; GUI tab removed) |
+| * | `/api/config/platform-packs`, `/api/config/templates` | Gone (410); use CLI objects |
 
 Write routes need `RequireWrite`. Config seed runs from
 `util.MigrateDatabase` → `cfgmgmt.Seed`.
