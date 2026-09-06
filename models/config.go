@@ -5,13 +5,20 @@ import (
 )
 
 const (
-	ConfigScopeKindFolder    = "folder"
-	ConfigScopeKindSite      = "site"
-	ConfigScopeKindLocation  = "location"
-	ConfigScopeKindDevice    = "device"
-	ConfigScopeKindInterface = "interface"
+	ConfigScopeKindFolder          = "folder"
+	ConfigScopeKindSite            = "site"
+	ConfigScopeKindLocation        = "location"
+	ConfigScopeKindDevice          = "device"
+	ConfigScopeKindInterface       = "interface"
+	ConfigScopeKindParameter       = "parameter"
+	ConfigScopeKindCLI             = "cli"
+	ConfigScopeKindService         = "service"
+	ConfigScopeKindServiceEndpoint = "service_endpoint"
 
-	ConfigRootName = "global"
+	ConfigRootName           = "global"
+	ConfigCatalogName        = "_catalog"
+	ConfigCatalogCLIName     = "cli"
+	ConfigServicesFolderName = "_services"
 
 	VarTypeString       = "string"
 	VarTypeInt          = "int"
@@ -49,26 +56,79 @@ const (
 // ConfigScope is one node in an arbitrary configuration hierarchy.
 type ConfigScope struct {
 	FactumModel
-	ParentID    *uint  `json:"parent_id"`
-	Name        string `json:"name" gorm:"not null;type:varchar(255)"`
-	Kind        string `json:"kind" gorm:"not null;type:varchar(32)"`
-	SiteID      *uint  `json:"site_id" gorm:"index"`
-	DeviceID    *uint  `json:"device_id" gorm:"index"`
-	InterfaceID *uint  `json:"interface_id" gorm:"index"`
-	SortOrder   int    `json:"sort_order"`
+	ParentID      *uint              `json:"parent_id"`
+	Name          string             `json:"name" gorm:"not null;type:varchar(255)"`
+	Kind          string             `json:"kind" gorm:"not null;type:varchar(32)"`
+	SiteID        *uint              `json:"site_id" gorm:"index"`
+	DeviceID      *uint              `json:"device_id" gorm:"index"`
+	InterfaceID   *uint              `json:"interface_id" gorm:"index"`
+	ServiceID     *uint              `json:"service_id" gorm:"index"`
+	ServiceTypeID *uint              `json:"service_type_id" gorm:"index"`
+	Platform      string             `json:"platform" gorm:"type:varchar(64)"`
+	PayloadKind   string             `json:"payload_kind" gorm:"type:varchar(32)"`
+	Enabled       bool               `json:"enabled" gorm:"not null;default:true"`
+	SortOrder     int                `json:"sort_order"`
+	Payload       ConfigScopePayload `json:"payload" gorm:"serializer:json"`
+	SeedChecksum  string             `json:"-" gorm:"type:varchar(64)"`
 }
 
 func (ConfigScope) TableName() string { return "config_scopes" }
 
 type ConfigScopeDTO struct {
-	ID          uint   `json:"id"`
-	ParentID    *uint  `json:"parent_id"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	SiteID      *uint  `json:"site_id"`
-	DeviceID    *uint  `json:"device_id"`
-	InterfaceID *uint  `json:"interface_id"`
-	SortOrder   int    `json:"sort_order"`
+	ID            uint               `json:"id"`
+	ParentID      *uint              `json:"parent_id"`
+	Name          string             `json:"name"`
+	Kind          string             `json:"kind"`
+	SiteID        *uint              `json:"site_id"`
+	DeviceID      *uint              `json:"device_id"`
+	InterfaceID   *uint              `json:"interface_id"`
+	ServiceID     *uint              `json:"service_id"`
+	ServiceTypeID *uint              `json:"service_type_id"`
+	Platform      string             `json:"platform"`
+	PayloadKind   string             `json:"payload_kind"`
+	Enabled       bool               `json:"enabled"`
+	SortOrder     int                `json:"sort_order"`
+	Payload       ConfigScopePayload `json:"payload"`
+}
+
+// ConfigScopePayload is kind-specific data stored as JSON on ConfigScope.
+type ConfigScopePayload struct {
+	Description string      `json:"description,omitempty"`
+	Platforms   []string    `json:"platforms,omitempty"`
+	Context     *CLIContext `json:"context,omitempty"`
+}
+
+// CLIContext is the optional CLI mode wrapping for a kind=cli object.
+type CLIContext struct {
+	Pattern  string            `json:"pattern"`
+	Enter    string            `json:"enter"`
+	Exit     string            `json:"exit"`
+	Captures map[string]string `json:"captures,omitempty"`
+}
+
+// ConfigCLIFeature is one ordered command-blob set on a kind=cli scope.
+type ConfigCLIFeature struct {
+	FactumModel
+	ScopeID        uint   `json:"scope_id" gorm:"uniqueIndex:idx_cfg_feat_scope_name;not null"`
+	Name           string `json:"name" gorm:"uniqueIndex:idx_cfg_feat_scope_name;not null;type:varchar(128)"`
+	SortOrder      int    `json:"sort_order"`
+	AddCommands    string `json:"add_commands" gorm:"type:text"`
+	UpdateCommands string `json:"update_commands" gorm:"type:text"`
+	RemoveCommands string `json:"remove_commands" gorm:"type:text"`
+	RemoveAtRoot   bool   `json:"remove_at_root"`
+}
+
+func (ConfigCLIFeature) TableName() string { return "config_cli_features" }
+
+type ConfigCLIFeatureDTO struct {
+	ID             uint   `json:"id"`
+	ScopeID        uint   `json:"scope_id"`
+	Name           string `json:"name"`
+	SortOrder      int    `json:"sort_order"`
+	AddCommands    string `json:"add_commands"`
+	UpdateCommands string `json:"update_commands"`
+	RemoveCommands string `json:"remove_commands"`
+	RemoveAtRoot   bool   `json:"remove_at_root"`
 }
 
 // ConfigVariableDef is a typed variable that can be assigned on any scope.

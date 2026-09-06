@@ -129,6 +129,7 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.JobSchedule{},
 
 		&models.ConfigScope{},
+		&models.ConfigCLIFeature{},
 		&models.ConfigVariableDef{},
 		&models.ConfigAssignment{},
 		&models.ServiceType{},

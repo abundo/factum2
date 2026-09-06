@@ -15,11 +15,15 @@ func packChecksum(body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Seed creates the global root scope, built-in service types, and ELINE
-// platform packs when they are missing. Operator-edited packs are left
-// alone; checksum-matching rows are refreshed from the embed files.
+// Seed creates the global root scope, reserved _catalog/_services folders,
+// built-in service types, and ELINE platform packs when they are missing.
+// Operator-edited packs are left alone; checksum-matching rows are
+// refreshed from the embed files.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
+		return err
+	}
+	if err := seedReservedFolders(db); err != nil {
 		return err
 	}
 	eline, err := seedServiceTypes(db)
@@ -39,6 +43,8 @@ func ensureScopeUniqueIndexes(db *gorm.DB) error {
 	stmts := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_device ON config_scopes (device_id) WHERE kind = 'device' AND device_id IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_interface ON config_scopes (interface_id) WHERE kind = 'interface' AND interface_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_service ON config_scopes (service_id) WHERE kind = 'service' AND service_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_cli_type_plat ON config_scopes (service_type_id, platform) WHERE kind = 'cli' AND service_type_id IS NOT NULL`,
 	}
 	for _, s := range stmts {
 		if err := db.Exec(s).Error; err != nil {
@@ -61,6 +67,42 @@ func seedRootScope(db *gorm.DB) error {
 		Kind: models.ConfigScopeKindFolder,
 	}
 	return db.Create(&root).Error
+}
+
+func seedReservedFolders(db *gorm.DB) error {
+	root, err := RootScope(db)
+	if err != nil {
+		return err
+	}
+	catalog, err := ensureChildFolder(db, root.ID, models.ConfigCatalogName)
+	if err != nil {
+		return err
+	}
+	if _, err := ensureChildFolder(db, catalog.ID, models.ConfigCatalogCLIName); err != nil {
+		return err
+	}
+	_, err = ensureChildFolder(db, root.ID, models.ConfigServicesFolderName)
+	return err
+}
+
+func ensureChildFolder(db *gorm.DB, parentID uint, name string) (*models.ConfigScope, error) {
+	var s models.ConfigScope
+	err := db.Where("parent_id = ? AND name = ?", parentID, name).First(&s).Error
+	if err == nil {
+		return &s, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	s = models.ConfigScope{
+		ParentID: &parentID,
+		Name:     name,
+		Kind:     models.ConfigScopeKindFolder,
+	}
+	if err := db.Create(&s).Error; err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 func schemaHas(fields []models.FieldSchema, name string) bool {
