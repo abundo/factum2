@@ -81,7 +81,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 14
+INSTALLER_VERSION = 15
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -155,12 +155,35 @@ def strip_v(tag: str) -> str:
     return tag[1:] if tag.startswith("v") or tag.startswith("V") else tag
 
 
+# git describe --tags --always --dirty, as stamped by the Makefile ldflags.
+_STAMPED_VERSION_RE = re.compile(
+    r"v?\d+\.\d+\.\d+(?:-\d+-g[0-9a-f]+)?(?:-dirty)?"
+)
+
+
 def parse_version(tag: str) -> tuple[int, int, int] | None:
     """Numeric X.Y.Z prefix. git-describe suffixes and 'dev' return None-able extras via is_dev_build."""
     m = re.match(r"v?(\d+)\.(\d+)\.(\d+)", tag.strip())
     if not m:
         return None
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def extract_stamped_version(text: str) -> str | None:
+    """Parse buildinfo.Version from cobra --version output or a VERSION file."""
+    if not text or not text.strip():
+        return None
+    m = _STAMPED_VERSION_RE.search(text)
+    if m:
+        return m.group(0)
+    m = re.search(r"(?i)\bversion\s+(\S+)", text)
+    if m:
+        token = m.group(1).strip()
+        return token or None
+    line = text.strip().splitlines()[0].strip()
+    if line and " " not in line:
+        return line
+    return None
 
 
 def is_dev_build(tag: str) -> bool:
@@ -498,9 +521,9 @@ def _version_from_binary(binary: Path) -> str | None:
         text = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0 and "unknown flag" in text:
             continue
-        m = re.search(r"v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?", text)
-        if m:
-            return m.group(0)
+        ver = extract_stamped_version(text)
+        if ver:
+            return ver
     # Makefile -ldflags injects `git describe` (v1.0.0-3-gdeadbee[-dirty]);
     # that string is unique enough to grep out of a stripped Go binary.
     try:
@@ -912,7 +935,7 @@ exit 1
             "BatchMode=yes",
             "-o",
             "ConnectTimeout=10",
-            f"{ssh_user}@{target_host}",
+            ssh_user_host(ssh_user, target_host),
             "bash",
             "-s",
         ],
@@ -977,6 +1000,22 @@ def remote_arch(host: str, ssh_user: str) -> str:
     return uname_to_goarch(proc.stdout.strip())
 
 
+def ssh_host(host: str) -> str:
+    """Bracket IPv6 literals so user@host and user@host:path stay unambiguous."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def ssh_user_host(user: str, host: str) -> str:
+    return f"{user}@{ssh_host(host)}"
+
+
+def scp_url(user: str, host: str, path: Path | str) -> str:
+    """user@host:path for scp/rsync. IPv6 hosts are bracketed."""
+    return f"{ssh_user_host(user, host)}:{path}"
+
+
 def ssh_cmd(user: str, host: str, remote: str) -> list[str]:
     return [
         "ssh",
@@ -984,9 +1023,63 @@ def ssh_cmd(user: str, host: str, remote: str) -> list[str]:
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
-        f"{user}@{host}",
+        ssh_user_host(user, host),
         remote,
     ]
+
+
+def refuse_install_without_workers(
+    worker_err: str | None, *, primary_only: bool
+) -> None:
+    """Hub handshake requires matching versions; do not skip remotes on lookup failure."""
+    if primary_only or worker_err is None:
+        return
+    raise InstallError(
+        "worker_nodes lookup failed; refusing to install a new version "
+        f"without updating remotes ({worker_err}). "
+        "Pass --primary-only to install only this host."
+    )
+
+
+def verify_host_version(
+    expected: str,
+    *,
+    target_host: str,
+    ssh_user: str,
+    install_dir: Path,
+    binary_name: str = "factum2-worker",
+) -> None:
+    """Require the installed binary's --version to match the build we just pushed.
+
+    The hub handshake compares buildinfo.Version (and Commit, stamped in the
+    same build). A stale remote factum2-worker is rejected with HTTP 409.
+    """
+    expected = expected.strip()
+    binary = install_dir / binary_name
+    where = "this host" if is_local_host(target_host) else target_host
+    if is_local_host(target_host):
+        got = _version_from_binary(binary)
+    else:
+        quoted = _shell_quote(str(binary))
+        proc = subprocess.run(
+            ssh_cmd(ssh_user, target_host, f"{quoted} --version"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        text = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 and not text.strip():
+            raise InstallError(
+                f"{where}: {binary_name} --version failed ({proc.returncode})"
+            )
+        got = extract_stamped_version(text)
+    if got != expected:
+        raise InstallError(
+            f"{where}: {binary_name} version {got or 'unknown'!r} != {expected!r} "
+            "(hub handshake requires matching versions)"
+        )
+    log(f"    verified {where}: {binary_name} {got}")
 
 
 # ---------------------------------------------------------------------------
@@ -1249,7 +1342,7 @@ def write_host_file(
                 "-o",
                 "ConnectTimeout=10",
                 tmp_name,
-                f"{ssh_user}@{target_host}:{dest}",
+                scp_url(ssh_user, target_host, dest),
             ],
             dry_run=False,
         )
@@ -1694,7 +1787,7 @@ def write_version_file(
                     "-o",
                     "ConnectTimeout=10",
                     tmp_path,
-                    f"{ssh_user}@{target_host}:{dest}",
+                    scp_url(ssh_user, target_host, dest),
                 ],
                 dry_run=False,
             )
@@ -1841,7 +1934,7 @@ def copy_unit_file(
             "-o",
             "ConnectTimeout=10",
             str(src),
-            f"{ssh_user}@{target_host}:{dest}",
+            scp_url(ssh_user, target_host, dest),
         ],
         dry_run=dry_run,
     )
@@ -2014,7 +2107,7 @@ def install_primary(
                     "ssh -o BatchMode=yes -o ConnectTimeout=10",
                     "--",
                     str(staging) + "/",
-                    f"{ssh_user}@{target_host}:{install_dir}/",
+                    scp_url(ssh_user, target_host, str(install_dir) + "/"),
                 ],
                 dry_run=False,
             )
@@ -2072,12 +2165,20 @@ def install_worker(
     install_dir: Path,
     dry_run: bool,
     *,
+    tag: str,
     assume_yes: bool = False,
     hub_tls: HubTLSMaterial | None = None,
 ) -> None:
     binaries = find_binaries(binaries_dir)
     log(f"==> Updating remote worker {host} ({len(binaries)} binaries)")
     run(ssh_cmd(ssh_user, host, f"mkdir -p {install_dir}"), dry_run=dry_run)
+    # Stop first so rsync is not replacing a mapped executable, and so the
+    # subsequent restart cannot keep the previous buildinfo stamp in memory.
+    log(f"    stopping {WORKER_UNIT} on {host}")
+    run(
+        ssh_cmd(ssh_user, host, f"systemctl stop {WORKER_UNIT} || true"),
+        dry_run=dry_run,
+    )
 
     staging = _stage_binaries(binaries_dir) if not dry_run else None
     try:
@@ -2091,13 +2192,17 @@ def install_worker(
                 "ssh -o BatchMode=yes -o ConnectTimeout=10",
                 "--",
                 src,
-                f"{ssh_user}@{host}:{install_dir}/",
+                scp_url(ssh_user, host, str(install_dir) + "/"),
             ],
             dry_run=dry_run,
         )
     finally:
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
+
+    write_version_file(
+        install_dir, tag, dry_run=dry_run, target_host=host, ssh_user=ssh_user
+    )
 
     ensure_factum_group(target_host=host, ssh_user=ssh_user, dry_run=dry_run)
     if hub_tls is not None:
@@ -2129,7 +2234,11 @@ def install_worker(
                     "-o",
                     "BatchMode=yes",
                     str(tpl),
-                    f"{ssh_user}@{host}:/etc/factum2/icinga-notification-email-example.tpl",
+                    scp_url(
+                        ssh_user,
+                        host,
+                        "/etc/factum2/icinga-notification-email-example.tpl",
+                    ),
                 ],
                 dry_run=dry_run,
             )
@@ -2140,6 +2249,16 @@ def install_worker(
         target_host=host,
         ssh_user=ssh_user,
         dry_run=dry_run,
+    )
+    if dry_run:
+        log(f"    [dry-run] would verify {host} factum2-worker version {tag}")
+        return
+    verify_host_version(
+        tag,
+        target_host=host,
+        ssh_user=ssh_user,
+        install_dir=install_dir,
+        binary_name="factum2-worker",
     )
 
 
@@ -2926,7 +3045,7 @@ def fetch_config(
             "-o",
             "BatchMode=yes",
             "-q",
-            f"{ssh_user}@{target_host}:{config_path}",
+            scp_url(ssh_user, target_host, config_path),
             str(tmp),
         ],
         dry_run=False,
@@ -3069,8 +3188,11 @@ def main_source(args: argparse.Namespace) -> int:
             log("==> Enabled remote workers: " + ", ".join(workers))
         elif args.primary_only:
             log("==> Skipping remote workers (--primary-only)")
+            log("    warning: hub handshake requires matching versions on remotes")
         elif worker_err:
-            log("==> Continuing without remote workers")
+            refuse_install_without_workers(
+                worker_err, primary_only=args.primary_only
+            )
         else:
             log("==> Enabled remote workers: (none)")
 
@@ -3088,6 +3210,16 @@ def main_source(args: argparse.Namespace) -> int:
             ]
             if missing:
                 raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
+            # Hub handshake compares buildinfo stamped into the binary, which
+            # can differ from git describe when --skip-build reuses build/.
+            stamped = _version_from_binary(build_dir / "factum2-worker")
+            if stamped:
+                if stamped != version:
+                    log(
+                        f"    binary stamp {stamped} "
+                        f"(git describe was {version}); using the binary"
+                    )
+                version = stamped
 
         if is_local_host(target_host):
             ensure_sudo(args.dry_run)
@@ -3144,6 +3276,7 @@ def main_source(args: argparse.Namespace) -> int:
                     examples_dir,
                     install_dir,
                     dry_run=False,
+                    tag=version,
                     assume_yes=args.yes,
                     hub_tls=hub_tls,
                 )
@@ -3277,8 +3410,9 @@ def main_release(args: argparse.Namespace) -> int:
         log("==> Enabled remote workers: " + ", ".join(workers))
     elif args.primary_only:
         log("==> Skipping remote workers (--primary-only)")
+        log("    warning: hub handshake requires matching versions on remotes")
     elif worker_err:
-        log("==> Continuing without remote workers")
+        refuse_install_without_workers(worker_err, primary_only=args.primary_only)
 
     ensure_sudo(args.dry_run)
 
@@ -3377,6 +3511,7 @@ def main_release(args: argparse.Namespace) -> int:
                     roots[arch] / "examples",
                     install_dir,
                     dry_run=False,
+                    tag=selected.tag,
                     assume_yes=args.yes,
                     hub_tls=hub_tls,
                 )

@@ -114,7 +114,7 @@ class ReleaseInstallerLoadTests(unittest.TestCase):
 class InstallerVersionTests(unittest.TestCase):
     def test_current_file_parses(self) -> None:
         text = Path("install.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(install.installer_version_of(text), 11)
+        self.assertGreaterEqual(install.installer_version_of(text), 15)
         self.assertTrue(install.looks_like_installer(text))
 
 
@@ -153,6 +153,113 @@ class WorkerHostsTests(unittest.TestCase):
             install.worker_hosts(["[2001:db8::10]:8443"]),
             ["2001:db8::10"],
         )
+
+
+class ExtractStampedVersionTests(unittest.TestCase):
+    def test_cobra_git_describe(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version(
+                "factum2-worker version v1.2.3-4-gabcdef"
+            ),
+            "v1.2.3-4-gabcdef",
+        )
+
+    def test_cobra_dirty(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version(
+                "factum2-worker version v1.2.3-4-gabcdef-dirty\n"
+            ),
+            "v1.2.3-4-gabcdef-dirty",
+        )
+
+    def test_clean_tag(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version("factum2-web version v1.0.0"),
+            "v1.0.0",
+        )
+
+    def test_version_file_line(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version("v1.0.0-3-gdeadbee\n"),
+            "v1.0.0-3-gdeadbee",
+        )
+
+    def test_dev_token(self) -> None:
+        self.assertEqual(install.extract_stamped_version("dev\n"), "dev")
+
+    def test_empty(self) -> None:
+        self.assertIsNone(install.extract_stamped_version(""))
+        self.assertIsNone(install.extract_stamped_version("   "))
+
+
+class ScpUrlTests(unittest.TestCase):
+    def test_hostname(self) -> None:
+        self.assertEqual(
+            install.scp_url("root", "dns1.example.com", "/opt/factum2/"),
+            "root@dns1.example.com:/opt/factum2/",
+        )
+
+    def test_ipv6_is_bracketed(self) -> None:
+        self.assertEqual(
+            install.scp_url("root", "2001:db8::10", "/opt/factum2/VERSION"),
+            "root@[2001:db8::10]:/opt/factum2/VERSION",
+        )
+
+    def test_already_bracketed(self) -> None:
+        self.assertEqual(
+            install.scp_url("root", "[2001:db8::10]", "/x"),
+            "root@[2001:db8::10]:/x",
+        )
+
+
+class RefuseInstallWithoutWorkersTests(unittest.TestCase):
+    def test_ok_when_lookup_succeeded(self) -> None:
+        install.refuse_install_without_workers(None, primary_only=False)
+
+    def test_ok_when_primary_only(self) -> None:
+        install.refuse_install_without_workers("db down", primary_only=True)
+
+    def test_raises_on_lookup_failure(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.refuse_install_without_workers(
+                "worker_nodes lookup failed: connection refused",
+                primary_only=False,
+            )
+        self.assertIn("--primary-only", str(ctx.exception))
+        self.assertIn("connection refused", str(ctx.exception))
+
+
+class VerifyHostVersionTests(unittest.TestCase):
+    def test_remote_match(self) -> None:
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="factum2-worker version v1.2.3-4-gabcdef\n", stderr=""
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install.verify_host_version(
+                "v1.2.3-4-gabcdef",
+                target_host="icinga.example.com",
+                ssh_user="root",
+                install_dir=Path("/opt/factum2"),
+            )
+
+    def test_remote_mismatch(self) -> None:
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="factum2-worker version v0.9.0\n", stderr=""
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            with self.assertRaises(install.InstallError) as ctx:
+                install.verify_host_version(
+                    "v1.2.3-4-gabcdef",
+                    target_host="icinga.example.com",
+                    ssh_user="root",
+                    install_dir=Path("/opt/factum2"),
+                )
+        self.assertIn("v0.9.0", str(ctx.exception))
+        self.assertIn("v1.2.3-4-gabcdef", str(ctx.exception))
 
 
 class SanEntryTests(unittest.TestCase):
