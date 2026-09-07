@@ -76,6 +76,43 @@ func TestCheckHubVersionCommitMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckHubVersionSkipsWhenLocalDev(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "dev", "none"
+
+	if err := checkHubVersion("v1.2.3", "abc123"); err != nil {
+		t.Fatalf("unstamped local should skip: %v", err)
+	}
+}
+
+func TestCheckHubVersionSkipsWhenPeerDev(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.2.3", "abc123"
+
+	if err := checkHubVersion("dev", "none"); err != nil {
+		t.Fatalf("unstamped peer should skip: %v", err)
+	}
+}
+
+func TestCheckHubVersionGitDescribeStillChecked(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.0.0-3-gdeadbee", "deadbee"
+
+	err := checkHubVersion("v1.0.0-4-gabcdef", "abcdef")
+	if err == nil {
+		t.Fatal("want mismatch for different git-describe stamps")
+	}
+}
+
 func TestHandleHubConnRejectsVersionMismatch(t *testing.T) {
 	origV, origC := buildinfo.Version, buildinfo.Commit
 	t.Cleanup(func() {
@@ -104,6 +141,12 @@ func TestHandleHubConnRejectsVersionMismatch(t *testing.T) {
 }
 
 func TestHandleHubConnRejectsMissingVersion(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.0.0", "aaa"
+
 	w := New(&util.ConfigWorker{
 		Token: "secret",
 		Commands: map[string]util.ConfigWorkerCommand{
@@ -116,6 +159,30 @@ func TestHandleHubConnRejectsMissingVersion(t *testing.T) {
 	w.handleHubConn(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleHubConnAllowsDevPrimary(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.0.0", "aaa"
+
+	w := New(&util.ConfigWorker{
+		Token: "secret",
+		Commands: map[string]util.ConfigWorkerCommand{
+			"dns": {Cmd: "/bin/true"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, HubPath, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set(hubVersionHeader, "dev")
+	req.Header.Set(hubCommitHeader, "none")
+	rec := httptest.NewRecorder()
+	w.handleHubConn(rec, req)
+	if rec.Code == http.StatusConflict {
+		t.Fatalf("unstamped primary rejected: %s", rec.Body.String())
 	}
 }
 

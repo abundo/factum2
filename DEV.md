@@ -472,10 +472,11 @@ web/frontend/src/
   Echo with `SetAPIHandler` **before** `RemoteManager.Run`. Hub is WSS
   only: `worker.tls_cert`/`worker.tls_key` on the agent, `wss://` dial from
   the primary, verify against `WorkerNode.TLSCA` or the system pool
-  (`TLSSkipVerify` is lab-only). No `ws://` fallback. Primary and worker
-  must run the same stamped `buildinfo.Version`/`Commit`; a mismatch is
+  (`TLSSkipVerify` is lab-only). No `ws://` fallback. Stamped primary and
+  worker must run the same `buildinfo.Version`/`Commit`; a mismatch is
   rejected at handshake (HTTP 409 from the agent, or the primary refusing
-  the hello) and shows as Last error on `/sync/status`.
+  the hello) and shows as Last error on `/sync/status`. Unstamped `go run`
+  / `go test` (`dev`/`none`) skip that check on either side.
 - **Hub RPC**: co-located CLIs (`FetchRemoteConfig`, `FactumClient`) HTTP
   to the worker's unix socket; the agent forwards a `request` envelope and
   the primary runs the existing Echo handler in-process (hub auth = service

@@ -13,6 +13,15 @@ var (
 	Date    = "unknown"
 )
 
+// IsDev reports an unstamped identity: Version/Commit left at the
+// `go run` / `go test` defaults. Makefile and GoReleaser always override
+// both. Empty strings are not IsDev — a peer that omitted handshake
+// headers is a missing identity, not a dev process.
+func IsDev(version, commit string) bool {
+	v, c := strings.TrimSpace(version), strings.TrimSpace(commit)
+	return v == "dev" || c == "none"
+}
+
 // Info is the JSON shape of GET /api/version.
 type Info struct {
 	Version   string `json:"version"`

@@ -3,6 +3,7 @@ package worker
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -27,6 +28,20 @@ func hubHandshakeHeaders(token string) http.Header {
 }
 
 func checkHubVersion(remoteVersion, remoteCommit string) error {
+	// Unstamped `go run` / `go test` (dev/none) skip the check on either
+	// side so a developer GUI can dial installed workers. Stamped
+	// Makefile/GoReleaser builds still require an exact match.
+	if buildinfo.IsDev(buildinfo.Version, buildinfo.Commit) || buildinfo.IsDev(remoteVersion, remoteCommit) {
+		if remoteVersion != buildinfo.Version || remoteCommit != buildinfo.Commit {
+			slog.Warn("worker hub: skipping version check (unstamped/dev build)",
+				"peer", hubIdent(remoteVersion),
+				"peer_commit", hubIdent(remoteCommit),
+				"local", hubIdent(buildinfo.Version),
+				"local_commit", hubIdent(buildinfo.Commit),
+			)
+		}
+		return nil
+	}
 	if remoteVersion == buildinfo.Version && remoteCommit == buildinfo.Commit {
 		return nil
 	}

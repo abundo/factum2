@@ -46,6 +46,27 @@ func TestSnapshotMarksDirtyVersion(t *testing.T) {
 	}
 }
 
+func TestIsDev(t *testing.T) {
+	if !IsDev("dev", "none") {
+		t.Fatal("go run defaults should be IsDev")
+	}
+	if !IsDev("dev", "abc123") {
+		t.Fatal("Version=dev should be IsDev")
+	}
+	if !IsDev("v1.0.0", "none") {
+		t.Fatal("Commit=none should be IsDev")
+	}
+	if IsDev("v1.0.0", "abc123") {
+		t.Fatal("stamped release should not be IsDev")
+	}
+	if IsDev("v1.0.0-3-gdeadbee", "deadbee") {
+		t.Fatal("git-describe stamp should not be IsDev")
+	}
+	if IsDev("", "") {
+		t.Fatal("empty handshake identity is missing, not go run")
+	}
+}
+
 func TestSnapshotAlwaysHasGoVersion(t *testing.T) {
 	got := Snapshot()
 	if got.GoVersion == "" {

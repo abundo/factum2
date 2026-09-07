@@ -481,13 +481,14 @@ reports `Hostname`/`Roles`/`Version`/`Commit`), `command` (primary -> agent, a p
 command to run), `log` (agent -> primary, streamed stdout/stderr/exit),
 `event` (structured job lines), `request` (agent -> primary HTTP-subset
 RPC: method/path/body), `response` (primary -> agent: status/body, or
-`Error` for transport failure → unix 502). Both sides require matching
+`Error` for transport failure → unix 502). Stamped builds require matching
 `buildinfo.Version` and `buildinfo.Commit`: the primary sends them as
 `X-Factum-Version` / `X-Factum-Commit` on the WSS handshake (the agent
 rejects a mismatch with HTTP 409 before Upgrade); the agent repeats them
 in hello (the primary refuses to register the node, and the mismatch
 surfaces as `LastError` on `/sync/status`). Unstamped `go run`/`go test`
-builds both report `dev`/`none` and therefore match each other.
+builds report `dev`/`none` and skip the check on either side (a developer
+GUI can dial installed workers; matching is then the developer's problem).
 `RemoteManager` (primary side,
 `web.Controller.RemoteManager`, instantiated once in `web.GUI()`) holds one
 supervised, auto-reconnecting connection per enabled `WorkerNode`.
