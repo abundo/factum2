@@ -146,13 +146,29 @@ var hubMaxMessageSize = 32 << 20
 // called directly by connectOnce for every inbound log envelope, which is
 // the entire integration into the web GUI's log window: hubHandler
 // (web/logstream.go) already tees every slog record into the LogHub the
-// frontend subscribes to.
+// frontend subscribes to. "command" is the sync target (librenms, netbox,
+// …) the log window uses as the line's source.
 func LogToSlog(msg LogMsg) {
 	if msg.Stream == StreamExit {
 		slog.Info("command finished", "id", msg.ID, "command", msg.Command, "exit_code", msg.ExitCode, "err", msg.Err)
 		return
 	}
 	slog.Info(msg.Data, "id", msg.ID, "command", msg.Command, "stream", msg.Stream)
+}
+
+// EventToSlog mirrors LogToSlog for structured job events (info/warning/
+// error lines from a sync tool). Without this, those lines only land in
+// JobTaskEvent (the job-detail modal) and the live log window never sees
+// them tagged with their target.
+func EventToSlog(msg EventMsg) {
+	level := slog.LevelInfo
+	switch strings.ToLower(msg.Level) {
+	case "warning", "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	slog.Log(context.Background(), level, msg.Message, "id", msg.ID, "command", msg.Target)
 }
 
 func newID() (string, error) {
@@ -826,7 +842,12 @@ func (m *RemoteManager) logJobFinished(job models.Job, finishedAt time.Time) {
 		}
 	}
 
+	source := "job"
+	if len(targets) == 1 {
+		source = targets[0]
+	}
 	slog.Info("job finished",
+		"source", source,
 		"job_id", job.ID,
 		"status", status,
 		"duration", formatJobDuration(duration),
@@ -1111,6 +1132,8 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 				jobTaskID = &pk
 			}
 			m.mu.Unlock()
+
+			EventToSlog(eventMsg)
 
 			if err := m.db.Create(&models.JobTaskEvent{
 				JobTaskID: jobTaskID,

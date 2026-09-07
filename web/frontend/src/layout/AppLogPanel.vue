@@ -5,6 +5,30 @@ import { useLogPanel } from './composables/logPanel'
 
 const { state, close, setHeight, clear, togglePause, connect, disconnect } = useLogPanel()
 
+// Labels match SyncOverviewPage's targetInfo so a librenms/netbox sync line
+// reads the same here as on the job overview tiles. Unknown sources (or a
+// worker command name we haven't listed) render as-is.
+const SOURCE_LABELS = {
+  becs: 'BECS',
+  lime: 'Lime',
+  netbox: 'Netbox',
+  dns: 'DNS',
+  icinga: 'Icinga',
+  librenms: 'LibreNMS',
+  oxidized: 'Oxidized',
+  prometheus: 'Prometheus',
+  housekeeping: 'Housekeeping',
+  'device-sync': 'Device sync',
+  hub: 'Hub',
+  job: 'Job',
+  web: 'Web',
+  eline: 'ELINE',
+}
+
+// Already represented by the source badge (command/source/target) or too
+// noisy for the tail (id/stream are hub-transport internals).
+const HIDDEN_ATTRS = new Set(['id', 'command', 'stream', 'source', 'target'])
+
 let bodyEl = null
 function setBodyRef(el) {
   bodyEl = el
@@ -40,6 +64,22 @@ function startResize(event) {
 function formatTime(iso) {
   const d = new Date(iso)
   return formatDateTime(iso) + '.' + String(d.getMilliseconds()).padStart(3, '0')
+}
+
+function lineSource(line) {
+  return line.source || line.attrs?.command || line.attrs?.source || line.attrs?.target || 'web'
+}
+
+function sourceLabel(line) {
+  const source = lineSource(line)
+  return SOURCE_LABELS[source] || source
+}
+
+function visibleAttrs(line) {
+  const attrs = line.attrs
+  if (!attrs) return null
+  const entries = Object.entries(attrs).filter(([key]) => !HIDDEN_ATTRS.has(key))
+  return entries.length ? Object.fromEntries(entries) : null
 }
 
 onMounted(connect)
@@ -101,12 +141,18 @@ onUnmounted(disconnect)
         }"
       >
         <span class="text-muted">{{ formatTime(line.time) }}</span>
+        <span
+          class="shrink-0 rounded bg-elevated px-1.5 py-0.5 font-medium text-primary"
+          :data-log-source="lineSource(line)"
+          :title="lineSource(line)"
+          >{{ sourceLabel(line) }}</span
+        >
         <span class="font-semibold uppercase">{{ line.level }}</span>
         <span>{{ line.message }}</span>
-        <span v-if="line.attrs && Object.keys(line.attrs).length" class="text-muted">
-          <span v-for="(value, key) in line.attrs" :key="key" class="mr-2"
-            >{{ key }}={{ value }}</span
-          >
+        <span v-if="visibleAttrs(line)" class="text-muted">
+          <span v-for="(value, key) in visibleAttrs(line)" :key="key" class="mr-2">
+            {{ key }}={{ value }}
+          </span>
         </span>
       </div>
     </div>

@@ -129,7 +129,7 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 	// sync itself - run it after responding so a slow Netbox API round-trip
 	// can't make the delivery time out and retry.
 	go func() {
-		reporter := webhookReporter{next: jobevent.NewSlogReporter(), deviceName: deviceName}
+		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
 		if err := netbox.SyncDB(ctrl.DB, deviceName, reporter); err != nil {
 			slog.Error("netbox webhook sync", "device", deviceName, "object_type", payload.ObjectType, "err", err)
 		}
@@ -156,7 +156,7 @@ func (ctrl *Controller) netboxWebhookDeleteDevice(c *echo.Context, payload Netbo
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
-	reporter := webhookReporter{next: jobevent.NewSlogReporter(), deviceName: deviceName}
+	reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
 	reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 0, deleted)
 	return c.JSON(http.StatusOK, map[string]any{
 		"status":    "deleted",
@@ -181,7 +181,7 @@ func (ctrl *Controller) netboxWebhookCable(c *echo.Context, payload NetboxWebhoo
 		return c.JSON(http.StatusOK, map[string]any{"status": "deleted", "netbox_id": netboxID})
 	}
 	go func() {
-		if err := netbox.SyncCable(ctrl.DB, netboxID, jobevent.NewSlogReporter()); err != nil {
+		if err := netbox.SyncCable(ctrl.DB, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
 			slog.Error("netbox webhook cable sync", "netbox_id", netboxID, "err", err)
 		}
 	}()
@@ -204,7 +204,7 @@ func (ctrl *Controller) netboxWebhookSite(c *echo.Context, payload NetboxWebhook
 		return c.JSON(http.StatusOK, map[string]any{"status": "deleted", "netbox_id": netboxID})
 	}
 	go func() {
-		if err := netbox.SyncSite(ctrl.DB, netboxID, jobevent.NewSlogReporter()); err != nil {
+		if err := netbox.SyncSite(ctrl.DB, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
 			slog.Error("netbox webhook site sync", "netbox_id", netboxID, "err", err)
 		}
 	}()

@@ -44,6 +44,28 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+func TestEventToSlog(t *testing.T) {
+	logs := captureSlog(t)
+	EventToSlog(EventMsg{ID: "t1", Target: "librenms", Level: "warning", Message: "skipped device"})
+	got := logs.String()
+	for _, want := range []string{"command=librenms", "level=WARN", "skipped device", "id=t1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestLogToSlogIncludesCommand(t *testing.T) {
+	logs := captureSlog(t)
+	LogToSlog(LogMsg{ID: "t2", Command: "netbox", Stream: StreamStdout, Data: "syncing sites"})
+	got := logs.String()
+	for _, want := range []string{"command=netbox", "syncing sites", "stream=stdout"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestFormatJobDuration(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -102,6 +124,7 @@ func TestResolveTaskLogsJobFinishedOnce(t *testing.T) {
 	for _, want := range []string{
 		"job_id=" + strconv.FormatUint(uint64(job.ID), 10),
 		"status=success",
+		"source=job",
 		"targets=dns,icinga",
 		"triggered_by=admin",
 	} {
@@ -141,7 +164,13 @@ func TestResolveTaskLogsJobFailed(t *testing.T) {
 	m := NewRemoteManager(db)
 	m.resolveTask("fail-1", 1, "boom")
 	got := logs.String()
-	for _, want := range []string{"status=failed", "errors=2", "warnings=1", "targets=netbox"} {
+	for _, want := range []string{
+		"status=failed",
+		"source=netbox",
+		"errors=2",
+		"warnings=1",
+		"targets=netbox",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log missing %q:\n%s", want, got)
 		}

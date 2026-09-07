@@ -344,7 +344,7 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdateVlans(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	mgr := devicesync.NewNetboxMgr(nb, jobevent.NewSlogReporter())
+	mgr := devicesync.NewNetboxMgr(nb, jobevent.NewSlogReporter("source", "netbox"))
 	if _, err := mgr.EnsureVlanGroup(settings.DeviceSyncVlanGroupName); err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to resolve netbox vlan group: " + err.Error()})
 	}
@@ -377,7 +377,7 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdateVlans(c *echo.Context) error {
 	// Re-pull the device (interfaces + VLAN assignments) from Netbox so
 	// factum's cache matches what we just wrote, including any side-effects
 	// Netbox applies (mode/qinq field mapping, VID resolution, etc.).
-	if err := netbox.SyncDB(ctrl.DB, device.Name, jobevent.NewSlogReporter()); err != nil {
+	if err := netbox.SyncDB(ctrl.DB, device.Name, jobevent.NewSlogReporter("source", "netbox")); err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to refresh factum cache from netbox: " + err.Error()})
 	}
 

@@ -92,22 +92,26 @@ func (r *ConsoleReporter) EmitErr(err error) {
 // SlogReporter emits via log/slog - for callers already running in-process
 // (not as a predefined-command subprocess), e.g. web.ApiNetboxWebhook
 // calling internal/netbox.FactumSyncNetbox directly, which has no
-// meaningful "stdout" to write JSON lines to.
-type SlogReporter struct{}
-
-func NewSlogReporter() SlogReporter {
-	return SlogReporter{}
+// meaningful "stdout" to write JSON lines to. Optional kv pairs (slog
+// attrs, typically "source", "netbox") are attached to every line so the
+// web GUI's log window can label the originating subsystem.
+type SlogReporter struct {
+	kv []any
 }
 
-func (SlogReporter) Emit(level Level, format string, args ...any) {
+func NewSlogReporter(kv ...any) SlogReporter {
+	return SlogReporter{kv: kv}
+}
+
+func (r SlogReporter) Emit(level Level, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	switch level {
 	case Warning:
-		slog.Warn(msg)
+		slog.Warn(msg, r.kv...)
 	case Error:
-		slog.Error(msg)
+		slog.Error(msg, r.kv...)
 	default:
-		slog.Info(msg)
+		slog.Info(msg, r.kv...)
 	}
 }
 

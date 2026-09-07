@@ -64,6 +64,7 @@ func (m *RemoteManager) runHousekeeping(taskID string, jobTaskPK uint) {
 		result.JobsDeleted, result.TasksDeleted, result.EventsDeleted, keep)
 	m.recordLocalJobEvent(jobTaskPK, taskID, HousekeepingTarget, "info", msg)
 	slog.Info("housekeeping finished",
+		"source", HousekeepingTarget,
 		"jobs_deleted", result.JobsDeleted,
 		"tasks_deleted", result.TasksDeleted,
 		"events_deleted", result.EventsDeleted,
@@ -71,6 +72,7 @@ func (m *RemoteManager) runHousekeeping(taskID string, jobTaskPK uint) {
 }
 
 func (m *RemoteManager) recordLocalJobEvent(jobTaskPK uint, taskID, target, level, message string) {
+	EventToSlog(EventMsg{ID: taskID, Target: target, Level: level, Message: message})
 	pk := jobTaskPK
 	if err := m.db.Create(&models.JobTaskEvent{
 		JobTaskID: &pk,
