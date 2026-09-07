@@ -1,4 +1,0 @@
-#!/bin/sh
-# Lab stand-in used inside factum-worker. factum2-dns already wrote DestFile.
-echo "dev dnsmgr2: dest file left in place (lab BIND serves static lab.example)"
-exit 0

@@ -72,16 +72,17 @@ test-integration-web:
 # testdata/itest. See dev/README.md. Uses docker compose, or podman compose if
 # FACTUM_COMPOSE is set / docker is missing.
 DEV_DIR := dev
-# Core lab apps (no factum). Schema is applied before factum-web starts.
-# icingadb / icingaweb start from seed.py after MariaDB DBs exist (existing
-# mysql volumes skip docker-entrypoint-initdb.d).
+# Core lab apps. Schema is applied before factum-web starts. dns runs BIND
+# plus a factum2-worker that only handles the dns command. icingadb /
+# icingaweb start from seed.py after MariaDB DBs exist (existing mysql
+# volumes skip docker-entrypoint-initdb.d).
 LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized dns portal
 # Optional: make dev-up SEED_ARGS=--demo  (netbox-community SQL dump)
 SEED_ARGS ?=
 
 dev-up:
 	$(DEV_DIR)/prepare.py $(SEED_ARGS)
-	@test -x $(BUILD_DIR)/factum2-web -a -x $(BUILD_DIR)/factum2-netbox || $(MAKE) build
+	@test -x $(BUILD_DIR)/factum2-web -a -x $(BUILD_DIR)/factum2-netbox -a -x $(BUILD_DIR)/factum2-dns -a -x $(BUILD_DIR)/factum2-worker || $(MAKE) build
 	@test -f web/static/vue/index.html || $(MAKE) frontend
 	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 300 $(LAB_CORE)
 	$(DEV_DIR)/seed.py $(SEED_ARGS)
@@ -91,8 +92,8 @@ dev-down:
 	$(DEV_DIR)/compose.sh down
 
 dev-reset:
-	$(DEV_DIR)/compose.sh down -v
-	$(MAKE) dev-up
+	$(DEV_DIR)/compose.sh down -v --remove-orphans
+	$(DEV_DIR)/prepare.py --wipe
 
 factum2:
 	@mkdir -p $(BUILD_DIR)

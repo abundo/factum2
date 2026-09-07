@@ -314,9 +314,9 @@ snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
 make dev-up            # docker or podman compose; first start pulls images
-./install.py --compose # rebuild build/ and restart factum-web / factum-worker
+./install.py --compose # rebuild build/ and restart factum-web / factum-worker / dns
 make dev-down          # keep volumes
-make dev-reset         # wipe volumes
+make dev-reset         # stop everything, wipe volumes and dest files (does not start again)
 ```
 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091

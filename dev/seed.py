@@ -52,6 +52,43 @@ UPDATE worker_nodes SET
   enabled = true,
   tls_skip_verify = true
 WHERE name = 'lab';
+
+INSERT INTO worker_nodes (name, address, token, enabled, tls_skip_verify, tls_ca, created_at, updated_at)
+SELECT 'dns', 'dns:8443', 'lab-dns-worker-token', true, true, '', NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM worker_nodes WHERE name = 'dns');
+UPDATE worker_nodes SET
+  address = 'dns:8443',
+  token = 'lab-dns-worker-token',
+  enabled = true,
+  tls_skip_verify = true
+WHERE name = 'dns';
+"""
+
+DNS_SEED_SQL = """\
+INSERT INTO dns_soa_templates (name, mname, rname, refresh, retry, expire, ttl, created_at, updated_at)
+SELECT 'default_soa', 'ns1.lab.example.', 'hostmaster.lab.example.', 36000, 3600, 604800, 900, NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM dns_soa_templates WHERE name = 'default_soa');
+
+INSERT INTO dns_templates (name, soa_template_id, default_ttl, created_at, updated_at)
+SELECT 'default_dns', id, 900, NOW(), NOW() FROM dns_soa_templates WHERE name = 'default_soa'
+ AND NOT EXISTS (SELECT 1 FROM dns_templates WHERE name = 'default_dns');
+
+INSERT INTO dns_template_nameservers (dns_template_id, rank, hostname)
+SELECT t.id, 0, 'ns1.lab.example.' FROM dns_templates t WHERE t.name = 'default_dns'
+ AND NOT EXISTS (
+   SELECT 1 FROM dns_template_nameservers n WHERE n.dns_template_id = t.id AND n.hostname = 'ns1.lab.example.'
+ );
+
+INSERT INTO dns_zones (name, type, dns_template_id, comment, created_at, updated_at)
+SELECT 'lab.example', 'forward', t.id, 'lab zone', NOW(), NOW() FROM dns_templates t WHERE t.name = 'default_dns'
+ AND NOT EXISTS (SELECT 1 FROM dns_zones WHERE name = 'lab.example');
+
+INSERT INTO dns_zone_records (dns_zone_id, rank, name, record_type, value, description)
+SELECT z.id, 0, 'ns1', 'A', '127.0.0.1', 'in-zone nameserver'
+ FROM dns_zones z WHERE z.name = 'lab.example'
+ AND NOT EXISTS (
+   SELECT 1 FROM dns_zone_records r WHERE r.dns_zone_id = z.id AND r.name = 'ns1' AND r.record_type = 'A'
+ );
 """
 
 ICINGA_DB_SQL = """\
@@ -83,7 +120,8 @@ READY = """
   Icinga Web:     http://127.0.0.1:18002  admin / admin
   Icinga API:     https://127.0.0.1:15665  factum / factum
   Oxidized:       http://127.0.0.1:18888
-  BIND:           127.0.0.1:18053          zone lab.example
+  BIND:           127.0.0.1:18053          zone lab.example (dnsmgr2 + factum-dns)
+  DNS worker hub: 127.0.0.1:18444
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
 
@@ -210,6 +248,38 @@ def _librenms_user_exists(text: str) -> bool:
     return "already been taken" in lower or "already exists" in lower
 
 
+def _install_dnsmgr2() -> None:
+    src = DIR / "bin" / "dnsmgr2"
+    if not src.is_file() or not os.access(src, os.X_OK):
+        raise SystemExit(f"missing {src} (prepare.py should have built it from github.com/abundo/dnsmgr2)")
+    log("Installing dnsmgr2 in dns container")
+    run(
+        compose(
+            "exec",
+            "-T",
+            "-u",
+            "root",
+            "dns",
+            "install",
+            "-m",
+            "755",
+            "/usr/local/bin/dnsmgr2",
+            "/usr/bin/dnsmgr2",
+        )
+    )
+    check = run(
+        compose("exec", "-T", "dns", "sh", "-c", "command -v dnsmgr2 && command -v named-checkzone && command -v rndc"),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        raise SystemExit(
+            "dns container is missing dnsmgr2, named-checkzone, or rndc: "
+            + ((check.stdout or "") + (check.stderr or "")).strip()
+        )
+
+
 def _disable_librenms_install_wizard() -> None:
     # Official image appends INSTALL=user,finish when the DB has no tables.
     # That keeps /login redirecting to the first-user wizard after user:add.
@@ -290,13 +360,30 @@ WHERE NOT EXISTS (SELECT 1 FROM settings WHERE id = 1);
 UPDATE settings SET
   default_domain = 'lab.example',
   factum_api_token = {_sql_lit(factum_token)},
+  organization_enabled = true,
+  optical_enabled = true,
+  ipam_enabled = true,
+  dns_zones_enabled = true,
+  device_sync_enabled = true,
   netbox_enabled = true,
   netbox_api_url = 'http://netbox:8080',
   netbox_api_token = {_sql_lit(netbox_token)},
   netbox_webhook_secret = {_sql_lit(webhook_secret)},
   public_base_url = {_sql_lit(public_base)},
   dns_enabled = true,
-  dns_dest_file = {_sql_lit("/data/dns/records")},
+  dns_dest_file = {_sql_lit("/etc/dnsmgr2/records")},
+  dns_config_file = {_sql_lit("/etc/dnsmgr2/dnsmgr2.yaml")},
+  dns_db_file = {_sql_lit("/var/lib/dnsmgr2/dnsmgr2.sqlite")},
+  dns_host_template = 'isc_bind',
+  dns_bind_type = 'isc_bind',
+  dns_bind_config_dir = {_sql_lit("/etc/bind")},
+  dns_bind_include_file = 'named.conf.dnsmgr2',
+  dns_bind_zones_dir = {_sql_lit("/var/lib/bind")},
+  dns_bind_zones_file = '{{zone}}',
+  dns_bind_tmp_dir = {_sql_lit("/var/lib/dnsmgr2")},
+  dns_bind_cmd_reload_all = {_sql_lit("rndc -k /etc/bind/rndc.key reload")},
+  dns_bind_cmd_reload_zone = {_sql_lit("rndc -k /etc/bind/rndc.key reload {zone}")},
+  dns_bind_cmd_restart = {_sql_lit("rndc -k /etc/bind/rndc.key reconfig")},
   icinga_enabled = true,
   icinga_api_url = 'https://icinga:5665',
   icinga_api_user = 'factum',
@@ -312,7 +399,9 @@ UPDATE settings SET
   librenms_snmp_communities = 'public',
   oxidized_enabled = true,
   oxidized_api_url = 'http://oxidized:8888',
-  oxidized_dest_file = {_sql_lit("/data/oxidized/router.db")}
+  oxidized_dest_file = {_sql_lit("/data/oxidized/router.db")},
+  prometheus_enabled = true,
+  prometheus_dest_file = {_sql_lit("/data/prometheus/targets.json")}
 WHERE id = 1;
 """
 
@@ -340,6 +429,7 @@ def seed(*, demo: bool = False) -> None:
         check=False,
         quiet=True,
     )
+    _install_dnsmgr2()
 
     log("Waiting for NetBox")
     wait_http("http://127.0.0.1:18000/login/", 80)
@@ -509,8 +599,11 @@ INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
         user=pg_user,
     )
 
-    log("Registering lab worker node")
+    log("Registering lab worker nodes")
     _psql(pg_db, WORKER_SQL, user=pg_user)
+
+    log("Seeding DNS SOA / template / lab.example zone")
+    _psql(pg_db, DNS_SEED_SQL, user=pg_user)
 
     log("NetBox webhook and custom fields")
     netbox_bin = REPO_ROOT / "build" / "factum2-netbox"

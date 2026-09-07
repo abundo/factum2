@@ -1,0 +1,18 @@
+# BIND + factum2-worker (factum-dns) for the lab dns service.
+# Binaries are bind-mounted from the host build/ directory; dnsmgr2 is
+# copied in by seed.py. named-checkzone (bind9-utils) is required by dnsmgr2.
+FROM docker.io/debian:bookworm-slim
+RUN apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		bind9 \
+		bind9-utils \
+		ca-certificates \
+		curl \
+		tzdata \
+	&& rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /run/named \
+		/run/factum2-worker /etc/dnsmgr2 \
+	&& chown bind:bind /var/cache/bind /var/lib/bind /run/named
+COPY dns/entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

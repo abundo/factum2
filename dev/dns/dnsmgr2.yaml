@@ -1,0 +1,50 @@
+---
+# Bootstrap config used until factum2-dns overwrites /etc/dnsmgr2/dnsmgr2.yaml
+# (Settings.dns_config_file) on the first DNS sync with the zone editor on.
+default_domain: lab.example
+dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
+
+sources:
+    - type: file
+      name: /etc/dnsmgr2/records
+
+destinations:
+    - type: dns_isc_bind
+      name: isc_bind
+
+dns:
+    host_templates:
+        isc_bind:
+            type: isc_bind
+            configdir: /etc/bind
+            includefile: named.conf.dnsmgr2
+            zonesdir: /var/lib/bind
+            zonesfile: "{zone}"
+            tmpdir: /var/lib/dnsmgr2
+            cmd_reload_all: "rndc -k /etc/bind/rndc.key reload"
+            cmd_reload_zone: "rndc -k /etc/bind/rndc.key reload {zone}"
+            cmd_restart: "rndc -k /etc/bind/rndc.key reconfig"
+
+    soa_templates:
+        default_soa:
+            mname: ns1.lab.example.
+            rname: hostmaster.lab.example.
+            serial_format: date_serial
+            refresh: 36000
+            retry: 3600
+            expire: 604800
+            minimum: 900
+
+    zone_templates:
+        default_dns:
+            soa: default_soa
+            default_ttl: 900
+            ns:
+                - { name: "@", type: "NS", value: "ns1.lab.example." }
+
+dnsmgr2:
+    - host_dns_template: isc_bind
+      zones:
+          - name: lab.example
+            type: forward
+            dns_template: default_dns

@@ -16,14 +16,15 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | Icinga Web | http://127.0.0.1:18002 |
 | Dest | Oxidized | http://127.0.0.1:18888 |
 | Dest | Icinga 2 API | https://127.0.0.1:15665 |
-| Dest | BIND (`lab.example`) | `127.0.0.1:18053` |
+| Dest | BIND (`lab.example`) + factum-dns worker | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker | `127.0.0.1:18443` |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
 | Shared Redis | netbox db0/db1, librenms db2 | `127.0.0.1:16379` |
 
-Factum-web and factum-worker run in compose with the host `build/` directory
-bind-mounted at `/opt/factum2`. Rebuild with `./install.py --compose`.
+Factum-web, factum-worker, and the dns container's factum-dns worker run in
+compose with the host `build/` directory bind-mounted at `/opt/factum2`.
+Rebuild with `./install.py --compose`.
 
 ## Start
 
@@ -34,8 +35,11 @@ make dev-up
 ```
 
 `dev-up` builds `build/` if needed, waits for NetBox/LibreNMS/…, migrates
-factum, seeds Settings/admin/tokens, registers the NetBox webhook and custom
-fields (`factum2-netbox check --update`), then starts factum-web and factum-worker.
+factum, seeds Settings/admin/tokens (all lab features on, including the DNS
+zone editor), registers the NetBox webhook and custom fields
+(`factum2-netbox check --update`), installs dnsmgr2 in the dns container,
+then starts factum-web and factum-worker. The dns container runs BIND,
+dnsmgr2, and a factum2-worker that only handles `dns` jobs.
 NetBox starts empty. To load the upstream
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data) SQL
 dump, pass `--demo` (`make dev-up SEED_ARGS=--demo`, or `./dev/seed.py --demo`
@@ -56,7 +60,7 @@ policy requires 8+ characters and a symbol).
 
 ```sh
 make dev-down          # keep volumes
-make dev-reset         # wipe volumes and start again
+make dev-reset         # stop everything, wipe volumes and dest files (does not start again)
 make dev-up SEED_ARGS=--demo   # also load netbox-community demo SQL
 ```
 
@@ -77,14 +81,18 @@ interface templates, and device `lu17-lab-r0`.
 
 ## Sync
 
-Sync CLIs run inside `factum-worker` (Job overview, or):
+Sync CLIs run inside `factum-worker` (Job overview, or). DNS sync runs in
+the `dns` container, next to BIND:
 
 ```sh
 ./dev/compose.sh exec factum-worker /opt/factum2/factum2-netbox sync -f /etc/factum2/factum2.yaml
 ./dev/compose.sh exec factum-worker /opt/factum2/factum2-icinga sync
+./dev/compose.sh exec dns /opt/factum2/factum2-dns sync
 ```
 
-Dest files are `/data/...` inside the worker, bind-mounted from `dev/data/`.
+Dest files are `/data/...` inside factum-worker, bind-mounted from
+`dev/data/`. DNS dest files are `/etc/dnsmgr2` and `/var/lib/bind` in the
+dns container.
 
 Oxidized exits if `router.db` has no nodes, so `prepare.py` writes a dummy
 `lab-dummy:127.0.0.1:ios` line when the file is missing. `factum2-oxidized

@@ -1,0 +1,16 @@
+---
+# Worker co-located with BIND in the dns container. Only the dns command:
+# factum2-dns writes records + dnsmgr2.yaml, then dnsmgr2 sync reloads named.
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-dns-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        dns:
+            cmd: /opt/factum2/factum2-dns
+            args: ["sync", "--job"]

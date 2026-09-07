@@ -47,7 +47,11 @@ dev/data/librenms.env
 dev/env.sh
 # Local NetBox API seed inventory (copy of netbox-seed.example.yaml)
 dev/netbox-seed.yaml
-dev/data/dns/records
+dev/data/dns/
+dev/data/bind/
+dev/data/bind-zones/
+dev/data/dnsmgr2/
+dev/data/prometheus/
 dev/data/icinga/hosts.conf
 dev/data/icinga/users.conf
 dev/data/oxidized/router.db
@@ -59,6 +63,7 @@ dev/data/oxidized/configs/
 dev/data/oxidized/crashes/
 dev/data/netbox/
 dev/certs/
+dev/.dnsmgr2-src/
 
 # Python (install.py)
 __pycache__/

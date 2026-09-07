@@ -26,7 +26,7 @@ from this release, the installer shows a diff and asks before overwriting
                                (default localhost). Replaces install_prod.sh.
   ./install.py --source --compose
                                Local compose lab: make, migrate, restart
-                               factum-web/factum-worker (build/ is bind-mounted;
+                               factum-web/factum-worker/dns (build/ is bind-mounted;
                                no /opt/factum2, no systemd).
 """
 
@@ -94,7 +94,7 @@ RELEASE_WORK_ENV = "FACTUM2_RELEASE_WORK"
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum2*` file so a newly added cmd/ still installs.
 COMPOSE_DIR_DEFAULT = REPO_DIR / "dev"
-COMPOSE_FACTUM_SERVICES = ("factum-web", "factum-worker")
+COMPOSE_FACTUM_SERVICES = ("factum-web", "factum-worker", "dns")
 
 KNOWN_BINARIES = (
     "factum2",

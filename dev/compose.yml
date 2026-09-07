@@ -16,7 +16,7 @@ x-lab-restart: &lab-restart
   restart: unless-stopped
 
 # Host build/ is bind-mounted at /opt/factum2. install.py --source --compose
-# rebuilds those binaries and restarts factum-web / factum-worker.
+# rebuilds those binaries and restarts factum-web / factum-worker / dns.
 x-factum: &factum
   <<: *lab-restart
   image: factum-dev:local
@@ -32,9 +32,8 @@ x-factum: &factum
     - ./certs:/etc/factum2/certs:z,ro
     - ./data/icinga:/data/icinga:z
     - ./data/oxidized:/data/oxidized:z
-    - ./data/dns:/data/dns:z
+    - ./data/prometheus:/data/prometheus:z
     - ./container/librenms.env:/opt/librenms-docker/.env:z,ro
-    - ./container/dnsmgr2:/usr/local/bin/dnsmgr2:z,ro
   environment:
     APP_ENV: development
     LIBRENMS_ENV_FILE: /opt/librenms-docker/.env
@@ -363,16 +362,41 @@ services:
       - ./data/oxidized:/home/oxidized/.config/oxidized:z
     mem_limit: 256m
 
+  # BIND + dnsmgr2 + factum2-worker (dns command only). factum2-dns writes
+  # /etc/dnsmgr2 then runs `dnsmgr2 sync`, which reloads named via rndc.
   dns:
     <<: *lab-restart
-    image: docker.io/internetsystemsconsortium/bind9:9.20
+    image: factum-dev-dns:local
+    build:
+      context: .
+      dockerfile: Dockerfile.dns
+    hostname: dns
     ports:
       - "18053:53/udp"
       - "18053:53/tcp"
+      - "18444:8443"
     volumes:
-      - ./dns/named.conf:/etc/bind/named.conf:z,ro
-      - ./dns/lab.example.zone:/etc/bind/lab.example.zone:z,ro
-    mem_limit: 64m
+      - ../build:/opt/factum2:z,ro
+      - ./container/factum2-dns-worker.yaml:/etc/factum2/factum2-dns-worker.yaml:z,ro
+      - ./certs:/etc/factum2/certs:z,ro
+      - ./bin/dnsmgr2:/usr/local/bin/dnsmgr2:z,ro
+      - ./data/dns:/etc/dnsmgr2:z
+      - ./data/bind:/etc/bind:z
+      - ./data/bind-zones:/var/lib/bind:z
+      - ./data/dnsmgr2:/var/lib/dnsmgr2:z
+    environment:
+      TZ: UTC
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "rndc -k /etc/bind/rndc.key status >/dev/null && test -S /run/factum2-worker/api.sock",
+        ]
+      start_period: 25s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 192m
 
   factum-web:
     <<: *factum
