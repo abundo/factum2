@@ -73,16 +73,18 @@ test-integration-web:
 # FACTUM_COMPOSE is set / docker is missing.
 DEV_DIR := dev
 # Core lab apps (no factum). Schema is applied before factum-web starts.
-# icingadb / icingaweb start from seed.sh after MariaDB DBs exist (existing
+# icingadb / icingaweb start from seed.py after MariaDB DBs exist (existing
 # mysql volumes skip docker-entrypoint-initdb.d).
 LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized dns portal
+# Optional: make dev-up SEED_ARGS=--demo  (netbox-community SQL dump)
+SEED_ARGS ?=
 
 dev-up:
-	$(DEV_DIR)/prepare.sh
+	$(DEV_DIR)/prepare.py $(SEED_ARGS)
 	@test -x $(BUILD_DIR)/factum2-web -a -x $(BUILD_DIR)/factum2-netbox || $(MAKE) build
 	@test -f web/static/vue/index.html || $(MAKE) frontend
 	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 300 $(LAB_CORE)
-	$(DEV_DIR)/seed.sh
+	$(DEV_DIR)/seed.py $(SEED_ARGS)
 	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 120 factum-web factum-worker
 
 dev-down:

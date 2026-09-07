@@ -2,9 +2,9 @@
 # (librenms + icingadb + icingaweb), one Redis (netbox tasks/cache + librenms),
 # a dedicated Redis for Icinga DB, then the apps.
 #
-# NetBox is loaded from netbox-community/netbox-demo-data (SQL dump matching
-# NETBOX_VERSION) on first postgres volume init; seed.sh restores if the
-# netbox DB is still empty (existing volume).
+# NetBox stays empty unless seed.py --demo (SQL dump matching NETBOX_VERSION)
+# or a local netbox-seed.yaml is applied via the REST API. postgres/init
+# loads the dump on first volume init only when prepare.py --demo ran.
 #
 # Not the live instance (port 8090 / DB factum2 on postgresql-db-1) and not
 # testdata/itest. Published on all interfaces (lab credentials). See README.md.
@@ -54,7 +54,7 @@ services:
       # PG 18+ VOLUME is /var/lib/postgresql (PGDATA=/var/lib/postgresql/18/docker)
       - postgres-data:/var/lib/postgresql
       - ./postgres/init:/docker-entrypoint-initdb.d:z,ro
-      # SQL dump fetched by prepare.sh / netbox-demo-fetch.sh
+      # SQL dump fetched by prepare.py --demo / netbox-demo-fetch.sh
       - ./data/netbox:/netbox-demo:z,ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]

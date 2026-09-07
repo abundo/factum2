@@ -36,10 +36,13 @@ make dev-up
 `dev-up` builds `build/` if needed, waits for NetBox/LibreNMS/…, migrates
 factum, seeds Settings/admin/tokens, registers the NetBox webhook and custom
 fields (`factum2-netbox check --update`), then starts factum-web and factum-worker.
-NetBox is populated from [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
-(SQL dump for this image's minor version, cached under `dev/data/netbox/`).
-First postgres volume init loads it; `seed.sh` restores if the netbox DB is
-still empty. `make dev-reset` reloads a fresh dump.
+NetBox starts empty. To load the upstream
+[netbox-demo-data](https://github.com/netbox-community/netbox-demo-data) SQL
+dump, pass `--demo` (`make dev-up SEED_ARGS=--demo`, or `./dev/seed.py --demo`
+on an already-running lab). For a local inventory, copy
+`dev/netbox-seed.example.yaml` to `dev/netbox-seed.yaml` (gitignored) and
+edit; `seed.py` applies it via the NetBox API when that file exists, or run
+`./dev/netbox-seed.sh` later.
 
 Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
 `admin` / `admin`. NetBox (`:18000`), LibreNMS (`:18001`) and Icinga Web
@@ -53,7 +56,23 @@ Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
 ```sh
 make dev-down          # keep volumes
 make dev-reset         # wipe volumes and start again
+make dev-up SEED_ARGS=--demo   # also load netbox-community demo SQL
 ```
+
+## NetBox inventory
+
+Copy the example and keep the real file out of git:
+
+```sh
+cp dev/netbox-seed.example.yaml dev/netbox-seed.yaml
+# edit names, sites, serials — netbox-seed.yaml is gitignored
+./dev/netbox-seed.sh                 # or let seed.py apply it
+./dev/netbox-seed.sh --dry-run       # print actions, no API writes
+```
+
+The example creates manufacturers (Arista, Cisco, Nokia), platforms
+(EOS, IOS-XR, SROS-MD), device types 7020R / 7280R / ASR9001 with
+interface templates, and device `lu17-lab-r0`.
 
 ## Sync
 
@@ -66,7 +85,7 @@ Sync CLIs run inside `factum-worker` (Job overview, or):
 
 Dest files are `/data/...` inside the worker, bind-mounted from `dev/data/`.
 
-Oxidized exits if `router.db` has no nodes, so `prepare.sh` writes a dummy
+Oxidized exits if `router.db` has no nodes, so `prepare.py` writes a dummy
 `lab-dummy:127.0.0.1:ios` line when the file is missing. `factum2-oxidized
 sync` replaces that file. Dest files under `dev/data/` are gitignored.
 

@@ -41,10 +41,12 @@ go.work.sum
 # MkDocs local build
 site/
 
-# Compose lab runtime (seed.sh / dest-file sync). prepare.sh creates dest
+# Compose lab runtime (seed.py / dest-file sync). prepare.py creates dest
 # files if missing; do not track them — the first sync rewrites them.
 dev/data/librenms.env
 dev/env.sh
+# Local NetBox API seed inventory (copy of netbox-seed.example.yaml)
+dev/netbox-seed.yaml
 dev/data/dns/records
 dev/data/icinga/hosts.conf
 dev/data/icinga/users.conf

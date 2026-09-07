@@ -1,0 +1,82 @@
+# NetBox inventory for the compose lab, applied by:
+#   ./dev/netbox-seed.sh [file]
+# or automatically from seed.py when this file is copied to netbox-seed.yaml.
+#
+# Copy this file to netbox-seed.yaml (gitignored) and edit. The local copy is
+# not checked in — it can hold non-public names, serials, and sites.
+#
+# Idempotent: existing objects (matched by slug/name) are left in place.
+# Interface lists on a device type become NetBox interface templates; new
+# devices get those ports, and missing ports are added on devices we touch.
+#
+# Extra keys on any object are passed through to the REST payload (description,
+# serial, custom_fields, tags, u_height, …).
+#
+# Common interface types:
+#   1000base-t, 10gbase-x-sfpp, 25gbase-x-sfp28,
+#   40gbase-x-qsfpp, 100gbase-x-qsfp28, 400gbase-x-qsfpdd, virtual, lag
+
+defaults:
+  site: Lab
+  role: Router
+  status: active
+
+sites:
+  - name: Lab
+    slug: lab
+
+device_roles:
+  - name: Router
+    slug: router
+    color: "9e9e9e"
+
+manufacturers:
+  - Arista
+  - Cisco
+  - Nokia
+
+platforms:
+  - name: EOS
+    manufacturer: Arista
+  - name: IOS-XR
+    manufacturer: Cisco
+  - name: SROS-MD
+    manufacturer: Nokia
+
+device_types:
+  - model: 7020R
+    manufacturer: Arista
+    u_height: 1
+    interfaces:
+      - {name: Ethernet1, type: 10gbase-x-sfpp}
+      - {name: Ethernet2, type: 10gbase-x-sfpp}
+      - {name: Ethernet3, type: 10gbase-x-sfpp}
+      - {name: Ethernet4, type: 10gbase-x-sfpp}
+      - {name: Management1, type: 1000base-t, mgmt_only: true}
+      - {name: Loopback0, type: virtual}
+  - model: 7280R
+    manufacturer: Arista
+    u_height: 1
+    interfaces:
+      - {name: Ethernet1, type: 100gbase-x-qsfp28}
+      - {name: Ethernet2, type: 100gbase-x-qsfp28}
+      - {name: Ethernet3, type: 100gbase-x-qsfp28}
+      - {name: Ethernet4, type: 100gbase-x-qsfp28}
+      - {name: Management1, type: 1000base-t, mgmt_only: true}
+      - {name: Loopback0, type: virtual}
+  - model: ASR9001
+    manufacturer: Cisco
+    u_height: 2
+    interfaces:
+      - {name: TenGigE0/0/0/0, type: 10gbase-x-sfpp}
+      - {name: TenGigE0/0/0/1, type: 10gbase-x-sfpp}
+      - {name: TenGigE0/0/0/2, type: 10gbase-x-sfpp}
+      - {name: TenGigE0/0/0/3, type: 10gbase-x-sfpp}
+      - {name: MgmtEth0/RSP0/CPU0/0, type: 1000base-t, mgmt_only: true}
+      - {name: Loopback0, type: virtual}
+
+devices:
+  - name: lu17-lab-r0
+    manufacturer: Arista
+    device_type: 7020R
+    platform: EOS

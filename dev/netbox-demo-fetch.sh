@@ -2,7 +2,7 @@
 # Download the PostgreSQL dump from netbox-community/netbox-demo-data that
 # matches this lab's NetBox image (compose.yml NETBOX_VERSION, default v4.6.10).
 # Writes dev/data/netbox/netbox-demo.sql for postgres/init/02-netbox-demo.sh
-# and seed.sh. Idempotent: skips when the cached file matches the minor version.
+# and seed.py --demo. Idempotent: skips when the cached file matches the minor version.
 set -eu
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
