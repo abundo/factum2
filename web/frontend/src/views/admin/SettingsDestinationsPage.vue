@@ -99,6 +99,105 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
+            <div class="font-semibold">dnsmgr2 config file</div>
+            <small class="text-muted-color -mt-4"
+              >When the DNS zone editor is on, factum2-dns writes a dnsmgr2.yaml here as well as the
+              records file above. Leave blank to keep a locally maintained config.</small
+            >
+            <div>
+              <label for="dns_config_file" class="block font-bold mb-3">Config file</label>
+              <UInput
+                id="dns_config_file"
+                v-model="settings.dns_config_file"
+                placeholder="/etc/dnsmgr2/dnsmgr2.yaml"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_db_file" class="block font-bold mb-3">SQLite serial DB</label>
+              <UInput
+                id="dns_db_file"
+                v-model="settings.dns_db_file"
+                placeholder="/var/lib/dnsmgr2/dnsmgr2.sqlite"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_host_template" class="block font-bold mb-3">Host template name</label>
+              <UInput
+                id="dns_host_template"
+                v-model="settings.dns_host_template"
+                placeholder="isc_bind"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_config_dir" class="block font-bold mb-3">BIND config dir</label>
+              <UInput
+                id="dns_bind_config_dir"
+                v-model="settings.dns_bind_config_dir"
+                placeholder="/etc/bind"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_include_file" class="block font-bold mb-3">Include file</label>
+              <UInput
+                id="dns_bind_include_file"
+                v-model="settings.dns_bind_include_file"
+                placeholder="named.conf.dnsmgr2"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_zones_dir" class="block font-bold mb-3">Zones dir</label>
+              <UInput
+                id="dns_bind_zones_dir"
+                v-model="settings.dns_bind_zones_dir"
+                placeholder="/var/lib/bind"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_tmp_dir" class="block font-bold mb-3">Temp dir</label>
+              <UInput
+                id="dns_bind_tmp_dir"
+                v-model="settings.dns_bind_tmp_dir"
+                placeholder="/var/lib/dnsmgr2"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_cmd_reload_zone" class="block font-bold mb-3"
+                >Reload zone command</label
+              >
+              <UInput
+                id="dns_bind_cmd_reload_zone"
+                v-model="settings.dns_bind_cmd_reload_zone"
+                placeholder="sudo rndc reload {zone}"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_cmd_reload_all" class="block font-bold mb-3"
+                >Reload all command</label
+              >
+              <UInput
+                id="dns_bind_cmd_reload_all"
+                v-model="settings.dns_bind_cmd_reload_all"
+                placeholder="sudo rndc reload"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dns_bind_cmd_restart" class="block font-bold mb-3">Restart command</label>
+              <UInput
+                id="dns_bind_cmd_restart"
+                v-model="settings.dns_bind_cmd_restart"
+                placeholder="systemctl restart named.service"
+                class="w-full"
+              />
+            </div>
           </div>
         </template>
 

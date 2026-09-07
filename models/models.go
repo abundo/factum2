@@ -303,12 +303,18 @@ type Settings struct {
 	// hides the menu — customer and contact rows stay in the database, and
 	// services may still reference them.
 	OrganizationEnabled *bool `gorm:"column:organization_enabled" form:"organization_enabled" json:"organization_enabled"`
-	LibrenmsEnabled     *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
-	LimeEnabled         *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
-	NetboxEnabled       *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
-	OxidizedEnabled     *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
-	PrometheusEnabled   *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
-	DeviceSyncEnabled   *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
+	// DnsZonesEnabled gates the DNS zone editor UI and /api/dns/* zone
+	// routes (SOA templates, DNS templates, DNSSEC policies, zones).
+	// Off (nil/false) is the default. Distinct from DnsEnabled, which is
+	// the Destinations toggle for device-record sync. Turning this off
+	// only hides the UI — rows stay in the database.
+	DnsZonesEnabled   *bool `gorm:"column:dns_zones_enabled" form:"dns_zones_enabled" json:"dns_zones_enabled"`
+	LibrenmsEnabled   *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
+	LimeEnabled       *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
+	NetboxEnabled     *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
+	OxidizedEnabled   *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
+	PrometheusEnabled *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
+	DeviceSyncEnabled *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
 
 	// factum
 	FactumApiToken string `gorm:"column:factum_api_token" form:"factum_api_token" json:"factum_api_token"`
@@ -351,6 +357,23 @@ type Settings struct {
 	// internal/dns.filterDevices skips a device matching either.
 	DnsIgnoreModels    string `gorm:"column:dns_ignore_models;type:text" form:"dns_ignore_models" json:"dns_ignore_models"`
 	DnsIgnorePlatforms string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
+	// DnsConfigFile is the path factum2-dns writes the generated dnsmgr2
+	// YAML to when DnsZonesEnabled is on. Empty skips writing the YAML
+	// (the operator keeps a local file).
+	DnsConfigFile string `gorm:"column:dns_config_file" form:"dns_config_file" json:"dns_config_file"`
+	DnsDbFile     string `gorm:"column:dns_db_file" form:"dns_db_file" json:"dns_db_file"`
+	// BIND host template used when generating dnsmgr2.yaml. Empty fields
+	// fall back to the Ubuntu BIND defaults from dnsmgr2's example config.
+	DnsHostTemplate      string `gorm:"column:dns_host_template" form:"dns_host_template" json:"dns_host_template"`
+	DnsBindType          string `gorm:"column:dns_bind_type" form:"dns_bind_type" json:"dns_bind_type"`
+	DnsBindConfigDir     string `gorm:"column:dns_bind_config_dir" form:"dns_bind_config_dir" json:"dns_bind_config_dir"`
+	DnsBindIncludeFile   string `gorm:"column:dns_bind_include_file" form:"dns_bind_include_file" json:"dns_bind_include_file"`
+	DnsBindZonesDir      string `gorm:"column:dns_bind_zones_dir" form:"dns_bind_zones_dir" json:"dns_bind_zones_dir"`
+	DnsBindZonesFile     string `gorm:"column:dns_bind_zones_file" form:"dns_bind_zones_file" json:"dns_bind_zones_file"`
+	DnsBindTmpDir        string `gorm:"column:dns_bind_tmp_dir" form:"dns_bind_tmp_dir" json:"dns_bind_tmp_dir"`
+	DnsBindCmdReloadAll  string `gorm:"column:dns_bind_cmd_reload_all" form:"dns_bind_cmd_reload_all" json:"dns_bind_cmd_reload_all"`
+	DnsBindCmdReloadZone string `gorm:"column:dns_bind_cmd_reload_zone" form:"dns_bind_cmd_reload_zone" json:"dns_bind_cmd_reload_zone"`
+	DnsBindCmdRestart    string `gorm:"column:dns_bind_cmd_restart" form:"dns_bind_cmd_restart" json:"dns_bind_cmd_restart"`
 
 	// Email / SMTP - a general-purpose outbound mail relay, not tied to
 	// Icinga specifically (factum2-icinga-notifications is the first

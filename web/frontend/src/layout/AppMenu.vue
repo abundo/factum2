@@ -42,6 +42,17 @@ const items = computed(() => {
             ],
           ]
         : []),
+      ...(authStore.dnsZonesEnabled
+        ? [
+            [
+              { type: 'label', label: 'DNS' },
+              { label: 'Zones', icon: 'i-lucide-globe-2', to: '/dns/zones' },
+              { label: 'DNS templates', icon: 'i-lucide-layers', to: '/dns/templates' },
+              { label: 'SOA templates', icon: 'i-lucide-file-text', to: '/dns/soa-templates' },
+              { label: 'DNSSEC policies', icon: 'i-lucide-shield', to: '/dns/dnssec-policies' },
+            ],
+          ]
+        : []),
       [
         { type: 'label', label: 'Provisioning' },
         { label: 'Services', icon: 'i-lucide-zap', to: '/service' },

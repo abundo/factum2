@@ -113,6 +113,13 @@ func MigrateDatabase(db *gorm.DB) error {
 		&models.IpamVRF{},
 		&models.IpamPrefix{},
 
+		&models.DnsSOATemplate{},
+		&models.DnsDNSSECPolicy{},
+		&models.DnsTemplate{},
+		&models.DnsTemplateNameserver{},
+		&models.DnsZone{},
+		&models.DnsZoneRecord{},
+
 		&models.Service{},
 		//&models.Deliverypoint1{},
 		//&models.Deliverypoint2{},

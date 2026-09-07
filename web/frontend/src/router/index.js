@@ -90,6 +90,36 @@ const router = createRouter({
           component: () => import('@/views/ipam/IpamPage.vue'),
         },
         {
+          path: '/dns/zones',
+          name: 'dns-zones',
+          meta: { title: 'Zones', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsZonesPage.vue'),
+        },
+        {
+          path: '/dns/zones/:id',
+          name: 'dns-zone',
+          meta: { title: 'Zone', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsZoneDetailPage.vue'),
+        },
+        {
+          path: '/dns/templates',
+          name: 'dns-templates',
+          meta: { title: 'DNS templates', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsTemplatesPage.vue'),
+        },
+        {
+          path: '/dns/soa-templates',
+          name: 'dns-soa-templates',
+          meta: { title: 'SOA templates', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsSOATemplatesPage.vue'),
+        },
+        {
+          path: '/dns/dnssec-policies',
+          name: 'dns-dnssec-policies',
+          meta: { title: 'DNSSEC policies', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsDNSSECPoliciesPage.vue'),
+        },
+        {
           path: '/ipam/:id',
           redirect: '/ipam',
         },
@@ -252,6 +282,9 @@ router.beforeEach((to) => {
     return { path: '/' }
   }
   if (to.meta?.requiresOxidized && !authStore.oxidizedEnabled) {
+    return { path: '/' }
+  }
+  if (to.meta?.requiresDnsZones && !authStore.dnsZonesEnabled) {
     return { path: '/' }
   }
 })

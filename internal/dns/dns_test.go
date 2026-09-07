@@ -174,10 +174,12 @@ func TestWriteRecordsSanitizesDeviceName(t *testing.T) {
 
 func TestFilterDevices(t *testing.T) {
 	client := &DNSClient{
-		DNS: &util.ConfigDNS{
-			CommonConfig:    util.CommonConfig{DefaultDomain: "example.com"},
-			IgnoreModels:    "ignored-model\n",
-			IgnorePlatforms: "ignored-platform",
+		DNS: &Config{
+			ConfigDNS: util.ConfigDNS{
+				CommonConfig:    util.CommonConfig{DefaultDomain: "example.com"},
+				IgnoreModels:    "ignored-model\n",
+				IgnorePlatforms: "ignored-platform",
+			},
 		},
 	}
 	all := []*models.Device{
@@ -201,7 +203,7 @@ func TestValidate(t *testing.T) {
 	if err := client.validate(); err == nil {
 		t.Fatal("expected error for missing config")
 	}
-	client.DNS = &util.ConfigDNS{}
+	client.DNS = &Config{}
 	if err := client.validate(); err == nil || !strings.Contains(err.Error(), "default_domain") {
 		t.Fatalf("expected default_domain error, got %v", err)
 	}
@@ -220,9 +222,11 @@ func TestSyncDevicesWritesAndUpdates(t *testing.T) {
 	dest := filepath.Join(dir, "records")
 	updated := 0
 	client := &DNSClient{
-		DNS: &util.ConfigDNS{
-			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
-			DestFile:     dest,
+		DNS: &Config{
+			ConfigDNS: util.ConfigDNS{
+				CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+				DestFile:     dest,
+			},
 		},
 		update: func() error {
 			updated++
@@ -261,9 +265,11 @@ func TestSyncDevicesWritesAndUpdates(t *testing.T) {
 func TestSyncDevicesUpdateError(t *testing.T) {
 	dir := t.TempDir()
 	client := &DNSClient{
-		DNS: &util.ConfigDNS{
-			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
-			DestFile:     filepath.Join(dir, "records"),
+		DNS: &Config{
+			ConfigDNS: util.ConfigDNS{
+				CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+				DestFile:     filepath.Join(dir, "records"),
+			},
 		},
 		update: func() error { return errors.New("dnsmgr2 failed") },
 	}

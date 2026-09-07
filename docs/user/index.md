@@ -22,13 +22,14 @@ currently on GitHub.
 | Customers / Contacts | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
 | Prefixes | IPAM | Only if **IP address management** is enabled |
+| Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |
 | Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |
 | Job overview / status / scheduler | Jobs | Trigger and watch syncs |
 | Settings, users, workers | Admin | Administrators only |
 
 Some entries appear only when the matching feature is on (Oxidized,
-optical, IPAM, organization). Turning a feature off hides the UI; it does
-not delete stored data.
+optical, IPAM, organization, DNS zone editor). Turning a feature off
+hides the UI; it does not delete stored data.
 
 ## Roles
 
@@ -42,5 +43,6 @@ change settings, users, and workers.
 - [Services](services.md)
 - [Config](config.md)
 - [Jobs](jobs.md)
+- [DNS](dns.md)
 - [Admin settings](settings.md)
 - [Software bill of materials](sbom.md)

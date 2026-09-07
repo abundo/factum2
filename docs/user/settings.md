@@ -18,6 +18,8 @@ Feature switches (all off by default except as noted):
 - **Optical / WDM modeling** — ROADM/transponder inventory, paths,
   maintenance impact
 - **IP address management** — namespaces, VRFs, prefixes
+- **DNS zone editor** — zones, DNS templates, SOA templates, DNSSEC
+  policies. Distinct from Destinations → DNS (device-record sync).
 
 Also set the **API token** (service-to-service, not a user password),
 **default domain** (used when matching short device names to FQDNs),
@@ -46,6 +48,8 @@ used by the corresponding sync tool, which may run on the primary
 
 DNS, Icinga, LibreNMS, Oxidized, and Prometheus each have an enabled
 flag, destination file or API URL, and ignore lists (newline-separated).
+The DNS tab also has the path of the generated **dnsmgr2 config file**
+and BIND host-template fields used when the [zone editor](dns.md) is on.
 LibreNMS delayed delete lives here. Oxidized **API URL** is what the GUI
 Oxidized browser uses; it must be reachable from `factum2-web`.
 

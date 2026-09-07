@@ -131,6 +131,19 @@ function testEmail() {
               >Namespaces, VRFs and prefix allocation. Off by default. Turning this off hides the
               UI; it does not delete any IPAM data.</small
             >
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.dns_zones_enabled"
+                id="dns_zones_enabled"
+                @update:model-value="settings.dns_zones_enabled = $event"
+              />
+              <label for="dns_zones_enabled" class="font-bold">DNS zone editor</label>
+            </div>
+            <small class="text-muted-color -mt-4"
+              >Zones, DNS templates, SOA templates and DNSSEC policies. Off by default. Turning this
+              off hides the UI; it does not delete any DNS data. Device-record sync stays on
+              Destinations → DNS.</small
+            >
             <div>
               <label for="factum_api_token" class="block font-bold mb-3">API token</label>
               <PasswordInput id="factum_api_token" v-model="settings.factum_api_token" />

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/abundo/factum2/internal/dns"
 	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/optical"
@@ -188,6 +189,7 @@ func mePayload(db *gorm.DB, u models.User) map[string]any {
 		"ipam_enabled":         ipam.Enabled(db),
 		"organization_enabled": util.OrganizationEnabled(db),
 		"oxidized_enabled":     util.OxidizedEnabled(db),
+		"dns_zones_enabled":    dns.ZonesEnabled(db),
 	}
 }
 

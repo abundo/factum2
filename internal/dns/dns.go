@@ -23,7 +23,7 @@ import (
 
 type DNSClient struct {
 	Config *util.ConfigAgentRoot
-	DNS    *util.ConfigDNS
+	DNS    *Config
 	// update, if set, replaces runDnsmgrUpdate - tests stub it so Sync
 	// doesn't need a real dnsmgr2 binary.
 	update func() error
@@ -89,7 +89,7 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		reporter.EmitErr(err)
 		return err
 	}
-	recordCount := writeRecords(f, dns.DNS.DefaultDomain, devices)
+	recordCount := writeRecordsWithZones(f, dns.DNS.DefaultDomain, devices, dns.zoneSections())
 	if err := f.Close(); err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -102,10 +102,35 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		return err
 	}
 	if changed {
-		reporter.Emit(jobevent.Info, "DNS records changed, running dnsmgr2 update")
+		reporter.Emit(jobevent.Info, "DNS records changed")
 	} else {
-		reporter.Emit(jobevent.Info, "DNS records unchanged, running dnsmgr2 update")
+		reporter.Emit(jobevent.Info, "DNS records unchanged")
 	}
+
+	if dns.DNS.ZonesEnabled && strings.TrimSpace(dns.DNS.ConfigFile) != "" {
+		yamlBytes, err := RenderDnsmgrConfig(dns.DNS)
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		cfgTmp := dns.DNS.ConfigFile + ".tmp"
+		if err := os.WriteFile(cfgTmp, yamlBytes, 0o644); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		cfgChanged, err := installConfFile(cfgTmp, dns.DNS.ConfigFile)
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		if cfgChanged {
+			reporter.Emit(jobevent.Info, "dnsmgr2 config changed: %s", dns.DNS.ConfigFile)
+		} else {
+			reporter.Emit(jobevent.Info, "dnsmgr2 config unchanged: %s", dns.DNS.ConfigFile)
+		}
+	}
+
+	reporter.Emit(jobevent.Info, "running dnsmgr2 update")
 	// Always invoke dnsmgr2: UpdateCommit skips BIND reload when zone
 	// content is unchanged, and a previous failed update still needs a retry.
 	if err := dns.runUpdate(); err != nil {
@@ -213,7 +238,40 @@ func (dns *DNSClient) filterDevices(all []*models.Device) ([]*models.Device, fil
 // device primary IP, then one A/AAAA per interface address named
 // <sanitized-interface>.<sanitized-device>.
 func writeRecords(w io.Writer, domain string, devices []*models.Device) int {
-	fmt.Fprintf(w, "$DOMAIN %s\n", domain)
+	return writeRecordsWithZones(w, domain, devices, nil)
+}
+
+func (dns *DNSClient) zoneSections() []ConfigDNSZone {
+	if dns.DNS == nil || !dns.DNS.ZonesEnabled {
+		return nil
+	}
+	return dns.DNS.Zones
+}
+
+func writeRecordsWithZones(w io.Writer, domain string, devices []*models.Device, zones []ConfigDNSZone) int {
+	recordCount := 0
+	writtenDefault := false
+	for _, zone := range zones {
+		name := strings.TrimSpace(zone.Name)
+		if name == "" {
+			continue
+		}
+		fmt.Fprintf(w, "$DOMAIN %s\n", name)
+		if domain != "" && strings.EqualFold(name, domain) {
+			recordCount += writeDeviceRecords(w, domain, devices)
+			writtenDefault = true
+		}
+		recordCount += writeZoneRecords(w, zone.Records)
+		fmt.Fprintln(w)
+	}
+	if !writtenDefault && domain != "" {
+		fmt.Fprintf(w, "$DOMAIN %s\n", domain)
+		recordCount += writeDeviceRecords(w, domain, devices)
+	}
+	return recordCount
+}
+
+func writeDeviceRecords(w io.Writer, domain string, devices []*models.Device) int {
 	recordCount := 0
 	for _, device := range devices {
 		host := dnsDeviceName(device.Name, domain)
