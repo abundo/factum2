@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent lab bootstrap: wait for compose services, overlay icinga API
-# config, load NetBox demo data if empty, migrate factum, create admin,
-# seed Settings, LibreNMS token, NetBox webhook and custom fields.
+# config and Icinga DB, load NetBox demo data if empty, migrate factum, create
+# admin, seed Settings, LibreNMS token, NetBox webhook and custom fields.
 set -euo pipefail
 
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -83,7 +83,18 @@ wait_http "http://127.0.0.1:18001/login" 80
 log "Waiting for Icinga API"
 wait_http "https://127.0.0.1:15665/v1/status" 40 || true
 
-log "Installing Icinga API user and factum includes"
+log "Ensuring Icinga Web databases"
+"${COMPOSE[@]}" exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-lab}" -e "
+CREATE DATABASE IF NOT EXISTS icingadb;
+CREATE DATABASE IF NOT EXISTS icingaweb;
+CREATE USER IF NOT EXISTS 'icingadb'@'%' IDENTIFIED BY 'icingadb';
+CREATE USER IF NOT EXISTS 'icingaweb'@'%' IDENTIFIED BY 'icingaweb';
+GRANT ALL PRIVILEGES ON icingadb.* TO 'icingadb'@'%';
+GRANT ALL PRIVILEGES ON icingaweb.* TO 'icingaweb'@'%';
+FLUSH PRIVILEGES;
+"
+
+log "Installing Icinga API user, factum includes, and Icinga DB"
 for i in $(seq 1 40); do
 	if "${COMPOSE[@]}" exec -T icinga test -d /data/etc/icinga2/conf.d; then
 		break
@@ -92,8 +103,14 @@ for i in $(seq 1 40); do
 done
 "${COMPOSE[@]}" exec -T -u root icinga tee /data/etc/icinga2/conf.d/api-users.conf >/dev/null <"$DIR/icinga/api-users.conf"
 "${COMPOSE[@]}" exec -T -u root icinga tee /data/etc/icinga2/conf.d/factum.conf >/dev/null <"$DIR/icinga/factum.conf"
+"${COMPOSE[@]}" exec -T -u root icinga sh -c 'mkdir -p /data/etc/icinga2/features-enabled'
+"${COMPOSE[@]}" exec -T -u root icinga tee /data/etc/icinga2/features-enabled/icingadb.conf >/dev/null <"$DIR/icinga/icingadb.conf"
 "${COMPOSE[@]}" exec -T icinga icinga2 daemon --reload >/dev/null 2>&1 || \
 	"${COMPOSE[@]}" exec -T -u root icinga sh -c 'kill -HUP $(pidof icinga2) 2>/dev/null || true'
+
+log "Starting Icinga Web"
+"${COMPOSE[@]}" up -d --wait --wait-timeout 180 icingadb icingaweb
+wait_http "http://127.0.0.1:18002" 40 || true
 
 log "NetBox API token"
 # Demo dump has admin/admin but no API tokens; first-boot SUPERUSER_API_TOKEN
@@ -275,6 +292,7 @@ cat <<EOF
   Rebuild:        ./install.py --source --compose
   NetBox:         http://127.0.0.1:18000  admin / admin
   LibreNMS:       http://127.0.0.1:18001  admin / admin
+  Icinga Web:     http://127.0.0.1:18002  admin / admin
   Icinga API:     https://127.0.0.1:15665  factum / factum
   Oxidized:       http://127.0.0.1:18888
   BIND:           127.0.0.1:18053          zone lab.example

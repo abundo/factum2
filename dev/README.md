@@ -13,6 +13,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | GUI | factum-web | http://127.0.0.1:18091 |
 | Source | NetBox | http://127.0.0.1:18000 |
 | Dest | LibreNMS (no syslog/snmptrapd) | http://127.0.0.1:18001 |
+| Dest | Icinga Web | http://127.0.0.1:18002 |
 | Dest | Oxidized | http://127.0.0.1:18888 |
 | Dest | Icinga 2 API | https://127.0.0.1:15665 |
 | Dest | BIND (`lab.example`) | `127.0.0.1:18053` |
@@ -41,8 +42,8 @@ First postgres volume init loads it; `seed.sh` restores if the netbox DB is
 still empty. `make dev-reset` reloads a fresh dump.
 
 Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
-`admin` / `admin`. NetBox (`:18000`) and LibreNMS (`:18001`) use the same
-user/pass.
+`admin` / `admin`. NetBox (`:18000`), LibreNMS (`:18001`) and Icinga Web
+(`:18002`) use the same user/pass.
 
 ```sh
 ./install.py --compose              # make + migrate + restart factum services

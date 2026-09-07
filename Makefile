@@ -68,12 +68,14 @@ test-integration-web:
 	go test -tags integration -count=1 -v ./web/
 
 # Laptop lab: shared Postgres + MariaDB + Redis, then NetBox / LibreNMS /
-# Icinga / Oxidized / BIND. Isolated from the live instance and testdata/itest.
-# See dev/README.md. Uses docker compose, or podman compose if FACTUM_COMPOSE
-# is set / docker is missing.
+# Icinga / Icinga Web / Oxidized / BIND. Isolated from the live instance and
+# testdata/itest. See dev/README.md. Uses docker compose, or podman compose if
+# FACTUM_COMPOSE is set / docker is missing.
 DEV_DIR := dev
 # Core lab apps (no factum). Schema is applied before factum-web starts.
-LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga oxidized dns portal
+# icingadb / icingaweb start from seed.sh after MariaDB DBs exist (existing
+# mysql volumes skip docker-entrypoint-initdb.d).
+LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized dns portal
 
 dev-up:
 	$(DEV_DIR)/prepare.sh

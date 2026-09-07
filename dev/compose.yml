@@ -1,5 +1,6 @@
 # Laptop lab for factum: one Postgres (factum2 + netbox), one MariaDB
-# (librenms), one Redis (netbox tasks/cache + librenms), then the apps.
+# (librenms + icingadb + icingaweb), one Redis (netbox tasks/cache + librenms),
+# a dedicated Redis for Icinga DB, then the apps.
 #
 # NetBox is loaded from netbox-community/netbox-demo-data (SQL dump matching
 # NETBOX_VERSION) on first postgres volume init; seed.sh restores if the
@@ -80,6 +81,8 @@ services:
       - "13306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      # Extra DBs/users for Icinga Web (runs only on first volume init).
+      - ./mysql/init:/docker-entrypoint-initdb.d:z,ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -249,6 +252,9 @@ services:
     volumes:
       - icinga-data:/data
       - ./data/icinga:/factum:z
+    depends_on:
+      icingadb-redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "icinga2 daemon -C >/dev/null"]
       start_period: 60s
@@ -256,6 +262,93 @@ services:
       timeout: 10s
       retries: 20
     mem_limit: 256m
+
+  # Icinga DB message bus. Not the shared Redis (netbox/librenms keys).
+  icingadb-redis:
+    <<: *lab-restart
+    image: docker.io/redis:7.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    mem_limit: 64m
+
+  icingadb:
+    <<: *lab-restart
+    image: docker.io/icinga/icingadb:1.5.1
+    depends_on:
+      mysql:
+        condition: service_healthy
+      icingadb-redis:
+        condition: service_healthy
+    environment:
+      ICINGADB_DATABASE_HOST: mysql
+      ICINGADB_DATABASE_PORT: "3306"
+      ICINGADB_DATABASE_DATABASE: icingadb
+      ICINGADB_DATABASE_USER: icingadb
+      ICINGADB_DATABASE_PASSWORD: icingadb
+      ICINGADB_REDIS_HOST: icingadb-redis
+      ICINGADB_REDIS_PORT: "6379"
+    mem_limit: 64m
+
+  icingaweb:
+    <<: *lab-restart
+    image: docker.io/icinga/icingaweb2:2.14.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      icingadb-redis:
+        condition: service_healthy
+      icinga:
+        condition: service_healthy
+    ports:
+      - "18002:8080"
+    environment:
+      icingaweb.enabledModules: icingadb
+      icingaweb.passwords.icingaweb2.admin: admin
+      icingaweb.authentication.icingaweb2.backend: db
+      icingaweb.authentication.icingaweb2.resource: icingaweb_db
+      icingaweb.config.global.config_backend: db
+      icingaweb.config.global.config_resource: icingaweb_db
+      icingaweb.config.logging.log: php
+      icingaweb.groups.icingaweb2.backend: db
+      icingaweb.groups.icingaweb2.resource: icingaweb_db
+      icingaweb.modules.icingadb.config.icingadb.resource: icingadb
+      icingaweb.modules.icingadb.redis.redis1.host: icingadb-redis
+      icingaweb.modules.icingadb.redis.redis1.port: "6379"
+      icingaweb.modules.icingadb.commandtransports.icinga2.transport: api
+      icingaweb.modules.icingadb.commandtransports.icinga2.host: icinga
+      icingaweb.modules.icingadb.commandtransports.icinga2.port: "5665"
+      icingaweb.modules.icingadb.commandtransports.icinga2.username: factum
+      icingaweb.modules.icingadb.commandtransports.icinga2.password: factum
+      icingaweb.resources.icingaweb_db.type: db
+      icingaweb.resources.icingaweb_db.db: mysql
+      icingaweb.resources.icingaweb_db.host: mysql
+      icingaweb.resources.icingaweb_db.dbname: icingaweb
+      icingaweb.resources.icingaweb_db.username: icingaweb
+      icingaweb.resources.icingaweb_db.password: icingaweb
+      icingaweb.resources.icingaweb_db.charset: utf8mb4
+      icingaweb.resources.icingadb.type: db
+      icingaweb.resources.icingadb.db: mysql
+      icingaweb.resources.icingadb.host: mysql
+      icingaweb.resources.icingadb.dbname: icingadb
+      icingaweb.resources.icingadb.username: icingadb
+      icingaweb.resources.icingadb.password: icingadb
+      icingaweb.resources.icingadb.charset: utf8mb4
+      icingaweb.roles.Administrators.users: admin
+      icingaweb.roles.Administrators.permissions: "*"
+      icingaweb.roles.Administrators.groups: Administrators
+    volumes:
+      - icingaweb-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      start_period: 45s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 384m
 
   oxidized:
     <<: *lab-restart
@@ -342,3 +435,4 @@ volumes:
   mysql-data:
   librenms-data:
   icinga-data:
+  icingaweb-data:

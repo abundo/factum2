@@ -309,8 +309,8 @@ uses).
 
 A laptop compose project in `dev/` brings up the upstream/downstream apps
 factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
-(librenms). LibreNMS is started without syslog-ng or snmptrapd. Factum-web
-stays on the host. See [dev/README.md](dev/README.md).
+(librenms + icingadb + icingaweb). LibreNMS is started without syslog-ng or
+snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
 make dev-up            # docker or podman compose; first start pulls images
@@ -320,8 +320,8 @@ make dev-reset         # wipe volumes
 ```
 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
-(`admin` / `admin`); NetBox `:18000` and LibreNMS `:18001` use the same
-user/pass. NetBox starts with the
+(`admin` / `admin`); NetBox `:18000`, LibreNMS `:18001` and Icinga Web
+`:18002` use the same user/pass. NetBox starts with the
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
 dump for the image's minor version. Reach them from another machine via this host's address. `build/` is bind-mounted into the factum
 containers; `install.py --compose` does not copy to `/opt/factum2` or
