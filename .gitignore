@@ -43,25 +43,10 @@ site/
 
 # Compose lab runtime (seed.py / dest-file sync). prepare.py creates dest
 # files if missing; do not track them — the first sync rewrites them.
-dev/data/librenms.env
+dev/data/
 dev/env.sh
 # Local NetBox API seed inventory (copy of netbox-seed.example.yaml)
 dev/netbox-seed.yaml
-dev/data/dns/
-dev/data/bind/
-dev/data/bind-zones/
-dev/data/dnsmgr2/
-dev/data/prometheus/
-dev/data/icinga/hosts.conf
-dev/data/icinga/users.conf
-dev/data/oxidized/router.db
-dev/data/oxidized/config
-dev/data/oxidized/log
-dev/data/oxidized/logs/
-dev/data/oxidized/pid
-dev/data/oxidized/configs/
-dev/data/oxidized/crashes/
-dev/data/netbox/
 dev/certs/
 dev/.dnsmgr2-src/
 
