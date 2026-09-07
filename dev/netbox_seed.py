@@ -4,12 +4,14 @@
 Copy netbox-seed.example.yaml to netbox-seed.yaml (gitignored) and edit.
 Objects are created if missing; existing rows are left in place. Interface
 templates on a device type are added when absent, and missing interfaces are
-created on devices we touch.
+created on devices we touch. Device-level interface lists overlay the type by
+name and may assign IP addresses, including the device's primary IPv4/IPv6.
 """
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 import ssl
@@ -40,8 +42,33 @@ _DEVICE_SKIP = {
     "role",
     "device_role",
     "interfaces",
+    "primary_ip",
+    "primary_ip4",
+    "primary_ip6",
 }
 _PLATFORM_SKIP = {"manufacturer"}
+_IFACE_IP_KEYS = frozenset({"ip", "ip_address", "ip_addresses", "addresses"})
+_IFACE_SKIP = {
+    "name",
+    "type",
+    "mgmt_only",
+    "device",
+    "device_type",
+    "primary",
+    "primary_ip",
+    *_IFACE_IP_KEYS,
+}
+_IP_SKIP = {
+    "address",
+    "name",
+    "ip",
+    "primary",
+    "primary_ip",
+    "interface",
+    "assigned_object_type",
+    "assigned_object_id",
+    "status",
+}
 
 
 class APIError(Exception):
@@ -76,6 +103,72 @@ def as_items(value: Any, *, name_key: str = "name") -> list[dict[str, Any]]:
 
 def extras(item: dict[str, Any], skip: set[str]) -> dict[str, Any]:
     return {k: v for k, v in item.items() if k not in skip and v is not None}
+
+
+def nested_id(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        vid = value.get("id")
+        return int(vid) if vid is not None else None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_ip_address(value: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise SystemExit("IP address is empty")
+    try:
+        return str(ipaddress.ip_interface(text))
+    except ValueError as exc:
+        raise SystemExit(f"invalid IP address {value!r}: {exc}") from exc
+
+
+def ip_version(address: str) -> int:
+    return ipaddress.ip_interface(address).version
+
+
+def merge_interfaces(
+    templates: list[dict[str, Any]], extra: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Overlay device-level interface dicts onto device-type templates by name."""
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for item in templates + extra:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        if name not in merged:
+            order.append(name)
+            merged[name] = dict(item)
+        else:
+            merged[name] = {**merged[name], **item}
+    return [merged[name] for name in order]
+
+
+def interface_ip_specs(item: dict[str, Any]) -> list[dict[str, Any]]:
+    raw: Any = None
+    for key in ("ip_addresses", "addresses", "ip_address", "ip"):
+        if item.get(key) is not None:
+            raw = item[key]
+            break
+    if raw is None:
+        return []
+    iface_primary = bool(item.get("primary") or item.get("primary_ip"))
+    specs: list[dict[str, Any]] = []
+    for spec in as_items(raw, name_key="address"):
+        row = dict(spec)
+        if not row.get("address"):
+            row["address"] = row.get("ip") or row.get("name")
+        if iface_primary:
+            row.setdefault("primary", True)
+        specs.append(row)
+    return specs
 
 
 class NetBox:
@@ -129,6 +222,20 @@ class NetBox:
 
     def post(self, collection: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", f"/api/{collection}/", payload=payload)
+
+    def patch(
+        self,
+        collection: str,
+        obj_id: int,
+        payload: dict[str, Any],
+        label: str,
+    ) -> dict[str, Any]:
+        if self.dry_run:
+            log(f"would update {label}")
+            return {"id": obj_id, **payload}
+        updated = self.request("PATCH", f"/api/{collection}/{obj_id}/", payload=payload)
+        log(f"updated {label} id={obj_id}")
+        return updated
 
     def ensure(
         self,
@@ -313,12 +420,18 @@ class Seeder:
                 raise SystemExit(f"interface template on {label} needs name")
             if not item.get("type"):
                 raise SystemExit(f"interface template {name} on {label} needs type")
+            ip_keys = sorted(_IFACE_IP_KEYS & item.keys())
+            if ip_keys:
+                raise SystemExit(
+                    f"interface template {name} on {label}: "
+                    f"{', '.join(ip_keys)} belongs on the device, not the device type"
+                )
             payload = {
                 "device_type": device_type_id,
                 "name": name,
                 "type": item["type"],
                 "mgmt_only": bool(item.get("mgmt_only", False)),
-                **extras(item, {"name", "type", "mgmt_only", "device_type"}),
+                **extras(item, _IFACE_SKIP),
             }
             self.nb.ensure(
                 "dcim/interface-templates",
@@ -394,34 +507,150 @@ class Seeder:
                 payload,
                 f"device {name}",
             )
-            wanted = templates + as_items(item.get("interfaces") or [])
-            self._device_interfaces(int(obj["id"]), name, wanted)
+            wanted = merge_interfaces(templates, as_items(item.get("interfaces") or []))
+            primaries = self._device_interfaces(int(obj["id"]), name, wanted)
+            self._set_device_primaries(int(obj["id"]), name, obj, primaries)
 
     def _device_interfaces(
         self, device_id: int, device_name: str, interfaces: list[dict[str, Any]]
-    ) -> None:
+    ) -> dict[int, int]:
         seen: set[str] = set()
+        primaries: dict[int, int] = {}
         for item in interfaces:
             ifname = str(item.get("name") or "")
             if not ifname or ifname in seen:
                 continue
             seen.add(ifname)
-            iftype = item.get("type")
-            if not iftype:
+            iface = self._ensure_interface(device_id, device_name, item)
+            if iface is None:
                 continue
+            for spec in interface_ip_specs(item):
+                ip_obj = self._ensure_ip(int(iface["id"]), device_name, ifname, spec)
+                if not (spec.get("primary") or spec.get("primary_ip")):
+                    continue
+                address = str(ip_obj.get("address") or spec.get("address") or "")
+                version = ip_version(address)
+                if version in primaries:
+                    raise SystemExit(
+                        f"device {device_name}: multiple primary IPv{version} addresses"
+                    )
+                primaries[version] = int(ip_obj["id"])
+        return primaries
+
+    def _ensure_interface(
+        self, device_id: int, device_name: str, item: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        ifname = str(item.get("name") or "")
+        iftype = item.get("type")
+        if iftype:
             payload = {
                 "device": device_id,
                 "name": ifname,
                 "type": iftype,
                 "mgmt_only": bool(item.get("mgmt_only", False)),
-                **extras(item, {"name", "type", "mgmt_only", "device"}),
+                **extras(item, _IFACE_SKIP),
             }
-            self.nb.ensure(
+            return self.nb.ensure(
                 "dcim/interfaces",
                 {"device_id": device_id, "name": ifname},
                 payload,
                 f"interface {device_name} {ifname}",
             )
+        if not interface_ip_specs(item):
+            return None
+        found = self.nb.find("dcim/interfaces", device_id=device_id, name=ifname)
+        if found:
+            log(f"exists interface {device_name} {ifname} id={found['id']}")
+            return found
+        raise SystemExit(
+            f"interface {device_name} {ifname} needs type "
+            "(not on the device type and not already in NetBox)"
+        )
+
+    def _ensure_ip(
+        self,
+        iface_id: int,
+        device_name: str,
+        ifname: str,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw = spec.get("address") or spec.get("ip") or spec.get("name") or ""
+        address = normalize_ip_address(str(raw))
+        label = f"ip {address} on {device_name} {ifname}"
+        payload = {
+            "address": address,
+            "status": spec.get("status") or "active",
+            "assigned_object_type": "dcim.interface",
+            "assigned_object_id": iface_id,
+            **extras(spec, _IP_SKIP),
+        }
+        if not self.nb.dry_run:
+            found = self.nb.find("ipam/ip-addresses", address=address)
+            if found:
+                self._adopt_existing_ip(found, iface_id, label)
+                return found
+        return self.nb.ensure(
+            "ipam/ip-addresses",
+            {"address": address},
+            payload,
+            label,
+        )
+
+    def _adopt_existing_ip(
+        self, found: dict[str, Any], iface_id: int, label: str
+    ) -> None:
+        assigned_id = nested_id(
+            found.get("assigned_object_id")
+            if found.get("assigned_object_id") is not None
+            else found.get("assigned_object")
+        )
+        assigned_type = found.get("assigned_object_type")
+        if assigned_id is None and not assigned_type:
+            self.nb.patch(
+                "ipam/ip-addresses",
+                int(found["id"]),
+                {
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": iface_id,
+                },
+                label,
+            )
+            return
+        if assigned_type in (None, "dcim.interface") and assigned_id == int(iface_id):
+            log(f"exists {label} id={found['id']}")
+            return
+        raise SystemExit(
+            f"{label}: address already assigned to "
+            f"{assigned_type or 'object'} id={assigned_id}"
+        )
+
+    def _set_device_primaries(
+        self,
+        device_id: int,
+        name: str,
+        device: dict[str, Any],
+        primaries: dict[int, int],
+    ) -> None:
+        if not primaries:
+            return
+        payload: dict[str, Any] = {}
+        for version, field in ((4, "primary_ip4"), (6, "primary_ip6")):
+            ip_id = primaries.get(version)
+            if ip_id is None:
+                continue
+            if nested_id(device.get(field)) == ip_id:
+                continue
+            payload[field] = ip_id
+        if not payload:
+            log(f"exists primary IP on {name}")
+            return
+        fields = ", ".join(f"{k}={v}" for k, v in payload.items())
+        self.nb.patch(
+            "dcim/devices",
+            device_id,
+            payload,
+            f"device {name} primary IP ({fields})",
+        )
 
 
 def load_yaml(path: Path) -> dict[str, Any]:

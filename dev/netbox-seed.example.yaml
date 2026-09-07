@@ -9,6 +9,22 @@
 # Interface lists on a device type become NetBox interface templates; new
 # devices get those ports, and missing ports are added on devices we touch.
 #
+# Device-level `interfaces` overlay the device type by name (type is optional
+# when the port already exists). Each port may list `ip_addresses` as CIDR
+# strings or mappings. Set `primary: true` on at most one IPv4 and one IPv6
+# per device to set primary_ip4 / primary_ip6. `ip:` is a single-address
+# shorthand; `primary: true` on the port marks every address on that port.
+#
+#   interfaces:
+#     - name: Loopback0
+#       ip_addresses:
+#         - address: 192.0.2.1/32
+#           primary: true
+#         - address: 2001:db8::1/128
+#           primary: true
+#     - name: Management1
+#       ip: 192.0.2.10/24
+#
 # Extra keys on any object are passed through to the REST payload (description,
 # serial, custom_fields, tags, u_height, …).
 #
@@ -52,6 +68,12 @@ device_types:
       - { name: Ethernet2, type: 10gbase-x-sfpp }
       - { name: Ethernet3, type: 10gbase-x-sfpp }
       - { name: Ethernet4, type: 10gbase-x-sfpp }
+      - { name: Ethernet5, type: 10gbase-x-sfpp }
+      - { name: Ethernet6, type: 10gbase-x-sfpp }
+      - { name: Ethernet7, type: 10gbase-x-sfpp }
+      - { name: Ethernet8, type: 10gbase-x-sfpp }
+      - { name: Ethernet9, type: 10gbase-x-sfpp }
+      - { name: Ethernet10, type: 10gbase-x-sfpp }
       - { name: Ethernet25/1, type: 100gbase-x-qsfp28 }
       - { name: Ethernet26/1, type: 100gbase-x-qsfp28 }
       - { name: Management1, type: 1000base-t, mgmt_only: true }
@@ -64,6 +86,11 @@ device_types:
       - { name: Ethernet2, type: 10gbase-x-sfpp }
       - { name: Ethernet3, type: 10gbase-x-sfpp }
       - { name: Ethernet4, type: 10gbase-x-sfpp }
+      - { name: Ethernet5, type: 10gbase-x-sfpp }
+      - { name: Ethernet6, type: 10gbase-x-sfpp }
+      - { name: Ethernet7, type: 10gbase-x-sfpp }
+      - { name: Ethernet8, type: 10gbase-x-sfpp }
+      - { name: Ethernet9, type: 10gbase-x-sfpp }
       - { name: Ethernet49/1, type: 100gbase-x-qsfp28 }
       - { name: Ethernet50/1, type: 100gbase-x-qsfp28 }
       - { name: Ethernet51/1, type: 100gbase-x-qsfp28 }
@@ -86,6 +113,15 @@ devices:
     manufacturer: Arista
     device_type: DCS-7020SR-24C2-F
     platform: EOS
+    interfaces:
+      - name: Loopback0
+        ip_addresses:
+          - address: 192.0.2.1/32
+            primary: true
+          - address: 2001:db8::1/128
+            primary: true
+      - name: Management1
+        ip: 192.0.2.10/24
   - name: lu17-lab-r2
     manufacturer: Arista
     device_type: DCS-7280SR2K-48C6-M-F
