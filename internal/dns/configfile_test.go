@@ -80,3 +80,56 @@ func TestWriteRecordsWithZonesMergesDefaultDomain(t *testing.T) {
 		t.Fatalf("expected device + zone records:\n%s", got)
 	}
 }
+
+func TestFormatTxtRdataQuotesDKIM(t *testing.T) {
+	in := "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC"
+	got := formatTxtRdata(in)
+	want := `"v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC"`
+	if got != want {
+		t.Fatalf("formatTxtRdata() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatTxtRdataLeavesQuoted(t *testing.T) {
+	in := `"v=spf1 mx -all"`
+	if got := formatTxtRdata(in); got != in {
+		t.Fatalf("formatTxtRdata() = %q, want unchanged", got)
+	}
+}
+
+func TestFormatTxtRdataEscapesAndSplits(t *testing.T) {
+	if got := formatTxtRdata(`say "hi"`); got != `"say \"hi\""` {
+		t.Fatalf("escape = %q", got)
+	}
+	long := strings.Repeat("a", 256)
+	got := formatTxtRdata(long)
+	want := `"` + strings.Repeat("a", 255) + `" "a"`
+	if got != want {
+		t.Fatalf("split = %q, want %q", got, want)
+	}
+}
+
+func TestWriteZoneRecordsQuotesTXT(t *testing.T) {
+	var buf strings.Builder
+	n := writeZoneRecords(&buf, []ConfigDNSRecord{
+		{Name: "abundo._domainkey", Type: "TXT", Value: "v=DKIM1; k=rsa; p=abc"},
+		{Name: "@", Type: "TXT", Value: `"v=spf1 mx -all"`},
+		{Name: "www", Type: "A", Value: "192.0.2.10"},
+	})
+	got := buf.String()
+	if n != 3 {
+		t.Fatalf("wrote %d, want 3:\n%s", n, got)
+	}
+	if !strings.Contains(got, `"v=DKIM1; k=rsa; p=abc"`) {
+		t.Fatalf("DKIM TXT not quoted:\n%s", got)
+	}
+	if strings.Contains(got, "TXT       v=DKIM1;") {
+		t.Fatalf("DKIM TXT still unquoted:\n%s", got)
+	}
+	if strings.Contains(got, `""v=spf1`) {
+		t.Fatalf("already-quoted SPF was double-quoted:\n%s", got)
+	}
+	if !strings.Contains(got, "www") || !strings.Contains(got, "192.0.2.10") {
+		t.Fatalf("A record missing:\n%s", got)
+	}
+}

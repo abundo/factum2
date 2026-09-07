@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/abundo/factum2/internal/util"
 	goyaml "github.com/goccy/go-yaml"
@@ -302,13 +303,68 @@ func writeZoneRecords(w io.Writer, recs []ConfigDNSRecord) int {
 			if rec.TTL != nil && *rec.TTL > 0 {
 				ttl = strconv.FormatUint(uint64(*rec.TTL), 10)
 			}
+			value := formatRecordValue(rec.Type, rec.Value)
 			if ttl != "" {
-				fmt.Fprintf(w, "%-40s  %-8s %-9s %s\n", rec.Name, ttl, rec.Type, rec.Value)
+				fmt.Fprintf(w, "%-40s  %-8s %-9s %s\n", rec.Name, ttl, rec.Type, value)
 			} else {
-				fmt.Fprintf(w, "%-40s  %-9s %s\n", rec.Name, rec.Type, rec.Value)
+				fmt.Fprintf(w, "%-40s  %-9s %s\n", rec.Name, rec.Type, value)
 			}
 			n++
 		}
 	}
 	return n
+}
+
+func formatRecordValue(typ, value string) string {
+	if strings.ToUpper(typ) != "TXT" {
+		return value
+	}
+	return formatTxtRdata(value)
+}
+
+// formatTxtRdata quotes TXT rdata for a dnsmgr2 records file. Unquoted
+// values with ';' (DKIM, DMARC, SPF) would otherwise be parsed as record
+// options ("k=rsa") and fail with "unknown record options". Already-quoted
+// values are left as-is. Character-strings are split at 255 bytes.
+func formatTxtRdata(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return `""`
+	}
+	if strings.HasPrefix(value, `"`) {
+		return value
+	}
+	var chunks []string
+	var current strings.Builder
+	currentBytes := 0
+	for _, r := range value {
+		n := utf8.RuneLen(r)
+		if n < 0 {
+			n = 1
+		}
+		if currentBytes+n > 255 && current.Len() > 0 {
+			chunks = append(chunks, quoteTxtString(current.String()))
+			current.Reset()
+			currentBytes = 0
+		}
+		current.WriteRune(r)
+		currentBytes += n
+	}
+	chunks = append(chunks, quoteTxtString(current.String()))
+	return strings.Join(chunks, " ")
+}
+
+func quoteTxtString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' || c == '"' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('"')
+	return b.String()
 }
