@@ -17,6 +17,9 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | Oxidized + worker | http://127.0.0.1:18888, hub `127.0.0.1:18447` |
 | Dest | Icinga 2 API + worker | https://127.0.0.1:15665, hub `127.0.0.1:18445` |
 | Dest | Prometheus + worker | http://127.0.0.1:19090, hub `127.0.0.1:18448` |
+| Dest | Grafana (devices + VMs) | http://127.0.0.1:18003 |
+| Dest | Alertmanager | http://127.0.0.1:19093 |
+| Dest | snmp-exporter | http://127.0.0.1:19116 |
 | Dest | BIND (`lab.example`) + factum-dns worker | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker (netbox, device-sync) | `127.0.0.1:18443` |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
@@ -52,9 +55,12 @@ edit; `seed.py` applies it via the NetBox API when that file exists, or run
 `./dev/netbox-seed.sh` later.
 
 Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
-`admin` / `admin`. NetBox (`:18000`) and Icinga Web (`:18002`) use the
-same user/pass; LibreNMS (`:18001`) is `admin` / `Admin-lab1!` (password
-policy requires 8+ characters and a symbol).
+`admin` / `admin`. NetBox (`:18000`), Icinga Web (`:18002`), and Grafana
+(`:18003`) use the same user/pass; LibreNMS (`:18001`) is `admin` /
+`Admin-lab1!` (password policy requires 8+ characters and a symbol).
+Grafana's home dashboard lists devices and virtual machines the way
+LibreNMS does (status, hostname, location, uptime, ports), fed by
+Prometheus via snmp-exporter.
 
 ```sh
 ./install.py --compose              # make + migrate + restart factum services

@@ -1,0 +1,17 @@
+# Lab Alertmanager: receive Prometheus alerts, no outbound notifications.
+route:
+  receiver: default
+  group_by: [alertname, device]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 12h
+
+receivers:
+  - name: default
+
+inhibit_rules:
+  - source_matchers:
+      - alertname = DeviceDown
+    target_matchers:
+      - alertname = InterfaceDown
+    equal: [device]

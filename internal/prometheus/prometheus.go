@@ -37,13 +37,18 @@ import (
 	"github.com/abundo/factum2/models"
 )
 
+// renameFile is os.Rename; tests stub it to simulate a bind-mounted dest
+// (EBUSY) so installConfFile's copy-in-place fallback is covered.
+var renameFile = os.Rename
+
 const (
 	defaultModule = "if_mib"
 	defaultAuth   = "public_v2"
 )
 
 // fileSDTarget is one Prometheus file_sd group: a single SNMP target
-// (device primary IPv4) plus labels snmp_exporter/Grafana use.
+// (device primary IPv4) plus labels snmp_exporter/Grafana use. Grafana
+// splits Devices vs Virtual Machines on the optional vm=true label.
 type fileSDTarget struct {
 	Targets []string          `json:"targets"`
 	Labels  map[string]string `json:"labels,omitempty"`
@@ -89,6 +94,18 @@ func fileSDLabels(device *models.Device, module, auth string) map[string]string 
 	}
 	if device.Role != "" {
 		labels["role"] = device.Role
+	}
+	if device.Manufacturer != "" {
+		labels["manufacturer"] = device.Manufacturer
+	}
+	if device.ModelName != "" {
+		labels["model"] = device.ModelName
+	}
+	if device.Platform != "" {
+		labels["platform"] = device.Platform
+	}
+	if device.VM {
+		labels["vm"] = "true"
 	}
 	return labels
 }
@@ -162,6 +179,10 @@ func (p *prometheusClient) httpReload() error {
 // installConfFile installs tmpFile as dst, but only if its content differs
 // from what's already there - this is what tells Sync() whether Prometheus
 // actually needs a reload.
+//
+// Rename is preferred (atomic). A bind-mounted dest file (Docker/Podman
+// volume of a single file) rejects rename with EBUSY; fall back to writing
+// dst in place and removing the tmp file.
 func installConfFile(tmpFile, dst string) (bool, error) {
 	newContent, err := os.ReadFile(tmpFile)
 	if err != nil {
@@ -175,8 +196,12 @@ func installConfFile(tmpFile, dst string) (bool, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	if err := os.Rename(tmpFile, dst); err != nil {
-		return false, err
+	if err := renameFile(tmpFile, dst); err != nil {
+		if werr := os.WriteFile(dst, newContent, 0o644); werr != nil {
+			os.Remove(tmpFile)
+			return false, fmt.Errorf("rename %s %s: %v (write: %w)", tmpFile, dst, err, werr)
+		}
+		os.Remove(tmpFile)
 	}
 	return true, nil
 }

@@ -2,10 +2,52 @@ global:
   scrape_interval: 1m
   evaluation_interval: 1m
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - 127.0.0.1:9090
+
+  - job_name: alertmanager
+    static_configs:
+      - targets:
+          - alertmanager:9093
+
+  - job_name: snmp-exporter
+    static_configs:
+      - targets:
+          - snmp-exporter:9116
+
+  # factum2-prometheus writes file_sd JSON (device IP + labels). Relabel
+  # sends each target through snmp-exporter. if_mib is interfaces/traffic;
+  # system is sysName/sysUpTime/sysLocation like a LibreNMS device page.
   - job_name: snmp
+    metrics_path: /snmp
+    scrape_timeout: 25s
     honor_labels: true
+    params:
+      module:
+        - if_mib
+        - system
     file_sd_configs:
       - files:
           - /etc/prometheus/targets.json
         refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - source_labels: [auth]
+        target_label: __param_auth
+      - target_label: __address__
+        replacement: snmp-exporter:9116

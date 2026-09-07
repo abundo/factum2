@@ -96,9 +96,12 @@ READY = """
   NetBox:         http://127.0.0.1:18000  admin / admin
   LibreNMS:       http://127.0.0.1:18001  admin / Admin-lab1!
   Icinga Web:     http://127.0.0.1:18002  admin / admin
+  Grafana:        http://127.0.0.1:18003  admin / admin
   Icinga API:     https://127.0.0.1:15665  factum / factum
   Oxidized:       http://127.0.0.1:18888
   Prometheus:     http://127.0.0.1:19090
+  Alertmanager:   http://127.0.0.1:19093
+  snmp-exporter:  http://127.0.0.1:19116
   BIND:           127.0.0.1:18053          zone lab.example (dnsmgr2 + factum-dns)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
@@ -507,6 +510,7 @@ def seed(*, demo: bool = False) -> None:
     log("Starting Icinga Web")
     run(compose("up", "-d", "--wait", "--wait-timeout", "180", "icingadb", "icingaweb"))
     wait_http("http://127.0.0.1:18002", 40, required=False)
+    wait_http("http://127.0.0.1:18003/login", 40, required=False)
 
     log("NetBox API token")
     # Demo dump has admin/admin but no API tokens; first-boot SUPERUSER_API_TOKEN

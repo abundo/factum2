@@ -414,6 +414,9 @@ services:
     mem_limit: 256m
 
   # Prometheus file_sd + factum2-worker (prometheus command only).
+  # Grafana, Alertmanager, and snmp-exporter sit next to it: snmp_exporter
+  # walks if_mib+system, Prometheus alerts into Alertmanager, Grafana shows
+  # a LibreNMS-style device/VM dashboard.
   prometheus:
     <<: *lab-restart
     image: factum-dev-prometheus:local
@@ -430,10 +433,18 @@ services:
       - ./container/factum2-prometheus-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
       - ./certs:/etc/factum2/certs:z,ro
       - ./prometheus/entrypoint.sh:/entrypoint.sh:z,ro
+      # Directory mount so factum2-prometheus can rename targets.json.tmp
+      # onto targets.json. A single-file bind returns EBUSY on rename.
+      - ./data/prometheus:/etc/prometheus:z
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:z,ro
-      - ./data/prometheus/targets.json:/etc/prometheus/targets.json:z
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:z,ro
     environment:
       TZ: UTC
+    depends_on:
+      snmp-exporter:
+        condition: service_started
+      alertmanager:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9090/-/healthy >/dev/null && test -S /run/factum2-worker/api.sock"]
       start_period: 20s
@@ -441,6 +452,69 @@ services:
       timeout: 5s
       retries: 20
     mem_limit: 192m
+
+  snmp-exporter:
+    <<: *lab-restart
+    image: docker.io/prom/snmp-exporter:v0.30.1
+    hostname: snmp-exporter
+    ports:
+      - "19116:9116"
+    environment:
+      TZ: UTC
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9116/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 64m
+
+  alertmanager:
+    <<: *lab-restart
+    image: docker.io/prom/alertmanager:v0.34.0
+    hostname: alertmanager
+    ports:
+      - "19093:9093"
+    volumes:
+      - alertmanager-data:/alertmanager
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:z,ro
+    environment:
+      TZ: UTC
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 64m
+
+  grafana:
+    <<: *lab-restart
+    image: docker.io/grafana/grafana:13.2.1
+    hostname: grafana
+    ports:
+      - "18003:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:z,ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:z,ro
+    environment:
+      TZ: UTC
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/devices.json
+    depends_on:
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 384m
 
   # BIND + dnsmgr2 + factum2-worker (dns command only). factum2-dns writes
   # /etc/dnsmgr2 then runs `dnsmgr2 sync`, which reloads named via rndc.
@@ -544,3 +618,5 @@ volumes:
   icinga-data:
   icingaweb-data:
   prometheus-data:
+  alertmanager-data:
+  grafana-data:

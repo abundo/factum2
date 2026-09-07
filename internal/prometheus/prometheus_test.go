@@ -1,10 +1,12 @@
 package prometheus
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/abundo/factum2/internal/jobevent"
@@ -84,6 +86,52 @@ func TestSaveTargetsJSON(t *testing.T) {
 	if got[0].Labels["module"] != "if_mib" || got[0].Labels["auth"] != "public_v2" {
 		t.Fatalf("defaults missing: %+v", got[0].Labels)
 	}
+	if _, ok := got[0].Labels["vm"]; ok {
+		t.Fatalf("physical device should omit vm label: %+v", got[0].Labels)
+	}
+}
+
+func TestSaveTargetsVMAndInventoryLabels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snmp.json")
+	fpc := testClient(path)
+
+	devices := []*models.Device{
+		{
+			Name: "sw1", Enabled: true, CfMonitorGrafana: true, PrimaryIPv4: "10.0.0.1/32",
+			Manufacturer: "Arista", ModelName: "7020R", Platform: "EOS",
+		},
+		{
+			Name: "vm1", VM: true, Enabled: true, CfMonitorGrafana: true, PrimaryIPv4: "10.0.0.9/32",
+			Site: "dc1", Role: "compute", Platform: "linux",
+		},
+	}
+	if _, err := fpc.Prometheus.SaveTargets(path, devices); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []fileSDTarget
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json: %v\n%s", err, raw)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Labels["device"] != "sw1" {
+		t.Fatalf("first = %+v, want sw1 (sorted)", got[0])
+	}
+	if got[0].Labels["manufacturer"] != "Arista" || got[0].Labels["model"] != "7020R" || got[0].Labels["platform"] != "EOS" {
+		t.Fatalf("sw1 inventory labels = %+v", got[0].Labels)
+	}
+	if _, ok := got[0].Labels["vm"]; ok {
+		t.Fatalf("sw1 should omit vm: %+v", got[0].Labels)
+	}
+	if got[1].Labels["device"] != "vm1" || got[1].Labels["vm"] != "true" {
+		t.Fatalf("vm1 labels = %+v", got[1].Labels)
+	}
 }
 
 func TestSaveTargetsEmpty(t *testing.T) {
@@ -159,6 +207,43 @@ func TestValidate(t *testing.T) {
 	fpc := &FactumPrometheusClient{PrometheusConfig: &util.ConfigPrometheus{}}
 	if err := fpc.validate(); err == nil {
 		t.Fatal("expected dest_file error")
+	}
+}
+
+func TestInstallConfFileBindMountFallback(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "targets.json")
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(dst, []byte("[]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("[\n  {\"targets\": [\"10.0.0.1\"]}\n]\n")
+	if err := os.WriteFile(tmp, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := renameFile
+	renameFile = func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EBUSY}
+	}
+	t.Cleanup(func() { renameFile = orig })
+
+	changed, err := installConfFile(tmp, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("want changed")
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, want) {
+		t.Fatalf("dst = %q, want %q", raw, want)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("tmp still present, stat err=%v", err)
 	}
 }
 

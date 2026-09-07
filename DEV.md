@@ -305,7 +305,7 @@ by any test, but there for a future test that wants `util.MigrateDatabase`
 against a real Postgres instead of the sqlite fakes `web/auth_test.go`
 uses).
 
-### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus)
+### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus, Grafana)
 
 A laptop compose project in `dev/` brings up the upstream/downstream apps
 factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
@@ -320,8 +320,10 @@ make dev-reset         # stop everything, wipe volumes and dest files (does not 
 ```
 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
-(`admin` / `admin`); NetBox `:18000` and Icinga Web `:18002` use the
-same user/pass; LibreNMS `:18001` is `admin` / `Admin-lab1!`. NetBox starts empty; `make dev-up
+(`admin` / `admin`); NetBox `:18000`, Icinga Web `:18002`, and Grafana
+`:18003` use the same user/pass; LibreNMS `:18001` is `admin` / `Admin-lab1!`.
+Grafana sits with Prometheus, Alertmanager, and snmp-exporter and shows
+devices and VMs like LibreNMS. NetBox starts empty; `make dev-up
 SEED_ARGS=--demo` loads the
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
 dump, or copy `dev/netbox-seed.example.yaml` to `dev/netbox-seed.yaml`

@@ -1,0 +1,29 @@
+groups:
+  - name: snmp
+    rules:
+      - alert: DeviceDown
+        expr: up{job="snmp",vm!="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Device {{ $labels.device }} is down"
+          description: "SNMP scrape of {{ $labels.device }} ({{ $labels.instance }}) has been failing for more than 2 minutes."
+
+      - alert: VirtualMachineDown
+        expr: up{job="snmp",vm="true"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM {{ $labels.device }} is down"
+          description: "SNMP scrape of virtual machine {{ $labels.device }} ({{ $labels.instance }}) has been failing for more than 2 minutes."
+
+      - alert: InterfaceDown
+        expr: ifOperStatus{job="snmp"} == 2 and ifAdminStatus{job="snmp"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Interface {{ $labels.ifName }} down on {{ $labels.device }}"
+          description: "{{ $labels.device }} interface {{ $labels.ifName }} ({{ $labels.ifAlias }}) is operationally down while admin-up."
