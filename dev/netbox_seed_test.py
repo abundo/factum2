@@ -124,7 +124,15 @@ class RecordingNB:
         self.ops.append(("PATCH", collection, obj_id, dict(payload), label))
         for obj in self.objects.get(collection, []):
             if obj.get("id") == obj_id:
-                obj.update(payload)
+                merged = dict(payload)
+                if isinstance(payload.get("custom_fields"), dict) and isinstance(
+                    obj.get("custom_fields"), dict
+                ):
+                    merged["custom_fields"] = {
+                        **obj["custom_fields"],
+                        **payload["custom_fields"],
+                    }
+                obj.update(merged)
                 return obj
         return {"id": obj_id, **payload}
 
@@ -308,6 +316,67 @@ class SeedIPTests(unittest.TestCase):
         r0 = next(d for d in data["devices"] if d["name"] == "lu17-lab-r0")
         lo = next(i for i in r0["interfaces"] if i["name"] == "Loopback0")
         self.assertTrue(any(a.get("primary") for a in lo["ip_addresses"]))
+
+
+class SeedCustomFieldTests(unittest.TestCase):
+    def test_create_sets_dest_sync_flags(self) -> None:
+        nb = RecordingNB()
+        Seeder(nb, _inventory()).run()  # type: ignore[arg-type]
+        device = nb.objects["dcim/devices"][0]
+        self.assertEqual(
+            device["custom_fields"],
+            {
+                "backup_oxidized": True,
+                "monitor_grafana": True,
+                "monitor_icinga": True,
+                "monitor_librenms": True,
+            },
+        )
+        posts = [op for op in nb.ops if op[0] == "POST" and op[1] == "dcim/devices"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][2]["custom_fields"]["backup_oxidized"], True)
+        patches = [
+            op
+            for op in nb.ops
+            if op[0] == "PATCH" and op[1] == "dcim/devices" and "custom fields" in op[4]
+        ]
+        self.assertEqual(patches, [])
+
+    def test_yaml_overrides_sync_flag(self) -> None:
+        nb = RecordingNB()
+        Seeder(
+            nb,  # type: ignore[arg-type]
+            _inventory(custom_fields={"monitor_icinga": False, "location": "lab"}),
+        ).run()
+        cf = nb.objects["dcim/devices"][0]["custom_fields"]
+        self.assertFalse(cf["monitor_icinga"])
+        self.assertTrue(cf["backup_oxidized"])
+        self.assertEqual(cf["location"], "lab")
+
+    def test_existing_device_gets_missing_sync_flags(self) -> None:
+        nb = RecordingNB()
+        data = _inventory()
+        Seeder(nb, data).run()  # type: ignore[arg-type]
+        device = nb.objects["dcim/devices"][0]
+        device["custom_fields"] = {"backup_oxidized": False, "location": "rack-1"}
+        Seeder(nb, data).run()  # type: ignore[arg-type]
+        patches = [
+            op
+            for op in nb.ops
+            if op[0] == "PATCH" and op[1] == "dcim/devices" and "custom fields" in op[4]
+        ]
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(
+            patches[0][3]["custom_fields"],
+            {
+                "backup_oxidized": True,
+                "monitor_grafana": True,
+                "monitor_icinga": True,
+                "monitor_librenms": True,
+            },
+        )
+        self.assertEqual(device["custom_fields"]["location"], "rack-1")
+        self.assertTrue(device["custom_fields"]["backup_oxidized"])
 
 
 if __name__ == "__main__":

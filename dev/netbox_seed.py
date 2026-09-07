@@ -2,7 +2,10 @@
 """Idempotent NetBox inventory seed from YAML via the REST API.
 
 Copy netbox-seed.example.yaml to netbox-seed.yaml (gitignored) and edit.
-Objects are created if missing; existing rows are left in place. Interface
+Objects are created if missing; existing rows are left in place except for
+primary IPs and the dest-sync custom fields (backup_oxidized, monitor_grafana,
+monitor_icinga, monitor_librenms), which default to true so lab devices are
+picked up by those syncs. YAML custom_fields overlay the defaults. Interface
 templates on a device type are added when absent, and missing interfaces are
 created on devices we touch. Device-level interface lists overlay the type by
 name and may assign IP addresses, including the device's primary IPv4/IPv6.
@@ -45,6 +48,17 @@ _DEVICE_SKIP = {
     "primary_ip",
     "primary_ip4",
     "primary_ip6",
+    "custom_fields",
+}
+
+# Dest-sync flags. False/null in NetBox means oxidized, Grafana/Prometheus,
+# LibreNMS, and Icinga skip the device. Lab seed turns them on; YAML may
+# override per defaults.custom_fields or device.custom_fields.
+_DEVICE_SYNC_CUSTOM_FIELDS = {
+    "backup_oxidized": True,
+    "monitor_grafana": True,
+    "monitor_icinga": True,
+    "monitor_librenms": True,
 }
 _PLATFORM_SKIP = {"manufacturer"}
 _IFACE_IP_KEYS = frozenset({"ip", "ip_address", "ip_addresses", "addresses"})
@@ -493,6 +507,7 @@ class Seeder:
                     self.roles, "dcim/device-roles", role_name, kind="device role"
                 ),
                 "status": item.get("status") or self.defaults.get("status") or "active",
+                "custom_fields": self._device_custom_fields(item),
                 **extras(item, _DEVICE_SKIP | {"name", "model", "status"}),
             }
             platform_name = item.get("platform") or self.defaults.get("platform")
@@ -510,6 +525,9 @@ class Seeder:
             wanted = merge_interfaces(templates, as_items(item.get("interfaces") or []))
             primaries = self._device_interfaces(int(obj["id"]), name, wanted)
             self._set_device_primaries(int(obj["id"]), name, obj, primaries)
+            self._set_device_custom_fields(
+                int(obj["id"]), name, obj, payload["custom_fields"]
+            )
 
     def _device_interfaces(
         self, device_id: int, device_name: str, interfaces: list[dict[str, Any]]
@@ -622,6 +640,38 @@ class Seeder:
         raise SystemExit(
             f"{label}: address already assigned to "
             f"{assigned_type or 'object'} id={assigned_id}"
+        )
+
+    def _device_custom_fields(self, item: dict[str, Any]) -> dict[str, Any]:
+        cf = dict(_DEVICE_SYNC_CUSTOM_FIELDS)
+        defaults_cf = self.defaults.get("custom_fields")
+        if isinstance(defaults_cf, dict):
+            cf.update(defaults_cf)
+        item_cf = item.get("custom_fields")
+        if isinstance(item_cf, dict):
+            cf.update(item_cf)
+        return cf
+
+    def _set_device_custom_fields(
+        self,
+        device_id: int,
+        name: str,
+        device: dict[str, Any],
+        wanted: dict[str, Any],
+    ) -> None:
+        existing = device.get("custom_fields")
+        if not isinstance(existing, dict):
+            existing = {}
+        changes = {
+            key: value for key, value in wanted.items() if existing.get(key) != value
+        }
+        if not changes:
+            return
+        self.nb.patch(
+            "dcim/devices",
+            device_id,
+            {"custom_fields": changes},
+            f"device {name} custom fields",
         )
 
     def _set_device_primaries(
