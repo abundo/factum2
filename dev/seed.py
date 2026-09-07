@@ -358,6 +358,9 @@ def _settings_sql(
 ) -> str:
     host_tmpl = (DIR / "templates" / "icinga-host.tmpl").read_text()
     user_tmpl = (DIR / "templates" / "icinga-user.tmpl").read_text()
+    # OxidizedApiURL is used by factum2-oxidized (reload) and by
+    # factum-web's /oxidized browser. Compose DNS oxidized:8888 is
+    # reachable from both; 127.0.0.1:8888 is only the oxidized container.
     return f"""
 INSERT INTO settings (id, created_at, updated_at)
 SELECT 1, NOW(), NOW()
@@ -404,7 +407,7 @@ UPDATE settings SET
   librenms_snmp_version = 'v2c',
   librenms_snmp_communities = 'public',
   oxidized_enabled = true,
-  oxidized_api_url = 'http://127.0.0.1:8888',
+  oxidized_api_url = 'http://oxidized:8888',
   oxidized_dest_file = {_sql_lit("/home/oxidized/.config/oxidized/router.db")},
   prometheus_enabled = true,
   prometheus_dest_file = {_sql_lit("/etc/prometheus/targets.json")},

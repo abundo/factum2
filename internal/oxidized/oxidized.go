@@ -133,6 +133,21 @@ func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
 	return string(body), nil
 }
 
+// dummyRouterDBLine is written when sync has no usable devices. Oxidized
+// 0.37 raises NoNodesFound and exits if the CSV source is empty, which
+// takes oxidized-web down with it. prepare.py seeds the same line for
+// the compose lab.
+const dummyRouterDBLine = "lab-dummy:127.0.0.1:ios\n"
+
+// ensureUsableRouterDB writes dummyRouterDBLine when count is 0 so
+// oxidized-web keeps running. Non-zero count leaves path unchanged.
+func ensureUsableRouterDB(path string, count int) error {
+	if count > 0 {
+		return nil
+	}
+	return os.WriteFile(path, []byte(dummyRouterDBLine), 0o644)
+}
+
 // SaveDevices writes one "name:ip:model" line per device to filename —
 // the router.db format oxidized (and LoadDevices above) expects when its
 // CSV source maps name: 0, ip: 1, model: 2. Name is an FQDN (the same
@@ -141,8 +156,8 @@ func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
 // model is oxidizedModel(platform) (lowercase, with IOS-XR/SROS-MD aliases).
 // A device whose name is already its own primary IPv4 is written with
 // that address in both name and ip, to match the device-api naming used
-// by the primary. Devices with no primary IPv4 are skipped. Named
-// devices require DefaultDomain.
+// by the primary. Devices with no primary IPv4 or no oxidized model are
+// skipped. Named devices require DefaultDomain.
 func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) (int, error) {
 	domain := strings.TrimSpace(o.c.DefaultDomain)
 	if domain == "" {
@@ -168,6 +183,9 @@ func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) 
 			continue
 		}
 		model := oxidizedModel(device.Platform)
+		if model == "" {
+			continue
+		}
 		fmt.Fprintf(f, "%s:%s:%s\n", routerDBName(device, domain), routerDBIP(device), model)
 		count++
 	}

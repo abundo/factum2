@@ -103,8 +103,13 @@ Dest files are local to each dest container (still bind-mounted from
 `~/.config/oxidized`, Prometheus `/etc/prometheus/targets.json`, DNS
 `/etc/dnsmgr2` and `/var/lib/bind`.
 
-Oxidized exits if `router.db` has no nodes, so `prepare.py` writes a dummy
-`lab-dummy:127.0.0.1:ios` line when the file is missing. `factum2-oxidized
-sync` replaces that file. Dest files under `dev/data/` are gitignored.
+Oxidized 0.37 exits if `router.db` has no usable nodes, which takes down
+oxidized-web. `prepare.py` (and the oxidized entrypoint) write a dummy
+`lab-dummy:127.0.0.1:ios` line when the file is missing or empty, and
+`factum2-oxidized sync` keeps that dummy when the inventory is empty.
+Factum's Oxidized browser uses `Settings.OxidizedApiURL`, seeded as
+`http://oxidized:8888` so factum-web can reach it; `http://127.0.0.1:8888`
+only works inside the oxidized container. Dest files under `dev/data/`
+are gitignored.
 
 Lab passwords are in `dev/.env` and are not for any other use.

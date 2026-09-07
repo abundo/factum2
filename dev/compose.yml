@@ -380,6 +380,11 @@ services:
       retries: 20
     mem_limit: 384m
 
+  # Oxidized-web is :18888. Factum's /oxidized browser talks to
+  # Settings.OxidizedApiURL from factum-web, so seed.py sets
+  # http://oxidized:8888 (127.0.0.1:8888 is only reachable in this
+  # container). Oxidized 0.37 exits if router.db has no usable nodes;
+  # the entrypoint restores the lab dummy if the file is empty.
   oxidized:
     <<: *lab-restart
     image: factum-dev-oxidized:local
@@ -387,6 +392,7 @@ services:
       context: .
       dockerfile: Dockerfile.oxidized
     hostname: oxidized
+    entrypoint: ["/usr/bin/dumb-init", "--", "/factum-lab/entrypoint.sh"]
     environment:
       OXIDIZED_HOME: /home/oxidized/.config/oxidized
     ports:
@@ -398,6 +404,7 @@ services:
       - ./container/factum2-oxidized-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
       - ./certs:/etc/factum2/certs:z,ro
       - ./oxidized/factum-worker/run:/etc/service/factum-worker/run:z,ro
+      - ./oxidized/entrypoint.sh:/factum-lab/entrypoint.sh:z,ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8888/ >/dev/null && test -S /run/factum2-worker/api.sock"]
       start_period: 20s

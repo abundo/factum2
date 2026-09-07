@@ -157,6 +157,14 @@ func (foc *FactumOxidizedClient) Sync(reporter jobevent.Reporter) error {
 	}
 	reporter.Emit(jobevent.Info, "Wrote %d device(s) to %s", count, tmpFile)
 
+	if count == 0 {
+		if err := ensureUsableRouterDB(tmpFile, count); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		reporter.Emit(jobevent.Info, "No devices to backup; keeping dummy node so oxidized stays running")
+	}
+
 	changed, err := installConfFile(tmpFile, foc.OxidizedConfig.DestFile)
 	if err != nil {
 		reporter.EmitErr(err)

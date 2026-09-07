@@ -87,6 +87,66 @@ func TestOxidizedModel(t *testing.T) {
 	}
 }
 
+func TestSaveDevicesSkipsEmptyModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	client := NewOxidizedClient(util.ConfigOxidized{
+		CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+	})
+	n, err := client.SaveDevices(path, []*models.Device{
+		{Name: "rtr1", Platform: "eos", PrimaryIPv4: "10.1.1.1/32"},
+		{Name: "rtr2", Platform: "", PrimaryIPv4: "10.1.1.2/32"},
+		{Name: "rtr3", Platform: "   ", PrimaryIPv4: "10.1.1.3/32"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("wrote %d, want 1", n)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "rtr1.example.com:10.1.1.1:eos\n" {
+		t.Fatalf("got %q", body)
+	}
+}
+
+func TestEnsureUsableRouterDBWritesDummyWhenEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureUsableRouterDB(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != dummyRouterDBLine {
+		t.Fatalf("got %q", body)
+	}
+}
+
+func TestEnsureUsableRouterDBLeavesNonEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	want := "rtr1.example.com:10.1.1.1:eos\n"
+	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureUsableRouterDB(path, 1); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != want {
+		t.Fatalf("got %q", body)
+	}
+}
+
 func TestSaveDevicesEmptyDomainError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.db")
 	client := NewOxidizedClient(util.ConfigOxidized{})

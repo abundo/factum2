@@ -28,6 +28,7 @@ EXECUTABLES = (
     "icinga/entrypoint.sh",
     "librenms/98-lab-tune.sh",
     "librenms/99-factum-worker.sh",
+    "oxidized/entrypoint.sh",
     "oxidized/factum-worker/run",
     "prometheus/entrypoint.sh",
     "netbox-demo-fetch.sh",
