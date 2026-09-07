@@ -75,10 +75,54 @@ function sourceLabel(line) {
   return SOURCE_LABELS[source] || source
 }
 
+function commandFinished(line) {
+  return line.message === 'command finished'
+}
+
+function commandExitCode(line) {
+  const raw = line.attrs?.exit_code
+  if (raw == null || raw === '') return null
+  const code = Number(raw)
+  return Number.isFinite(code) ? code : null
+}
+
+function commandErr(line) {
+  return String(line.attrs?.err || '').trim()
+}
+
+function commandFailed(line) {
+  if (!commandFinished(line)) return false
+  const exitCode = commandExitCode(line)
+  return Boolean(commandErr(line) || (exitCode != null && exitCode !== 0))
+}
+
+// Hub exit records arrive as message "command finished" plus slog attrs
+// err=/exit_code=. Fold those into a single status so the tail reads like
+// the rest of the job stream instead of dumping empty key=value pairs.
+function lineMessage(line) {
+  if (!commandFinished(line)) return line.message
+  if (!commandFailed(line)) return 'command finished successfully'
+  const err = commandErr(line)
+  const exitCode = commandExitCode(line)
+  if (err && exitCode != null && exitCode !== 0) {
+    return `command failed: ${err} (exit code ${exitCode})`
+  }
+  if (err) return `command failed: ${err}`
+  if (exitCode != null) return `command failed (exit code ${exitCode})`
+  return 'command failed'
+}
+
 function visibleAttrs(line) {
   const attrs = line.attrs
   if (!attrs) return null
-  const entries = Object.entries(attrs).filter(([key]) => !HIDDEN_ATTRS.has(key))
+  const hidden = new Set(HIDDEN_ATTRS)
+  if (commandFinished(line)) {
+    hidden.add('err')
+    hidden.add('exit_code')
+  }
+  const entries = Object.entries(attrs).filter(
+    ([key, value]) => !hidden.has(key) && value !== '' && value != null,
+  )
   return entries.length ? Object.fromEntries(entries) : null
 }
 
@@ -135,7 +179,7 @@ onUnmounted(disconnect)
         :key="line.id"
         class="flex flex-wrap gap-x-2"
         :class="{
-          'text-error': line.level?.toLowerCase() === 'error',
+          'text-error': line.level?.toLowerCase() === 'error' || commandFailed(line),
           'text-warning':
             line.level?.toLowerCase() === 'warning' || line.level?.toLowerCase() === 'warn',
         }"
@@ -148,7 +192,7 @@ onUnmounted(disconnect)
           >{{ sourceLabel(line) }}</span
         >
         <span class="font-semibold uppercase">{{ line.level }}</span>
-        <span>{{ line.message }}</span>
+        <span>{{ lineMessage(line) }}</span>
         <span v-if="visibleAttrs(line)" class="text-muted">
           <span v-for="(value, key) in visibleAttrs(line)" :key="key" class="mr-2">
             {{ key }}={{ value }}
