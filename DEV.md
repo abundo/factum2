@@ -320,8 +320,8 @@ make dev-reset         # wipe volumes
 ```
 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
-(`admin` / `admin`); NetBox `:18000`, LibreNMS `:18001` and Icinga Web
-`:18002` use the same user/pass. NetBox starts empty; `make dev-up
+(`admin` / `admin`); NetBox `:18000` and Icinga Web `:18002` use the
+same user/pass; LibreNMS `:18001` is `admin` / `Admin-lab1!`. NetBox starts empty; `make dev-up
 SEED_ARGS=--demo` loads the
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
 dump, or copy `dev/netbox-seed.example.yaml` to `dev/netbox-seed.yaml`

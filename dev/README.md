@@ -45,8 +45,9 @@ edit; `seed.py` applies it via the NetBox API when that file exists, or run
 `./dev/netbox-seed.sh` later.
 
 Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
-`admin` / `admin`. NetBox (`:18000`), LibreNMS (`:18001`) and Icinga Web
-(`:18002`) use the same user/pass.
+`admin` / `admin`. NetBox (`:18000`) and Icinga Web (`:18002`) use the
+same user/pass; LibreNMS (`:18001`) is `admin` / `Admin-lab1!` (password
+policy requires 8+ characters and a symbol).
 
 ```sh
 ./install.py --compose              # make + migrate + restart factum services

@@ -198,6 +198,8 @@ services:
       REDIS_DB: "2"
       CACHE_DRIVER: redis
       SESSION_DRIVER: redis
+      # Image writes INSTALL=user,finish on empty DB; seed.py creates admin.
+      INSTALL: "false"
       MEMORY_LIMIT: 256M
       MAX_INPUT_VARS: "1000"
       UPLOAD_MAX_SIZE: 8M

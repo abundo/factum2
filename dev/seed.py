@@ -19,6 +19,9 @@ from prepare import prepare
 
 FACTUM_YAML = DIR / "factum2.yaml"
 LIBRENMS_TOKEN = "0123456789abcdef0123456789abcdef"
+# LibreNMS 25.11+ Password::defaults(): min 8 chars and a symbol (not "admin").
+LIBRENMS_ADMIN_USER = "admin"
+LIBRENMS_ADMIN_PASS = "Admin-lab1!"
 
 NETBOX_TOKEN_PY = """\
 import os
@@ -76,7 +79,7 @@ READY = """
   Factum GUI:     http://127.0.0.1:18091   admin / admin
   Rebuild:        ./install.py --source --compose
   NetBox:         http://127.0.0.1:18000  admin / admin
-  LibreNMS:       http://127.0.0.1:18001  admin / admin
+  LibreNMS:       http://127.0.0.1:18001  admin / Admin-lab1!
   Icinga Web:     http://127.0.0.1:18002  admin / admin
   Icinga API:     https://127.0.0.1:15665  factum / factum
   Oxidized:       http://127.0.0.1:18888
@@ -196,6 +199,77 @@ def _create_admin(admin_user: str, admin_pass: str) -> None:
     run(["tmux", "send-keys", "-t", "factum2-dev-admin", admin_pass, "Enter"])
     time.sleep(2)
     run(["tmux", "kill-session", "-t", "factum2-dev-admin"], check=False, quiet=True)
+
+
+def _librenms_user_add_output(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _librenms_user_exists(text: str) -> bool:
+    lower = text.lower()
+    return "already been taken" in lower or "already exists" in lower
+
+
+def _disable_librenms_install_wizard() -> None:
+    # Official image appends INSTALL=user,finish when the DB has no tables.
+    # That keeps /login redirecting to the first-user wizard after user:add.
+    script = """
+set -e
+found=0
+for f in /opt/librenms/.env /data/.env; do
+  [ -f "$f" ] || continue
+  if grep -q '^INSTALL=' "$f"; then
+    sed -i '/^INSTALL=/d' "$f"
+    found=1
+  fi
+done
+if [ "$found" = 1 ]; then
+  artisan config:clear --no-interaction
+  artisan config:cache --no-interaction
+  s6-svc -r /var/run/s6/services/php-fpm 2>/dev/null || s6-svc -r /run/s6/services/php-fpm 2>/dev/null || true
+fi
+"""
+    run(compose("exec", "-T", "librenms", "sh", "-c", script), quiet=True)
+
+
+def _ensure_librenms_admin() -> None:
+    attempts = (
+        compose(
+            "exec",
+            "-T",
+            "librenms",
+            "lnms",
+            "user:add",
+            LIBRENMS_ADMIN_USER,
+            f"--password={LIBRENMS_ADMIN_PASS}",
+            "--role=admin",
+            "--email=admin@lab.example",
+        ),
+        compose(
+            "exec",
+            "-T",
+            "librenms",
+            "php",
+            "/opt/librenms/lnms",
+            "user:add",
+            LIBRENMS_ADMIN_USER,
+            f"--password={LIBRENMS_ADMIN_PASS}",
+            "--role=admin",
+            "--email=admin@lab.example",
+        ),
+    )
+    last = ""
+    for cmd in attempts:
+        result = run(cmd, check=False, capture_output=True, text=True)
+        last = _librenms_user_add_output((result.stdout or "") + "\n" + (result.stderr or ""))
+        if result.returncode == 0:
+            _disable_librenms_install_wizard()
+            return
+        if _librenms_user_exists(last):
+            log("LibreNMS admin user already exists")
+            _disable_librenms_install_wizard()
+            return
+    raise SystemExit(f"LibreNMS user:add failed: {last or 'no output'}")
 
 
 def _settings_sql(
@@ -360,41 +434,10 @@ def seed(*, demo: bool = False) -> None:
     log(f"NetBox token: {netbox_token[:8]}…")
 
     log("LibreNMS admin user + API token")
-    add_user = run(
-        compose(
-            "exec",
-            "-T",
-            "librenms",
-            "lnms",
-            "user:add",
-            "admin",
-            "--password=admin",
-            "--role=admin",
-            "--email=admin@lab.example",
-        ),
-        check=False,
-        quiet=True,
-    )
-    if add_user.returncode != 0:
-        run(
-            compose(
-                "exec",
-                "-T",
-                "librenms",
-                "php",
-                "/opt/librenms/lnms",
-                "user:add",
-                "admin",
-                "--password=admin",
-                "--role=admin",
-                "--email=admin@lab.example",
-            ),
-            check=False,
-            quiet=True,
-        )
+    _ensure_librenms_admin()
     token_sql = f"""\
 INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
- SELECT user_id, '{LIBRENMS_TOKEN}', 'factum lab', 0 FROM librenms.users WHERE username='admin'
+ SELECT user_id, '{LIBRENMS_TOKEN}', 'factum lab', 0 FROM librenms.users WHERE username='{LIBRENMS_ADMIN_USER}'
  AND NOT EXISTS (SELECT 1 FROM librenms.api_tokens WHERE token_hash='{LIBRENMS_TOKEN}');
 """
     mariadb = run(
