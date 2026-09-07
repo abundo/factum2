@@ -1,0 +1,7 @@
+# LibreNMS plus gcompat so the host's glibc factum2 binaries can run next
+# to the Alpine image. factum2-worker is started from
+# /etc/cont-init.d/99-factum-worker.sh (bind-mounted).
+ARG LIBRENMS_VERSION=26.8.2
+FROM docker.io/librenms/librenms:${LIBRENMS_VERSION}
+USER root
+RUN apk add --no-cache gcompat

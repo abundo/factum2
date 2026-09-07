@@ -1,0 +1,16 @@
+---
+# Worker co-located with Oxidized. factum2-oxidized writes router.db and
+# reloads oxidized-web on localhost.
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-oxidized-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        oxidized:
+            cmd: /opt/factum2/factum2-oxidized
+            args: ["sync", "--job"]

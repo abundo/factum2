@@ -16,7 +16,9 @@ x-lab-restart: &lab-restart
   restart: unless-stopped
 
 # Host build/ is bind-mounted at /opt/factum2. install.py --source --compose
-# rebuilds those binaries and restarts factum-web / factum-worker / dns.
+# rebuilds those binaries and restarts factum-web / factum-worker and every
+# dest that runs a co-located factum2-worker (dns, icinga, librenms,
+# oxidized, prometheus).
 x-factum: &factum
   <<: *lab-restart
   image: factum-dev:local
@@ -30,13 +32,8 @@ x-factum: &factum
     - ./container/factum2.yaml:/etc/factum2/factum2.yaml:z,ro
     - ./container/factum2-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
     - ./certs:/etc/factum2/certs:z,ro
-    - ./data/icinga:/data/icinga:z
-    - ./data/oxidized:/data/oxidized:z
-    - ./data/prometheus:/data/prometheus:z
-    - ./container/librenms.env:/opt/librenms-docker/.env:z,ro
   environment:
     APP_ENV: development
-    LIBRENMS_ENV_FILE: /opt/librenms-docker/.env
     TZ: UTC
 
 services:
@@ -140,14 +137,20 @@ services:
       COPILOT_ENABLED: "false"
       ISOLATED_DEPLOYMENT: "true"
       RELEASE_CHECK_URL: ""
+      CSRF_TRUSTED_ORIGINS: "http://127.0.0.1:18000 http://localhost:18000 http://netbox:8080"
+      # One worker keeps RAM down. Backpressure must stay well above 1:
+      # Granian treats it as max concurrent connections, and HTTP keep-alive
+      # healthchecks otherwise occupy the only slot so /login and the UI hang.
       GRANIAN_WORKERS: "1"
-      GRANIAN_BACKPRESSURE: "1"
+      GRANIAN_BACKPRESSURE: "64"
+      # launch-netbox.sh binds :: ; extra --host makes IPv4 (127.0.0.1) work.
+      GRANIAN_EXTRA_ARGS: "--host=0.0.0.0"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login/ >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 4 -o /dev/null http://127.0.0.1:8080/login/"]
       start_period: 180s
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 30
+      retries: 20
     mem_limit: 1g
 
   netbox-worker:
@@ -170,7 +173,12 @@ services:
 
   librenms:
     <<: *lab-restart
-    image: docker.io/librenms/librenms:${LIBRENMS_VERSION:-26.8.2}
+    image: factum-dev-librenms:local
+    build:
+      context: .
+      dockerfile: Dockerfile.librenms
+      args:
+        LIBRENMS_VERSION: ${LIBRENMS_VERSION:-26.8.2}
     hostname: librenms
     cap_add:
       - NET_ADMIN
@@ -182,8 +190,14 @@ services:
         condition: service_healthy
     ports:
       - "18001:8000"
+      - "18446:8443"
     volumes:
       - librenms-data:/data
+      - ../build:/opt/factum2:z,ro
+      - ./container/factum2-librenms-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
+      - ./certs:/etc/factum2/certs:z,ro
+      - ./librenms/98-lab-tune.sh:/etc/cont-init.d/98-lab-tune.sh:z,ro
+      - ./librenms/99-factum-worker.sh:/etc/cont-init.d/99-factum-worker.sh:z,ro
     environment:
       TZ: UTC
       PUID: "1000"
@@ -192,7 +206,8 @@ services:
       DB_NAME: ${MYSQL_DATABASE:-librenms}
       DB_USER: ${MYSQL_USER:-librenms}
       DB_PASSWORD: ${MYSQL_PASSWORD:-librenms}
-      DB_TIMEOUT: "120"
+      # mysql is already healthy via depends_on; keep this short.
+      DB_TIMEOUT: "30"
       REDIS_HOST: redis
       REDIS_DB: "2"
       CACHE_DRIVER: redis
@@ -202,8 +217,15 @@ services:
       MEMORY_LIMIT: 256M
       MAX_INPUT_VARS: "1000"
       UPLOAD_MAX_SIZE: 8M
+      # Image defaults (15 children / opcache 128 / nginx auto) are sized for
+      # a real NMS box; on a 20-core laptop that forks ~20 nginx workers.
+      FPM_PM_MAX_CHILDREN: "2"
+      FPM_PM_START_SERVERS: "1"
+      FPM_PM_MIN_SPARE_SERVERS: "1"
+      FPM_PM_MAX_SPARE_SERVERS: "2"
+      OPCACHE_MEM_SIZE: "64"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/login >/dev/null || wget -qO- http://localhost:8000/login >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 4 -o /dev/null http://127.0.0.1:8000/login && test -S /run/factum2-worker/api.sock"]
       start_period: 180s
       interval: 10s
       timeout: 5s
@@ -232,7 +254,7 @@ services:
       DB_NAME: ${MYSQL_DATABASE:-librenms}
       DB_USER: ${MYSQL_USER:-librenms}
       DB_PASSWORD: ${MYSQL_PASSWORD:-librenms}
-      DB_TIMEOUT: "120"
+      DB_TIMEOUT: "30"
       REDIS_HOST: redis
       REDIS_DB: "2"
       CACHE_DRIVER: redis
@@ -246,18 +268,25 @@ services:
     <<: *lab-restart
     image: docker.io/icinga/icinga2:2.16.5
     hostname: icinga
+    user: "0"
+    entrypoint: ["/usr/bin/dumb-init", "-c", "--", "/factum-lab/entrypoint.sh"]
     environment:
       ICINGA_MASTER: "1"
     ports:
       - "15665:5665"
+      - "18445:8443"
     volumes:
       - icinga-data:/data
       - ./data/icinga:/factum:z
+      - ../build:/opt/factum2:z,ro
+      - ./container/factum2-icinga-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
+      - ./certs:/etc/factum2/certs:z,ro
+      - ./icinga/entrypoint.sh:/factum-lab/entrypoint.sh:z,ro
     depends_on:
       icingadb-redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "icinga2 daemon -C >/dev/null"]
+      test: ["CMD-SHELL", "icinga2 daemon -C >/dev/null && test -S /run/factum2-worker/api.sock"]
       start_period: 60s
       interval: 15s
       timeout: 10s
@@ -353,14 +382,58 @@ services:
 
   oxidized:
     <<: *lab-restart
-    image: docker.io/oxidized/oxidized:latest
+    image: factum-dev-oxidized:local
+    build:
+      context: .
+      dockerfile: Dockerfile.oxidized
+    hostname: oxidized
     environment:
       OXIDIZED_HOME: /home/oxidized/.config/oxidized
     ports:
       - "18888:8888"
+      - "18447:8443"
     volumes:
       - ./data/oxidized:/home/oxidized/.config/oxidized:z
+      - ../build:/opt/factum2:z,ro
+      - ./container/factum2-oxidized-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
+      - ./certs:/etc/factum2/certs:z,ro
+      - ./oxidized/factum-worker/run:/etc/service/factum-worker/run:z,ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8888/ >/dev/null && test -S /run/factum2-worker/api.sock"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 15
     mem_limit: 256m
+
+  # Prometheus file_sd + factum2-worker (prometheus command only).
+  prometheus:
+    <<: *lab-restart
+    image: factum-dev-prometheus:local
+    build:
+      context: .
+      dockerfile: Dockerfile.prometheus
+    hostname: prometheus
+    ports:
+      - "19090:9090"
+      - "18448:8443"
+    volumes:
+      - prometheus-data:/prometheus
+      - ../build:/opt/factum2:z,ro
+      - ./container/factum2-prometheus-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
+      - ./certs:/etc/factum2/certs:z,ro
+      - ./prometheus/entrypoint.sh:/entrypoint.sh:z,ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:z,ro
+      - ./data/prometheus/targets.json:/etc/prometheus/targets.json:z
+    environment:
+      TZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9090/-/healthy >/dev/null && test -S /run/factum2-worker/api.sock"]
+      start_period: 20s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 192m
 
   # BIND + dnsmgr2 + factum2-worker (dns command only). factum2-dns writes
   # /etc/dnsmgr2 then runs `dnsmgr2 sync`, which reloads named via rndc.
@@ -377,8 +450,9 @@ services:
       - "18444:8443"
     volumes:
       - ../build:/opt/factum2:z,ro
-      - ./container/factum2-dns-worker.yaml:/etc/factum2/factum2-dns-worker.yaml:z,ro
+      - ./container/factum2-dns-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
       - ./certs:/etc/factum2/certs:z,ro
+      - ./dns/entrypoint.sh:/entrypoint.sh:z,ro
       - ./bin/dnsmgr2:/usr/local/bin/dnsmgr2:z,ro
       - ./data/dns:/etc/dnsmgr2:z
       - ./data/bind:/etc/bind:z
@@ -462,3 +536,4 @@ volumes:
   librenms-data:
   icinga-data:
   icingaweb-data:
+  prometheus-data:

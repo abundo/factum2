@@ -25,12 +25,26 @@ EXECUTABLES = (
     "netbox-seed.sh",
     "bin/dnsmgr2",
     "dns/entrypoint.sh",
+    "icinga/entrypoint.sh",
+    "librenms/98-lab-tune.sh",
+    "librenms/99-factum-worker.sh",
+    "oxidized/factum-worker/run",
+    "prometheus/entrypoint.sh",
     "netbox-demo-fetch.sh",
     "postgres/init/02-netbox-demo.sh",
     "prepare.py",
     "seed.py",
     "netbox_seed.py",
     "lab.py",
+)
+
+HUB_CERT_DNS = (
+    "factum-worker",
+    "dns",
+    "icinga",
+    "librenms",
+    "oxidized",
+    "prometheus",
 )
 
 SENTINEL = DIR / "data" / "netbox" / "load-demo"
@@ -109,14 +123,15 @@ def _hub_cert_has_dns_san(crt: Path) -> bool:
         text=True,
     )
     text = result.stdout or ""
-    return "DNS:dns" in text and "DNS:factum-worker" in text
+    return all(f"DNS:{name}" in text for name in HUB_CERT_DNS)
 
 
 def _ensure_hub_certs() -> None:
     crt, key = DIR / "certs" / "hub.crt", DIR / "certs" / "hub.key"
     if crt.is_file() and key.is_file() and _hub_cert_has_dns_san(crt):
         return
-    log("Writing hub TLS cert (SAN factum-worker, dns)")
+    sans = ",".join(f"DNS:{name}" for name in HUB_CERT_DNS) + ",DNS:localhost,IP:127.0.0.1"
+    log(f"Writing hub TLS cert (SAN {', '.join(HUB_CERT_DNS)})")
     run(
         [
             "openssl",
@@ -135,7 +150,7 @@ def _ensure_hub_certs() -> None:
             "-subj",
             "/CN=factum-worker",
             "-addext",
-            "subjectAltName=DNS:factum-worker,DNS:dns,DNS:localhost,IP:127.0.0.1",
+            f"subjectAltName={sans}",
         ],
         quiet=True,
     )

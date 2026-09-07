@@ -1,0 +1,16 @@
+---
+# Worker co-located with Icinga 2. factum2-icinga writes /factum/*.conf
+# and reloads icinga2 (systemctl, else API on localhost).
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-icinga-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        icinga:
+            cmd: /opt/factum2/factum2-icinga
+            args: ["sync", "--job"]

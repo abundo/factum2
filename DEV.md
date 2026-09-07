@@ -305,7 +305,7 @@ by any test, but there for a future test that wants `util.MigrateDatabase`
 against a real Postgres instead of the sqlite fakes `web/auth_test.go`
 uses).
 
-### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized)
+### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus)
 
 A laptop compose project in `dev/` brings up the upstream/downstream apps
 factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
@@ -314,7 +314,7 @@ snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
 make dev-up            # docker or podman compose; first start pulls images
-./install.py --compose # rebuild build/ and restart factum-web / factum-worker / dns
+./install.py --compose # rebuild build/ and restart factum-web / factum-worker / dest workers
 make dev-down          # keep volumes
 make dev-reset         # stop everything, wipe volumes and dest files (does not start again)
 ```
@@ -326,7 +326,7 @@ SEED_ARGS=--demo` loads the
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data)
 dump, or copy `dev/netbox-seed.example.yaml` to `dev/netbox-seed.yaml`
 and let `seed.py` apply it via the API. Reach them from another machine via this host's address. `build/` is bind-mounted into the factum
-containers; `install.py --compose` does not copy to `/opt/factum2` or
+containers and each dest worker; `install.py --compose` does not copy to `/opt/factum2` or
 touch systemd.
 
 Ports are published on all interfaces and chosen not to collide with the

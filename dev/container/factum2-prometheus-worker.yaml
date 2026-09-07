@@ -1,0 +1,16 @@
+---
+# Worker co-located with Prometheus. factum2-prometheus writes file_sd JSON
+# and POSTs /-/reload on localhost.
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-prometheus-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        prometheus:
+            cmd: /opt/factum2/factum2-prometheus
+            args: ["sync", "--job"]

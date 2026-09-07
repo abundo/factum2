@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -224,41 +223,74 @@ func (l *LibrenmsLocation) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// librenmsAPIURL joins Settings.LibrenmsApiURL with an API path. The stored
+// URL is often the site origin (http://librenms:8000) without /api/v0; POSTs
+// to the web UI then fail with Laravel's "CSRF token mismatch."
+func librenmsAPIURL(base, endpoint string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if !strings.HasSuffix(strings.ToLower(base), "/api/v0") {
+		base += "/api/v0"
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+	return base + endpoint
+}
+
+func apiHTTPError(status int, body []byte) error {
+	var parsed StatusJSON
+	if json.Unmarshal(body, &parsed) == nil && parsed.Message != "" {
+		return fmt.Errorf("librenms: HTTP %d: %s", status, parsed.Message)
+	}
+	msg := strings.TrimSpace(string(body))
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	return fmt.Errorf("librenms: HTTP %d: %s", status, msg)
+}
+
 // Helper, to setup headers etc for calling Librenms API
 // If data is not nil, it is JSON encoded before posting
 func (librenms *LibrenmsClient) callAPI(method string, endpoint string, data any) ([]byte, error) {
-	var err error
-	url := librenms.P.URL + endpoint
+	url := librenmsAPIURL(librenms.P.URL, endpoint)
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	client := &http.Client{Transport: transport}
 
-	var jsonData []byte
+	var body io.Reader
 	if data != nil {
-		jsonData, err = json.Marshal(data)
+		jsonData, err := json.Marshal(data)
 		if err != nil {
 			return nil, err
 		}
+		body = bytes.NewReader(jsonData)
 	}
-	req, err := http.NewRequest(method, url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Auth-Token", librenms.P.Key)
+	if data != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	response, err := client.Do(req)
 	if err != nil {
-		log.Fatal("Server error:", err)
 		return nil, err
 	}
 	defer response.Body.Close()
 	respData, err := io.ReadAll(response.Body)
 	if err != nil {
-		log.Fatal("Server error:", err)
 		return nil, err
+	}
+	if response.StatusCode >= 400 {
+		return nil, apiHTTPError(response.StatusCode, respData)
 	}
 	return respData, nil
 }

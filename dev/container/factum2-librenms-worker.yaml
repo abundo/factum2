@@ -1,0 +1,16 @@
+---
+# Worker co-located with LibreNMS. factum2-librenms reads /opt/librenms/.env
+# and talks to the local REST API.
+factum:
+    url: http://factum-web:8091
+    token: lab-factum-api-token-not-for-production
+
+worker:
+    listen: ":8443"
+    token: lab-librenms-worker-token
+    tls_cert: /etc/factum2/certs/hub.crt
+    tls_key: /etc/factum2/certs/hub.key
+    commands:
+        librenms:
+            cmd: /opt/factum2/factum2-librenms
+            args: ["sync", "--job"]

@@ -280,6 +280,13 @@ const destinationTabItems = [
             <div>
               <label for="librenms_api_url" class="block font-bold mb-3">API URL</label>
               <UInput id="librenms_api_url" v-model="settings.librenms_api_url" class="w-full" />
+              <p class="text-muted-color mt-1">
+                LibreNMS REST API origin, for example
+                <span class="font-mono">http://librenms:8000/api/v0</span>.
+                <span class="font-mono">/api/v0</span>
+                is added if missing. Without it, device create hits the web UI
+                and fails with a CSRF error.
+              </p>
             </div>
             <div>
               <label for="librenms_api_token" class="block font-bold mb-3">API token</label>

@@ -12,17 +12,18 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Index | portal | http://127.0.0.1:18080 |
 | GUI | factum-web | http://127.0.0.1:18091 |
 | Source | NetBox | http://127.0.0.1:18000 |
-| Dest | LibreNMS (no syslog/snmptrapd) | http://127.0.0.1:18001 |
+| Dest | LibreNMS (no syslog/snmptrapd) + worker | http://127.0.0.1:18001, hub `127.0.0.1:18446` |
 | Dest | Icinga Web | http://127.0.0.1:18002 |
-| Dest | Oxidized | http://127.0.0.1:18888 |
-| Dest | Icinga 2 API | https://127.0.0.1:15665 |
+| Dest | Oxidized + worker | http://127.0.0.1:18888, hub `127.0.0.1:18447` |
+| Dest | Icinga 2 API + worker | https://127.0.0.1:15665, hub `127.0.0.1:18445` |
+| Dest | Prometheus + worker | http://127.0.0.1:19090, hub `127.0.0.1:18448` |
 | Dest | BIND (`lab.example`) + factum-dns worker | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
-| Worker hub | factum-worker | `127.0.0.1:18443` |
+| Worker hub | factum-worker (netbox, device-sync) | `127.0.0.1:18443` |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
 | Shared Redis | netbox db0/db1, librenms db2 | `127.0.0.1:16379` |
 
-Factum-web, factum-worker, and the dns container's factum-dns worker run in
+Factum-web, factum-worker, and each dest's co-located factum2-worker run in
 compose with the host `build/` directory bind-mounted at `/opt/factum2`.
 Rebuild with `./install.py --compose`.
 
@@ -38,8 +39,10 @@ make dev-up
 factum, seeds Settings/admin/tokens (all lab features on, including the DNS
 zone editor), registers the NetBox webhook and custom fields
 (`factum2-netbox check --update`), installs dnsmgr2 in the dns container,
-then starts factum-web and factum-worker. The dns container runs BIND,
-dnsmgr2, and a factum2-worker that only handles `dns` jobs.
+then starts factum-web and factum-worker. Each dest container (dns, icinga,
+librenms, oxidized, prometheus) runs its own factum2-worker with only that
+dest's command, matching production. factum-worker handles netbox and
+device-sync.
 NetBox starts empty. To load the upstream
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data) SQL
 dump, pass `--demo` (`make dev-up SEED_ARGS=--demo`, or `./dev/seed.py --demo`
@@ -77,22 +80,28 @@ cp dev/netbox-seed.example.yaml dev/netbox-seed.yaml
 
 The example creates manufacturers (Arista, Cisco, Nokia), platforms
 (EOS, IOS-XR, SROS-MD), device types 7020R / 7280R / ASR9001 with
-interface templates, and device `lu17-lab-r0`.
+interface templates, and device `lu17-lab-r0` with Loopback0 / Management1
+addresses (Loopback0 is primary). Repeat a device-type port by name on the
+device to assign `ip_addresses`; mark one IPv4 and/or IPv6 `primary: true`.
 
 ## Sync
 
-Sync CLIs run inside `factum-worker` (Job overview, or). DNS sync runs in
-the `dns` container, next to BIND:
+Job overview dispatches each dest command to the worker on that dest
+container. Manual CLIs:
 
 ```sh
 ./dev/compose.sh exec factum-worker /opt/factum2/factum2-netbox sync -f /etc/factum2/factum2.yaml
-./dev/compose.sh exec factum-worker /opt/factum2/factum2-icinga sync
+./dev/compose.sh exec icinga /opt/factum2/factum2-icinga sync
+./dev/compose.sh exec librenms /opt/factum2/factum2-librenms sync
+./dev/compose.sh exec oxidized /opt/factum2/factum2-oxidized sync
+./dev/compose.sh exec prometheus /opt/factum2/factum2-prometheus sync
 ./dev/compose.sh exec dns /opt/factum2/factum2-dns sync
 ```
 
-Dest files are `/data/...` inside factum-worker, bind-mounted from
-`dev/data/`. DNS dest files are `/etc/dnsmgr2` and `/var/lib/bind` in the
-dns container.
+Dest files are local to each dest container (still bind-mounted from
+`dev/data/` so `make dev-reset` can wipe them): Icinga `/factum`, Oxidized
+`~/.config/oxidized`, Prometheus `/etc/prometheus/targets.json`, DNS
+`/etc/dnsmgr2` and `/var/lib/bind`.
 
 Oxidized exits if `router.db` has no nodes, so `prepare.py` writes a dummy
 `lab-dummy:127.0.0.1:ios` line when the file is missing. `factum2-oxidized

@@ -138,6 +138,7 @@ func (o *oxidizedClient) GetDeviceConfig(name string) (string, error) {
 // CSV source maps name: 0, ip: 1, model: 2. Name is an FQDN (the same
 // name factum2-dns publishes), not a short factum hostname; ip is the
 // primary IPv4 without a prefix, which oxidized uses as the SSH target.
+// model is oxidizedModel(platform) (lowercase, with IOS-XR/SROS-MD aliases).
 // A device whose name is already its own primary IPv4 is written with
 // that address in both name and ip, to match the device-api naming used
 // by the primary. Devices with no primary IPv4 are skipped. Named
@@ -166,11 +167,30 @@ func (o *oxidizedClient) SaveDevices(filename string, devices []*models.Device) 
 		if device.PrimaryIPv4 == "" {
 			continue
 		}
-		model := device.Platform // device-api 'platform' is called 'model' in oxidized
+		model := oxidizedModel(device.Platform)
 		fmt.Fprintf(f, "%s:%s:%s\n", routerDBName(device, domain), routerDBIP(device), model)
 		count++
 	}
 	return count, nil
+}
+
+// oxidizedModel is the third router.db field. Oxidized loads
+// lib/oxidized/model/<name>.rb and treats unknown names as unusable, so a
+// NetBox platform of "EOS" (or "IOS-XR" / "SROS-MD") yields zero nodes and
+// Oxidized 0.37 exits with "source returns no usable nodes".
+func oxidizedModel(platform string) string {
+	p := strings.ToLower(strings.TrimSpace(platform))
+	p = strings.ReplaceAll(p, "_", "-")
+	switch p {
+	case "ios-xr", "iosxr":
+		return "iosxr"
+	case "nx-os", "nxos":
+		return "nxos"
+	case "sros-md", "sros", "tiamos":
+		return "sros"
+	default:
+		return p
+	}
 }
 
 // parseRouterDBLine splits one router.db line. Current format is

@@ -42,28 +42,6 @@ if not Token.objects.filter(plaintext=key).exists():
 print(key)
 """
 
-WORKER_SQL = """\
-INSERT INTO worker_nodes (name, address, token, enabled, tls_skip_verify, tls_ca, created_at, updated_at)
-SELECT 'lab', 'factum-worker:8443', 'lab-worker-token', true, true, '', NOW(), NOW()
-WHERE NOT EXISTS (SELECT 1 FROM worker_nodes WHERE name = 'lab');
-UPDATE worker_nodes SET
-  address = 'factum-worker:8443',
-  token = 'lab-worker-token',
-  enabled = true,
-  tls_skip_verify = true
-WHERE name = 'lab';
-
-INSERT INTO worker_nodes (name, address, token, enabled, tls_skip_verify, tls_ca, created_at, updated_at)
-SELECT 'dns', 'dns:8443', 'lab-dns-worker-token', true, true, '', NOW(), NOW()
-WHERE NOT EXISTS (SELECT 1 FROM worker_nodes WHERE name = 'dns');
-UPDATE worker_nodes SET
-  address = 'dns:8443',
-  token = 'lab-dns-worker-token',
-  enabled = true,
-  tls_skip_verify = true
-WHERE name = 'dns';
-"""
-
 DNS_SEED_SQL = """\
 INSERT INTO dns_soa_templates (name, mname, rname, refresh, retry, expire, ttl, created_at, updated_at)
 SELECT 'default_soa', 'ns1.lab.example.', 'hostmaster.lab.example.', 36000, 3600, 604800, 900, NOW(), NOW()
@@ -120,8 +98,9 @@ READY = """
   Icinga Web:     http://127.0.0.1:18002  admin / admin
   Icinga API:     https://127.0.0.1:15665  factum / factum
   Oxidized:       http://127.0.0.1:18888
+  Prometheus:     http://127.0.0.1:19090
   BIND:           127.0.0.1:18053          zone lab.example (dnsmgr2 + factum-dns)
-  DNS worker hub: 127.0.0.1:18444
+  Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
 
@@ -131,6 +110,33 @@ READY = """
 
 def _sql_lit(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _worker_sql(name: str, address: str, token: str) -> str:
+    return f"""\
+INSERT INTO worker_nodes (name, address, token, enabled, tls_skip_verify, tls_ca, created_at, updated_at)
+SELECT {_sql_lit(name)}, {_sql_lit(address)}, {_sql_lit(token)}, true, true, '', NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM worker_nodes WHERE name = {_sql_lit(name)});
+UPDATE worker_nodes SET
+  address = {_sql_lit(address)},
+  token = {_sql_lit(token)},
+  enabled = true,
+  tls_skip_verify = true
+WHERE name = {_sql_lit(name)};
+"""
+
+
+WORKER_SQL = "".join(
+    _worker_sql(name, address, token)
+    for name, address, token in (
+        ("lab", "factum-worker:8443", "lab-worker-token"),
+        ("dns", "dns:8443", "lab-dns-worker-token"),
+        ("icinga", "icinga:8443", "lab-icinga-worker-token"),
+        ("librenms", "librenms:8443", "lab-librenms-worker-token"),
+        ("oxidized", "oxidized:8443", "lab-oxidized-worker-token"),
+        ("prometheus", "prometheus:8443", "lab-prometheus-worker-token"),
+    )
+)
 
 
 def _psql(database: str, sql: str, *, user: str, quiet: bool = False) -> None:
@@ -385,23 +391,24 @@ UPDATE settings SET
   dns_bind_cmd_reload_zone = {_sql_lit("rndc -k /etc/bind/rndc.key reload {zone}")},
   dns_bind_cmd_restart = {_sql_lit("rndc -k /etc/bind/rndc.key reconfig")},
   icinga_enabled = true,
-  icinga_api_url = 'https://icinga:5665',
+  icinga_api_url = 'https://127.0.0.1:5665',
   icinga_api_user = 'factum',
   icinga_api_pass = 'factum',
-  icinga_hosts_file = {_sql_lit("/data/icinga/hosts.conf")},
-  icinga_users_file = {_sql_lit("/data/icinga/users.conf")},
+  icinga_hosts_file = {_sql_lit("/factum/hosts.conf")},
+  icinga_users_file = {_sql_lit("/factum/users.conf")},
   icinga_host_template = {_sql_lit(host_tmpl)},
   icinga_user_template = {_sql_lit(user_tmpl)},
   librenms_enabled = true,
-  librenms_api_url = 'http://librenms:8000',
+  librenms_api_url = 'http://127.0.0.1:8000/api/v0',
   librenms_api_token = {_sql_lit(librenms_token)},
   librenms_snmp_version = 'v2c',
   librenms_snmp_communities = 'public',
   oxidized_enabled = true,
-  oxidized_api_url = 'http://oxidized:8888',
-  oxidized_dest_file = {_sql_lit("/data/oxidized/router.db")},
+  oxidized_api_url = 'http://127.0.0.1:8888',
+  oxidized_dest_file = {_sql_lit("/home/oxidized/.config/oxidized/router.db")},
   prometheus_enabled = true,
-  prometheus_dest_file = {_sql_lit("/data/prometheus/targets.json")}
+  prometheus_dest_file = {_sql_lit("/etc/prometheus/targets.json")},
+  prometheus_reload_url = 'http://127.0.0.1:9090/-/reload'
 WHERE id = 1;
 """
 
@@ -646,7 +653,6 @@ INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
             [
                 "# shellcheck disable=SC2148",
                 "# Source from the repo root:  . dev/env.sh",
-                f'export LIBRENMS_ENV_FILE="{DIR / "data" / "librenms.env"}"',
                 f'export PATH="{DIR / "bin"}:$PATH"',
                 f'export FACTUM_DEV_CONFIG="{FACTUM_YAML}"',
                 "",

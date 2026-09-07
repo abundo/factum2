@@ -1,0 +1,14 @@
+# Prometheus plus factum2-worker. Binaries are bind-mounted from host build/.
+FROM docker.io/prom/prometheus:v2.55.1 AS prom
+FROM docker.io/debian:bookworm-slim
+RUN apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		ca-certificates \
+		curl \
+		tzdata \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& mkdir -p /prometheus /etc/prometheus /run/factum2-worker
+COPY --from=prom /bin/prometheus /bin/prometheus
+COPY prometheus/entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

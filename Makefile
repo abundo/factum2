@@ -68,15 +68,15 @@ test-integration-web:
 	go test -tags integration -count=1 -v ./web/
 
 # Laptop lab: shared Postgres + MariaDB + Redis, then NetBox / LibreNMS /
-# Icinga / Icinga Web / Oxidized / BIND. Isolated from the live instance and
-# testdata/itest. See dev/README.md. Uses docker compose, or podman compose if
-# FACTUM_COMPOSE is set / docker is missing.
+# Icinga / Icinga Web / Oxidized / Prometheus / BIND. Isolated from the live
+# instance and testdata/itest. See dev/README.md. Uses docker compose, or
+# podman compose if FACTUM_COMPOSE is set / docker is missing.
 DEV_DIR := dev
-# Core lab apps. Schema is applied before factum-web starts. dns runs BIND
-# plus a factum2-worker that only handles the dns command. icingadb /
-# icingaweb start from seed.py after MariaDB DBs exist (existing mysql
-# volumes skip docker-entrypoint-initdb.d).
-LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized dns portal
+# Core lab apps. Schema is applied before factum-web starts. Each dest
+# (dns, icinga, librenms, oxidized, prometheus) runs its own factum2-worker.
+# icingadb / icingaweb start from seed.py after MariaDB DBs exist (existing
+# mysql volumes skip docker-entrypoint-initdb.d).
+LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized prometheus dns portal
 # Optional: make dev-up SEED_ARGS=--demo  (netbox-community SQL dump)
 SEED_ARGS ?=
 

@@ -31,7 +31,7 @@ for _ in $(seq 1 50); do
 	sleep 0.2
 done
 
-/opt/factum2/factum2-worker -f /etc/factum2/factum2-dns-worker.yaml start &
+/opt/factum2/factum2-worker -f /etc/factum2/factum2-worker.yaml start &
 WORKER_PID=$!
 
 term() {

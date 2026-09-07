@@ -1,5 +1,6 @@
 ---
-# In-container worker. Commands run from the bind-mounted build/ directory.
+# Primary-side worker (NetBox / device-sync). Dest CLIs run on their own
+# dest containers as remote workers — see factum2-*-worker.yaml.
 # factum.url is unix-socket fallback; CLIs co-located here use api.sock.
 factum:
     url: http://factum-web:8091
@@ -13,18 +14,6 @@ worker:
     commands:
         netbox:
             cmd: /opt/factum2/factum2-netbox
-            args: ["sync", "--job"]
-        icinga:
-            cmd: /opt/factum2/factum2-icinga
-            args: ["sync", "--job"]
-        librenms:
-            cmd: /opt/factum2/factum2-librenms
-            args: ["sync", "--job"]
-        oxidized:
-            cmd: /opt/factum2/factum2-oxidized
-            args: ["sync", "--job"]
-        prometheus:
-            cmd: /opt/factum2/factum2-prometheus
             args: ["sync", "--job"]
         device-sync:
             cmd: /opt/factum2/factum2-device-sync

@@ -43,6 +43,50 @@ func TestSaveDevicesQualifiesShortNames(t *testing.T) {
 	}
 }
 
+func TestSaveDevicesNormalizesModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	client := NewOxidizedClient(util.ConfigOxidized{
+		CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+	})
+	n, err := client.SaveDevices(path, []*models.Device{
+		{Name: "eos1", Platform: "EOS", PrimaryIPv4: "10.1.1.1/32"},
+		{Name: "xr1", Platform: "IOS-XR", PrimaryIPv4: "10.1.1.2/32"},
+		{Name: "sros1", Platform: "SROS-MD", PrimaryIPv4: "10.1.1.3/32"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("wrote %d, want 3", n)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "eos1.example.com:10.1.1.1:eos\nxr1.example.com:10.1.1.2:iosxr\nsros1.example.com:10.1.1.3:sros\n"
+	if string(body) != want {
+		t.Fatalf("router.db =\n%q\nwant\n%q", body, want)
+	}
+}
+
+func TestOxidizedModel(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"EOS", "eos"},
+		{"eos", "eos"},
+		{"IOS-XR", "iosxr"},
+		{"iosxr", "iosxr"},
+		{"SROS-MD", "sros"},
+		{"nx-os", "nxos"},
+		{"junos", "junos"},
+		{"  IOS  ", "ios"},
+	}
+	for _, tt := range tests {
+		if got := oxidizedModel(tt.in); got != tt.want {
+			t.Errorf("oxidizedModel(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestSaveDevicesEmptyDomainError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.db")
 	client := NewOxidizedClient(util.ConfigOxidized{})

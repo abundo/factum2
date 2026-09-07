@@ -1,0 +1,5 @@
+# Oxidized plus a runit service slot for factum2-worker. The run script and
+# binaries are bind-mounted; this image only creates the service directory
+# so runsv can write supervise/ next to the mounted run file.
+FROM docker.io/oxidized/oxidized:latest
+RUN mkdir -p /etc/service/factum-worker
