@@ -1,8 +1,14 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const route = useRoute()
+
+// Shared across the per-group AccordionRoots inside UNavigationMenu. Selecting a
+// leaf item (or changing route) keeps only the matching heading(s) open.
+const openSections = ref([])
 
 function section(label, children) {
   return [
@@ -14,8 +20,67 @@ function section(label, children) {
   ]
 }
 
-const items = computed(() => {
-  const groups = [
+function pathMatches(to, exact, path) {
+  if (!to) return false
+  if (exact) return path === to
+  return path === to || path.startsWith(`${to}/`)
+}
+
+function containsPath(item, path) {
+  if (pathMatches(item.to, item.exact, path)) return true
+  return item.children?.some((child) => containsPath(child, path)) ?? false
+}
+
+function openValuesForPath(path) {
+  const values = []
+  for (const group of groups.value) {
+    for (const item of group) {
+      if (item.value && containsPath(item, path)) {
+        values.push(item.value)
+      }
+    }
+  }
+  return values
+}
+
+function collapseToPath(path) {
+  openSections.value = openValuesForPath(path)
+}
+
+function topLevelValues() {
+  const values = new Set()
+  for (const group of groups.value) {
+    for (const item of group) {
+      if (item.value) values.add(item.value)
+    }
+  }
+  return values
+}
+
+// Nested accordions (Admin > Settings/AAA) also emit update:modelValue through
+// UNavigationMenu. Ignore those so they don't collapse every top-level heading.
+function onOpenSectionsUpdate(val) {
+  const incoming = Array.isArray(val) ? val : val != null ? [val] : []
+  const allowed = topLevelValues()
+  const next = incoming.filter((v) => allowed.has(v))
+  if (next.length > 0 || incoming.length === 0) {
+    openSections.value = next
+  }
+}
+
+function decorate(item, path) {
+  const next = { ...item }
+  if (next.children?.length) {
+    next.children = next.children.map((child) => decorate(child, path))
+    next.open = containsPath(next, path)
+  } else if (next.to) {
+    next.onSelect = () => collapseToPath(next.to)
+  }
+  return next
+}
+
+const groups = computed(() => {
+  const result = [
     section('Home', [{ label: 'Dashboard', icon: 'i-lucide-home', to: '/', exact: true }]),
   ]
 
@@ -23,7 +88,7 @@ const items = computed(() => {
   // and their own profile - see web/auth.go's RequireRead/RequireWrite,
   // which reject every other API route for them.
   if (authStore.canRead) {
-    groups.push(
+    result.push(
       ...(authStore.organizationEnabled
         ? [
             section('Organization', [
@@ -72,10 +137,10 @@ const items = computed(() => {
     )
   }
 
-  groups.push(section('Help', [{ label: 'Documentation', icon: 'i-lucide-book-open', to: '/doc' }]))
+  result.push(section('Help', [{ label: 'Documentation', icon: 'i-lucide-book-open', to: '/doc' }]))
 
   if (authStore.isAdmin) {
-    groups.push(
+    result.push(
       section('Admin', [
         {
           label: 'Settings',
@@ -114,10 +179,26 @@ const items = computed(() => {
     )
   }
 
-  return groups
+  return result
 })
+
+const items = computed(() =>
+  groups.value.map((group) => group.map((item) => decorate(item, route.path))),
+)
+
+watch(
+  () => route.path,
+  (path) => collapseToPath(path),
+  { immediate: true },
+)
 </script>
 
 <template>
-  <UNavigationMenu orientation="vertical" :items="items" class="w-full" />
+  <UNavigationMenu
+    :model-value="openSections"
+    orientation="vertical"
+    :items="items"
+    class="w-full"
+    @update:model-value="onOpenSectionsUpdate"
+  />
 </template>
