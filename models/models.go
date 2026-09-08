@@ -308,7 +308,13 @@ type Settings struct {
 	// Off (nil/false) is the default. Distinct from DnsEnabled, which is
 	// the Destinations toggle for device-record sync. Turning this off
 	// only hides the UI — rows stay in the database.
-	DnsZonesEnabled   *bool `gorm:"column:dns_zones_enabled" form:"dns_zones_enabled" json:"dns_zones_enabled"`
+	DnsZonesEnabled *bool `gorm:"column:dns_zones_enabled" form:"dns_zones_enabled" json:"dns_zones_enabled"`
+	// DhcpEnabled gates DHCP server management: per-prefix DHCP in IPAM
+	// and the MAC column on DNS zone records. Off (nil/false) is the
+	// default. Turning it off only hides the UI — prefix DHCP fields and
+	// record MACs stay in the database. factum2-dns writes Kea prefixes
+	// into dnsmgr2.yaml when this is on.
+	DhcpEnabled       *bool `gorm:"column:dhcp_enabled" form:"dhcp_enabled" json:"dhcp_enabled"`
 	LibrenmsEnabled   *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
 	LimeEnabled       *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
 	NetboxEnabled     *bool `gorm:"column:netbox_enabled" form:"netbox_enabled" json:"netbox_enabled"`
@@ -374,6 +380,23 @@ type Settings struct {
 	DnsBindCmdReloadAll  string `gorm:"column:dns_bind_cmd_reload_all" form:"dns_bind_cmd_reload_all" json:"dns_bind_cmd_reload_all"`
 	DnsBindCmdReloadZone string `gorm:"column:dns_bind_cmd_reload_zone" form:"dns_bind_cmd_reload_zone" json:"dns_bind_cmd_reload_zone"`
 	DnsBindCmdRestart    string `gorm:"column:dns_bind_cmd_restart" form:"dns_bind_cmd_restart" json:"dns_bind_cmd_restart"`
+	// DhcpDnsServers is the default DNS server list offered to DHCP
+	// clients (newline-separated). A prefix may override this. Edited on
+	// the Factum tab next to the DHCP feature switch.
+	DhcpDnsServers string `gorm:"column:dhcp_dns_servers;type:text" form:"dhcp_dns_servers" json:"dhcp_dns_servers"`
+	// Kea host-template fields, written into dnsmgr2.yaml when DhcpEnabled
+	// is on. Empty fields fall back to the Ubuntu Kea layout from
+	// dnsmgr2's example config, same convention as the BIND fields above.
+	DhcpHostTemplate    string `gorm:"column:dhcp_host_template" form:"dhcp_host_template" json:"dhcp_host_template"`
+	DhcpKeaType         string `gorm:"column:dhcp_kea_type" form:"dhcp_kea_type" json:"dhcp_kea_type"`
+	DhcpKea4ConfigDir   string `gorm:"column:dhcp_kea4_config_dir" form:"dhcp_kea4_config_dir" json:"dhcp_kea4_config_dir"`
+	DhcpKea4IncludeFile string `gorm:"column:dhcp_kea4_include_file" form:"dhcp_kea4_include_file" json:"dhcp_kea4_include_file"`
+	DhcpKea4TmpDir      string `gorm:"column:dhcp_kea4_tmp_dir" form:"dhcp_kea4_tmp_dir" json:"dhcp_kea4_tmp_dir"`
+	DhcpKea4CmdRestart  string `gorm:"column:dhcp_kea4_cmd_restart" form:"dhcp_kea4_cmd_restart" json:"dhcp_kea4_cmd_restart"`
+	DhcpKea6ConfigDir   string `gorm:"column:dhcp_kea6_config_dir" form:"dhcp_kea6_config_dir" json:"dhcp_kea6_config_dir"`
+	DhcpKea6IncludeFile string `gorm:"column:dhcp_kea6_include_file" form:"dhcp_kea6_include_file" json:"dhcp_kea6_include_file"`
+	DhcpKea6TmpDir      string `gorm:"column:dhcp_kea6_tmp_dir" form:"dhcp_kea6_tmp_dir" json:"dhcp_kea6_tmp_dir"`
+	DhcpKea6CmdRestart  string `gorm:"column:dhcp_kea6_cmd_restart" form:"dhcp_kea6_cmd_restart" json:"dhcp_kea6_cmd_restart"`
 
 	// Email / SMTP - a general-purpose outbound mail relay, not tied to
 	// Icinga specifically (factum2-icinga-notifications is the first

@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -46,7 +45,7 @@ func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {
 }
 
 // Get all devices from factum database
-// Write a dnsmgr records file
+// Write a dnsmgr2 JSON records file
 // Ask dnsmgr to update dns
 func (dns *DNSClient) Sync(reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "DNS sync started")
@@ -89,10 +88,15 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		reporter.EmitErr(err)
 		return err
 	}
-	recordCount := writeRecordsWithZones(f, dns.DNS.DefaultDomain, devices, dns.zoneSections())
-	if err := f.Close(); err != nil {
+	recordCount, err := writeRecordsWithZones(f, dns.DNS.DefaultDomain, devices, dns.zoneSections())
+	closeErr := f.Close()
+	if err != nil {
 		reporter.EmitErr(err)
 		return err
+	}
+	if closeErr != nil {
+		reporter.EmitErr(closeErr)
+		return closeErr
 	}
 	reporter.Emit(jobevent.Info, "DNS sync: wrote %d record(s) to %s", recordCount, tmpFile)
 
@@ -107,7 +111,7 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		reporter.Emit(jobevent.Info, "DNS records unchanged")
 	}
 
-	if dns.DNS.ZonesEnabled && strings.TrimSpace(dns.DNS.ConfigFile) != "" {
+	if (dns.DNS.ZonesEnabled || dns.DNS.DhcpEnabled) && strings.TrimSpace(dns.DNS.ConfigFile) != "" {
 		yamlBytes, err := RenderDnsmgrConfig(dns.DNS)
 		if err != nil {
 			reporter.EmitErr(err)
@@ -234,76 +238,11 @@ func (dns *DNSClient) filterDevices(all []*models.Device) ([]*models.Device, fil
 	return devices, counts
 }
 
-// writeRecords emits a dnsmgr records file: $DOMAIN, then one A/AAAA per
-// device primary IP, then one A/AAAA per interface address named
-// <sanitized-interface>.<sanitized-device>.
-func writeRecords(w io.Writer, domain string, devices []*models.Device) int {
-	return writeRecordsWithZones(w, domain, devices, nil)
-}
-
 func (dns *DNSClient) zoneSections() []ConfigDNSZone {
 	if dns.DNS == nil || !dns.DNS.ZonesEnabled {
 		return nil
 	}
 	return dns.DNS.Zones
-}
-
-func writeRecordsWithZones(w io.Writer, domain string, devices []*models.Device, zones []ConfigDNSZone) int {
-	recordCount := 0
-	writtenDefault := false
-	for _, zone := range zones {
-		name := strings.TrimSpace(zone.Name)
-		if name == "" {
-			continue
-		}
-		fmt.Fprintf(w, "$DOMAIN %s\n", name)
-		if domain != "" && strings.EqualFold(name, domain) {
-			recordCount += writeDeviceRecords(w, domain, devices)
-			writtenDefault = true
-		}
-		recordCount += writeZoneRecords(w, zone.Records)
-		fmt.Fprintln(w)
-	}
-	if !writtenDefault && domain != "" {
-		fmt.Fprintf(w, "$DOMAIN %s\n", domain)
-		recordCount += writeDeviceRecords(w, domain, devices)
-	}
-	return recordCount
-}
-
-func writeDeviceRecords(w io.Writer, domain string, devices []*models.Device) int {
-	recordCount := 0
-	for _, device := range devices {
-		host := dnsDeviceName(device.Name, domain)
-		if host == "" {
-			continue
-		}
-		recordCount += writeAddress(w, host, device.PrimaryIPv4)
-		recordCount += writeAddress(w, host, device.PrimaryIPv6)
-		for _, intf := range device.Interfaces {
-			label := dnsInterfaceLabel(intf.Name)
-			if label == "" {
-				continue
-			}
-			name := label + "." + host
-			for _, addr := range intf.Addresses {
-				recordCount += writeAddress(w, name, addr.Address)
-			}
-		}
-	}
-	return recordCount
-}
-
-// writeAddress writes one A or AAAA line for cidr (which may include a
-// "/prefixlen" suffix, as models.Device.PrimaryIPv4 and Address.Address
-// do). Empty or unparseable values are skipped.
-func writeAddress(w io.Writer, name, cidr string) int {
-	ip, rrtype, ok := parseRecord(cidr)
-	if !ok {
-		return 0
-	}
-	fmt.Fprintf(w, "%-40s  %-9s %s\n", name, rrtype, ip)
-	return 1
 }
 
 func parseRecord(cidr string) (ip, rrtype string, ok bool) {
@@ -324,8 +263,8 @@ func parseRecord(cidr string) (ip, rrtype string, ok bool) {
 
 // dnsDeviceName turns a factum device name into a relative DNS name for a
 // dnsmgr2 records file: strip a trailing "."+domain suffix so we don't
-// double-append $DOMAIN, then sanitize each label like dnsInterfaceLabel.
-// Empty if nothing usable remains.
+// double-append the default domain, then sanitize each label like
+// dnsInterfaceLabel. Empty if nothing usable remains.
 func dnsDeviceName(name, domain string) string {
 	name = strings.TrimSuffix(name, ".")
 	name = util.ShortName(name, domain)

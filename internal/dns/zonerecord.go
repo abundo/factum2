@@ -77,13 +77,68 @@ func parseZoneRecord(req models.DnsZoneRecordDTO) (models.DnsZoneRecord, error) 
 	if err := validateRecordValue(typ, value); err != nil {
 		return models.DnsZoneRecord{}, err
 	}
+	mac, err := parseRecordMAC(typ, req.MAC)
+	if err != nil {
+		return models.DnsZoneRecord{}, err
+	}
 	return models.DnsZoneRecord{
 		Name:        name,
 		TTL:         normalizeTTL(req.TTL),
 		Type:        typ,
 		Value:       value,
 		Description: strings.TrimSpace(req.Description),
+		MAC:         mac,
 	}, nil
+}
+
+// parseRecordMAC returns canonical lowercase colon form, or "" if unset.
+// MAC is only valid on A/AAAA (DHCP host reservations).
+func parseRecordMAC(typ, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if typ != "A" && typ != "AAAA" {
+		return "", fmt.Errorf("MAC is only valid on A and AAAA records")
+	}
+	mac, err := NormalizeMAC(raw)
+	if err != nil {
+		return "", err
+	}
+	return mac, nil
+}
+
+// NormalizeMAC parses a MAC and returns canonical lowercase colon form
+// (aa:bb:cc:dd:ee:ff). Accepted input: aa:bb:cc:dd:ee:ff, aa-bb-cc-dd-ee-ff,
+// aabb.ccdd.eeff, aabbccddeeff — matching dnsmgr2.
+func NormalizeMAC(v string) (string, error) {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return "", fmt.Errorf("empty MAC address")
+	}
+	var hexChars []byte
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c == ':' || c == '-' || c == '.':
+			continue
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
+			hexChars = append(hexChars, c)
+		default:
+			return "", fmt.Errorf("invalid MAC address")
+		}
+	}
+	if len(hexChars) != 12 {
+		return "", fmt.Errorf("invalid MAC address")
+	}
+	out := make([]byte, 0, 17)
+	for i, c := range hexChars {
+		if i > 0 && i%2 == 0 {
+			out = append(out, ':')
+		}
+		out = append(out, c)
+	}
+	return string(out), nil
 }
 
 func normalizeTTL(ttl *uint) *uint {
@@ -148,6 +203,7 @@ func ZoneRecordsDTO(recs []models.DnsZoneRecord) []models.DnsZoneRecordDTO {
 			Type:        r.Type,
 			Value:       r.Value,
 			Description: r.Description,
+			MAC:         r.MAC,
 		})
 	}
 	return out

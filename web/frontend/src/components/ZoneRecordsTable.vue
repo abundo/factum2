@@ -216,6 +216,30 @@
               </div>
             </UTooltip>
           </template>
+          <template #mac-cell="{ row }">
+            <div data-record-col="mac" class="w-full" @keydown="onCellKeydown($event, row, 'mac')">
+              <UTooltip v-bind="cellTooltipProps(row.original.mac, row.original, 'mac')">
+                <div
+                  class="w-full min-w-0"
+                  @pointerenter="onFieldEnter($event, row.original, 'mac', row.original.mac)"
+                  @pointerleave="onFieldLeave(row.original, 'mac')"
+                >
+                  <UInput
+                    v-model="row.original.mac"
+                    class="w-full font-mono"
+                    variant="none"
+                    color="neutral"
+                    size="xs"
+                    :ui="cellFieldUi"
+                    placeholder="aa:bb:cc:dd:ee:ff"
+                    autocomplete="off"
+                    :disabled="disabled || !isAddressRecord(row.original)"
+                    @update:model-value="syncRowChanged(row.original)"
+                  />
+                </div>
+              </UTooltip>
+            </div>
+          </template>
           <template #description-cell="{ row }">
             <div
               data-record-col="description"
@@ -330,6 +354,10 @@ import {
   subzoneRecordRange,
   ZONE_RECORD_TYPES,
 } from '@/utils/zoneRecords'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const dhcpEnabled = computed(() => authStore.dhcpEnabled)
 
 const STRINGS = {
   'common.name': 'Name',
@@ -339,6 +367,7 @@ const STRINGS = {
   'zoneRecords.type': 'Type',
   'zoneRecords.value': 'Value',
   'zoneRecords.description': 'Description',
+  'zoneRecords.mac': 'MAC',
   'zoneRecords.remove': 'Remove record',
   'zoneRecords.add': 'Add record',
   'zoneRecords.addComment': 'Add comment',
@@ -391,12 +420,13 @@ let dragStartY = 0
 let ghostEl = null
 let lineEl = null
 
-const COMMENT_COLSPAN = 5
-const COL_MIN = { name: 72, ttl: 48, type: 72, description: 96 }
+const COMMENT_COLSPAN = computed(() => (dhcpEnabled.value ? 6 : 5))
+const COL_MIN = { name: 72, ttl: 48, type: 72, mac: 96, description: 96 }
 const colWidths = reactive({
   name: 144,
   ttl: 64,
   type: 96,
+  mac: 160,
   description: 200,
 })
 
@@ -405,12 +435,16 @@ const typeItems = ZONE_RECORD_TYPES.map((type) => ({
   value: type,
 }))
 
-const resizeHeaderCols = computed(() => [
-  { key: 'name', label: t('common.name') },
-  { key: 'ttl', label: t('zones.ttl') },
-  { key: 'type', label: t('zoneRecords.type') },
-  { key: 'description', label: t('zoneRecords.description') },
-])
+const resizeHeaderCols = computed(() => {
+  const cols = [
+    { key: 'name', label: t('common.name') },
+    { key: 'ttl', label: t('zones.ttl') },
+    { key: 'type', label: t('zoneRecords.type') },
+  ]
+  if (dhcpEnabled.value) cols.push({ key: 'mac', label: t('zoneRecords.mac') })
+  cols.push({ key: 'description', label: t('zoneRecords.description') })
+  return cols
+})
 
 let menuRowIndex = -1
 
@@ -632,6 +666,11 @@ function colWidthStyle(key) {
   return { width: `${colWidths[key]}px`, minWidth: `${colWidths[key]}px` }
 }
 
+function isAddressRecord(row) {
+  const type = (row?.type || '').toUpperCase()
+  return type === 'A' || type === 'AAAA'
+}
+
 function setRowType(row, type) {
   const prev = row.original.type
   row.original.type = type
@@ -639,9 +678,13 @@ function setRowType(row, type) {
     row.original.name = ';'
     row.original.ttl = null
     row.original.description = ''
+    row.original.mac = ''
     focusCell(row.index, 'value')
   } else if (type !== COMMENT_TYPE && prev === COMMENT_TYPE) {
     if (row.original.name === ';') row.original.name = ''
+  }
+  if (!isAddressRecord(row.original)) {
+    row.original.mac = ''
   }
   syncRowChanged(row.original)
 }
@@ -701,7 +744,7 @@ const columns = computed(() => [
         td: (cell) => (isSpanningRecord(cell.row.original) ? undefined : colWidthStyle('name')),
       },
       colspan: {
-        td: (cell) => (isSpanningRecord(cell.row.original) ? COMMENT_COLSPAN : undefined),
+        td: (cell) => (isSpanningRecord(cell.row.original) ? COMMENT_COLSPAN.value : undefined),
       },
     },
   },
@@ -732,6 +775,22 @@ const columns = computed(() => [
     enableSorting: false,
     meta: { class: { td: spanningSkipClass } },
   },
+  ...(dhcpEnabled.value
+    ? [
+        {
+          accessorKey: 'mac',
+          header: t('zoneRecords.mac'),
+          enableSorting: false,
+          meta: {
+            class: { td: spanningSkipClass },
+            style: {
+              th: () => colWidthStyle('mac'),
+              td: () => colWidthStyle('mac'),
+            },
+          },
+        },
+      ]
+    : []),
   {
     accessorKey: 'description',
     header: t('zoneRecords.description'),

@@ -216,9 +216,18 @@ def prepare(*, demo: bool = False) -> None:
     _write_if_empty(DIR / "data" / "oxidized" / "router.db", "lab-dummy:127.0.0.1:ios\n")
     _write_if_empty(
         DIR / "data" / "dns" / "records",
-        "# Written by factum2-dns. ns1 is required so named-checkzone accepts the zone.\n"
-        "$DOMAIN lab.example\n"
-        "ns1                                     A       127.0.0.1\n",
+        """{
+  "version": 1,
+  "domains": [
+    {
+      "name": "lab.example",
+      "records": [
+        {"name": "ns1", "type": "A", "value": "127.0.0.1"}
+      ]
+    }
+  ]
+}
+""",
     )
     _write_if_empty(DIR / "data" / "prometheus" / "targets.json", "[]\n")
 

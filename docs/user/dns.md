@@ -10,8 +10,8 @@ Factum**. Off by default. Turning it off hides the menu; it does not
 delete SOA templates, DNS templates, DNSSEC policies, or zones.
 
 This is separate from **Admin → Settings → Destinations → DNS**, which
-is the device-record sync (`factum2-dns` writing A/AAAA lines for
-devices, then `dnsmgr2 sync`).
+is the device-record sync (`factum2-dns` writing a JSON records file
+for devices, then `dnsmgr2 sync`).
 
 ## What you edit
 
@@ -26,24 +26,51 @@ A zone's SOA and apex NS come from its DNS template. The record editor
 is for everything else (A, AAAA, MX, TXT, …). Leave TTL empty to use the
 template default.
 
+## DHCP
+
+Optional. Turn it on under **Admin → Settings → Factum**. Off by default.
+Turning it off hides the IPAM DHCP fields and the zone-editor MAC
+column; it does not delete stored values.
+
+When it is on:
+
+- Each allocated prefix in IPAM can enable a DHCP server,
+  with a dynamic range (must sit inside the prefix), a default gateway
+  (empty = first usable address in the prefix), and DNS servers (empty =
+  the Factum default DNS server list).
+- A/AAAA records in the zone editor gain a **MAC** column. That is a
+  DHCP host reservation, not a DNS comment. `factum2-dns` writes it as
+  a `mac` field on the JSON A/AAAA record so dnsmgr2 can emit a Kea
+  reservation.
+
+Default DNS servers for DHCP clients are on **Settings → Factum**. Kea
+paths (config dir, include file, restart command) are on
+**Destinations → DNS**, same as BIND.
+
+When DHCP is on and **Destinations → DNS → Config file** is set,
+`factum2-dns` includes `dhcp:` / `host_dhcp_template` / prefixes in the
+generated `dnsmgr2.yaml`.
+
 Reverse zones use a prefix as the name (`192.168.0.0/16`,
 `2001:db8::/32`), matching dnsmgr2.
 
 ## Config file for dnsmgr2
 
-When the zone editor is on and **Destinations → DNS → Config file** is
-set, `factum2-dns` writes that path as a `dnsmgr2.yaml`: host template
-(BIND paths and reload commands), SOA templates, zone templates, and the
-zone list. The existing **Destination file** is still the records file
-(`sources[].name`). Empty config-file path means "do not overwrite a
-locally maintained yaml".
+When the zone editor or DHCP is on and **Destinations → DNS → Config
+file** is set, `factum2-dns` writes that path as a `dnsmgr2.yaml`: host
+template (BIND paths and reload commands), SOA templates, zone
+templates, the zone list, and (if DHCP is on) Kea host template, global
+DNS servers, and enabled prefixes. The existing **Destination file** is
+the JSON records file (`sources[].type: json`, `sources[].name`). Empty
+config-file path means "do not overwrite a locally maintained yaml"
+(that yaml must use `type: json` if the dest file is JSON).
 
 BIND path fields on the same Destinations tab default to the Ubuntu
 layout from dnsmgr2's example config when left blank.
 
 ## Sync
 
-A DNS job still writes the records file (devices plus zone-editor
+A DNS job still writes the JSON records file (devices plus zone-editor
 records) and runs `dnsmgr2 sync`. Zone-editor records for a zone named
-the same as **default domain** are merged into that `$DOMAIN` section
-with the device records.
+the same as **default domain** are merged into that domain's `records`
+array with the device records.

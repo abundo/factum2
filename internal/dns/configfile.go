@@ -2,10 +2,8 @@ package dns
 
 import (
 	"fmt"
-	"io"
-	"strconv"
+	"net/netip"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/abundo/factum2/internal/util"
 	goyaml "github.com/goccy/go-yaml"
@@ -13,16 +11,47 @@ import (
 
 // Config is the runtime DNS config factum2-dns fetches from the primary.
 // It extends util.ConfigDNS with the optional zone-editor payload used to
-// generate dnsmgr2.yaml and extra records-file sections.
+// generate dnsmgr2.yaml and extra JSON records-file sections.
 type Config struct {
 	util.ConfigDNS
 	ZonesEnabled bool
+	DhcpEnabled  bool
 	ConfigFile   string
 	DbFile       string
 	Host         ConfigDNSHost
 	SOATemplates []ConfigDNSSOA
 	Templates    []ConfigDNSTemplate
 	Zones        []ConfigDNSZone
+	DHCP         ConfigDHCP
+}
+
+// ConfigDHCP is the Kea payload written into dnsmgr2.yaml when DhcpEnabled.
+type ConfigDHCP struct {
+	DnsServers []string           `json:"dns_servers"`
+	Host       ConfigDHCPHost     `json:"host_template"`
+	Prefixes   []ConfigDHCPPrefix `json:"prefixes"`
+}
+
+type ConfigDHCPHost struct {
+	Name string          `json:"name"`
+	Type string          `json:"type"`
+	IPv4 ConfigDHCPProto `json:"ipv4"`
+	IPv6 ConfigDHCPProto `json:"ipv6"`
+}
+
+type ConfigDHCPProto struct {
+	Enable      bool   `json:"enable"`
+	ConfigDir   string `json:"config_dir"`
+	IncludeFile string `json:"include_file"`
+	TmpDir      string `json:"tmp_dir"`
+	CmdRestart  string `json:"cmd_restart"`
+}
+
+type ConfigDHCPPrefix struct {
+	Name       string   `json:"name"`
+	Range      string   `json:"range"`
+	Gateway    string   `json:"gateway"`
+	DnsServers []string `json:"dns_servers"`
 }
 
 // ConfigDNSHost is the BIND host template written into dnsmgr2.yaml.
@@ -70,6 +99,7 @@ type ConfigDNSRecord struct {
 	Type        string `json:"type"`
 	Value       string `json:"value"`
 	Description string `json:"description"`
+	MAC         string `json:"mac"`
 }
 
 type yamlSource struct {
@@ -129,9 +159,38 @@ type yamlZone struct {
 	DnsTemplate string `yaml:"dns_template"`
 }
 
+type yamlDHCPProto struct {
+	Enable      bool   `yaml:"enable"`
+	Configdir   string `yaml:"configdir"`
+	IncludeFile string `yaml:"includefile"`
+	Tmpdir      string `yaml:"tmpdir"`
+	CmdRestart  string `yaml:"cmd_restart"`
+}
+
+type yamlDHCPHost struct {
+	Type string        `yaml:"type"`
+	IPv4 yamlDHCPProto `yaml:"ipv4"`
+	IPv6 yamlDHCPProto `yaml:"ipv6"`
+}
+
+type yamlDHCP struct {
+	DomainName    string                  `yaml:"domain_name,omitempty"`
+	DNSServers    []string                `yaml:"dns_servers,omitempty"`
+	HostTemplates map[string]yamlDHCPHost `yaml:"host_templates"`
+}
+
+type yamlPrefix struct {
+	Name       string   `yaml:"name"`
+	Range      string   `yaml:"range,omitempty"`
+	Gateway    string   `yaml:"gateway,omitempty"`
+	DnsServers []string `yaml:"dns_servers,omitempty"`
+}
+
 type yamlDataGroup struct {
-	HostDnsTemplate string     `yaml:"host_dns_template"`
-	Zones           []yamlZone `yaml:"zones"`
+	HostDnsTemplate  string       `yaml:"host_dns_template,omitempty"`
+	HostDhcpTemplate string       `yaml:"host_dhcp_template,omitempty"`
+	Prefixes         []yamlPrefix `yaml:"prefixes,omitempty"`
+	Zones            []yamlZone   `yaml:"zones,omitempty"`
 }
 
 type yamlRoot struct {
@@ -139,7 +198,8 @@ type yamlRoot struct {
 	Dbfile        string          `yaml:"dbfile"`
 	Sources       []yamlSource    `yaml:"sources"`
 	Destinations  []yamlDest      `yaml:"destinations"`
-	DNS           yamlDNS         `yaml:"dns"`
+	DNS           yamlDNS         `yaml:"dns,omitempty"`
+	DHCP          *yamlDHCP       `yaml:"dhcp,omitempty"`
 	Dnsmgr2       []yamlDataGroup `yaml:"dnsmgr2"`
 }
 
@@ -244,16 +304,13 @@ func RenderDnsmgrConfig(cfg *Config) ([]byte, error) {
 			DnsTemplate: z.DnsTemplate,
 		})
 	}
-	root := yamlRoot{
-		DefaultDomain: cfg.DefaultDomain,
-		Dbfile:        dbFileOrDefault(cfg.DbFile),
-		Sources: []yamlSource{
-			{Type: "file", Name: cfg.DestFile},
-		},
-		Destinations: []yamlDest{
-			{Type: "dns_isc_bind", Name: host.Name},
-		},
-		DNS: yamlDNS{
+	includeDNS := cfg.ZonesEnabled || !cfg.DhcpEnabled
+	group := yamlDataGroup{}
+	var dests []yamlDest
+	var dnsSection yamlDNS
+	if includeDNS {
+		dests = append(dests, yamlDest{Type: "dns_isc_bind", Name: host.Name})
+		dnsSection = yamlDNS{
 			HostTemplates: map[string]yamlHostTemplate{
 				host.Name: {
 					Type:          host.Type,
@@ -269,102 +326,109 @@ func RenderDnsmgrConfig(cfg *Config) ([]byte, error) {
 			},
 			SOATemplates:  soa,
 			ZoneTemplates: templates,
-		},
-		Dnsmgr2: []yamlDataGroup{
-			{
-				HostDnsTemplate: host.Name,
-				Zones:           zones,
+		}
+		group.HostDnsTemplate = host.Name
+		group.Zones = zones
+	}
+	var dhcpSection *yamlDHCP
+	if cfg.DhcpEnabled {
+		dhcpHost := dhcpHostOrDefault(cfg.DHCP.Host, cfg.DHCP.Prefixes)
+		dests = append(dests, yamlDest{Type: "dhcp_isc_kea", Name: dhcpHost.Name})
+		dhcpSection = &yamlDHCP{
+			DomainName: cfg.DefaultDomain,
+			DNSServers: cfg.DHCP.DnsServers,
+			HostTemplates: map[string]yamlDHCPHost{
+				dhcpHost.Name: {
+					Type: dhcpHost.Type,
+					IPv4: yamlDHCPProto{
+						Enable:      dhcpHost.IPv4.Enable,
+						Configdir:   dhcpHost.IPv4.ConfigDir,
+						IncludeFile: dhcpHost.IPv4.IncludeFile,
+						Tmpdir:      dhcpHost.IPv4.TmpDir,
+						CmdRestart:  dhcpHost.IPv4.CmdRestart,
+					},
+					IPv6: yamlDHCPProto{
+						Enable:      dhcpHost.IPv6.Enable,
+						Configdir:   dhcpHost.IPv6.ConfigDir,
+						IncludeFile: dhcpHost.IPv6.IncludeFile,
+						Tmpdir:      dhcpHost.IPv6.TmpDir,
+						CmdRestart:  dhcpHost.IPv6.CmdRestart,
+					},
+				},
 			},
+		}
+		group.HostDhcpTemplate = dhcpHost.Name
+		group.Prefixes = dhcpPrefixesYAML(cfg.DHCP.Prefixes)
+	}
+	root := yamlRoot{
+		DefaultDomain: cfg.DefaultDomain,
+		Dbfile:        dbFileOrDefault(cfg.DbFile),
+		Sources: []yamlSource{
+			{Type: "json", Name: cfg.DestFile},
 		},
+		Destinations: dests,
+		DNS:          dnsSection,
+		DHCP:         dhcpSection,
+		Dnsmgr2:      []yamlDataGroup{group},
 	}
 	return goyaml.Marshal(root)
 }
 
-func writeZoneRecords(w io.Writer, recs []ConfigDNSRecord) int {
-	n := 0
-	for _, rec := range recs {
-		switch strings.ToUpper(rec.Type) {
-		case zoneRecordTypeComment:
-			line := "; " + rec.Value
-			if rec.Value == "" {
-				line = ";"
-			}
-			fmt.Fprintf(w, "%s\n", line)
-		case zoneRecordTypeDomain:
-			if strings.TrimSpace(rec.Name) == "" {
-				continue
-			}
-			fmt.Fprintf(w, "$DOMAIN %s\n", strings.TrimSpace(rec.Name))
-		default:
-			if rec.Name == "" || rec.Type == "" || rec.Value == "" {
-				continue
-			}
-			ttl := ""
-			if rec.TTL != nil && *rec.TTL > 0 {
-				ttl = strconv.FormatUint(uint64(*rec.TTL), 10)
-			}
-			value := formatRecordValue(rec.Type, rec.Value)
-			if ttl != "" {
-				fmt.Fprintf(w, "%-40s  %-8s %-9s %s\n", rec.Name, ttl, rec.Type, value)
-			} else {
-				fmt.Fprintf(w, "%-40s  %-9s %s\n", rec.Name, rec.Type, value)
-			}
-			n++
+func dhcpHostOrDefault(h ConfigDHCPHost, prefixes []ConfigDHCPPrefix) ConfigDHCPHost {
+	if strings.TrimSpace(h.Name) == "" {
+		h.Name = "isc_kea"
+	}
+	if strings.TrimSpace(h.Type) == "" {
+		h.Type = "isc_kea"
+	}
+	h.IPv4 = dhcpProtoOrDefault(h.IPv4, "kea-dhcp4.conf", "systemctl restart kea-dhcp4-server")
+	h.IPv6 = dhcpProtoOrDefault(h.IPv6, "kea-dhcp6.conf", "systemctl restart kea-dhcp6-server")
+	has4, has6 := false, false
+	for _, p := range prefixes {
+		pfx, err := netip.ParsePrefix(strings.TrimSpace(p.Name))
+		if err != nil {
+			continue
+		}
+		if pfx.Addr().Is4() {
+			has4 = true
+		} else {
+			has6 = true
 		}
 	}
-	return n
+	h.IPv4.Enable = has4 || !has6
+	h.IPv6.Enable = has6
+	return h
 }
 
-func formatRecordValue(typ, value string) string {
-	if strings.ToUpper(typ) != "TXT" {
-		return value
+func dhcpProtoOrDefault(p ConfigDHCPProto, include, restart string) ConfigDHCPProto {
+	if strings.TrimSpace(p.ConfigDir) == "" {
+		p.ConfigDir = "/etc/kea"
 	}
-	return formatTxtRdata(value)
+	if strings.TrimSpace(p.IncludeFile) == "" {
+		p.IncludeFile = include
+	}
+	if strings.TrimSpace(p.TmpDir) == "" {
+		p.TmpDir = "/var/lib/dnsmgr2"
+	}
+	if strings.TrimSpace(p.CmdRestart) == "" {
+		p.CmdRestart = restart
+	}
+	return p
 }
 
-// formatTxtRdata quotes TXT rdata for a dnsmgr2 records file. Unquoted
-// values with ';' (DKIM, DMARC, SPF) would otherwise be parsed as record
-// options ("k=rsa") and fail with "unknown record options". Already-quoted
-// values are left as-is. Character-strings are split at 255 bytes.
-func formatTxtRdata(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return `""`
-	}
-	if strings.HasPrefix(value, `"`) {
-		return value
-	}
-	var chunks []string
-	var current strings.Builder
-	currentBytes := 0
-	for _, r := range value {
-		n := utf8.RuneLen(r)
-		if n < 0 {
-			n = 1
+func dhcpPrefixesYAML(prefixes []ConfigDHCPPrefix) []yamlPrefix {
+	out := make([]yamlPrefix, 0, len(prefixes))
+	for _, p := range prefixes {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
 		}
-		if currentBytes+n > 255 && current.Len() > 0 {
-			chunks = append(chunks, quoteTxtString(current.String()))
-			current.Reset()
-			currentBytes = 0
-		}
-		current.WriteRune(r)
-		currentBytes += n
+		out = append(out, yamlPrefix{
+			Name:       name,
+			Range:      strings.TrimSpace(p.Range),
+			Gateway:    strings.TrimSpace(p.Gateway),
+			DnsServers: p.DnsServers,
+		})
 	}
-	chunks = append(chunks, quoteTxtString(current.String()))
-	return strings.Join(chunks, " ")
-}
-
-func quoteTxtString(s string) string {
-	var b strings.Builder
-	b.Grow(len(s) + 2)
-	b.WriteByte('"')
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '\\' || c == '"' {
-			b.WriteByte('\\')
-		}
-		b.WriteByte(c)
-	}
-	b.WriteByte('"')
-	return b.String()
+	return out
 }

@@ -5,7 +5,7 @@ default_domain: lab.example
 dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
 
 sources:
-    - type: file
+    - type: json
       name: /etc/dnsmgr2/records
 
 destinations:

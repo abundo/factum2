@@ -2,6 +2,7 @@ package dns
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -107,28 +108,30 @@ func TestWriteRecords(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	n := writeRecords(&buf, "example.com", devices)
-	got := buf.String()
+	n, err := writeRecords(&buf, "example.com", devices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseRecordsJSON(t, buf.Bytes())
 
-	wantLines := []string{
-		"$DOMAIN example.com",
-		"r1                                        A         10.0.0.1",
-		"r1                                        AAAA      2001:db8::1",
-		"ethernet1-1.r1                            A         10.1.1.1",
-		"ethernet1-1.r1                            AAAA      2001:db8:1::1",
-		"loopback0.r1                              A         10.0.0.1",
+	want := []recordsJSONRecord{
+		{Name: "r1", Type: "A", Value: "10.0.0.1"},
+		{Name: "r1", Type: "AAAA", Value: "2001:db8::1"},
+		{Name: "ethernet1-1.r1", Type: "A", Value: "10.1.1.1"},
+		{Name: "ethernet1-1.r1", Type: "AAAA", Value: "2001:db8:1::1"},
+		{Name: "loopback0.r1", Type: "A", Value: "10.0.0.1"},
 	}
 	if n != 5 {
 		t.Errorf("wrote %d records, want 5", n)
 	}
-	gotLines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-	if len(gotLines) != len(wantLines) {
-		t.Fatalf("got %d lines, want %d:\n%s", len(gotLines), len(wantLines), got)
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1", got.Version)
 	}
-	for i, want := range wantLines {
-		if gotLines[i] != want {
-			t.Errorf("line %d:\n  got  %q\n  want %q", i, gotLines[i], want)
-		}
+	if len(got.Domains) != 1 || got.Domains[0].Name != "example.com" {
+		t.Fatalf("domains = %#v", got.Domains)
+	}
+	if !recordsJSONEqual(got.Domains[0].Records, want) {
+		t.Errorf("records = %#v, want %#v", got.Domains[0].Records, want)
 	}
 }
 
@@ -151,24 +154,20 @@ func TestWriteRecordsSanitizesDeviceName(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	n := writeRecords(&buf, "example.com", devices)
-	got := buf.String()
-	wantLines := []string{
-		"$DOMAIN example.com",
-		"core-sw-1                                 A         10.0.0.1",
-		"ethernet1-1.core-sw-1                     A         10.1.1.1",
+	n, err := writeRecords(&buf, "example.com", devices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseRecordsJSON(t, buf.Bytes())
+	want := []recordsJSONRecord{
+		{Name: "core-sw-1", Type: "A", Value: "10.0.0.1"},
+		{Name: "ethernet1-1.core-sw-1", Type: "A", Value: "10.1.1.1"},
 	}
 	if n != 2 {
 		t.Errorf("wrote %d records, want 2", n)
 	}
-	gotLines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-	if len(gotLines) != len(wantLines) {
-		t.Fatalf("got %d lines, want %d:\n%s", len(gotLines), len(wantLines), got)
-	}
-	for i, want := range wantLines {
-		if gotLines[i] != want {
-			t.Errorf("line %d:\n  got  %q\n  want %q", i, gotLines[i], want)
-		}
+	if len(got.Domains) != 1 || !recordsJSONEqual(got.Domains[0].Records, want) {
+		t.Errorf("records = %#v, want %#v", got.Domains, want)
 	}
 }
 
@@ -248,9 +247,10 @@ func TestSyncDevicesWritesAndUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "$DOMAIN example.com\nr1                                        A         10.0.0.1\n"
-	if string(got) != want {
-		t.Errorf("records file:\n  got  %q\n  want %q", got, want)
+	doc := parseRecordsJSON(t, got)
+	want := []recordsJSONRecord{{Name: "r1", Type: "A", Value: "10.0.0.1"}}
+	if doc.Version != 1 || len(doc.Domains) != 1 || doc.Domains[0].Name != "example.com" || !recordsJSONEqual(doc.Domains[0].Records, want) {
+		t.Errorf("records file:\n  got  %s", got)
 	}
 
 	// Unchanged content still retries dnsmgr2 update.
@@ -280,4 +280,25 @@ func TestSyncDevicesUpdateError(t *testing.T) {
 	if err == nil || err.Error() != "dnsmgr2 failed" {
 		t.Fatalf("got %v, want dnsmgr2 failed", err)
 	}
+}
+
+func parseRecordsJSON(t *testing.T, data []byte) recordsJSON {
+	t.Helper()
+	var doc recordsJSON
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("json.Unmarshal: %v\n%s", err, data)
+	}
+	return doc
+}
+
+func recordsJSONEqual(got, want []recordsJSONRecord) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

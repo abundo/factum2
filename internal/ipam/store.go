@@ -334,7 +334,7 @@ func ListPrefixes(db *gorm.DB, nsID uint) ([]models.IpamPrefix, error) {
 	return rows, nil
 }
 
-func Allocate(db *gorm.DB, nsID, vrfID uint, raw, description string) (*models.IpamPrefix, error) {
+func Allocate(db *gorm.DB, nsID, vrfID uint, raw, description string, dhcp PrefixDHCP) (*models.IpamPrefix, error) {
 	if _, err := loadNamespace(db, nsID); err != nil {
 		return nil, err
 	}
@@ -363,6 +363,9 @@ func Allocate(db *gorm.DB, nsID, vrfID uint, raw, description string) (*models.I
 			Family:      familyOf(p),
 			Description: strings.TrimSpace(description),
 		}
+		if err := applyDHCP(&row, dhcp); err != nil {
+			return err
+		}
 		if err := tx.Create(&row).Error; err != nil {
 			if isUniqueViolation(err) {
 				return statusErr(409, errDuplicate.Error())
@@ -378,7 +381,7 @@ func Allocate(db *gorm.DB, nsID, vrfID uint, raw, description string) (*models.I
 	return created, nil
 }
 
-func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string) (*models.IpamPrefix, error) {
+func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string, dhcp PrefixDHCP) (*models.IpamPrefix, error) {
 	var row models.IpamPrefix
 	if err := db.Where("id = ? AND namespace_id = ?", prefixID, nsID).First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -387,6 +390,9 @@ func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string) (*models
 		return nil, err
 	}
 	row.Description = strings.TrimSpace(description)
+	if err := applyDHCP(&row, dhcp); err != nil {
+		return nil, err
+	}
 	if err := db.Save(&row).Error; err != nil {
 		return nil, err
 	}

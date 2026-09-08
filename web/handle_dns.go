@@ -3,8 +3,10 @@ package web
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/abundo/factum2/internal/dns"
+	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -19,19 +21,21 @@ type DNSConfigResponse struct {
 	IgnoreModels    string                  `json:"ignore_models"`
 	IgnorePlatforms string                  `json:"ignore_platforms"`
 	ZonesEnabled    bool                    `json:"zones_enabled"`
+	DhcpEnabled     bool                    `json:"dhcp_enabled"`
 	ConfigFile      string                  `json:"config_file"`
 	DbFile          string                  `json:"db_file"`
 	Host            dns.ConfigDNSHost       `json:"host_template"`
 	SOATemplates    []dns.ConfigDNSSOA      `json:"soa_templates"`
 	Templates       []dns.ConfigDNSTemplate `json:"zone_templates"`
 	Zones           []dns.ConfigDNSZone     `json:"zones"`
+	DHCP            dns.ConfigDHCP          `json:"dhcp"`
 }
 
 // ApiDNSConfig returns the DNS sync settings from the database-backed
 // Settings row, so factum2-dns - which typically runs on a different host
 // than the primary - doesn't need a direct Postgres connection just to read
 // these. When the zone editor is enabled it also includes templates, zones
-// and records so the CLI can write dnsmgr2.yaml and the records file.
+// and records so the CLI can write dnsmgr2.yaml and the JSON records file.
 func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
@@ -43,6 +47,7 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 		IgnoreModels:    settings.DnsIgnoreModels,
 		IgnorePlatforms: settings.DnsIgnorePlatforms,
 		ZonesEnabled:    dns.ZonesEnabled(ctrl.DB),
+		DhcpEnabled:     dns.DhcpEnabled(ctrl.DB),
 		ConfigFile:      settings.DnsConfigFile,
 		DbFile:          settings.DnsDbFile,
 		Host: dns.ConfigDNSHost{
@@ -57,6 +62,13 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 			CmdReloadZone: settings.DnsBindCmdReloadZone,
 			CmdRestart:    settings.DnsBindCmdRestart,
 		},
+	}
+	if resp.DhcpEnabled {
+		dhcp, err := loadDHCPSyncPayload(ctrl.DB, settings)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		resp.DHCP = dhcp
 	}
 	if resp.ZonesEnabled {
 		soas, templates, zones, err := loadDNSSyncPayload(ctrl.DB)
@@ -133,6 +145,7 @@ func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSSOA, []dns.ConfigDNSTemplat
 				Type:        r.Type,
 				Value:       r.Value,
 				Description: r.Description,
+				MAC:         r.MAC,
 			})
 		}
 		zones = append(zones, dns.ConfigDNSZone{
@@ -143,4 +156,42 @@ func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSSOA, []dns.ConfigDNSTemplat
 		})
 	}
 	return soas, templates, zones, nil
+}
+
+func loadDHCPSyncPayload(db *gorm.DB, settings *models.Settings) (dns.ConfigDHCP, error) {
+	rows, err := ipam.ListDhcpPrefixes(db)
+	if err != nil {
+		return dns.ConfigDHCP{}, err
+	}
+	prefixes := make([]dns.ConfigDHCPPrefix, 0, len(rows))
+	for _, row := range rows {
+		p := dns.ConfigDHCPPrefix{Name: row.Prefix, Gateway: strings.TrimSpace(row.DhcpGateway)}
+		start := strings.TrimSpace(row.DhcpRangeStart)
+		end := strings.TrimSpace(row.DhcpRangeEnd)
+		if start != "" && end != "" {
+			p.Range = start + "-" + end
+		}
+		p.DnsServers = ipam.SplitLines(row.DhcpDnsServers)
+		prefixes = append(prefixes, p)
+	}
+	return dns.ConfigDHCP{
+		DnsServers: ipam.SplitLines(settings.DhcpDnsServers),
+		Host: dns.ConfigDHCPHost{
+			Name: settings.DhcpHostTemplate,
+			Type: settings.DhcpKeaType,
+			IPv4: dns.ConfigDHCPProto{
+				ConfigDir:   settings.DhcpKea4ConfigDir,
+				IncludeFile: settings.DhcpKea4IncludeFile,
+				TmpDir:      settings.DhcpKea4TmpDir,
+				CmdRestart:  settings.DhcpKea4CmdRestart,
+			},
+			IPv6: dns.ConfigDHCPProto{
+				ConfigDir:   settings.DhcpKea6ConfigDir,
+				IncludeFile: settings.DhcpKea6IncludeFile,
+				TmpDir:      settings.DhcpKea6TmpDir,
+				CmdRestart:  settings.DhcpKea6CmdRestart,
+			},
+		},
+		Prefixes: prefixes,
+	}, nil
 }

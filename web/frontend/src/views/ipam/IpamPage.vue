@@ -72,7 +72,7 @@ function itemsFor(node) {
     case 'allocated':
       items.push(
         { id: 'add-prefix', label: 'Add child prefix' },
-        { id: 'edit-prefix', label: 'Edit description' },
+        { id: 'edit-prefix', label: authStore.dhcpEnabled ? 'Edit prefix' : 'Edit description' },
         { id: 'sep2' },
         { id: 'del-prefix', label: 'Delete', danger: true },
       )
@@ -138,6 +138,11 @@ async function runMenu(id) {
       prefix: '',
       description: '',
       parent_key: node.key,
+      dhcp_enabled: false,
+      dhcp_range_start: '',
+      dhcp_range_end: '',
+      dhcp_gateway: '',
+      dhcp_dns_servers: '',
     }
     dialog.value = 'prefix'
     return
@@ -149,6 +154,11 @@ async function runMenu(id) {
       prefix: node.title,
       description: node.description ?? '',
       parent_key: node.key,
+      dhcp_enabled: !!node.dhcp_enabled,
+      dhcp_range_start: node.dhcp_range_start ?? '',
+      dhcp_range_end: node.dhcp_range_end ?? '',
+      dhcp_gateway: node.dhcp_gateway ?? '',
+      dhcp_dns_servers: node.dhcp_dns_servers ?? '',
     }
     dialog.value = 'prefix'
     return
@@ -185,6 +195,47 @@ async function runMenu(id) {
   }
 }
 
+function prefixPayload(f) {
+  const payload = {
+    prefix: (f.prefix ?? '').trim(),
+    vrf_id: Number(f.vrf_id) || 0,
+    description: f.description ?? '',
+  }
+  if (authStore.dhcpEnabled) {
+    payload.dhcp_enabled = !!f.dhcp_enabled
+    payload.dhcp_range_start = (f.dhcp_range_start ?? '').trim()
+    payload.dhcp_range_end = (f.dhcp_range_end ?? '').trim()
+    payload.dhcp_gateway = (f.dhcp_gateway ?? '').trim()
+    payload.dhcp_dns_servers = f.dhcp_dns_servers ?? ''
+  }
+  return payload
+}
+
+function defaultGatewayHint(prefix) {
+  const s = (prefix || '').trim()
+  const slash = s.lastIndexOf('/')
+  if (slash < 0) return ''
+  const addr = s.slice(0, slash)
+  const bits = Number(s.slice(slash + 1))
+  if (!Number.isInteger(bits)) return ''
+  if (addr.includes('.')) {
+    const parts = addr.split('.').map((p) => Number(p))
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      return ''
+    }
+    if (bits > 30) return addr
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
+    let n = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+    n = (n & mask) + 1
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+  }
+  if (bits <= 126 && addr.includes(':')) {
+    if (addr.endsWith('::')) return `${addr}1`
+    if (addr.endsWith('::0')) return addr.slice(0, -1) + '1'
+  }
+  return ''
+}
+
 function saveDialog() {
   const f = form.value
   saving.value = true
@@ -204,18 +255,15 @@ function saveDialog() {
     }
     req = f.id ? updateVrf(f.namespace_id, f.id, payload) : createVrf(f.namespace_id, payload)
   } else if (dialog.value === 'prefix') {
+    const payload = prefixPayload(f)
     if (f.id) {
-      req = updatePrefix(f.namespace_id, f.id, { description: f.description ?? '' })
+      req = updatePrefix(f.namespace_id, f.id, payload)
     } else {
       if (!(f.prefix ?? '').trim()) {
         saving.value = false
         return
       }
-      req = createPrefix(f.namespace_id, {
-        prefix: f.prefix.trim(),
-        vrf_id: Number(f.vrf_id) || 0,
-        description: f.description ?? '',
-      })
+      req = createPrefix(f.namespace_id, payload)
     }
   }
   if (!req) {
@@ -385,6 +433,50 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           <label class="block font-bold mb-2">Description</label>
           <UInput v-model="form.description" :autofocus="!!form.id" />
         </div>
+        <template v-if="authStore.dhcpEnabled">
+          <div class="flex items-center gap-2">
+            <USwitch v-model="form.dhcp_enabled" id="prefix_dhcp_enabled" />
+            <label for="prefix_dhcp_enabled" class="font-bold">DHCP server</label>
+          </div>
+          <template v-if="form.dhcp_enabled">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block font-bold mb-2">Range start</label>
+                <UInput v-model="form.dhcp_range_start" placeholder="192.0.2.100" />
+              </div>
+              <div>
+                <label class="block font-bold mb-2">Range end</label>
+                <UInput v-model="form.dhcp_range_end" placeholder="192.0.2.200" />
+              </div>
+            </div>
+            <small class="text-muted-color -mt-2"
+              >Must sit inside the prefix. Leave empty for reservations only.</small
+            >
+            <div>
+              <label class="block font-bold mb-2">Default gateway</label>
+              <UInput
+                v-model="form.dhcp_gateway"
+                :placeholder="defaultGatewayHint(form.prefix) || 'first address in prefix'"
+                class="w-full"
+              />
+              <small class="block text-muted-color mt-1"
+                >Empty uses the first usable address in the prefix.</small
+              >
+            </div>
+            <div>
+              <label class="block font-bold mb-2">DNS servers</label>
+              <UTextarea
+                v-model="form.dhcp_dns_servers"
+                :rows="2"
+                placeholder="Leave empty to use the default"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >One IP per line. Empty uses Settings → Factum → Default DNS servers.</small
+              >
+            </div>
+          </template>
+        </template>
       </div>
     </template>
     <template #footer>

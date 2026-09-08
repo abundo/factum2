@@ -56,6 +56,8 @@ function recordT(key, params) {
     'zoneRecords.valueRequired': 'Value is required',
     'zoneRecords.aMustBeIpv4': 'A record must be an IPv4 address',
     'zoneRecords.aaaaMustBeIpv6': 'AAAA record must be an IPv6 address',
+    'zoneRecords.macOnlyA': 'MAC is only valid on A and AAAA records',
+    'zoneRecords.macInvalid': 'MAC must be 12 hex digits (aa:bb:cc:dd:ee:ff)',
     'zoneRecords.recordN': 'Record {n}: {message}',
   }
   let s = strings[key] ?? key

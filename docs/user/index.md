@@ -28,8 +28,8 @@ currently on GitHub.
 | Settings, users, workers | Admin | Administrators only |
 
 Some entries appear only when the matching feature is on (Oxidized,
-optical, IPAM, organization, DNS zone editor). Turning a feature off
-hides the UI; it does not delete stored data.
+optical, IPAM, organization, DNS zone editor, DHCP). Turning a feature
+off hides the UI; it does not delete stored data.
 
 ## Roles
 

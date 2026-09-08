@@ -121,6 +121,9 @@ func (DnsZone) TableName() string { return "dns_zones" }
 // TTL is seconds; nil means unspecified (use the template default). A stored 0
 // is treated as unspecified — DNS TTL 0 is not used.
 // Description is an optional operator note; it is not part of the DNS RDATA.
+// MAC is a DHCP host reservation (A/AAAA only). It is its own column, not a
+// comment; factum2-dns writes it as a `mac` field on the JSON A/AAAA record
+// so dnsmgr2 can emit a Kea reservation.
 type DnsZoneRecord struct {
 	ID          uint   `json:"id" gorm:"primaryKey"`
 	DnsZoneID   uint   `json:"dns_zone_id" gorm:"not null;uniqueIndex:idx_dns_zone_record_rank"`
@@ -130,6 +133,7 @@ type DnsZoneRecord struct {
 	Type        string `json:"type" gorm:"column:record_type;type:varchar(16);not null"`
 	Value       string `json:"value" gorm:"type:text;not null"`
 	Description string `json:"description" gorm:"type:text"`
+	MAC         string `json:"mac" gorm:"type:varchar(32)"`
 }
 
 func (DnsZoneRecord) TableName() string { return "dns_zone_records" }
@@ -140,6 +144,7 @@ type DnsZoneRecordDTO struct {
 	Type        string `json:"type"`
 	Value       string `json:"value"`
 	Description string `json:"description"`
+	MAC         string `json:"mac"`
 }
 
 type DnsZoneDTO struct {

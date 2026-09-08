@@ -9,7 +9,7 @@ import (
 func TestParseZoneRecords(t *testing.T) {
 	ttl := uint(300)
 	recs, err := ParseZoneRecords([]models.DnsZoneRecordDTO{
-		{Name: "www", Type: "A", Value: "192.0.2.1", TTL: &ttl},
+		{Name: "www", Type: "A", Value: "192.0.2.1", TTL: &ttl, MAC: "AA-BB-CC-DD-EE-FF"},
 		{Name: ";", Type: "COMMENT", Value: "note"},
 		{Name: "sub.example.com", Type: "$DOMAIN"},
 		{Name: "@", Type: "MX", Value: "10 mail.example.com."},
@@ -23,11 +23,43 @@ func TestParseZoneRecords(t *testing.T) {
 	if recs[0].Type != "A" || recs[0].TTL == nil || *recs[0].TTL != 300 {
 		t.Fatalf("A record: %+v", recs[0])
 	}
+	if recs[0].MAC != "aa:bb:cc:dd:ee:ff" {
+		t.Fatalf("MAC = %q", recs[0].MAC)
+	}
 	if recs[1].Type != "COMMENT" || recs[1].Name != ";" {
 		t.Fatalf("comment: %+v", recs[1])
 	}
 	if recs[2].Type != "$DOMAIN" {
 		t.Fatalf("domain: %+v", recs[2])
+	}
+}
+
+func TestParseZoneRecordsRejectsMACOnMX(t *testing.T) {
+	_, err := ParseZoneRecords([]models.DnsZoneRecordDTO{
+		{Name: "@", Type: "MX", Value: "10 mail.example.com.", MAC: "aa:bb:cc:dd:ee:ff"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeMAC(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff"},
+		{"aa-bb-cc-dd-ee-ff", "aa:bb:cc:dd:ee:ff"},
+		{"aabb.ccdd.eeff", "aa:bb:cc:dd:ee:ff"},
+		{"aabbccddeeff", "aa:bb:cc:dd:ee:ff"},
+	}
+	for _, tc := range cases {
+		got, err := NormalizeMAC(tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("NormalizeMAC(%q) = %q, %v want %q", tc.in, got, err, tc.want)
+		}
+	}
+	if _, err := NormalizeMAC("not-a-mac"); err == nil {
+		t.Fatal("expected error")
 	}
 }
 

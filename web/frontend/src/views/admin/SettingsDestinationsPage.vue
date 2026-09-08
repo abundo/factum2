@@ -198,6 +198,88 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
+            <div class="font-semibold">Kea DHCP</div>
+            <small class="text-muted-color -mt-4"
+              >Used when DHCP server management is on (Settings → Factum). Empty fields fall back to
+              the Ubuntu Kea layout from dnsmgr2's example config.</small
+            >
+            <div>
+              <label for="dhcp_host_template" class="block font-bold mb-3"
+                >Host template name</label
+              >
+              <UInput
+                id="dhcp_host_template"
+                v-model="settings.dhcp_host_template"
+                placeholder="isc_kea"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea4_config_dir" class="block font-bold mb-3"
+                >DHCPv4 config dir</label
+              >
+              <UInput
+                id="dhcp_kea4_config_dir"
+                v-model="settings.dhcp_kea4_config_dir"
+                placeholder="/etc/kea"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea4_include_file" class="block font-bold mb-3"
+                >DHCPv4 include file</label
+              >
+              <UInput
+                id="dhcp_kea4_include_file"
+                v-model="settings.dhcp_kea4_include_file"
+                placeholder="kea-dhcp4.conf"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea4_cmd_restart" class="block font-bold mb-3"
+                >DHCPv4 restart command</label
+              >
+              <UInput
+                id="dhcp_kea4_cmd_restart"
+                v-model="settings.dhcp_kea4_cmd_restart"
+                placeholder="systemctl restart kea-dhcp4-server"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea6_config_dir" class="block font-bold mb-3"
+                >DHCPv6 config dir</label
+              >
+              <UInput
+                id="dhcp_kea6_config_dir"
+                v-model="settings.dhcp_kea6_config_dir"
+                placeholder="/etc/kea"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea6_include_file" class="block font-bold mb-3"
+                >DHCPv6 include file</label
+              >
+              <UInput
+                id="dhcp_kea6_include_file"
+                v-model="settings.dhcp_kea6_include_file"
+                placeholder="kea-dhcp6.conf"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="dhcp_kea6_cmd_restart" class="block font-bold mb-3"
+                >DHCPv6 restart command</label
+              >
+              <UInput
+                id="dhcp_kea6_cmd_restart"
+                v-model="settings.dhcp_kea6_cmd_restart"
+                placeholder="systemctl restart kea-dhcp6-server"
+                class="w-full"
+              />
+            </div>
           </div>
         </template>
 
@@ -284,8 +366,8 @@ const destinationTabItems = [
                 LibreNMS REST API origin, for example
                 <span class="font-mono">http://librenms:8000/api/v0</span>.
                 <span class="font-mono">/api/v0</span>
-                is added if missing. Without it, device create hits the web UI
-                and fails with a CSRF error.
+                is added if missing. Without it, device create hits the web UI and fails with a CSRF
+                error.
               </p>
             </div>
             <div>

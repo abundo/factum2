@@ -144,6 +144,33 @@ function testEmail() {
               off hides the UI; it does not delete any DNS data. Device-record sync stays on
               Destinations → DNS.</small
             >
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.dhcp_enabled"
+                id="dhcp_enabled"
+                @update:model-value="settings.dhcp_enabled = $event"
+              />
+              <label for="dhcp_enabled" class="font-bold">DHCP server management</label>
+            </div>
+            <small class="text-muted-color -mt-4"
+              >Per-prefix DHCP in IPAM (range, gateway, DNS servers) and a MAC column on DNS zone
+              records for static reservations. Off by default. Turning this off hides the UI; it
+              does not delete stored DHCP data. Kea paths live on Destinations → DNS.</small
+            >
+            <div v-if="settings.dhcp_enabled">
+              <label for="dhcp_dns_servers" class="block font-bold mb-3">Default DNS servers</label>
+              <UTextarea
+                id="dhcp_dns_servers"
+                v-model="settings.dhcp_dns_servers"
+                :rows="3"
+                placeholder="One IP address per line"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Offered to DHCP clients unless a prefix overrides them. Domain name is the default
+                domain above.</small
+              >
+            </div>
             <div>
               <label for="factum_api_token" class="block font-bold mb-3">API token</label>
               <PasswordInput id="factum_api_token" v-model="settings.factum_api_token" />

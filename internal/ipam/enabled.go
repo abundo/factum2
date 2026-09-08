@@ -14,3 +14,14 @@ func Enabled(db *gorm.DB) bool {
 	}
 	return s.IpamEnabled != nil && *s.IpamEnabled
 }
+
+// DhcpEnabled reports Settings.DhcpEnabled (nil/false = off). Disabling
+// the flag only hides per-prefix DHCP UI and the DNS MAC column — it
+// does not touch rows.
+func DhcpEnabled(db *gorm.DB) bool {
+	var s models.Settings
+	if err := db.Select("dhcp_enabled").First(&s, 1).Error; err != nil {
+		return false
+	}
+	return s.DhcpEnabled != nil && *s.DhcpEnabled
+}

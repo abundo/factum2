@@ -46,7 +46,7 @@ export function useSettings() {
           description: 'Settings saved',
           duration: 3000,
         })
-        // Feature flags (optical/ipam/organization/oxidized) live on /api/me
+        // Feature flags (optical/ipam/organization/oxidized/dhcp) live on /api/me
         // and gate the sidebar — refresh so the menu updates without a reload.
         useAuthStore().fetchCurrentUser()
       })

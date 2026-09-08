@@ -25,19 +25,24 @@ type TreeNode struct {
 }
 
 type TreeNodeData struct {
-	Kind        string  `json:"kind"` // namespace | pool | vrf | allocated
-	ID          uint    `json:"id"`
-	NamespaceID uint    `json:"namespace_id,omitempty"`
-	PoolID      uint    `json:"pool_id,omitempty"`
-	PrefixID    uint    `json:"prefix_id,omitempty"`
-	VRFID       uint    `json:"vrf_id,omitempty"`
-	VRFName     string  `json:"vrf_name,omitempty"`
-	IsDefault   bool    `json:"is_default,omitempty"`
-	Family      int     `json:"family"`
-	Description string  `json:"description,omitempty"`
-	Used        string  `json:"used"`
-	UsedFrac    float64 `json:"used_frac"`
-	ChildCount  int     `json:"child_count"`
+	Kind           string  `json:"kind"` // namespace | pool | vrf | allocated
+	ID             uint    `json:"id"`
+	NamespaceID    uint    `json:"namespace_id,omitempty"`
+	PoolID         uint    `json:"pool_id,omitempty"`
+	PrefixID       uint    `json:"prefix_id,omitempty"`
+	VRFID          uint    `json:"vrf_id,omitempty"`
+	VRFName        string  `json:"vrf_name,omitempty"`
+	IsDefault      bool    `json:"is_default,omitempty"`
+	Family         int     `json:"family"`
+	Description    string  `json:"description,omitempty"`
+	Used           string  `json:"used"`
+	UsedFrac       float64 `json:"used_frac"`
+	ChildCount     int     `json:"child_count"`
+	DhcpEnabled    bool    `json:"dhcp_enabled,omitempty"`
+	DhcpRangeStart string  `json:"dhcp_range_start,omitempty"`
+	DhcpRangeEnd   string  `json:"dhcp_range_end,omitempty"`
+	DhcpGateway    string  `json:"dhcp_gateway,omitempty"`
+	DhcpDnsServers string  `json:"dhcp_dns_servers,omitempty"`
 }
 
 type treeEntry struct {
@@ -49,6 +54,7 @@ type treeEntry struct {
 	vrfID       uint
 	vrfName     string
 	description string
+	dhcp        PrefixDHCP
 }
 
 func Tree(db *gorm.DB, nsID uint, parentRaw string) ([]TreeNode, error) {
@@ -102,6 +108,7 @@ func Tree(db *gorm.DB, nsID uint, parentRaw string) ([]TreeNode, error) {
 			existing.vrfID = a.VRFID
 			existing.vrfName = vrfName[a.VRFID]
 			existing.description = a.Description
+			existing.dhcp = dhcpFromRow(a)
 			continue
 		}
 		byKey[key] = &treeEntry{
@@ -112,6 +119,7 @@ func Tree(db *gorm.DB, nsID uint, parentRaw string) ([]TreeNode, error) {
 			vrfID:       a.VRFID,
 			vrfName:     vrfName[a.VRFID],
 			description: a.Description,
+			dhcp:        dhcpFromRow(a),
 		}
 	}
 
@@ -203,7 +211,7 @@ func Tree(db *gorm.DB, nsID uint, parentRaw string) ([]TreeNode, error) {
 			Title: e.prefix.String(),
 			Lazy:  nChildren > 0,
 			Type:  e.kind,
-			Data: TreeNodeData{
+			Data: withDHCP(TreeNodeData{
 				Kind:        e.kind,
 				ID:          e.id,
 				PoolID:      e.poolID,
@@ -215,7 +223,7 @@ func Tree(db *gorm.DB, nsID uint, parentRaw string) ([]TreeNode, error) {
 				Used:        formatUsed(frac, len(childPrefixes) > 0),
 				UsedFrac:    frac,
 				ChildCount:  nChildren,
-			},
+			}, e.dhcp),
 		})
 	}
 	return nodes, nil
@@ -540,7 +548,7 @@ func allocNode(a models.IpamPrefix, p netip.Prefix, vrfName string, hasChild boo
 		Title: a.Prefix,
 		Lazy:  hasChild,
 		Type:  "allocated",
-		Data: TreeNodeData{
+		Data: withDHCP(TreeNodeData{
 			Kind:        "allocated",
 			ID:          a.ID,
 			NamespaceID: a.NamespaceID,
@@ -550,8 +558,17 @@ func allocNode(a models.IpamPrefix, p netip.Prefix, vrfName string, hasChild boo
 			Family:      familyOf(p),
 			Description: a.Description,
 			ChildCount:  boolCount(hasChild),
-		},
+		}, dhcpFromRow(a)),
 	}
+}
+
+func withDHCP(data TreeNodeData, dhcp PrefixDHCP) TreeNodeData {
+	data.DhcpEnabled = dhcp.Enabled
+	data.DhcpRangeStart = dhcp.RangeStart
+	data.DhcpRangeEnd = dhcp.RangeEnd
+	data.DhcpGateway = dhcp.Gateway
+	data.DhcpDnsServers = dhcp.DnsServers
+	return data
 }
 
 func prefixCountByVRF(db *gorm.DB, nsID uint) (map[uint]int64, error) {

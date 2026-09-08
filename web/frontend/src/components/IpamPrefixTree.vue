@@ -2,8 +2,11 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
 import { getForest } from '@/api/ipam'
+import { useAuthStore } from '@/stores/auth'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
+
+const authStore = useAuthStore()
 
 const props = defineProps({
   reloadKey: { type: Number, default: 0 },
@@ -145,6 +148,9 @@ function renderCell(e) {
       case 'vrf':
         col.elem.textContent = data.kind === 'allocated' ? data.vrf_name || '—' : '—'
         break
+      case 'dhcp':
+        col.elem.textContent = data.kind === 'allocated' && data.dhcp_enabled ? 'On' : ''
+        break
       case 'description':
         col.elem.textContent = data.description || ''
         break
@@ -197,6 +203,19 @@ function bindContextMenu() {
   el.value.addEventListener('contextmenu', onContextMenu)
 }
 
+function treeColumns() {
+  const cols = [
+    { id: '*', title: 'Name', width: '320px' },
+    { id: 'kind', title: 'Kind', width: '110px' },
+    { id: 'vrf', title: 'VRF', width: '120px' },
+  ]
+  if (authStore.dhcpEnabled) {
+    cols.push({ id: 'dhcp', title: 'DHCP', width: '70px' })
+  }
+  cols.push({ id: 'description', title: 'Description', width: '*' })
+  return cols
+}
+
 function buildTree(source) {
   if (!el.value) return
   tree = new Wunderbaum({
@@ -220,12 +239,7 @@ function buildTree(source) {
       expanderLazy: '<i class="wb-expander">+</i>',
     },
     source,
-    columns: [
-      { id: '*', title: 'Name', width: '320px' },
-      { id: 'kind', title: 'Kind', width: '110px' },
-      { id: 'vrf', title: 'VRF', width: '120px' },
-      { id: 'description', title: 'Description', width: '*' },
-    ],
+    columns: treeColumns(),
     types: {
       namespace: { icon: false },
       pool: { icon: false },

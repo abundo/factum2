@@ -64,6 +64,8 @@ type IpamVRFIDTO struct {
 
 // IpamPrefix is a CIDR allocated to exactly one VRF in a namespace.
 // Parent/child relationships are computed from containment, not stored.
+// DHCP fields are used when Settings.DhcpEnabled is on; turning that
+// flag off only hides the UI — values stay on the row.
 type IpamPrefix struct {
 	FactumModel
 	NamespaceID uint   `json:"namespace_id" gorm:"uniqueIndex:idx_ipam_alloc_ns_pfx;not null"`
@@ -71,14 +73,31 @@ type IpamPrefix struct {
 	Prefix      string `json:"prefix" gorm:"uniqueIndex:idx_ipam_alloc_ns_pfx;type:varchar(80);not null"`
 	Family      int    `json:"family"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
+	// DhcpEnabled is the per-prefix "run a DHCP server here" checkbox.
+	DhcpEnabled bool `json:"dhcp_enabled"`
+	// DhcpRangeStart/End are the dynamic pool. Both empty is static-only.
+	// When set they must sit inside Prefix.
+	DhcpRangeStart string `json:"dhcp_range_start" gorm:"type:varchar(80)"`
+	DhcpRangeEnd   string `json:"dhcp_range_end" gorm:"type:varchar(80)"`
+	// DhcpGateway empty means "first usable address in the prefix"
+	// (network + 1 for IPv4 /30 or shorter).
+	DhcpGateway string `json:"dhcp_gateway" gorm:"type:varchar(80)"`
+	// DhcpDnsServers is newline-separated. Empty means use the global
+	// default (Settings.DhcpDnsServers).
+	DhcpDnsServers string `json:"dhcp_dns_servers" gorm:"type:text"`
 }
 
 func (IpamPrefix) TableName() string { return "ipam_prefixes" }
 
 type IpamPrefixDTO struct {
-	ID          uint   `json:"id"`
-	NamespaceID uint   `json:"namespace_id"`
-	VRFID       uint   `json:"vrf_id"`
-	Prefix      string `json:"prefix"`
-	Description string `json:"description"`
+	ID             uint   `json:"id"`
+	NamespaceID    uint   `json:"namespace_id"`
+	VRFID          uint   `json:"vrf_id"`
+	Prefix         string `json:"prefix"`
+	Description    string `json:"description"`
+	DhcpEnabled    bool   `json:"dhcp_enabled"`
+	DhcpRangeStart string `json:"dhcp_range_start"`
+	DhcpRangeEnd   string `json:"dhcp_range_end"`
+	DhcpGateway    string `json:"dhcp_gateway"`
+	DhcpDnsServers string `json:"dhcp_dns_servers"`
 }

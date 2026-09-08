@@ -190,6 +190,7 @@ func mePayload(db *gorm.DB, u models.User) map[string]any {
 		"organization_enabled": util.OrganizationEnabled(db),
 		"oxidized_enabled":     util.OxidizedEnabled(db),
 		"dns_zones_enabled":    dns.ZonesEnabled(db),
+		"dhcp_enabled":         ipam.DhcpEnabled(db),
 	}
 }
 

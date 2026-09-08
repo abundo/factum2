@@ -117,9 +117,24 @@ func (ctrl *Controller) ApiIpamPoolList(c *echo.Context) error {
 }
 
 type ipamPrefixBody struct {
-	Prefix      string `json:"prefix"`
-	VRFID       uint   `json:"vrf_id"`
-	Description string `json:"description"`
+	Prefix         string `json:"prefix"`
+	VRFID          uint   `json:"vrf_id"`
+	Description    string `json:"description"`
+	DhcpEnabled    bool   `json:"dhcp_enabled"`
+	DhcpRangeStart string `json:"dhcp_range_start"`
+	DhcpRangeEnd   string `json:"dhcp_range_end"`
+	DhcpGateway    string `json:"dhcp_gateway"`
+	DhcpDnsServers string `json:"dhcp_dns_servers"`
+}
+
+func (b ipamPrefixBody) dhcp() ipam.PrefixDHCP {
+	return ipam.PrefixDHCP{
+		Enabled:    b.DhcpEnabled,
+		RangeStart: b.DhcpRangeStart,
+		RangeEnd:   b.DhcpRangeEnd,
+		Gateway:    b.DhcpGateway,
+		DnsServers: b.DhcpDnsServers,
+	}
 }
 
 func (ctrl *Controller) ApiIpamPoolCreate(c *echo.Context) error {
@@ -242,7 +257,7 @@ func (ctrl *Controller) ApiIpamPrefixCreate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row, err := ipam.Allocate(ctrl.DB, id, body.VRFID, body.Prefix, body.Description)
+	row, err := ipam.Allocate(ctrl.DB, id, body.VRFID, body.Prefix, body.Description, body.dhcp())
 	if err != nil {
 		return ipamWriteError(c, err)
 	}
@@ -262,7 +277,7 @@ func (ctrl *Controller) ApiIpamPrefixUpdate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row, err := ipam.UpdatePrefix(ctrl.DB, id, prefixID, body.Description)
+	row, err := ipam.UpdatePrefix(ctrl.DB, id, prefixID, body.Description, body.dhcp())
 	if err != nil {
 		return ipamWriteError(c, err)
 	}

@@ -392,3 +392,62 @@ func TestIpamDisableDoesNotDeleteData(t *testing.T) {
 		t.Fatalf("namespaces after disable = %d, want 1", n)
 	}
 }
+
+func TestIpamPrefixDHCP(t *testing.T) {
+	ctrl := setupIPAM(t)
+	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "lab"}, nil, nil)
+	if err := ctrl.ApiIpamNamespaceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var ns ipam.NamespaceView
+	if err := json.Unmarshal(rec.Body.Bytes(), &ns); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatUint(uint64(ns.ID), 10)
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "192.0.2.0/24", VRFID: ns.VRFs[0].ID, Description: "lab",
+		DhcpEnabled: true, DhcpRangeStart: "192.0.2.100", DhcpRangeEnd: "192.0.2.200",
+		DhcpGateway: "192.0.2.1", DhcpDnsServers: "192.0.2.53",
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var pfx models.IpamPrefix
+	if err := json.Unmarshal(rec.Body.Bytes(), &pfx); err != nil {
+		t.Fatal(err)
+	}
+	if !pfx.DhcpEnabled || pfx.DhcpRangeStart != "192.0.2.100" || pfx.DhcpGateway != "192.0.2.1" {
+		t.Fatalf("created: %+v", pfx)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "198.51.100.0/24", VRFID: ns.VRFs[0].ID,
+		DhcpEnabled: true, DhcpRangeStart: "10.0.0.1", DhcpRangeEnd: "10.0.0.10",
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("outside range status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/ipam/namespaces/x/prefixes/x", ipamPrefixBody{
+		Description: "lab-dhcp", DhcpEnabled: true, DhcpRangeStart: "192.0.2.50", DhcpRangeEnd: "192.0.2.60",
+	}, []string{"id", "prefixId"}, []string{id, strconv.FormatUint(uint64(pfx.ID), 10)})
+	if err := ctrl.ApiIpamPrefixUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pfx); err != nil {
+		t.Fatal(err)
+	}
+	if pfx.DhcpRangeStart != "192.0.2.50" || pfx.Description != "lab-dhcp" {
+		t.Fatalf("updated: %+v", pfx)
+	}
+}

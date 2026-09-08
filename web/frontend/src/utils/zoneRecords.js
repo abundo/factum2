@@ -92,6 +92,7 @@ export function emptyZoneRecord() {
     type: 'A',
     value: '',
     description: '',
+    mac: '',
   }
 }
 
@@ -132,6 +133,7 @@ export function recordOrigin(row) {
     type: row?.type || '',
     value: domain ? '' : row?.value || '',
     description: comment || domain ? '' : row?.description || '',
+    mac: comment || domain ? '' : row?.mac || '',
   }
 }
 
@@ -150,7 +152,8 @@ export function isRecordChanged(row) {
     cur.ttl !== orig.ttl ||
     cur.type !== orig.type ||
     cur.value !== orig.value ||
-    cur.description !== orig.description
+    cur.description !== orig.description ||
+    cur.mac !== orig.mac
   )
 }
 
@@ -165,6 +168,7 @@ export function fromApiRecord(row) {
     type,
     value: domain ? '' : row.value || '',
     description: comment || domain ? '' : row.description || '',
+    mac: comment || domain ? '' : row.mac || '',
   })
 }
 
@@ -182,6 +186,7 @@ export function toApiRecords(rows) {
           type: COMMENT_TYPE,
           value: (r.value || '').trim(),
           description: '',
+          mac: '',
         }
       }
       if (isDomainRecord(r)) {
@@ -191,6 +196,7 @@ export function toApiRecords(rows) {
           type: DOMAIN_TYPE,
           value: '',
           description: '',
+          mac: '',
         }
       }
       let ttl = null
@@ -198,12 +204,15 @@ export function toApiRecords(rows) {
         const n = Number(r.ttl)
         if (Number.isFinite(n) && n > 0) ttl = n
       }
+      const type = (r.type || '').toUpperCase()
+      const mac = type === 'A' || type === 'AAAA' ? (r.mac || '').trim() : ''
       return {
         name: (r.name || '').trim(),
         ttl,
         type: r.type,
         value: (r.value || '').trim(),
         description: (r.description || '').trim(),
+        mac,
       }
     })
 }
@@ -249,7 +258,20 @@ export function validateZoneRecord(row, t) {
   if (type === 'AAAA' && !isIPv6Address(value)) {
     return t('zoneRecords.aaaaMustBeIpv6')
   }
+  const mac = (row.mac || '').trim()
+  if (mac && type !== 'A' && type !== 'AAAA') {
+    return t('zoneRecords.macOnlyA')
+  }
+  if (mac && !isMacAddress(mac)) {
+    return t('zoneRecords.macInvalid')
+  }
   return null
+}
+
+export function isMacAddress(value) {
+  if (typeof value !== 'string') return false
+  const hex = value.toLowerCase().replace(/[:\-.]/g, '')
+  return /^[0-9a-f]{12}$/.test(hex)
 }
 
 export function validateZoneRecords(rows, t) {

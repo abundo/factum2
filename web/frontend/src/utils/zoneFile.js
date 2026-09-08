@@ -160,15 +160,33 @@ function formatRecordValue(type, value) {
   return value || ''
 }
 
-function formatRRLine({ name, ttl, type, value, description }) {
+export function splitMacFromComment(comment) {
+  let mac = ''
+  const rest = []
+  for (const part of String(comment || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)) {
+    const m = /^mac=(.+)$/i.exec(part)
+    if (m && !mac) mac = m[1]
+    else rest.push(part)
+  }
+  return { mac, description: rest.join(' ') }
+}
+
+function formatRRLine({ name, ttl, type, value, description, mac }) {
   let line = padField((name || '').trim() || '@', 40)
   const n = Number(ttl)
   const ttlStr = Number.isFinite(n) && n > 0 ? String(n) : ''
   line += padField(ttlStr, 8)
   line += padField((type || 'A').toUpperCase(), 8)
   line += formatRecordValue(type, value)
+  const parts = []
+  const hw = (mac || '').trim()
+  if (hw) parts.push(`mac=${hw}`)
   const desc = (description || '').trim()
-  if (desc) line += ` ; ${desc}`
+  if (desc) parts.push(desc)
+  if (parts.length) line += ` ; ${parts.join(' ')}`
   return line
 }
 
@@ -264,7 +282,7 @@ export function tokenizeZoneLine(line) {
   return tokens
 }
 
-function toRecordRow({ name, ttl, type, value, description = '' }) {
+function toRecordRow({ name, ttl, type, value, description = '', mac = '' }) {
   return {
     _key: crypto.randomUUID(),
     name,
@@ -272,6 +290,7 @@ function toRecordRow({ name, ttl, type, value, description = '' }) {
     type,
     value,
     description,
+    mac,
   }
 }
 
@@ -437,13 +456,15 @@ export function parseZoneFile(text, zoneOrigin = '') {
       continue
     }
 
+    const { mac, description } = splitMacFromComment(comment)
     records.push(
       toRecordRow({
         name,
         ttl,
         type,
         value: formatRdata(type, tokens, origin),
-        description: comment,
+        description,
+        mac,
       }),
     )
   }
@@ -523,6 +544,7 @@ export function formatZoneFile({
         type,
         value,
         description: r.description,
+        mac: r.mac,
       }),
     )
   }

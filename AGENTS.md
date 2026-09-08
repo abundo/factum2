@@ -104,6 +104,13 @@ construction time) connect directly to the DB and call
 DNS/Icinga/LibreNMS/Oxidized below, nothing about Netbox or Lime sync is
 meant to run off the primary host.
 
+**DHCP:** `Settings.DhcpEnabled` (Factum tab, off by default) gates
+per-prefix DHCP on `models.IpamPrefix` (`DhcpEnabled` / range / gateway /
+`DhcpDnsServers`) and `DnsZoneRecord.MAC` (A/AAAA host reservations).
+`factum2-dns` writes those prefixes into dnsmgr2.yaml and `mac` fields
+on JSON A/AAAA records when the flag is on. Turning the flag off only
+hides the UI.
+
 **Capacity service types (cfgmgmt):** CN/CI types (ELINE, ELAN, L3VPN, …)
 are a `ServiceType` + per-NOS CLI objects in the DB, not a new Go
 package. Endpoints live in `service_endpoints`. Each type can carry

@@ -211,6 +211,44 @@ func TestDnsZoneBadRecord(t *testing.T) {
 	}
 }
 
+func TestDnsZoneRecordMAC(t *testing.T) {
+	ctrl := setupDNSZones(t)
+	c, rec := jsonRequest(t, http.MethodPost, "/api/dns/soa-templates", dnsSOABody{Name: "soa", Mname: "ns."}, nil, nil)
+	if err := ctrl.ApiDnsSOACreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var soa models.DnsSOATemplate
+	json.Unmarshal(rec.Body.Bytes(), &soa)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dns/templates", dnsTemplateBody{
+		Name: "t", SOATemplateID: soa.ID, Nameservers: []string{"ns."},
+	}, nil, nil)
+	if err := ctrl.ApiDnsTemplateCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var tmpl models.DnsTemplateDTO
+	json.Unmarshal(rec.Body.Bytes(), &tmpl)
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dns/zones", dnsZoneBody{
+		Name: "example.com", Type: "forward", DnsTemplateID: tmpl.ID,
+		Records: []models.DnsZoneRecordDTO{
+			{Name: "host", Type: "A", Value: "192.0.2.4", MAC: "AA-BB-CC-DD-EE-04"},
+		},
+	}, nil, nil)
+	if err := ctrl.ApiDnsZoneCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var zone models.DnsZoneDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &zone); err != nil {
+		t.Fatal(err)
+	}
+	if len(zone.Records) != 1 || zone.Records[0].MAC != "aa:bb:cc:dd:ee:04" {
+		t.Fatalf("records = %+v", zone.Records)
+	}
+}
+
 func itoa(id uint) string {
 	return strconv.FormatUint(uint64(id), 10)
 }
