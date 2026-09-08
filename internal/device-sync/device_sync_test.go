@@ -400,8 +400,7 @@ func (f *fakeNetboxAPI) CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netb
 type fakeFactumAPI struct {
 	mu sync.Mutex
 
-	devices      map[string]*models.Device
-	serviceTypes []models.ServiceType
+	devices map[string]*models.Device
 
 	getDevicesCalls      int
 	getDeviceByNameCalls []string
@@ -436,12 +435,6 @@ func (f *fakeFactumAPI) GetDeviceByName(name string) (*models.Device, error) {
 		return nil, fmt.Errorf("unknown device %q", name)
 	}
 	return d, nil
-}
-
-func (f *fakeFactumAPI) GetServiceTypes() ([]models.ServiceType, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.serviceTypes, nil
 }
 
 func (f *fakeFactumAPI) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {
@@ -1734,6 +1727,33 @@ func TestSyncELINEsSkipsMissingInterface(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected warning about missing interface; lines = %v", reporter.lines)
+	}
+}
+
+func TestLoadInventoryMapsFromConfig(t *testing.T) {
+	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), &util.ConfigDeviceSync{
+		InventoryMaps: map[string]string{
+			models.SyncSourceELAN:  models.NetboxTypeVPLS,
+			models.SyncSourceL3VPN: models.NetboxTypeVRF,
+		},
+	})
+	ds.loadInventoryMaps()
+	if ds.netboxType(models.SyncSourceELAN) != models.NetboxTypeVPLS {
+		t.Errorf("elan = %q, want vpls", ds.netboxType(models.SyncSourceELAN))
+	}
+	if ds.netboxType(models.SyncSourceL3VPN) != models.NetboxTypeVRF {
+		t.Errorf("l3vpn = %q, want vrf", ds.netboxType(models.SyncSourceL3VPN))
+	}
+}
+
+func TestLoadInventoryMapsFallbackWhenEmpty(t *testing.T) {
+	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), nil)
+	ds.loadInventoryMaps()
+	if ds.netboxType(models.SyncSourceELINE) != models.NetboxTypeEVPL {
+		t.Errorf("eline = %q, want evpl fallback", ds.netboxType(models.SyncSourceELINE))
+	}
+	if ds.netboxType(models.SyncSourceELAN) != "" {
+		t.Errorf("elan = %q, want empty without mapping", ds.netboxType(models.SyncSourceELAN))
 	}
 }
 

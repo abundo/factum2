@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
@@ -61,8 +60,6 @@ type FactumAPI interface {
 	// GetDeviceByName returns one device with interfaces/addresses
 	// populated.
 	GetDeviceByName(name string) (*models.Device, error)
-	// GetServiceTypes returns cfgmgmt service types (sync_source / netbox_type).
-	GetServiceTypes() ([]models.ServiceType, error)
 	// ApplyOpticalInventory persists a driver's optical dump on the device.
 	ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error)
 }
@@ -100,7 +97,8 @@ type DeviceSync struct {
 	deviceCacheMu sync.Mutex
 
 	// inventoryMaps is sync_source → netbox_type from cfgmgmt service
-	// types (ELINE→evpl, ELAN→vpls, L3VPN→vrf). Loaded once per run.
+	// types (ELINE→evpl, ELAN→vpls, L3VPN→vrf), fetched via
+	// /api/device-sync-config. Loaded once per run.
 	inventoryMaps map[string]string
 }
 
@@ -1102,17 +1100,8 @@ func (ds *DeviceSync) loadInventoryMaps() {
 	ds.inventoryMaps = map[string]string{
 		models.SyncSourceELINE: models.NetboxTypeEVPL,
 	}
-	if ds.factum == nil {
-		return
-	}
-	types, err := ds.factum.GetServiceTypes()
-	if err != nil {
-		ds.reporter.Emit(jobevent.Warning, "service types: %v (using ELINE→evpl fallback)", err)
-		return
-	}
-	mapped := cfgmgmt.InventoryMaps(types)
-	if len(mapped) > 0 {
-		ds.inventoryMaps = mapped
+	if ds.cfg != nil && len(ds.cfg.InventoryMaps) > 0 {
+		ds.inventoryMaps = ds.cfg.InventoryMaps
 	}
 }
 

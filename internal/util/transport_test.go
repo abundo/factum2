@@ -305,6 +305,46 @@ func TestFetchRemoteConfigUnix502DoesNotRetryHTTPS(t *testing.T) {
 	}
 }
 
+func TestWithoutHubSocketSkipsLiveUnixSocket(t *testing.T) {
+	sock := serveUnixHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"default_domain":"unix"}`))
+	}))
+	https := serveHTTPSConfig(t, http.StatusOK, `{"default_domain":"https"}`, nil, nil)
+
+	raw := ConfigFactum{URL: https.URL, Token: "secret", Socket: sock}
+	_, _, viaSocket, err := FactumHTTP(&raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !viaSocket {
+		t.Fatal("raw cfg should use the live unix socket")
+	}
+
+	rest := WithoutHubSocket(raw)
+	_, baseURL, viaSocket, err := FactumHTTP(&rest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaSocket {
+		t.Fatal("WithoutHubSocket must force HTTPS even if a socket exists")
+	}
+	if baseURL != https.URL {
+		t.Fatalf("baseURL = %q", baseURL)
+	}
+	if raw.Socket != sock {
+		t.Fatal("WithoutHubSocket must not mutate the original cfg")
+	}
+
+	got, err := FetchRemoteConfig[probePayload](&rest, "/api/librenms-config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultDomain != "https" {
+		t.Fatalf("got %+v, want https payload", got)
+	}
+}
+
 func TestFactumHTTPEnvNoneForcesHTTPSEvenIfSocketExists(t *testing.T) {
 	sock := serveUnixHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

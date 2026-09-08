@@ -2,10 +2,10 @@ package main
 
 // ---------------------------------------------------------------------------
 //
-// This program is meant to run on a host with network access to the
-// devices - it needs no direct database access, only the Factum API
-// (factum.url/factum.token, see internal/factum.NewFactumClient,
-// internal/netbox.RemoteClient and internal/device-sync.FetchRemoteConfig).
+// This program runs on the primary (same host as factum2-web). It needs no
+// direct database access, only the Factum REST API (factum.url / factum.token).
+// It does not use the worker hub unix socket — even when factum2-worker is
+// co-located — see util.WithoutHubSocket.
 //
 // ---------------------------------------------------------------------------
 
@@ -19,6 +19,7 @@ import (
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -50,15 +51,18 @@ func main() {
 				RunFuncE: func(p *SyncParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 
+					// REST to factum2-web, not the co-located worker socket.
+					factumCfg := util.WithoutHubSocket(p.Config.Factum)
+
 					// nb is write-only now: reads come from factum (already
 					// synced from Netbox), see internal/device-sync's package
 					// doc comment.
-					nb, err := netbox.RemoteClient(&p.Config.Factum)
+					nb, err := netbox.RemoteClient(&factumCfg)
 					if err != nil {
 						return err
 					}
-					factumClient := factum.NewFactumClient(&p.Config.Factum)
-					cfg, err := devicesync.FetchRemoteConfig(&p.Config.Factum)
+					factumClient := factum.NewFactumClient(&factumCfg)
+					cfg, err := devicesync.FetchRemoteConfig(&factumCfg)
 					if err != nil {
 						return err
 					}

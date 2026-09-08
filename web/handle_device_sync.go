@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -25,6 +26,7 @@ type DeviceSyncConfigResponse struct {
 	DeviceStates  []string                       `json:"device_states"`
 	DeviceIgnore  []string                       `json:"device_ignore"`
 	VlanGroupName string                         `json:"vlan_group_name"`
+	InventoryMaps map[string]string              `json:"inventory_maps"`
 	Auth          map[string]DeviceSyncAuthEntry `json:"auth"`
 }
 
@@ -44,13 +46,12 @@ func splitLines(s string) []string {
 
 // ApiDeviceSyncConfig returns everything factum2-device-sync-cli needs to
 // run: the default domain and VRFInGlobal/DeviceStates/DeviceIgnore lists
-// from the database-backed Settings row, plus per-device credentials from
-// the models.DeviceSyncAuth table - so factum2-device-sync-cli, which
-// typically runs on a host with network access to the devices rather than
-// the primary, doesn't need any local device-sync config or DB access of
-// its own. The Netbox client itself isn't served here - that's
-// /api/netbox-config (web.ApiNetboxConfig), which device-sync fetches
-// separately.
+// from the database-backed Settings row, per-device credentials from
+// the models.DeviceSyncAuth table, and cfgmgmt inventory maps
+// (sync_source → netbox_type). Device-sync talks to this over REST
+// (util.WithoutHubSocket), not /api/config/service-types. The Netbox
+// client itself isn't served here - that's /api/netbox-config
+// (web.ApiNetboxConfig), which device-sync fetches separately.
 func (ctrl *Controller) ApiDeviceSyncConfig(c *echo.Context) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
@@ -66,12 +67,18 @@ func (ctrl *Controller) ApiDeviceSyncConfig(c *echo.Context) error {
 		auth[row.Name] = DeviceSyncAuthEntry{Username: row.Username, Password: row.Password}
 	}
 
+	types, err := cfgmgmt.ListServiceTypes(ctrl.DB)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
 	return c.JSON(http.StatusOK, DeviceSyncConfigResponse{
 		CommonConfig:  util.NewCommonConfig(settings),
 		VRFInGlobal:   splitLines(settings.DeviceSyncVRFInGlobal),
 		DeviceStates:  splitLines(settings.DeviceSyncDeviceStates),
 		DeviceIgnore:  splitLines(settings.DeviceSyncDeviceIgnore),
 		VlanGroupName: settings.DeviceSyncVlanGroupName,
+		InventoryMaps: cfgmgmt.InventoryMaps(types),
 		Auth:          auth,
 	})
 }

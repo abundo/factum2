@@ -20,6 +20,16 @@ const HubRPCTimeout = 60 * time.Second
 // honor when the yaml override is empty.
 // Values "none" and "0" (yaml or env) mean "no socket" (CLI: force HTTPS;
 // worker: Start error).
+// WithoutHubSocket returns a copy of cfg that never probes the worker unix
+// socket. Primary-side CLIs (device-sync and anything else that runs next
+// to factum2-web) must use this: a co-located factum2-worker still listens
+// on the socket, and FactumHTTP would otherwise send every call over hub
+// RPC. Dest-host CLIs (dns, icinga, …) keep the default probe.
+func WithoutHubSocket(cfg ConfigFactum) ConfigFactum {
+	cfg.Socket = "none"
+	return cfg
+}
+
 func HubSocketPath(yamlOverride string) string {
 	if yamlOverride == "none" || yamlOverride == "0" {
 		return ""

@@ -3,10 +3,10 @@ package devicesync
 //
 // factum2-device-sync-cli fetches its config (vrf_in_global/device_states/
 // device_ignore/auth, all database-backed - see models.Settings and
-// models.DeviceSyncAuth) from the primary over REST, same pattern as
-// internal/netbox/internal/oxidized - it typically runs on a host with
-// network access to the devices, not the primary. The Netbox client itself
-// isn't fetched here - internal/netbox.RemoteClient already does that
+// models.DeviceSyncAuth; inventory_maps from cfgmgmt service types) from
+// factum2-web over REST. It runs on the primary and skips the hub unix
+// socket (util.WithoutHubSocket). The Netbox client itself isn't fetched
+// here - internal/netbox.RemoteClient already does that
 // (GET /api/netbox-config), and callers use it directly.
 //
 
@@ -25,6 +25,7 @@ type remoteConfigResponse struct {
 	DeviceStates  []string                         `json:"device_states"`
 	DeviceIgnore  []string                         `json:"device_ignore"`
 	VlanGroupName string                           `json:"vlan_group_name"`
+	InventoryMaps map[string]string                `json:"inventory_maps"`
 	Auth          map[string]remoteConfigAuthEntry `json:"auth"`
 }
 
@@ -45,6 +46,7 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigDeviceSync,
 		DeviceStates:  remote.DeviceStates,
 		DeviceIgnore:  remote.DeviceIgnore,
 		VlanGroupName: remote.VlanGroupName,
+		InventoryMaps: remote.InventoryMaps,
 		Auth:          auth,
 	}, nil
 }

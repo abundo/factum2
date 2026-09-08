@@ -93,17 +93,20 @@ from there, so it needs a DB connection (hence `-f` still has to point at a
 config with valid `db:` credentials, even for the read-only `factum2-netbox
 get-*` commands).
 
-LibreNMS/Icinga/DNS/Oxidized/device-sync are DB-backed too, but their CLIs
-normally run on a different host than the primary, so they can't reach the
-DB directly — they fetch config from the primary's REST handlers
+LibreNMS/Icinga/DNS/Oxidized are DB-backed too, but their CLIs normally
+run on a different host than the primary, so they can't reach the DB
+directly — they fetch config from the primary's REST handlers
 (`GET /api/<service>-config`) via `util.FactumHTTP`. Co-located with
 `factum2-worker start`, that is the unix socket
 (`/run/factum2-worker/api.sock`); otherwise HTTPS with `factum.token` (see
-below). Start-only YAML may omit `factum.url`/`factum.token`. Keep them
-for Stat/Dial fallback, for `factum2-worker run`, and for any CLI that
-cannot open the socket. Plus `worker.*` if that host also runs
-`factum2-worker start`. LibreNMS's own MySQL credentials are read from
-LibreNMS's `.env` on disk, not from factum config.
+below). `factum2-device-sync` also fetches `/api/device-sync-config` that
+way, but it runs on the primary and skips the unix socket
+(`util.WithoutHubSocket`) so it talks to factum2-web over REST. Start-only
+YAML may omit `factum.url`/`factum.token`. Keep them for Stat/Dial
+fallback, for `factum2-worker run`, and for any CLI that cannot open the
+socket. Plus `worker.*` if that host also runs `factum2-worker start`.
+LibreNMS's own MySQL credentials are read from LibreNMS's `.env` on disk,
+not from factum config.
 
 `factum.token` is a shared secret (matched against the primary's
 `Settings.FactumApiToken`, set from the admin UI's Factum tab) used on the

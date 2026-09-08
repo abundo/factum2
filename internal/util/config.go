@@ -26,6 +26,8 @@ type ConfigFactum struct {
 	// Socket is the local unix API path when this CLI is co-located with
 	// factum2-worker. Empty uses DefaultHubSocket unless FACTUM_WORKER_API_SOCKET
 	// overrides it; "none"/"0" disables the socket (CLI-only escape hatch).
+	// Primary-side CLIs should call WithoutHubSocket rather than relying on
+	// operators to set this.
 	Socket string `boa:"configonly" yaml:"socket" optional:"true"`
 }
 
@@ -148,13 +150,12 @@ type ConfigDeviceSyncAuth struct {
 // DeviceIgnore, all newline-separated text; Auth comes from the
 // models.DeviceSyncAuth table instead of a Settings column, since it's a
 // list of credentials, not a single value), fetched over REST by
-// internal/device-sync.FetchRemoteConfig/RemoteClient from
-// web.ApiDeviceSyncConfig - factum2-device-sync-cli typically runs on a host
-// with network access to the devices, not the primary, so it has no direct
-// DB connection to read either from. The Netbox client itself isn't fetched
-// here - internal/netbox.RemoteClient/FetchRemoteConfig already does that
-// (GET /api/netbox-config), and device-sync reuses it rather than
-// duplicating Netbox credentials in a second config type.
+// internal/device-sync.FetchRemoteConfig from web.ApiDeviceSyncConfig.
+// factum2-device-sync-cli runs on the primary and talks to factum2-web over
+// REST (util.WithoutHubSocket), not the hub unix socket. The Netbox client
+// itself isn't fetched here - internal/netbox.RemoteClient/FetchRemoteConfig
+// already does that (GET /api/netbox-config), and device-sync reuses it
+// rather than duplicating Netbox credentials in a second config type.
 type ConfigDeviceSync struct {
 	CommonConfig
 	VRFInGlobal  []string
@@ -163,6 +164,10 @@ type ConfigDeviceSync struct {
 	// VlanGroupName is the Netbox VLAN Group every synced VLAN is created
 	// in (Settings.DeviceSyncVlanGroupName) - "" disables VLAN sync.
 	VlanGroupName string
+	// InventoryMaps is sync_source → netbox_type from cfgmgmt service
+	// types (ELINE→evpl, ELAN→vpls, L3VPN→vrf). Empty means device-sync
+	// falls back to ELINE→evpl only.
+	InventoryMaps map[string]string
 	Auth          map[string]ConfigDeviceSyncAuth
 }
 

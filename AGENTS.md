@@ -609,10 +609,11 @@ embedding the full root forces a config file to fill in every section
 regardless of whether the binary actually reads it. Binaries that run off
 the primary (`factum2-worker`, `factum2-dns`, `factum2-icinga`,
 `factum2-librenms`, `factum2-oxidized`, `factum2-prometheus`,
-`factum2-device-sync`, `factum2-driver`, `factum2`) embed `cmdbase.ParamsAgent`
-instead, which loads the leaner
-`util.ConfigAgentRoot` (`factum`/`worker` only, default file
-`/etc/factum2/factum2-worker.yaml`). `cmdbase.ShowConfig()` is the
+`factum2-driver`, `factum2`) embed `cmdbase.ParamsAgent` instead, which loads
+the leaner `util.ConfigAgentRoot` (`factum`/`worker` only, default file
+`/etc/factum2/factum2-worker.yaml`). `factum2-device-sync` also embeds
+`ParamsAgent` but runs on the primary and uses REST (`util.WithoutHubSocket`)
+rather than the hub unix socket. `cmdbase.ShowConfig()` is the
 `show-config` for full-`Params` binaries; `cmdbase.ShowConfigAgent`
 (optional remote-config fetch) is the matching helper for `ParamsAgent`
 binaries. Follow this pattern (typed params struct + `RunFuncE`) rather

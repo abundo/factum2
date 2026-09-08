@@ -1,10 +1,11 @@
 ---
 # Primary-side worker (NetBox / device-sync). Dest CLIs run on their own
 # dest containers as remote workers — see factum2-*-worker.yaml.
-# factum.url is unix-socket fallback; CLIs co-located here use api.sock.
+# Primary-side CLIs talk to factum-web over REST, not the hub unix socket.
 factum:
     url: http://factum-web:8091
     token: lab-factum-api-token-not-for-production
+    socket: none
 
 worker:
     listen: ":8443"

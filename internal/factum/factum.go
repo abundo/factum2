@@ -82,16 +82,6 @@ func (factum *FactumClient) getDevices(path string) ([]*models.Device, error) {
 	return tmp, nil
 }
 
-// GetServiceTypes is GET /api/config/service-types — used by device-sync
-// to map on-device ELINE/ELAN/L3VPN collections onto NetBox object kinds.
-func (factum *FactumClient) GetServiceTypes() ([]models.ServiceType, error) {
-	var rows []models.ServiceType
-	if err := factum.doJSON(http.MethodGet, "/api/config/service-types", nil, &rows); err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
 // ApplyOpticalInventory is PUT /api/optical/device/:id/inventory — persists
 // a driver's optical dump onto OpticalKind / OpticalPort / OpticalXConnect.
 func (factum *FactumClient) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {
