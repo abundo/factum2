@@ -65,8 +65,12 @@ go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 
 A database that already has factum tables from AutoMigrate is stamped at
 goose version 1 (the committed `00001_baseline.sql` dump) and does not
-re-run `CREATE TABLE`. Fresh databases apply that dump. Add later schema
-changes as `internal/dbmigrate/sql/0000N_description.sql` (`-- +goose Up`)
+re-run `CREATE TABLE`. Fresh databases apply that dump. Do not edit
+`00001_baseline.sql` after it has been released — adopted production
+databases are already stamped at version 1, so changes to the dump never
+run there. Add later schema changes as
+`internal/dbmigrate/sql/0000N_description.sql` (`-- +goose Up`,
+idempotent `IF NOT EXISTS` when the objects also live in the baseline)
 and keep GORM models in sync. Do not call AutoMigrate from production
 code.
 

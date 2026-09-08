@@ -1,7 +1,8 @@
 // Package dbmigrate applies versioned Postgres schema migrations (goose SQL
 // under sql/). Production schema is those files, not GORM AutoMigrate.
 // Existing databases created by AutoMigrate are stamped at version 1
-// (the baseline dump) without re-running CREATE TABLE.
+// (the baseline dump) without re-running CREATE TABLE; later files
+// (00002+) still apply.
 package dbmigrate
 
 import (
@@ -36,8 +37,16 @@ func Up(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if _, err := provider.Up(ctx); err != nil {
+	results, err := provider.Up(ctx)
+	if err != nil {
 		return fmt.Errorf("goose up: %w", err)
+	}
+	if len(results) == 0 {
+		fmt.Println("goose: no pending migrations")
+		return nil
+	}
+	for _, r := range results {
+		fmt.Println("goose:", r)
 	}
 	return nil
 }

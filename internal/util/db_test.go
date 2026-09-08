@@ -218,3 +218,53 @@ func TestMigrateDatabaseAdoptsExistingPostgres(t *testing.T) {
 		t.Fatalf("stamped version = %d, want >= 1", version)
 	}
 }
+
+func TestMigrateDatabaseAddsDNSZoneEditorOnAdoptedSchema(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("setup migrate: %v", err)
+	}
+
+	// Production DBs created before the DNS zone editor, then stamped at
+	// goose v1, have neither the settings columns nor the dns_* tables.
+	if err := db.Exec(`
+		ALTER TABLE settings DROP COLUMN IF EXISTS dns_zones_enabled;
+		ALTER TABLE settings DROP COLUMN IF EXISTS dhcp_enabled;
+		ALTER TABLE IF EXISTS ipam_prefixes DROP COLUMN IF EXISTS dhcp_enabled;
+		DROP TABLE IF EXISTS dns_zone_records, dns_zones, dns_template_nameservers, dns_templates, dns_soa_templates, dns_dnssec_policies CASCADE;
+		DELETE FROM goose_db_version WHERE version_id > 1;
+	`).Error; err != nil {
+		t.Fatalf("strip dns zone editor schema: %v", err)
+	}
+
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("migrate adopted schema: %v", err)
+	}
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("second migrate (idempotent): %v", err)
+	}
+
+	var hasCol bool
+	if err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'settings'
+			  AND column_name = 'dns_zones_enabled'
+		)`).Scan(&hasCol).Error; err != nil {
+		t.Fatalf("column check: %v", err)
+	}
+	if !hasCol {
+		t.Fatal("expected settings.dns_zones_enabled after migrate")
+	}
+	if !db.Migrator().HasTable("dns_zones") {
+		t.Fatal("expected dns_zones after migrate")
+	}
+	var version int64
+	if err := db.Raw(`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version).Error; err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if version < 2 {
+		t.Fatalf("stamped version = %d, want >= 2", version)
+	}
+}
