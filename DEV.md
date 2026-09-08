@@ -29,16 +29,16 @@ go work init . ../limetool ../netboxtool ../dnsmgr2
 
 That overrides module resolution on your machine only. CI and releases
 keep using the tagged versions. Pin a new library release with
-`go get github.com/abundo/netboxtool@v1.2.1` (or the matching limetool
-or dnsmgr2 tag) and commit the `go.mod` / `go.sum` bump.
-
-`factum2-dns` imports `github.com/abundo/dnsmgr2/dnsmgr` (the `internal/`
-package was renamed). Locally that needs the workspace until a dnsmgr2
-tag that contains `dnsmgr/` is published, then:
+`GOWORK=off` so the workspace does not hide the tagged module's
+transitives, then commit the `go.mod` / `go.sum` bump:
 
 ```sh
-go get github.com/abundo/dnsmgr2@v1.2.0
+GOWORK=off go get github.com/abundo/dnsmgr2@v1.2.0
+GOWORK=off go mod tidy
 ```
+
+Same pattern for limetool / netboxtool. `factum2-dns` imports
+`github.com/abundo/dnsmgr2/dnsmgr`.
 
 ## Database setup
 
