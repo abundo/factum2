@@ -53,7 +53,9 @@ The DNS tab also has the path of the generated **dnsmgr2 config file** and
 BIND host-template fields used when the [zone editor](dns.md) is on.
 The DHCP tab is [DHCP server management](dns.md#dhcp): per-prefix DHCP
 in IPAM, the MAC column on DNS zone records, default DNS servers for
-DHCP clients, and Kea host-template fields.
+DHCP clients, and Kea host-template fields. The Kea include file is a
+JSON array of subnets that the main Kea config must include; it is not
+the main config file.
 LibreNMS delayed delete lives here. Oxidized **API URL** is what the GUI
 Oxidized browser uses; it must be reachable from `factum2-web`.
 

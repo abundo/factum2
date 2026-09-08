@@ -44,7 +44,9 @@ When it is on:
   reservation.
 
 Default DNS servers for DHCP clients and Kea paths (config dir, include
-file, restart command) are on **Destinations → DHCP**.
+file, restart command) are on **Destinations → DHCP**. The include file is
+a JSON array of subnets (typically `kea-dhcp4.dnsmgr2.json`); the main Kea
+config must include it as `"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`.
 
 When DHCP is on and **Destinations → DNS → Config file** is set,
 `factum2-dns` includes `dhcp:` / `host_dhcp_template` / prefixes in the

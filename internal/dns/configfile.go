@@ -381,8 +381,8 @@ func dhcpHostOrDefault(h ConfigDHCPHost, prefixes []ConfigDHCPPrefix) ConfigDHCP
 	if strings.TrimSpace(h.Type) == "" {
 		h.Type = "isc_kea"
 	}
-	h.IPv4 = dhcpProtoOrDefault(h.IPv4, "kea-dhcp4.conf", "systemctl restart kea-dhcp4-server")
-	h.IPv6 = dhcpProtoOrDefault(h.IPv6, "kea-dhcp6.conf", "systemctl restart kea-dhcp6-server")
+	h.IPv4 = dhcpProtoOrDefault(h.IPv4, "kea-dhcp4.dnsmgr2.json", "systemctl restart kea-dhcp4-server")
+	h.IPv6 = dhcpProtoOrDefault(h.IPv6, "kea-dhcp6.dnsmgr2.json", "systemctl restart kea-dhcp6-server")
 	has4, has6 := false, false
 	for _, p := range prefixes {
 		pfx, err := netip.ParsePrefix(strings.TrimSpace(p.Name))

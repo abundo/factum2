@@ -153,7 +153,7 @@ func TestRenderDnsmgrConfigDHCP(t *testing.T) {
 		"name: 192.0.2.0/24",
 		"range: 192.0.2.100-192.0.2.200",
 		"gateway: 192.0.2.1",
-		"kea-dhcp4.conf",
+		"kea-dhcp4.dnsmgr2.json",
 		"192.0.2.53",
 	} {
 		if !strings.Contains(s, want) {

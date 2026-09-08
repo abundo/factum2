@@ -261,9 +261,14 @@ const destinationTabItems = [
               <UInput
                 id="dhcp_kea4_include_file"
                 v-model="settings.dhcp_kea4_include_file"
-                placeholder="kea-dhcp4.conf"
+                placeholder="kea-dhcp4.dnsmgr2.json"
                 class="w-full"
               />
+              <small class="text-muted-color"
+                >JSON array of subnets written by dnsmgr2. Include it from the main Kea config as
+                <code>"subnet4": &lt;?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?&gt;</code> — not the
+                main config file itself.</small
+              >
             </div>
             <div>
               <label for="dhcp_kea4_cmd_restart" class="block font-bold mb-3"
@@ -294,9 +299,13 @@ const destinationTabItems = [
               <UInput
                 id="dhcp_kea6_include_file"
                 v-model="settings.dhcp_kea6_include_file"
-                placeholder="kea-dhcp6.conf"
+                placeholder="kea-dhcp6.dnsmgr2.json"
                 class="w-full"
               />
+              <small class="text-muted-color"
+                >Same include pattern as DHCPv4, with
+                <code>"subnet6": &lt;?include "/etc/kea/kea-dhcp6.dnsmgr2.json"?&gt;</code>.</small
+              >
             </div>
             <div>
               <label for="dhcp_kea6_cmd_restart" class="block font-bold mb-3"
