@@ -35,10 +35,10 @@ func main() {
 					return err
 				},
 			},
-			boa.CmdT[web.GuiParams]{
+			boa.CmdT[web.CreateAdminParams]{
 				Use:   "createadmin",
 				Short: "(Re)create adminstrator",
-				RunFuncE: func(p *web.GuiParams, cmd *cobra.Command, args []string) error {
+				RunFuncE: func(p *web.CreateAdminParams, cmd *cobra.Command, args []string) error {
 					err := web.CreateAdmin(p)
 					return err
 				},

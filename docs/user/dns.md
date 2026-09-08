@@ -11,7 +11,7 @@ delete SOA templates, DNS templates, DNSSEC policies, or zones.
 
 This is separate from **Admin → Settings → Destinations → DNS**, which
 is the device-record sync (`factum2-dns` writing a JSON records file
-for devices, then `dnsmgr2 sync`).
+for devices, then applying BIND/Kea through the dnsmgr2 library).
 
 ## What you edit
 
@@ -72,6 +72,11 @@ layout from dnsmgr2's example config when left blank.
 ## Sync
 
 A DNS job still writes the JSON records file (devices plus zone-editor
-records) and runs `dnsmgr2 sync`. Zone-editor records for a zone named
+records) and the `dnsmgr2.yaml` config, then `factum2-dns` applies them
+in-process (BIND zone files, `rndc`, optional Kea). No separate `dnsmgr2`
+binary is required on the worker. Zone-editor records for a zone named
 the same as **default domain** are merged into that domain's `records`
 array with the device records.
+
+The DNS host still needs BIND (`named-checkzone`, `rndc`) and, if DHCP
+is on, Kea. Those stay OS packages.

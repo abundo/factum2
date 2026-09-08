@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
-	"os/exec"
 	"strings"
 	"unicode"
 
+	"github.com/abundo/dnsmgr2/dnsmgr"
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
@@ -23,8 +23,8 @@ import (
 type DNSClient struct {
 	Config *util.ConfigAgentRoot
 	DNS    *Config
-	// update, if set, replaces runDnsmgrUpdate - tests stub it so Sync
-	// doesn't need a real dnsmgr2 binary.
+	// update, if set, replaces runDnsmgrUpdate — tests stub it so Sync
+	// does not apply BIND/Kea.
 	update func() error
 }
 
@@ -45,8 +45,7 @@ func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {
 }
 
 // Get all devices from factum database
-// Write a dnsmgr2 JSON records file
-// Ask dnsmgr to update dns
+// Write a dnsmgr2 JSON records file and config, then apply BIND/Kea.
 func (dns *DNSClient) Sync(reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "DNS sync started")
 	if err := dns.validate(); err != nil {
@@ -135,8 +134,8 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 	}
 
 	reporter.Emit(jobevent.Info, "running dnsmgr2 update")
-	// Always invoke dnsmgr2: UpdateCommit skips BIND reload when zone
-	// content is unchanged, and a previous failed update still needs a retry.
+	// Always apply: UpdateCommit skips BIND reload when zone content is
+	// unchanged, and a previous failed update still needs a retry.
 	if err := dns.runUpdate(); err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -148,14 +147,32 @@ func (dns *DNSClient) runUpdate() error {
 	if dns.update != nil {
 		return dns.update()
 	}
-	return runDnsmgrUpdate()
+	return runDnsmgrUpdate(dns.dnsmgrConfigPath())
 }
 
-func runDnsmgrUpdate() error {
-	cmd := exec.Command("dnsmgr2", "sync")
-	out, err := cmd.CombinedOutput()
+func (dns *DNSClient) dnsmgrConfigPath() string {
+	if dns.DNS != nil {
+		if p := strings.TrimSpace(dns.DNS.ConfigFile); p != "" {
+			return p
+		}
+	}
+	return "/etc/dnsmgr2/dnsmgr2.yaml"
+}
+
+func runDnsmgrUpdate(configFile string) error {
+	cfg, err := dnsmgr.LoadConfigFile(configFile)
 	if err != nil {
-		return fmt.Errorf("dnsmgr2 update: %w: %s", err, bytes.TrimSpace(out))
+		return fmt.Errorf("dnsmgr2 config %s: %w", configFile, err)
+	}
+	dm, err := dnsmgr.NewDnsManager(cfg)
+	if err != nil {
+		return fmt.Errorf("dnsmgr2: %w", err)
+	}
+	if err := dm.Load(); err != nil {
+		return fmt.Errorf("dnsmgr2 load: %w", err)
+	}
+	if err := dm.Sync(); err != nil {
+		return fmt.Errorf("dnsmgr2 update: %w", err)
 	}
 	return nil
 }

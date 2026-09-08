@@ -21,9 +21,10 @@ grant all privileges on database factum2 to factum2_user;
 alter database factum2 owner to factum2_user;
 ```
 
-Schema migrations are a dedicated command (`factum2-web migrate`). They
-do **not** run when the GUI or a sync CLI starts. `install.py` applies
-them during install; to run them by hand, stop the GUI first:
+Schema migrations are a dedicated command (`factum2-web migrate`, goose
+SQL in the binary). They do **not** run when the GUI or a sync CLI
+starts. `install.py` applies them during install; to run them by hand,
+stop the GUI first:
 
 ```sh
 sudo /opt/factum2/factum2-web migrate -f /etc/factum2/factum2.yaml

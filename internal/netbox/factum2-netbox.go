@@ -813,9 +813,8 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 
 		// Built fresh (no factum ID) and upserted on (device_id, netbox_id)
 		// rather than read-then-Save, same reasoning and pattern as
-		// syncDevice above - see MigrateDatabase's dedupeInterfaces
-		// (internal/util/db.go) for what the old read-then-Save race let
-		// happen.
+		// syncDevice above. The unique index on (device_id, netbox_id)
+		// makes a duplicate insert fail instead of leaving a stale twin.
 		var iface models.Interface
 		iface.DeviceID = deviceID
 		iface.NetboxID = nb_intf.NetboxID

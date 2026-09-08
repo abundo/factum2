@@ -7,9 +7,9 @@
 # 502/timeout after Dial succeeded. Omit both on start-only hosts once
 # CLIs use the socket. factum2-worker run still needs them (HTTPS).
 factum:
-    url: https://factum.example.com
-    token: <change-me>
-    # socket: none   # force HTTPS (same as FACTUM_WORKER_API_SOCKET=none)
+  url: https://factum.example.com
+  token: <change-me>
+  # socket: none   # force HTTPS (same as FACTUM_WORKER_API_SOCKET=none)
 
 # on each worker, adjust the commands to what the worker handles
 # this token is for the primary server accessing this worker
@@ -22,35 +22,35 @@ factum:
 #     -subj "/CN=worker.example.com" \
 #     -addext "subjectAltName=DNS:worker.example.com"
 worker:
-    listen: ":8443"
-    token: <change-me>
-    tls_cert: /etc/factum2/hub.crt
-    tls_key: /etc/factum2/hub.key
-    # api_socket:  (default /run/factum2-worker/api.sock; relocate via
-    # FACTUM_WORKER_API_SOCKET on the worker unit AND in CLI environments —
-    # do not set only worker.api_socket or only factum.socket)
-    commands:
-        becs:
-            cmd: /opt/factum2/factum2-becs
-            args: ["sync", "--job"]
-        device-sync:
-            cmd: /opt/factum2/factum2-device-sync
-            args: ["sync", "--job"]
-        dns:
-            cmd: /opt/factum2/factum2-dns
-            args: ["sync", "--job"]
-        icinga:
-            cmd: /opt/factum2/factum2-icinga
-            args: ["sync", "--job"]
-        librenms:
-            cmd: /opt/factum2/factum2-librenms
-            args: ["sync", "--job"]
-        prometheus:
-            cmd: /opt/factum2/factum2-prometheus
-            args: ["sync", "--job"]
-        lime:
-            cmd: /opt/factum2/factum2-lime
-            args: ["sync", "--job"]
-        netbox:
-            cmd: /opt/factum2/factum2-netbox
-            args: ["sync", "--job"]
+  listen: ":8443"
+  token: <change-me>
+  tls_cert: /etc/factum2/hub.crt
+  tls_key: /etc/factum2/hub.key
+  # api_socket:  (default /run/factum2-worker/api.sock; relocate via
+  # FACTUM_WORKER_API_SOCKET on the worker unit AND in CLI environments —
+  # do not set only worker.api_socket or only factum.socket)
+  commands:
+    becs:
+      cmd: /opt/factum2/factum2-becs
+      args: ["sync", "--job"]
+    device-sync:
+      cmd: /opt/factum2/factum2-device-sync
+      args: ["sync", "--job"]
+    dns:
+      cmd: /opt/factum2/factum2-dns
+      args: ["sync", "--job"]
+    icinga:
+      cmd: /opt/factum2/factum2-icinga
+      args: ["sync", "--job"]
+    librenms:
+      cmd: /opt/factum2/factum2-librenms
+      args: ["sync", "--job"]
+    prometheus:
+      cmd: /opt/factum2/factum2-prometheus
+      args: ["sync", "--job"]
+    lime:
+      cmd: /opt/factum2/factum2-lime
+      args: ["sync", "--job", "--refresh"]
+    netbox:
+      cmd: /opt/factum2/factum2-netbox
+      args: ["sync", "--job"]

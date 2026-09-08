@@ -35,8 +35,9 @@ section before adding tests there.
   attached and `psql` silently succeeds while doing nothing.
 - **CLI flags:** config file is `-f` (default `/etc/factum2/factum2.yaml`;
   worker default `/etc/factum2/factum2-worker.yaml`); web subcommand is
-  `start`. Schema changes are `factum2-web migrate` (or `factum2 migrate`) —
-  start/createadmin/sync do not AutoMigrate. `web.GuiParams.Bind` defaults
+  `start`. Schema changes are `factum2-web migrate` (or `factum2 migrate`)
+  applying goose SQL in `internal/dbmigrate/sql/` — start/createadmin/sync
+  do not migrate. `web.GuiParams.Bind` defaults
   to `:8090` and overrides YAML `web.bind` — always pass `-b` for an
   isolated instance or it collides with the live process.
 - **Browser:** `chromium-cli` is not installed. The skill drives

@@ -16,9 +16,11 @@ ENV_FILE = DIR / ".env"
 
 OK_HTTP = {200, 204, 301, 302, 401, 403}
 
+_T0 = time.monotonic()
+
 
 def log(msg: str) -> None:
-    print(f"==> {msg}", flush=True)
+    print(f"==> {msg}  [{time.monotonic() - _T0:.0f}s]", flush=True)
 
 
 def load_env(path: Path = ENV_FILE) -> dict[str, str]:
@@ -86,7 +88,7 @@ def wait_http(url: str, tries: int = 60, *, required: bool = True) -> bool:
                 return True
         except OSError as exc:
             last = str(exc)
-        time.sleep(3)
+        time.sleep(1)
     msg = f"timed out waiting for {url} (last HTTP {last})"
     if required:
         raise SystemExit(msg)

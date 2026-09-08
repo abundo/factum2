@@ -2000,7 +2000,7 @@ def migrate_database(
 ) -> None:
     """Stop factum2-web, apply schema migrations, leave the unit stopped.
 
-    AutoMigrate must not run while the GUI is serving; the caller restarts
+    Schema migrations must not run while the GUI is serving; the caller restarts
     units after this returns. A missing unit (first install) is ignored.
     """
     web_unit = PRIMARY_UNITS[0]

@@ -73,21 +73,32 @@ test-integration-web:
 # instance and testdata/itest. See dev/README.md. Uses docker compose, or
 # podman compose if FACTUM_COMPOSE is set / docker is missing.
 DEV_DIR := dev
+NPROC := $(shell nproc 2>/dev/null || echo 4)
 # Core lab apps. Schema is applied before factum-web starts. Each dest
 # (dns, icinga, librenms, oxidized, prometheus) runs its own factum2-worker.
-# icingadb / icingaweb start from seed.py after MariaDB DBs exist (existing
-# mysql volumes skip docker-entrypoint-initdb.d).
-LAB_CORE := postgres mysql redis netbox netbox-worker librenms librenms-dispatcher icinga icingadb-redis oxidized prometheus snmp-exporter alertmanager grafana dns portal
+# icingadb / icingaweb need the extra MariaDB DBs (existing mysql volumes
+# skip docker-entrypoint-initdb.d), so dev-up creates those then starts
+# Icinga Web in parallel with NetBox/LibreNMS instead of after --wait.
+LAB_DBS := postgres mysql redis icingadb-redis
+# Services compose --wait blocks on. Sidecars that cannot become healthy
+# until a parent is (netbox-worker, librenms-dispatcher) are started
+# without --wait so they don't serialize extra healthchecks.
+LAB_APPS := netbox librenms icinga oxidized prometheus snmp-exporter alertmanager grafana dns portal
+LAB_SIDECARS := netbox-worker librenms-dispatcher
+LAB_ICINGA_WEB := icingadb icingaweb
+LAB_CORE := $(LAB_DBS) $(LAB_APPS) $(LAB_SIDECARS)
+export LAB_DBS LAB_APPS LAB_SIDECARS LAB_ICINGA_WEB LAB_CORE
 # Optional: make dev-up SEED_ARGS=--demo  (netbox-community SQL dump)
 SEED_ARGS ?=
 
 dev-up:
+	@echo "==> prepare"
 	$(DEV_DIR)/prepare.py $(SEED_ARGS)
-	@test -x $(BUILD_DIR)/factum2-web -a -x $(BUILD_DIR)/factum2-netbox -a -x $(BUILD_DIR)/factum2-dns -a -x $(BUILD_DIR)/factum2-worker || $(MAKE) build
+	@echo "==> binaries"
+	@test -x $(BUILD_DIR)/factum2-web && test -x $(BUILD_DIR)/factum2-netbox && test -x $(BUILD_DIR)/factum2-dns && test -x $(BUILD_DIR)/factum2-worker || $(MAKE) -j$(NPROC) build
+	@echo "==> frontend"
 	@test -f web/static/vue/index.html || $(MAKE) frontend
-	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 300 $(LAB_CORE)
-	$(DEV_DIR)/seed.py $(SEED_ARGS)
-	$(DEV_DIR)/compose.sh up -d --wait --wait-timeout 120 factum-web factum-worker
+	FACTUM_DEV_UP_START=$$(date +%s) $(DEV_DIR)/up.sh $(SEED_ARGS)
 
 dev-down:
 	$(DEV_DIR)/compose.sh down

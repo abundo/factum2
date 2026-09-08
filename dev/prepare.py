@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Create dest-file dirs, hub TLS, Oxidized config, BIND layout, and the
-dnsmgr2 binary for the dns container. With --demo, fetch the NetBox demo
-dump so postgres/init/02-netbox-demo.sh can load it on first init.
+"""Create dest-file dirs, hub TLS, Oxidized/Grafana config, and BIND layout.
+With --demo, fetch the NetBox demo dump so postgres/init/02-netbox-demo.sh
+can load it on first init.
 
 Feature flags (DNS, IPAM, …) live in Settings and are turned on by seed.py.
 This script only prepares the files those features write.
@@ -22,8 +22,8 @@ from lab import DIR, log, run
 
 EXECUTABLES = (
     "compose.sh",
+    "up.sh",
     "netbox-seed.sh",
-    "bin/dnsmgr2",
     "dns/entrypoint.sh",
     "icinga/entrypoint.sh",
     "librenms/98-lab-tune.sh",
@@ -49,9 +49,6 @@ HUB_CERT_DNS = (
 )
 
 SENTINEL = DIR / "data" / "netbox" / "load-demo"
-DNSMGR2_REPO = "https://github.com/abundo/dnsmgr2"
-DNSMGR2_SRC = DIR / ".dnsmgr2-src"
-DNSMGR2_BIN = DIR / "bin" / "dnsmgr2"
 
 DATA_DIRS = (
     "data/icinga",
@@ -61,6 +58,7 @@ DATA_DIRS = (
     "data/bind-zones",
     "data/dnsmgr2",
     "data/prometheus",
+    "data/grafana",
     "data/netbox",
     "certs",
 )
@@ -159,25 +157,6 @@ def _ensure_hub_certs() -> None:
     key.chmod(0o644)
 
 
-def _ensure_dnsmgr2() -> None:
-    DNSMGR2_BIN.parent.mkdir(parents=True, exist_ok=True)
-    if DNSMGR2_BIN.is_file() and os.access(DNSMGR2_BIN, os.X_OK):
-        return
-    log(f"Building dnsmgr2 from {DNSMGR2_REPO}")
-    if not (DNSMGR2_SRC / ".git").is_dir():
-        if DNSMGR2_SRC.exists():
-            shutil.rmtree(DNSMGR2_SRC)
-        run(["git", "clone", "--depth", "1", DNSMGR2_REPO, str(DNSMGR2_SRC)])
-    else:
-        run(["git", "-C", str(DNSMGR2_SRC), "pull", "--ff-only"], check=False)
-    run(["make"], cwd=str(DNSMGR2_SRC))
-    built = DNSMGR2_SRC / "bin" / "dnsmgr2"
-    if not built.is_file():
-        raise SystemExit(f"dnsmgr2 build produced no binary at {built}")
-    shutil.copy2(built, DNSMGR2_BIN)
-    _chmod_exec(DNSMGR2_BIN)
-
-
 def prepare(*, demo: bool = False) -> None:
     for name in DATA_DIRS:
         (DIR / name).mkdir(parents=True, exist_ok=True)
@@ -191,11 +170,14 @@ def prepare(*, demo: bool = False) -> None:
         SENTINEL.unlink()
 
     _ensure_hub_certs()
-    _ensure_dnsmgr2()
 
     oxidized_src = DIR / "oxidized" / "config"
     oxidized_dst = DIR / "data" / "oxidized" / "config"
     oxidized_dst.write_bytes(oxidized_src.read_bytes())
+
+    grafana_src = DIR / "grafana" / "grafana.ini"
+    grafana_dst = DIR / "data" / "grafana" / "grafana.ini"
+    grafana_dst.write_bytes(grafana_src.read_bytes())
 
     shutil.copyfile(DIR / "dns" / "named.conf", DIR / "data" / "bind" / "named.conf")
     dst_yaml = DIR / "data" / "dns" / "dnsmgr2.yaml"
@@ -241,6 +223,7 @@ def prepare(*, demo: bool = False) -> None:
         DIR / "data" / "bind" / "named.conf",
         DIR / "data" / "bind" / "named.conf.dnsmgr2",
         DIR / "data" / "prometheus" / "targets.json",
+        DIR / "data" / "grafana" / "grafana.ini",
     )
     for path in writable:
         try:
@@ -255,6 +238,7 @@ def prepare(*, demo: bool = False) -> None:
         "data/bind-zones",
         "data/dnsmgr2",
         "data/prometheus",
+        "data/grafana",
     ):
         try:
             os.chmod(DIR / name, 0o777)

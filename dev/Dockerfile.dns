@@ -1,6 +1,6 @@
 # BIND + factum2-worker (factum-dns) for the lab dns service.
-# Binaries are bind-mounted from the host build/ directory; dnsmgr2 is
-# copied in by seed.py. named-checkzone (bind9-utils) is required by dnsmgr2.
+# Binaries are bind-mounted from the host build/ directory.
+# named-checkzone (bind9-utils) is required when factum2-dns applies zones.
 FROM docker.io/debian:bookworm-slim
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -14,6 +14,20 @@ import (
 	"github.com/abundo/factum2/models"
 )
 
+func TestDnsmgrConfigPath(t *testing.T) {
+	if got := (&DNSClient{}).dnsmgrConfigPath(); got != "/etc/dnsmgr2/dnsmgr2.yaml" {
+		t.Errorf("empty client = %q", got)
+	}
+	client := &DNSClient{DNS: &Config{ConfigFile: "  /tmp/dnsmgr2.yaml  "}}
+	if got := client.dnsmgrConfigPath(); got != "/tmp/dnsmgr2.yaml" {
+		t.Errorf("ConfigFile = %q", got)
+	}
+	client.DNS.ConfigFile = "   "
+	if got := client.dnsmgrConfigPath(); got != "/etc/dnsmgr2/dnsmgr2.yaml" {
+		t.Errorf("blank ConfigFile = %q", got)
+	}
+}
+
 func TestDnsInterfaceLabel(t *testing.T) {
 	cases := []struct {
 		in, want string

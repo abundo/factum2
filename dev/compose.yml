@@ -146,10 +146,18 @@ services:
       # launch-netbox.sh binds :: ; extra --host makes IPv4 (127.0.0.1) work.
       GRANIAN_EXTRA_ARGS: "--host=0.0.0.0"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS --max-time 4 -o /dev/null http://127.0.0.1:8080/login/"]
+      # /login is a full Django render. During first-boot migrations it often
+      # takes >4s, so curl --max-time 4 fails and `compose --wait` sits on
+      # start_period (180s) plus retries until wait-timeout. Close the
+      # connection: GRANIAN_WORKERS=1 treats keep-alive as an occupied slot.
+      # /api/status/ is 403 without a token on this NetBox, so it is not a
+      # cheaper substitute. start_interval polls often during migrations so
+      # compose --wait notices readiness without waiting out interval.
+      test: ["CMD-SHELL", "curl -fsS --max-time 15 -H 'Connection: close' -o /dev/null http://127.0.0.1:8080/login/"]
       start_period: 180s
-      interval: 15s
-      timeout: 5s
+      start_interval: 3s
+      interval: 10s
+      timeout: 20s
       retries: 20
     mem_limit: 1g
 
@@ -162,14 +170,18 @@ services:
       - rqworker
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f rqworker >/dev/null"]
-      start_period: 30s
+      start_period: 20s
+      start_interval: 3s
       interval: 15s
       timeout: 5s
       retries: 10
     mem_limit: 512m
     depends_on:
       netbox:
-        condition: service_healthy
+        # Start with NetBox rather than waiting for it to be healthy;
+        # rqworker retries the DB. compose --wait does not include this
+        # sidecar, so a service_healthy dep would only delay the worker.
+        condition: service_started
 
   librenms:
     <<: *lab-restart
@@ -225,10 +237,11 @@ services:
       FPM_PM_MAX_SPARE_SERVERS: "2"
       OPCACHE_MEM_SIZE: "64"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS --max-time 4 -o /dev/null http://127.0.0.1:8000/login && test -S /run/factum2-worker/api.sock"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 15 -H 'Connection: close' -o /dev/null http://127.0.0.1:8000/login && test -S /run/factum2-worker/api.sock"]
       start_period: 180s
+      start_interval: 3s
       interval: 10s
-      timeout: 5s
+      timeout: 20s
       retries: 30
     mem_limit: 768m
 
@@ -286,10 +299,11 @@ services:
       icingadb-redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "icinga2 daemon -C >/dev/null && test -S /run/factum2-worker/api.sock"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/5665' && test -S /run/factum2-worker/api.sock"]
       start_period: 60s
-      interval: 15s
-      timeout: 10s
+      start_interval: 3s
+      interval: 10s
+      timeout: 5s
       retries: 20
     mem_limit: 256m
 
@@ -375,6 +389,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
       start_period: 45s
+      start_interval: 3s
       interval: 10s
       timeout: 5s
       retries: 20
@@ -408,6 +423,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8888/ >/dev/null && test -S /run/factum2-worker/api.sock"]
       start_period: 20s
+      start_interval: 3s
       interval: 10s
       timeout: 5s
       retries: 15
@@ -448,6 +464,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9090/-/healthy >/dev/null && test -S /run/factum2-worker/api.sock"]
       start_period: 20s
+      start_interval: 2s
       interval: 5s
       timeout: 5s
       retries: 20
@@ -462,8 +479,8 @@ services:
     environment:
       TZ: UTC
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9116/"]
-      interval: 10s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9116/metrics"]
+      interval: 5s
       timeout: 5s
       retries: 10
     mem_limit: 64m
@@ -496,10 +513,12 @@ services:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:z,ro
       - ./grafana/dashboards:/etc/grafana/dashboards:z,ro
+      - ./data/grafana/grafana.ini:/etc/grafana/grafana.ini:z,ro
     environment:
       TZ: UTC
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_BASIC_PASSWORD_POLICY: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
@@ -511,13 +530,14 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
       start_period: 30s
+      start_interval: 3s
       interval: 10s
       timeout: 5s
       retries: 20
     mem_limit: 384m
 
-  # BIND + dnsmgr2 + factum2-worker (dns command only). factum2-dns writes
-  # /etc/dnsmgr2 then runs `dnsmgr2 sync`, which reloads named via rndc.
+  # BIND + factum2-worker (dns command only). factum2-dns writes
+  # /etc/dnsmgr2 then applies BIND/Kea in-process, which reloads named via rndc.
   dns:
     <<: *lab-restart
     image: factum-dev-dns:local
@@ -534,7 +554,6 @@ services:
       - ./container/factum2-dns-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
       - ./certs:/etc/factum2/certs:z,ro
       - ./dns/entrypoint.sh:/entrypoint.sh:z,ro
-      - ./bin/dnsmgr2:/usr/local/bin/dnsmgr2:z,ro
       - ./data/dns:/etc/dnsmgr2:z
       - ./data/bind:/etc/bind:z
       - ./data/bind-zones:/var/lib/bind:z
@@ -548,6 +567,7 @@ services:
           "rndc -k /etc/bind/rndc.key status >/dev/null && test -S /run/factum2-worker/api.sock",
         ]
       start_period: 25s
+      start_interval: 2s
       interval: 5s
       timeout: 5s
       retries: 20
@@ -570,6 +590,7 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/version"]
       start_period: 20s
+      start_interval: 2s
       interval: 5s
       timeout: 3s
       retries: 20

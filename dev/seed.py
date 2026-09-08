@@ -3,6 +3,9 @@
 config and Icinga DB, optionally load NetBox demo data (--demo), migrate
 factum, create admin, seed Settings, LibreNMS token, NetBox webhook and
 custom fields. If netbox-seed.yaml exists, load that inventory via the API.
+
+`--icinga-db` only creates the Icinga MariaDB databases so icingadb /
+icingaweb can start in parallel with NetBox (see `make dev-up`).
 """
 
 from __future__ import annotations
@@ -102,7 +105,7 @@ READY = """
   Prometheus:     http://127.0.0.1:19090
   Alertmanager:   http://127.0.0.1:19093
   snmp-exporter:  http://127.0.0.1:19116
-  BIND:           127.0.0.1:18053          zone lab.example (dnsmgr2 + factum-dns)
+  BIND:           127.0.0.1:18053          zone lab.example (factum2-dns)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
@@ -225,26 +228,77 @@ def _netbox_demo(*, pg_user: str) -> None:
 
 def _create_admin(admin_user: str, admin_pass: str) -> None:
     log(f"Creating admin user ({admin_user})")
-    if not shutil.which("tmux"):
-        log(f"tmux not found; run: go run ./cmd/web createadmin -f {FACTUM_YAML}")
+    web_bin = REPO_ROOT / "build" / "factum2-web"
+    extra_env = {**os.environ, "FACTUM_ADMIN_PASSWORD": admin_pass}
+    if web_bin.is_file() and os.access(web_bin, os.X_OK):
+        cmd = [str(web_bin), "createadmin", "-f", str(FACTUM_YAML), "-p", admin_pass]
+        cwd = None
+    else:
+        cmd = [
+            "go",
+            "run",
+            "./cmd/web",
+            "createadmin",
+            "-f",
+            str(FACTUM_YAML),
+            "-p",
+            admin_pass,
+        ]
+        cwd = str(REPO_ROOT)
+    result = run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        env=extra_env,
+    )
+    if result.returncode == 0:
         return
+    combined = (result.stdout or "") + (result.stderr or "")
+    if "unknown" in combined.lower() and "-p" in combined:
+        log("createadmin -p not supported by this binary; using tmux prompt")
+        _create_admin_tmux(admin_pass)
+        return
+    raise SystemExit(f"createadmin failed: {combined.strip() or 'no output'}")
+
+
+def _create_admin_tmux(admin_pass: str) -> None:
+    if not shutil.which("tmux"):
+        raise SystemExit(
+            f"tmux not found; rebuild factum2-web or run: "
+            f"go run ./cmd/web createadmin -f {FACTUM_YAML} -p <password>"
+        )
+    web_bin = REPO_ROOT / "build" / "factum2-web"
+    if web_bin.is_file() and os.access(web_bin, os.X_OK):
+        create = f"'{web_bin}' createadmin -f '{FACTUM_YAML}'"
+    else:
+        create = f"cd '{REPO_ROOT}' && go run ./cmd/web createadmin -f '{FACTUM_YAML}'"
     run(["tmux", "kill-session", "-t", "factum2-dev-admin"], check=False, quiet=True)
     run(["tmux", "new-session", "-d", "-s", "factum2-dev-admin", "-x", "200", "-y", "50"])
-    run(
-        [
-            "tmux",
-            "send-keys",
-            "-t",
-            "factum2-dev-admin",
-            f"cd '{REPO_ROOT}' && go run ./cmd/web createadmin -f '{FACTUM_YAML}'",
-            "Enter",
-        ]
-    )
-    time.sleep(4)
+    run(["tmux", "send-keys", "-t", "factum2-dev-admin", create, "Enter"])
+    # createadmin uses term.ReadPassword (needs a TTY). The prebuilt binary
+    # prompts immediately; `go run` compiles first. Wait for the prompt
+    # instead of a fixed sleep that races the compiler.
+    prompted = False
+    for _ in range(60):
+        pane = run(
+            ["tmux", "capture-pane", "-t", "factum2-dev-admin", "-p"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if "password" in (pane.stdout or "").lower():
+            prompted = True
+            break
+        time.sleep(0.5)
+    if not prompted:
+        run(["tmux", "kill-session", "-t", "factum2-dev-admin"], check=False, quiet=True)
+        raise SystemExit("createadmin did not prompt for a password")
+    run(["tmux", "send-keys", "-t", "factum2-dev-admin", admin_pass, "Enter"])
+    time.sleep(0.4)
     run(["tmux", "send-keys", "-t", "factum2-dev-admin", admin_pass, "Enter"])
     time.sleep(1)
-    run(["tmux", "send-keys", "-t", "factum2-dev-admin", admin_pass, "Enter"])
-    time.sleep(2)
     run(["tmux", "kill-session", "-t", "factum2-dev-admin"], check=False, quiet=True)
 
 
@@ -257,34 +311,16 @@ def _librenms_user_exists(text: str) -> bool:
     return "already been taken" in lower or "already exists" in lower
 
 
-def _install_dnsmgr2() -> None:
-    src = DIR / "bin" / "dnsmgr2"
-    if not src.is_file() or not os.access(src, os.X_OK):
-        raise SystemExit(f"missing {src} (prepare.py should have built it from github.com/abundo/dnsmgr2)")
-    log("Installing dnsmgr2 in dns container")
-    run(
-        compose(
-            "exec",
-            "-T",
-            "-u",
-            "root",
-            "dns",
-            "install",
-            "-m",
-            "755",
-            "/usr/local/bin/dnsmgr2",
-            "/usr/bin/dnsmgr2",
-        )
-    )
+def _check_dns_tools() -> None:
     check = run(
-        compose("exec", "-T", "dns", "sh", "-c", "command -v dnsmgr2 && command -v named-checkzone && command -v rndc"),
+        compose("exec", "-T", "dns", "sh", "-c", "command -v named-checkzone && command -v rndc"),
         check=False,
         capture_output=True,
         text=True,
     )
     if check.returncode != 0:
         raise SystemExit(
-            "dns container is missing dnsmgr2, named-checkzone, or rndc: "
+            "dns container is missing named-checkzone or rndc: "
             + ((check.stdout or "") + (check.stderr or "")).strip()
         )
 
@@ -452,7 +488,7 @@ def seed(*, demo: bool = False) -> None:
         check=False,
         quiet=True,
     )
-    _install_dnsmgr2()
+    _check_dns_tools()
 
     log("Waiting for NetBox")
     wait_http("http://127.0.0.1:18000/login/", 80)
@@ -467,18 +503,7 @@ def seed(*, demo: bool = False) -> None:
     wait_http("https://127.0.0.1:15665/v1/status", 40, required=False)
 
     log("Ensuring Icinga Web databases")
-    run(
-        compose(
-            "exec",
-            "-T",
-            "mysql",
-            "mysql",
-            "-uroot",
-            f"-p{mysql_root}",
-            "-e",
-            ICINGA_DB_SQL,
-        )
-    )
+    ensure_icinga_databases(mysql_root)
 
     log("Installing Icinga API user, factum includes, and Icinga DB")
     for _ in range(40):
@@ -634,9 +659,9 @@ INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
     if not netbox_bin.is_file() or not os.access(netbox_bin, os.X_OK):
         raise SystemExit(f"missing {netbox_bin} (make build)")
     # check --update creates the factum-sync webhook, event rules, and custom
-    # fields. The interface "role" select cannot be created without operator
-    # choices; that one problem is expected on a fresh demo dump.
-    check = run(
+    # fields (including interface "role" with lab seed choices). Run inside
+    # the compose network so Settings.NetboxApiURL (http://netbox:8080) resolves.
+    run(
         compose(
             "run",
             "--rm",
@@ -649,11 +674,8 @@ INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
             "--update",
             "-f",
             "/etc/factum2/factum2.yaml",
-        ),
-        check=False,
+        )
     )
-    if check.returncode != 0:
-        log("NetBox check reported problems (interface custom field 'role' needs operator-defined choices)")
 
     if DEFAULT_YAML.is_file():
         log(f"Seeding NetBox from {DEFAULT_YAML.name}")
@@ -687,6 +709,40 @@ INSERT INTO librenms.api_tokens (user_id, token_hash, description, disabled)
     )
 
 
+def ensure_icinga_databases(mysql_root: str | None = None) -> None:
+    """Create icingadb/icingaweb on the shared MariaDB.
+
+    docker-entrypoint-initdb.d only runs on an empty volume, so this is
+    required on every subsequent `make dev-up` before icingadb can start.
+    Retries while mysqld is still coming up.
+    """
+    load_env()
+    if mysql_root is None:
+        mysql_root = env("MYSQL_ROOT_PASSWORD", "lab")
+    last = ""
+    for _ in range(60):
+        result = run(
+            compose(
+                "exec",
+                "-T",
+                "mysql",
+                "mysql",
+                "-uroot",
+                f"-p{mysql_root}",
+                "-e",
+                ICINGA_DB_SQL,
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return
+        last = ((result.stdout or "") + (result.stderr or "")).strip()
+        time.sleep(1)
+    raise SystemExit(f"MariaDB not ready for Icinga databases: {last or 'no output'}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -694,7 +750,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="download and import netbox-community demo SQL if NetBox has no devices",
     )
+    parser.add_argument(
+        "--icinga-db",
+        action="store_true",
+        help="only create Icinga MariaDB databases, then exit",
+    )
     args = parser.parse_args(argv)
+    if args.icinga_db:
+        log("Ensuring Icinga Web databases")
+        ensure_icinga_databases()
+        return
     seed(demo=args.demo)
 
 

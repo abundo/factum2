@@ -1,6 +1,6 @@
 ---
 # Worker co-located with BIND in the dns container. Only the dns command:
-# factum2-dns writes records + dnsmgr2.yaml, then dnsmgr2 sync reloads named.
+# factum2-dns writes records + dnsmgr2.yaml, then applies BIND/Kea in-process.
 factum:
     url: http://factum-web:8091
     token: lab-factum-api-token-not-for-production

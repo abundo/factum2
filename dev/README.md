@@ -38,11 +38,13 @@ Needs `docker compose` or `podman compose` (override with `FACTUM_COMPOSE`).
 make dev-up
 ```
 
-`dev-up` builds `build/` if needed, waits for NetBox/LibreNMS/…, migrates
-factum, seeds Settings/admin/tokens (all lab features on, including the DNS
-zone editor), registers the NetBox webhook and custom fields
-(`factum2-netbox check --update`), installs dnsmgr2 in the dns container,
-then starts factum-web and factum-worker. Each dest container (dns, icinga,
+`dev-up` builds `build/` if needed, starts databases, creates the Icinga
+MariaDB DBs so Icinga Web can come up with NetBox/LibreNMS (instead of
+after them), waits for those apps, migrates factum, seeds
+Settings/admin/tokens (all lab features on, including the DNS zone
+editor), registers the NetBox webhook and custom fields
+(`factum2-netbox check --update`), then starts factum-web and factum-worker.
+Each step prints elapsed seconds (`==> wait-apps +45s`). Each dest container (dns, icinga,
 librenms, oxidized, prometheus) runs its own factum2-worker with only that
 dest's command, matching production. factum-worker handles netbox and
 device-sync.

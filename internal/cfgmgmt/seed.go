@@ -53,10 +53,7 @@ func Seed(db *gorm.DB) error {
 	if err := moveAssignmentsOntoParameterChildren(db); err != nil {
 		return err
 	}
-	if err := migrateServicesToTree(db); err != nil {
-		return err
-	}
-	return ensureScopeUniqueIndexes(db)
+	return migrateServicesToTree(db)
 }
 
 // migrateServicesToTree places each typed CN/CI inventory row under _services
@@ -208,24 +205,6 @@ func moveAssignmentsOntoParameterChildren(db *gorm.DB) error {
 			if err := db.Where("id = ?", a.ID).Delete(&models.ConfigAssignment{}).Error; err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-func ensureScopeUniqueIndexes(db *gorm.DB) error {
-	if db.Dialector.Name() != "postgres" {
-		return nil
-	}
-	stmts := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_device ON config_scopes (device_id) WHERE kind = 'device' AND device_id IS NOT NULL`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_interface ON config_scopes (interface_id) WHERE kind = 'interface' AND interface_id IS NOT NULL`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_one_service ON config_scopes (service_id) WHERE kind = 'service' AND service_id IS NOT NULL`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_config_scopes_cli_type_plat ON config_scopes (service_type_id, platform) WHERE kind = 'cli' AND service_type_id IS NOT NULL`,
-	}
-	for _, s := range stmts {
-		if err := db.Exec(s).Error; err != nil {
-			return err
 		}
 	}
 	return nil

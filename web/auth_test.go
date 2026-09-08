@@ -67,9 +67,8 @@ func TestGUIRequiresJWTSecret(t *testing.T) {
 	}
 }
 
-// newTestDB returns an in-memory SQLite DB with the same schema as
-// production (via util.MigrateDatabase), so auth tests don't need a live
-// Postgres. "cache=shared" + a single open connection keeps the in-memory
+// newTestDB returns an in-memory SQLite DB migrated via
+// util.MigrateDatabase, so auth tests don't need a live Postgres. "cache=shared" + a single open connection keeps the in-memory
 // data visible across the pooled connections gorm may otherwise use - a
 // plain ":memory:" DSN would give each connection its own empty database.
 func newTestDB(t *testing.T) *gorm.DB {

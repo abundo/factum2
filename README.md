@@ -46,10 +46,10 @@ alter database factum2 owner to factum2_user;
 ```
 
 Schema migrations are a dedicated command (`factum2-web migrate` / `factum2
-migrate`) — they do **not** run when the GUI or a sync CLI starts, because
-rewriting tables while `factum2-web` is serving is unsafe. `install.py`
-applies them during install (step 3); to run them by hand, stop the GUI
-first:
+migrate`, goose SQL under `internal/dbmigrate/sql/`) — they do **not** run
+when the GUI or a sync CLI starts, because rewriting tables while
+`factum2-web` is serving is unsafe. `install.py` applies them during
+install (step 3); to run them by hand, stop the GUI first:
 
 ```sh
 sudo /opt/factum2/factum2-web migrate -f /etc/factum2/factum2.yaml

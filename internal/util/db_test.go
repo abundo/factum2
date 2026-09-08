@@ -10,10 +10,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// TestMigrateDatabaseEmptySQLite is the same first-boot path every other
-// package's newTestDB already exercises (SQLite, so dedupeInterfaces is a
-// no-op). Kept here so a change to MigrateDatabase is caught in this package
-// without depending on those callers.
 func TestMigrateDatabaseEmptySQLite(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -157,12 +153,8 @@ func TestMigrateDatabaseMigratesLeftoverTemplate(t *testing.T) {
 	}
 }
 
-// TestMigrateDatabaseEmptyPostgres is the production first-boot path that
-// used to fail with SQLSTATE 42P01 ("relation interfaces does not exist")
-// because dedupeInterfaces queried the table before AutoMigrate created it.
-// Skipped unless FACTUM2_TEST_PG_* is set - CI and local sqlite runs
-// don't have a throwaway Postgres.
-func TestMigrateDatabaseEmptyPostgres(t *testing.T) {
+func postgresTestConfig(t *testing.T) *ConfigDB {
+	t.Helper()
 	host := os.Getenv("FACTUM2_TEST_PG_HOST")
 	user := os.Getenv("FACTUM2_TEST_PG_USER")
 	pass := os.Getenv("FACTUM2_TEST_PG_PASS")
@@ -170,14 +162,18 @@ func TestMigrateDatabaseEmptyPostgres(t *testing.T) {
 	if host == "" || user == "" || pass == "" || database == "" {
 		t.Skip("set FACTUM2_TEST_PG_HOST, FACTUM2_TEST_PG_USER, FACTUM2_TEST_PG_PASS, FACTUM2_TEST_PG_DATABASE to run")
 	}
-	cfg := &ConfigDB{
+	return &ConfigDB{
 		Host:     host,
 		Port:     os.Getenv("FACTUM2_TEST_PG_PORT"),
 		User:     user,
 		Pass:     pass,
 		Database: database,
 	}
-	db, err := ConnectDatabase(cfg)
+}
+
+func openPostgresTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := ConnectDatabase(postgresTestConfig(t))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -187,11 +183,38 @@ func TestMigrateDatabaseEmptyPostgres(t *testing.T) {
 	}
 	t.Cleanup(func() { sqlDB.Close() })
 	db.Logger = logger.Default.LogMode(logger.Silent)
+	return db
+}
 
+func TestMigrateDatabaseEmptyPostgres(t *testing.T) {
+	db := openPostgresTestDB(t)
 	if err := MigrateDatabase(db); err != nil {
 		t.Fatalf("first migrate on empty postgres: %v", err)
 	}
 	if err := MigrateDatabase(db); err != nil {
 		t.Fatalf("second migrate (already applied): %v", err)
+	}
+}
+
+func TestMigrateDatabaseAdoptsExistingPostgres(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("setup migrate: %v", err)
+	}
+	if err := db.Exec(`DROP TABLE goose_db_version`).Error; err != nil {
+		t.Fatalf("drop goose table: %v", err)
+	}
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("adopt migrate: %v", err)
+	}
+	if !db.Migrator().HasTable("goose_db_version") {
+		t.Fatal("expected goose_db_version after adopt")
+	}
+	var version int64
+	if err := db.Raw(`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version).Error; err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if version < 1 {
+		t.Fatalf("stamped version = %d, want >= 1", version)
 	}
 }

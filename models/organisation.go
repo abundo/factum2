@@ -153,8 +153,8 @@ type Service struct {
 
 	// Leftover ELINE columns. New code stores terminations in
 	// service_endpoints (roles a/b, vlan + netbox ids in Fields). These
-	// columns are no longer written; they remain so AutoMigrate does not
-	// drop them.
+	// columns are no longer written; they stay in the schema until a SQL
+	// migration drops them.
 	EndpointADeviceID             uint `json:"endpoint_a_device_id"`
 	EndpointAInterfaceID          uint `json:"endpoint_a_interface_id"`
 	EndpointAVlan                 int  `json:"endpoint_a_vlan"`

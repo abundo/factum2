@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	cmdbase "github.com/abundo/factum2/cmd"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"golang.org/x/term"
@@ -26,12 +27,41 @@ var standardRoles = map[string]string{
 	"viewer":      "read data",
 }
 
-// Function to seed initial data (admin user, roles)
-func CreateAdmin(p *GuiParams) error {
+// CreateAdminParams is the createadmin CLI. Password may come from -p,
+// FACTUM_ADMIN_PASSWORD, or an interactive prompt (in that order).
+type CreateAdminParams struct {
+	cmdbase.Params
+	Password string `short:"p" optional:"true" descr:"Admin password (FACTUM_ADMIN_PASSWORD or prompt if omitted)"`
+}
+
+// CreateAdmin seeds roles and (re)creates the admin user.
+func CreateAdmin(p *CreateAdminParams) error {
 	util.Config = &p.Config
 	db, err := util.ConnectDatabase(&util.Config.DB)
 	if err != nil {
 		return err
+	}
+
+	password, err := adminPassword(p.Password)
+	if err != nil {
+		return err
+	}
+	return createAdminUser(db, password)
+}
+
+func adminPassword(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if v := os.Getenv("FACTUM_ADMIN_PASSWORD"); v != "" {
+		return v, nil
+	}
+	return promptPassword()
+}
+
+func createAdminUser(db *gorm.DB, password string) error {
+	if password == "" {
+		return fmt.Errorf("admin password cannot be empty")
 	}
 
 	for name, description := range standardRoles {
@@ -41,24 +71,17 @@ func CreateAdmin(p *GuiParams) error {
 	}
 
 	fmt.Printf("Creating admin user %s\n", adminUsername)
-	adminPassword, err := promptPassword()
+	hashedPassword, err := HashPassword(password)
 	if err != nil {
-		return err
+		return fmt.Errorf("hash admin password: %w", err)
 	}
 
-	hashedPassword, err := HashPassword(adminPassword)
-	if err != nil {
-		slog.Error("Failed to hash password for admin user:", "err", err)
-	}
-
-	// get admin user if any
 	var users []models.User
 	res := db.Where("username = ?", adminUsername).Find(&users)
 	if res.Error != nil {
-		return nil
+		return res.Error
 	}
 	if res.RowsAffected > 0 {
-		// admin user already exists, just update the password
 		existingUser := users[0]
 		existingUser.PasswordHash = hashedPassword
 		if err := db.Save(&existingUser).Error; err != nil {
@@ -74,19 +97,13 @@ func CreateAdmin(p *GuiParams) error {
 		return err
 	}
 
-	// create admin user and the admin role
 	adminUser := models.User{
 		Username:     adminUsername,
 		PasswordHash: hashedPassword,
 		Name:         adminName,
-		Roles:        []*models.Role{&adminRole}, // Assign the admin role
+		Roles:        []*models.Role{&adminRole},
 	}
-	err = db.Create(&adminUser).Error
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return db.Create(&adminUser).Error
 }
 
 // getOrCreateRole returns the role with the given name, creating it with

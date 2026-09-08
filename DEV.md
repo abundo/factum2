@@ -16,20 +16,29 @@ Operator Markdown lives in `docs/user/` (GUI `/doc`, via `docs.List` /
 - Node.js `^22.18.0` or `>=24.12.0` (see `web/frontend/package.json`)
 - PostgreSQL (app data, via GORM)
 
-[limetool](https://github.com/abundo/limetool) and
-[netboxtool](https://github.com/abundo/netboxtool) are ordinary tagged
+[limetool](https://github.com/abundo/limetool),
+[netboxtool](https://github.com/abundo/netboxtool), and
+[dnsmgr2](https://github.com/abundo/dnsmgr2) are ordinary tagged
 modules (`go.mod` / `go.sum`). A clone builds without sibling checkouts.
 
 To edit a library and factum together, use a Go workspace (gitignored):
 
 ```sh
-go work init . ../limetool ../netboxtool
+go work init . ../limetool ../netboxtool ../dnsmgr2
 ```
 
 That overrides module resolution on your machine only. CI and releases
 keep using the tagged versions. Pin a new library release with
 `go get github.com/abundo/netboxtool@v1.2.1` (or the matching limetool
-tag) and commit the `go.mod` / `go.sum` bump.
+or dnsmgr2 tag) and commit the `go.mod` / `go.sum` bump.
+
+`factum2-dns` imports `github.com/abundo/dnsmgr2/dnsmgr` (the `internal/`
+package was renamed). Locally that needs the workspace until a dnsmgr2
+tag that contains `dnsmgr/` is published, then:
+
+```sh
+go get github.com/abundo/dnsmgr2@v1.2.0
+```
 
 ## Database setup
 
@@ -42,16 +51,24 @@ alter database factum owner to factum_user;
 ```
 
 Schema migrations are a dedicated command (`factum2-web migrate` or
-`factum2 migrate`, both `cmdbase.Migrate` → `util.MigrateDatabase`).
-Runtime commands (`factum2-web start`, `createadmin`, `factum2-netbox
-sync`, …) only `ConnectDatabase` — they must not AutoMigrate while the
-GUI is serving. Stop `factum2-web` first:
+`factum2 migrate`, both `cmdbase.Migrate` → `util.MigrateDatabase` →
+goose SQL in `internal/dbmigrate/sql/`). GORM models are the application
+mapping, not the source of schema. Runtime commands (`factum2-web start`,
+`createadmin`, `factum2-netbox sync`, …) only `ConnectDatabase`. Stop
+`factum2-web` first:
 
 ```sh
 factum2-web migrate -f /etc/factum2/factum2.yaml
 # or, against a local/dev config:
 go run ./cmd/web migrate -f /etc/factum2/factum2.yaml
 ```
+
+A database that already has factum tables from AutoMigrate is stamped at
+goose version 1 (the committed `00001_baseline.sql` dump) and does not
+re-run `CREATE TABLE`. Fresh databases apply that dump. Add later schema
+changes as `internal/dbmigrate/sql/0000N_description.sql` (`-- +goose Up`)
+and keep GORM models in sync. Do not call AutoMigrate from production
+code.
 
 ## Configuration
 
@@ -300,10 +317,10 @@ outright - see the file's header comment for the `FACTUM_TEST_LDAP_*`/
 bootstrap.ldif` on first boot - edit it and re-run `itest-up` (after
 `itest-down`, so the container reseeds) to add more directory fixtures.
 
-Postgres runs in this stack too (port 55432, throwaway - not currently used
-by any test, but there for a future test that wants `util.MigrateDatabase`
-against a real Postgres instead of the sqlite fakes `web/auth_test.go`
-uses).
+Postgres runs in this stack too (port 55432, throwaway).
+`internal/util.TestMigrateDatabaseEmptyPostgres` (and the adopt test)
+use `FACTUM2_TEST_PG_*` against a throwaway database — not the live
+`factum2` DB and not these sqlite fakes.
 
 ### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus, Grafana)
 
@@ -313,7 +330,7 @@ factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
 snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
-make dev-up            # docker or podman compose; first start pulls images
+make dev-up            # docker or podman compose; first start pulls images (prints per-step elapsed time)
 ./install.py --compose # rebuild build/ and restart factum-web / factum-worker / dest workers
 make dev-down          # keep volumes
 make dev-reset         # stop everything, wipe volumes and dest files (does not start again)

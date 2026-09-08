@@ -40,6 +40,33 @@ func TestEnsureCustomField_RefusesSelectWithoutChoices(t *testing.T) {
 	}
 }
 
+func TestEnsureCustomField_CreatesRoleWithSeedChoices(t *testing.T) {
+	api := &fakeCheckAPI{}
+	spec := customFieldSpecs(&models.Settings{})
+	var role cfSpec
+	for _, s := range spec {
+		if s.name == "role" {
+			role = s
+		}
+	}
+	if len(role.choices) < 2 {
+		t.Fatal("role must ship seed choices so check --update can create it")
+	}
+	res, err := ensureCustomField(api, role, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.action != "created" {
+		t.Fatalf("action = %q, want created", res.action)
+	}
+	if len(api.ensuredSets) != 1 || api.ensuredSets[0] != "factum_role" {
+		t.Fatalf("ensuredSets = %v", api.ensuredSets)
+	}
+	if api.fields["role"] == nil || api.fields["role"].ChoiceSetID == 0 {
+		t.Fatal("expected role field with a choice set")
+	}
+}
+
 func TestEnsureCustomField_CreatesAlarmTimeperiodWithSeedChoices(t *testing.T) {
 	api := &fakeCheckAPI{}
 	spec := customFieldSpecs(&models.Settings{})

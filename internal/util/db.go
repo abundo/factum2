@@ -2,19 +2,23 @@ package util
 
 import (
 	"fmt"
+	"log"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
+	"github.com/abundo/factum2/internal/dbmigrate"
 	"github.com/abundo/factum2/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // ConnectDatabase opens Postgres and does not apply schema migrations.
 // Call this from the web server and CLIs. Schema changes belong in the
 // dedicated `migrate` command (cmdbase.Migrate → MigrateDatabase); running
-// AutoMigrate as a side effect of start/sync/createadmin rewrites tables
+// migrations as a side effect of start/sync/createadmin rewrites tables
 // while factum2-web may already be serving.
 func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	port := config.Port
@@ -24,11 +28,19 @@ func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	dns := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s timezone=Europe/Stockholm",
 		config.Host, port, config.User, config.Pass, config.Database)
 	slog.Debug("database", "open", dns)
-	db, err := gorm.Open(postgres.Open(dns), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dns), &gorm.Config{
+		// cfgmgmt.Seed uses First() then Create(); GORM otherwise logs every
+		// miss as "record not found" during migrate on an empty database.
+		Logger: logger.New(log.New(os.Stdout, "\n", log.LstdFlags), logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  true,
+		}),
+	})
 	if err != nil {
 		return nil, err
 	}
-	db.Debug()
 
 	// database/sql defaults to an unlimited connection pool - every caller
 	// of ConnectDatabase (web server, CLI tools, and formerly one per
@@ -49,134 +61,23 @@ func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	return db, nil
 }
 
-// MigrateDatabase applies gorm.AutoMigrate plus one-off data fixes. Only
+// MigrateDatabase applies schema migrations then cfgmgmt.Seed. Only
 // cmdbase.Migrate (and tests) should call this — not ConnectDatabase.
+//
+// Postgres: goose SQL in internal/dbmigrate (existing AutoMigrate DBs are
+// stamped at the baseline version). SQLite: GORM AutoMigrateAll, for unit
+// tests only.
 func MigrateDatabase(db *gorm.DB) error {
-	// Service.ConnectionNumber (a Lime term) was renamed to ServiceID, which
-	// AutoMigrate below would read as a request for a brand-new "service_id"
-	// column - leaving the old "connection_number" column and its data
-	// behind unless renamed explicitly first. A no-op once every DB has
-	// picked this up.
-	if db.Migrator().HasColumn(&models.Service{}, "connection_number") && !db.Migrator().HasColumn(&models.Service{}, "service_id") {
-		if err := db.Migrator().RenameColumn(&models.Service{}, "connection_number", "service_id"); err != nil {
+	if db.Dialector.Name() == "postgres" {
+		if err := dbmigrate.Up(db); err != nil {
+			return err
+		}
+	} else {
+		if err := models.AutoMigrateAll(db); err != nil {
 			return err
 		}
 	}
 
-	// internal/netbox.syncInterfaces used to read-then-insert with no unique
-	// constraint backing it, so two near-simultaneous syncs of the same
-	// device could each decide "no existing row for this Netbox interface"
-	// and insert their own - e.g. Ethernet16.10 on lu17-lab-r0 ending up
-	// with two factum interface rows sharing one netbox_id, one of them
-	// forever stale since syncInterfaces' cleanup pass (deleting interfaces
-	// no longer seen) is keyed by netbox_id too, so it can't tell the two
-	// apart and never removes either. Fixed alongside this by making the
-	// insert atomic (see syncInterfaces), but AutoMigrate below now also
-	// adds a unique index on (device_id, netbox_id) to close the race for
-	// good - which fails outright if a duplicate like this already exists,
-	// so dedupeInterfaces must run first.
-	if err := dedupeInterfaces(db); err != nil {
-		return err
-	}
-
-	err := db.AutoMigrate(
-		// factum
-		&models.User{},
-		&models.Role{},
-		&models.LdapRoleMapping{},
-		&models.PasswordResetToken{},
-
-		//
-		&models.Device{},
-		&models.Interface{},
-		&models.Address{},
-		&models.Tag{},
-		&models.Connection{},
-		&models.Site{},
-		&models.OpticalKindMap{},
-		&models.OpticalPort{},
-		&models.OpticalXConnect{},
-		&models.ServicePath{},
-		&models.ServiceHop{},
-		&models.MaintenanceWindow{},
-		&models.MaintenanceResource{},
-		&models.MaintenanceNotification{},
-		&models.CustomerContact{},
-
-		//
-		&models.Customer{},
-		&models.Contact{},
-		&models.Product{},
-
-		&models.IpamNamespace{},
-		&models.IpamNamespacePrefix{},
-		&models.IpamVRF{},
-		&models.IpamPrefix{},
-
-		&models.DnsSOATemplate{},
-		&models.DnsDNSSECPolicy{},
-		&models.DnsTemplate{},
-		&models.DnsTemplateNameserver{},
-		&models.DnsZone{},
-		&models.DnsZoneRecord{},
-
-		&models.Service{},
-		//&models.Deliverypoint1{},
-		//&models.Deliverypoint2{},
-
-		&models.Agreement{},
-
-		&models.Settings{},
-		&models.LibrenmsPendingDelete{},
-		&models.WorkerNode{},
-		&models.DeviceSyncAuth{},
-		&models.Link{},
-		&models.Job{},
-		&models.JobTask{},
-		&models.JobTaskEvent{},
-		&models.JobSchedule{},
-
-		&models.ConfigScope{},
-		&models.ConfigCLIFeature{},
-		&models.ConfigVariableDef{},
-		&models.ConfigAssignment{},
-		&models.ServiceType{},
-		&models.ConfigMacro{},
-		&models.ServiceEndpoint{},
-	)
-	if err != nil {
-		return err
-	}
-
-	if err := backfillMaintenanceResources(db); err != nil {
-		return err
-	}
-
-	// Before customer.ID became autogenerated, internal/lime.SyncCustomers
-	// stored the Lime company ID directly as the factum primary key and
-	// never set source_id. SaveCustomer now matches existing rows by
-	// (source, source_id) instead of by ID, so every such row needs its
-	// Lime company ID copied into source_id once - otherwise the next Lime
-	// sync would fail to match it and insert a duplicate customer. This is
-	// a no-op once every "lime" row has a source_id.
-	if err := db.Exec(`UPDATE customers SET source_id = CAST(id AS TEXT) WHERE source = 'lime' AND (source_id IS NULL OR source_id = '')`).Error; err != nil {
-		return err
-	}
-
-	// Same history for services/deliveries, except source_id was already
-	// populated there - with the wrong value (the parent company's Lime
-	// ID, a copy/paste artifact) instead of the delivery's own Lime ID.
-	// The factum ID (still the delivery's own Lime ID, from before it
-	// became autogenerated) is the value SaveDelivery now needs, so it's
-	// copied over unconditionally for every "lime" row rather than gated
-	// on an empty source_id like customers above.
-	if err := db.Exec(`UPDATE services SET source_id = CAST(id AS TEXT) WHERE source = 'lime'`).Error; err != nil {
-		return err
-	}
-
-	// Seed copies leftover platform_packs / config_templates onto CLI
-	// objects (and creates ELINE translators from embed). Refuse DROP if
-	// any leftover row still has no twin — those would be lost.
 	if err := cfgmgmt.Seed(db); err != nil {
 		return err
 	}
@@ -186,135 +87,5 @@ func MigrateDatabase(db *gorm.DB) error {
 	if err := cfgmgmt.AssertTemplatesHaveCLITwins(db); err != nil {
 		return err
 	}
-	if err := cfgmgmt.DropPackAndTemplateTables(db); err != nil {
-		return err
-	}
-
-	// customer.ID/service.ID used to be set explicitly to the Lime
-	// company/delivery ID, which inserts without ever advancing that
-	// table's id sequence - so the sequence can still be sitting at its
-	// initial value while rows exist with much higher explicit IDs. Now
-	// that ID is never set explicitly, an autogenerated insert would reuse
-	// one of those IDs and fail (or worse, silently succeed against a
-	// row that was since deleted). Advance both sequences to the current
-	// max ID once so new inserts can't collide with a pre-existing row.
-	//
-	// Sequences are a Postgres-only concept - the test suite runs this same
-	// migration against an in-memory SQLite DB (newTestDB), which has
-	// nothing for pg_get_serial_sequence/setval to act on, so skip this
-	// step there.
-	if db.Dialector.Name() != "postgres" {
-		return nil
-	}
-	if err := db.Exec(`SELECT setval(pg_get_serial_sequence('customers', 'id'), COALESCE((SELECT MAX(id) FROM customers), 1))`).Error; err != nil {
-		return err
-	}
-	return db.Exec(`SELECT setval(pg_get_serial_sequence('services', 'id'), COALESCE((SELECT MAX(id) FROM services), 1))`).Error
-}
-
-// dedupeInterfaces removes duplicate Interface rows that share a
-// (device_id, netbox_id) pair - see the race described where this is called
-// from MigrateDatabase. For each duplicate group it keeps the most recently
-// updated row and reparents any addresses/tags/service endpoints pointing at
-// the rest onto it before deleting them, so no child record is silently
-// orphaned (the FK constraints on addresses/tags have no ON DELETE CASCADE,
-// so a plain delete of the losing rows would fail anyway if any existed).
-// A no-op once no duplicates remain. Postgres-only, like the sequence fixups
-// below - the test suite's in-memory SQLite DB doesn't need it since nothing
-// exercises this race there.
-func dedupeInterfaces(db *gorm.DB) error {
-	if db.Dialector.Name() != "postgres" {
-		return nil
-	}
-	// AutoMigrate below creates the table. An empty database (first boot)
-	// has nothing to dedupe, and SELECT FROM interfaces would fail with
-	// SQLSTATE 42P01 ("relation does not exist").
-	if !db.Migrator().HasTable(&models.Interface{}) {
-		return nil
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			CREATE TEMP TABLE interface_dupes ON COMMIT DROP AS
-			SELECT id AS lose_id, keep_id FROM (
-				SELECT id,
-				       first_value(id) OVER (
-				           PARTITION BY device_id, netbox_id
-				           ORDER BY updated_at DESC, id DESC
-				       ) AS keep_id
-				FROM interfaces
-				WHERE netbox_id <> 0
-			) ranked
-			WHERE id <> keep_id
-		`).Error; err != nil {
-			return err
-		}
-		// Child tables that reference interfaces are also created by
-		// AutoMigrate *after* this function. Skip any that aren't there
-		// yet (first boot, or a live DB that hasn't picked up a later
-		// model yet).
-		type reparent struct {
-			table string
-			stmt  string
-		}
-		for _, r := range []reparent{
-			{"addresses", `UPDATE addresses SET interface_id = d.keep_id FROM interface_dupes d WHERE addresses.interface_id = d.lose_id`},
-			{"tags", `UPDATE tags SET interface_id = d.keep_id FROM interface_dupes d WHERE tags.interface_id = d.lose_id`},
-			{"services", `UPDATE services SET endpoint_a_interface_id = d.keep_id FROM interface_dupes d WHERE services.endpoint_a_interface_id = d.lose_id`},
-			{"services", `UPDATE services SET endpoint_b_interface_id = d.keep_id FROM interface_dupes d WHERE services.endpoint_b_interface_id = d.lose_id`},
-			{"service_endpoints", `UPDATE service_endpoints SET interface_id = d.keep_id FROM interface_dupes d WHERE service_endpoints.interface_id = d.lose_id`},
-			{"optical_ports", `UPDATE optical_ports SET interface_id = d.keep_id FROM interface_dupes d WHERE optical_ports.interface_id = d.lose_id`},
-			{"optical_x_connects", `UPDATE optical_x_connects SET interface_a_id = d.keep_id FROM interface_dupes d WHERE optical_x_connects.interface_a_id = d.lose_id`},
-			{"optical_x_connects", `UPDATE optical_x_connects SET interface_b_id = d.keep_id FROM interface_dupes d WHERE optical_x_connects.interface_b_id = d.lose_id`},
-			{"service_paths", `UPDATE service_paths SET endpoint_a_interface_id = d.keep_id FROM interface_dupes d WHERE service_paths.endpoint_a_interface_id = d.lose_id`},
-			{"service_paths", `UPDATE service_paths SET endpoint_z_interface_id = d.keep_id FROM interface_dupes d WHERE service_paths.endpoint_z_interface_id = d.lose_id`},
-			{"service_hops", `UPDATE service_hops SET interface_id = d.keep_id FROM interface_dupes d WHERE service_hops.interface_id = d.lose_id`},
-			{"connections", `UPDATE connections SET interface_a_id = d.keep_id FROM interface_dupes d WHERE connections.interface_a_id = d.lose_id`},
-			{"connections", `UPDATE connections SET interface_b_id = d.keep_id FROM interface_dupes d WHERE connections.interface_b_id = d.lose_id`},
-			{"maintenance_windows", `UPDATE maintenance_windows SET resource_id = d.keep_id FROM interface_dupes d WHERE maintenance_windows.resource_type = 'interface' AND maintenance_windows.resource_id = d.lose_id`},
-			{"maintenance_resources", `UPDATE maintenance_resources SET resource_id = d.keep_id FROM interface_dupes d WHERE maintenance_resources.resource_type = 'interface' AND maintenance_resources.resource_id = d.lose_id`},
-			{"interfaces", `DELETE FROM interfaces i USING interface_dupes d WHERE i.id = d.lose_id`},
-		} {
-			if r.table != "interfaces" && !tx.Migrator().HasTable(r.table) {
-				continue
-			}
-			if err := tx.Exec(r.stmt).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-// backfillMaintenanceResources copies the denormalized ResourceType/ResourceID
-// on each window into maintenance_resources so multi-resource windows and
-// pre-join rows share one lookup path. A no-op once every window has at least
-// one matching join row.
-func backfillMaintenanceResources(db *gorm.DB) error {
-	var windows []models.MaintenanceWindow
-	if err := db.Find(&windows).Error; err != nil {
-		return err
-	}
-	for _, w := range windows {
-		if w.ResourceType == "" || w.ResourceID == 0 {
-			continue
-		}
-		var n int64
-		if err := db.Model(&models.MaintenanceResource{}).
-			Where("window_id = ? AND resource_type = ? AND resource_id = ?", w.ID, w.ResourceType, w.ResourceID).
-			Count(&n).Error; err != nil {
-			return err
-		}
-		if n > 0 {
-			continue
-		}
-		row := models.MaintenanceResource{
-			WindowID:     w.ID,
-			ResourceType: w.ResourceType,
-			ResourceID:   w.ResourceID,
-		}
-		if err := db.Create(&row).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+	return cfgmgmt.DropPackAndTemplateTables(db)
 }

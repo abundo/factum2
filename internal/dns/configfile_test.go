@@ -96,6 +96,36 @@ func TestWriteRecordsWithZonesMergesDefaultDomain(t *testing.T) {
 	}
 }
 
+func TestWriteRecordsWithZonesSkipsReverse(t *testing.T) {
+	var buf strings.Builder
+	n, err := writeRecordsWithZones(&buf, "example.com", nil, []ConfigDNSZone{
+		{Name: "172.27.0.0/16", Type: "reverse4"},
+		{
+			Name: "example.com",
+			Type: "forward",
+			Records: []ConfigDNSRecord{
+				{Name: "www", Type: "A", Value: "192.0.2.10"},
+			},
+		},
+		{Name: "2001:db8::/32", Type: "reverse6"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseRecordsJSON(t, []byte(buf.String()))
+	if n != 1 {
+		t.Errorf("wrote %d records, want 1 (got file:\n%s)", n, buf.String())
+	}
+	if len(got.Domains) != 1 || got.Domains[0].Name != "example.com" {
+		t.Fatalf("domains = %#v", got.Domains)
+	}
+	if !recordsJSONEqual(got.Domains[0].Records, []recordsJSONRecord{
+		{Name: "www", Type: "A", Value: "192.0.2.10"},
+	}) {
+		t.Errorf("example.com records = %#v", got.Domains[0].Records)
+	}
+}
+
 func TestWriteZoneRecordsJSONTXT(t *testing.T) {
 	var buf strings.Builder
 	n, err := writeRecordsWithZones(&buf, "", nil, []ConfigDNSZone{{

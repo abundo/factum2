@@ -45,6 +45,10 @@ func writeRecordsWithZones(w io.Writer, domain string, devices []*models.Device,
 		if name == "" {
 			continue
 		}
+		// Reverse zones are CIDR names in dnsmgr2.yaml, not JSON domains.
+		if isReverseZoneType(zone.Type) {
+			continue
+		}
 		d := recordsJSONDomain{Name: name}
 		if domain != "" && strings.EqualFold(name, domain) {
 			recs := deviceRecordsJSON(domain, devices)
@@ -100,6 +104,15 @@ func appendAddressJSON(out []recordsJSONRecord, name, cidr string) []recordsJSON
 		return out
 	}
 	return append(out, recordsJSONRecord{Name: name, Type: rrtype, Value: ip})
+}
+
+func isReverseZoneType(typ string) bool {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case models.DnsZoneTypeReverse4, models.DnsZoneTypeReverse6:
+		return true
+	default:
+		return false
+	}
 }
 
 func zoneRecordsJSON(recs []ConfigDNSRecord) []recordsJSONRecord {

@@ -25,7 +25,11 @@ Rows that were synced from Lime cannot be edited or deleted here. Lime
 owns company, delivery points, product, service, comment, service ID, and
 agreement status; the next Lime sync would overwrite those fields. You
 can still set the Factum service type and endpoints on a Lime-sourced
-row, and attach it to the config tree.
+row, and attach it to the config tree. A Lime sync also **removes**
+Factum rows for deliveries that Lime no longer returns (and, on a full
+sync with no company filter, companies Lime no longer returns). Inactive
+Lime persons stay as contact rows but are unlinked so they are not
+mailed.
 
 ## Create
 

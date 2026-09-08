@@ -63,7 +63,7 @@ func ShowConfig() boa.CmdIfc {
 
 // Migrate applies schema migrations (util.MigrateDatabase) and nothing else.
 // Runtime commands connect with util.ConnectDatabase and must not call this
-// as a side effect: AutoMigrate while factum2-web is serving will rewrite
+// as a side effect: migrating while factum2-web is serving will rewrite
 // tables out from under the GUI. Stop the web process, run migrate, start
 // it again. Uses Params (factum2.yaml with db:) even when the parent binary
 // is otherwise a ParamsAgent API client.
