@@ -22,6 +22,19 @@ func IsDev(version, commit string) bool {
 	return v == "dev" || c == "none"
 }
 
+// CanonicalVersion strips a leading v/V so git-describe stamps ("v1.0.6")
+// match GoReleaser {{.Version}} ("1.0.6"). Other characters are kept.
+func CanonicalVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	if v[0] == 'v' || v[0] == 'V' {
+		return v[1:]
+	}
+	return v
+}
+
 // Info is the JSON shape of GET /api/version.
 type Info struct {
 	Version   string `json:"version"`

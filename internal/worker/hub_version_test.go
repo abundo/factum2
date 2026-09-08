@@ -64,6 +64,23 @@ func TestCheckHubVersionEmptyIsMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckHubVersionVPrefix(t *testing.T) {
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "1.0.6", "abc123"
+
+	if err := checkHubVersion("v1.0.6", "abc123"); err != nil {
+		t.Fatalf("git-tag v-prefix should match GoReleaser stamp: %v", err)
+	}
+
+	buildinfo.Version = "v1.0.6"
+	if err := checkHubVersion("1.0.6", "abc123"); err != nil {
+		t.Fatalf("GoReleaser stamp should match git-tag v-prefix: %v", err)
+	}
+}
+
 func TestCheckHubVersionCommitMismatch(t *testing.T) {
 	origV, origC := buildinfo.Version, buildinfo.Commit
 	t.Cleanup(func() {

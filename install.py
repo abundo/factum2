@@ -17,9 +17,11 @@ from this release, the installer shows a diff and asks before overwriting
                                or --list / --install TAG. After a tag is
                                chosen, that release's install.py (from the
                                tarball, else the git tag) does the install
-                               so CLI steps match those binaries. A
-                               standalone copy is offered a self-update from
-                               the latest GitHub *release* tarball after
+                               so CLI steps match those binaries, unless
+                               this copy has a higher INSTALLER_VERSION
+                               (keeps installer bugfixes). A standalone
+                               copy is offered a self-update from the
+                               latest GitHub *release* tarball after
                                SHA-256 verification, not from main or git.
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
@@ -81,7 +83,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 15
+INSTALLER_VERSION = 16
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -161,6 +163,16 @@ def is_local_host(host: str) -> bool:
 def strip_v(tag: str) -> str:
     tag = tag.strip()
     return tag[1:] if tag.startswith("v") or tag.startswith("V") else tag
+
+
+def same_stamp(a: str, b: str) -> bool:
+    """True if a and b are the same build stamp, ignoring a leading v.
+
+    Git tags and `git describe` are `v1.0.6`; GoReleaser `{{.Version}}` is
+    `1.0.6`. The hub handshake and this installer must treat those as equal.
+    """
+    left, right = strip_v(a), strip_v(b)
+    return bool(left) and left == right
 
 
 # git describe --tags --always --dirty, as stamped by the Makefile ldflags.
@@ -1061,6 +1073,7 @@ def verify_host_version(
 
     The hub handshake compares buildinfo.Version (and Commit, stamped in the
     same build). A stale remote factum2-worker is rejected with HTTP 409.
+    Git tags keep a leading v; GoReleaser stamps without it — those match.
     """
     expected = expected.strip()
     binary = install_dir / binary_name
@@ -1082,7 +1095,7 @@ def verify_host_version(
                 f"{where}: {binary_name} --version failed ({proc.returncode})"
             )
         got = extract_stamped_version(text)
-    if got != expected:
+    if not got or not same_stamp(got, expected):
         raise InstallError(
             f"{where}: {binary_name} version {got or 'unknown'!r} != {expected!r} "
             "(hub handshake requires matching versions)"
@@ -2851,6 +2864,20 @@ def pinned_child_argv(argv: Sequence[str], tag: str) -> list[str]:
     return out
 
 
+def should_run_pinned_installer(current: bytes, payload: bytes) -> bool:
+    """Re-exec the tag's install.py unless this copy is the same or newer.
+
+    A newer local installer (higher INSTALLER_VERSION) keeps bugfixes such
+    as version-stamp comparison; an older or equal-version different copy
+    still yields to the release tarball so install steps match those binaries.
+    """
+    if payload == current:
+        return False
+    current_ver = installer_version_of(current.decode("utf-8", errors="replace"))
+    payload_ver = installer_version_of(payload.decode("utf-8", errors="replace"))
+    return current_ver <= payload_ver
+
+
 def run_pinned_installer_if_needed(
     selected: Release,
     primary_root: Path,
@@ -2859,7 +2886,8 @@ def run_pinned_installer_if_needed(
 ) -> int | None:
     """If this copy is not the selected tag's installer, run that copy.
 
-    Returns the child's exit code, or None to continue in-process.
+    Returns the child's exit code, or None to continue in-process. A local
+    copy with a higher INSTALLER_VERSION is kept (see should_run_pinned_installer).
     """
     if os.environ.get(PINNED_ENV):
         return None
@@ -2870,7 +2898,19 @@ def run_pinned_installer_if_needed(
         )
         return None
     current = Path(__file__).resolve().read_bytes()
-    if payload == current:
+    if not should_run_pinned_installer(current, payload):
+        current_ver = installer_version_of(
+            current.decode("utf-8", errors="replace")
+        )
+        payload_ver = installer_version_of(
+            payload.decode("utf-8", errors="replace")
+        )
+        if current_ver > payload_ver:
+            log(
+                f"==> This {INSTALLER_FILENAME} (version {current_ver}) is newer "
+                f"than {selected.tag}'s (version {payload_ver}); "
+                "installing with this copy"
+            )
         return None
     log(
         f"==> Running {selected.tag}'s {INSTALLER_FILENAME} "

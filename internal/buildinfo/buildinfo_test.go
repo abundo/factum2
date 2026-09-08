@@ -46,6 +46,25 @@ func TestSnapshotMarksDirtyVersion(t *testing.T) {
 	}
 }
 
+func TestCanonicalVersion(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"v1.0.6", "1.0.6"},
+		{"1.0.6", "1.0.6"},
+		{"V1.0.6", "1.0.6"},
+		{" v1.0.6 ", "1.0.6"},
+		{"v1.0.6-3-gdeadbee", "1.0.6-3-gdeadbee"},
+		{"", ""},
+		{"dev", "dev"},
+	}
+	for _, c := range cases {
+		if got := CanonicalVersion(c.in); got != c.want {
+			t.Errorf("CanonicalVersion(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestIsDev(t *testing.T) {
 	if !IsDev("dev", "none") {
 		t.Fatal("go run defaults should be IsDev")

@@ -12,6 +12,9 @@ before:
         # Inventory is //go:embed'd into factum2-web (`docs/sbom_release.go`).
         - go run ./internal/sbom/gensbom -o docs/generated/sbom.md
 
+# {{.Version}} is the tag without a leading v (git tag v1.0.6 → 1.0.6).
+# Makefile ldflags use `git describe` (keeps the v). Hub handshake and
+# install.py treat those as the same stamp.
 builds:
     - id: factum2
       main: ./cmd/factum2

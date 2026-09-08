@@ -114,7 +114,7 @@ class ReleaseInstallerLoadTests(unittest.TestCase):
 class InstallerVersionTests(unittest.TestCase):
     def test_current_file_parses(self) -> None:
         text = Path("install.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(install.installer_version_of(text), 15)
+        self.assertGreaterEqual(install.installer_version_of(text), 16)
         self.assertTrue(install.looks_like_installer(text))
 
 
@@ -155,6 +155,48 @@ class WorkerHostsTests(unittest.TestCase):
         )
 
 
+class SameStampTests(unittest.TestCase):
+    def test_v_prefix(self) -> None:
+        self.assertTrue(install.same_stamp("v1.0.6", "1.0.6"))
+        self.assertTrue(install.same_stamp("1.0.6", "v1.0.6"))
+        self.assertTrue(install.same_stamp("v1.0.6", "v1.0.6"))
+        self.assertTrue(install.same_stamp("1.0.6", "1.0.6"))
+        self.assertTrue(install.same_stamp("v1.0.6-3-gdeadbee", "1.0.6-3-gdeadbee"))
+
+    def test_git_describe_still_distinct(self) -> None:
+        self.assertFalse(install.same_stamp("v1.0.6", "v1.0.6-3-gdeadbee"))
+        self.assertFalse(install.same_stamp("1.0.6", "v1.0.7"))
+
+    def test_empty(self) -> None:
+        self.assertFalse(install.same_stamp("", "1.0.6"))
+        self.assertFalse(install.same_stamp("v1.0.6", ""))
+
+
+class ShouldRunPinnedInstallerTests(unittest.TestCase):
+    def test_identical_stays_in_process(self) -> None:
+        body = _installer_script(16)
+        self.assertFalse(install.should_run_pinned_installer(body, body))
+
+    def test_newer_local_stays_in_process(self) -> None:
+        self.assertFalse(
+            install.should_run_pinned_installer(
+                _installer_script(16), _installer_script(15)
+            )
+        )
+
+    def test_older_local_yields_to_tarball(self) -> None:
+        self.assertTrue(
+            install.should_run_pinned_installer(
+                _installer_script(15), _installer_script(16)
+            )
+        )
+
+    def test_same_version_different_content_yields(self) -> None:
+        a = _installer_script(15)
+        b = _installer_script(15) + b"# different\n"
+        self.assertTrue(install.should_run_pinned_installer(a, b))
+
+
 class ExtractStampedVersionTests(unittest.TestCase):
     def test_cobra_git_describe(self) -> None:
         self.assertEqual(
@@ -176,6 +218,12 @@ class ExtractStampedVersionTests(unittest.TestCase):
         self.assertEqual(
             install.extract_stamped_version("factum2-web version v1.0.0"),
             "v1.0.0",
+        )
+
+    def test_goreleaser_omits_v(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version("factum2-worker version 1.0.6"),
+            "1.0.6",
         )
 
     def test_version_file_line(self) -> None:
@@ -260,6 +308,20 @@ class VerifyHostVersionTests(unittest.TestCase):
                 )
         self.assertIn("v0.9.0", str(ctx.exception))
         self.assertIn("v1.2.3-4-gabcdef", str(ctx.exception))
+
+    def test_remote_v_prefix_vs_goreleaser(self) -> None:
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="factum2-worker version 1.0.6\n", stderr=""
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install.verify_host_version(
+                "v1.0.6",
+                target_host="librenms.example.com",
+                ssh_user="root",
+                install_dir=Path("/opt/factum2"),
+            )
 
 
 class SanEntryTests(unittest.TestCase):

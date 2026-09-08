@@ -30,7 +30,8 @@ func hubHandshakeHeaders(token string) http.Header {
 func checkHubVersion(remoteVersion, remoteCommit string) error {
 	// Unstamped `go run` / `go test` (dev/none) skip the check on either
 	// side so a developer GUI can dial installed workers. Stamped
-	// Makefile/GoReleaser builds still require an exact match.
+	// Makefile/GoReleaser builds still require the same version and commit
+	// (a leading v on the version is ignored).
 	if buildinfo.IsDev(buildinfo.Version, buildinfo.Commit) || buildinfo.IsDev(remoteVersion, remoteCommit) {
 		if remoteVersion != buildinfo.Version || remoteCommit != buildinfo.Commit {
 			slog.Warn("worker hub: skipping version check (unstamped/dev build)",
@@ -42,7 +43,8 @@ func checkHubVersion(remoteVersion, remoteCommit string) error {
 		}
 		return nil
 	}
-	if remoteVersion == buildinfo.Version && remoteCommit == buildinfo.Commit {
+	sameVersion := buildinfo.CanonicalVersion(remoteVersion) == buildinfo.CanonicalVersion(buildinfo.Version)
+	if sameVersion && remoteCommit == buildinfo.Commit {
 		return nil
 	}
 	return fmt.Errorf("version mismatch: peer %s (%s) != local %s (%s)",
