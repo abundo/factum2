@@ -1,21 +1,56 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
-import { getForest } from '@/api/ipam'
+import { getForest, updateNamespace, updatePrefix, updateVrf } from '@/api/ipam'
+import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
 import { useAuthStore } from '@/stores/auth'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
 
 const authStore = useAuthStore()
+const toast = useToast()
 
 const props = defineProps({
   reloadKey: { type: Number, default: 0 },
 })
-const emit = defineEmits(['contextmenu'])
+const emit = defineEmits(['contextmenu', 'select'])
+
+const TREE_WIDTH_KEY = 'factum:ipam-tree-width'
+const TREE_WIDTH_DEFAULT = 800
+const TREE_WIDTH_MIN = 320
+const COL_WIDTHS_KEY = 'factum:ipam-tree-col-widths'
+function loadTreeWidth() {
+  const n = Number(localStorage.getItem(TREE_WIDTH_KEY))
+  return Number.isFinite(n) && n >= TREE_WIDTH_MIN ? n : TREE_WIDTH_DEFAULT
+}
+function loadColWidths() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || 'null')
+    return raw && typeof raw === 'object' ? raw : {}
+  } catch {
+    return {}
+  }
+}
 
 const el = ref(null)
+const selected = ref(null)
+const form = ref({})
+const saving = ref(false)
+const treeWidth = ref(loadTreeWidth())
+const treeResizing = ref(false)
 let tree
 let onContextMenu
+let resizeMove
+let resizeUp
+let persistColsTimer
+
+const selectedKind = computed(() => selected.value?.kind || selected.value?.type || '')
+const isAllocated = computed(() => selectedKind.value === 'allocated')
+const isNamedRow = computed(() => selectedKind.value === 'namespace' || selectedKind.value === 'vrf')
+const canSaveSelected = computed(
+  () => authStore.canWrite && (isAllocated.value || isNamedRow.value),
+)
 
 function splitHextets(s) {
   if (!s) return []
@@ -134,8 +169,123 @@ function selectedPayload(node) {
   return {
     key: node.key,
     title: node.title,
+    type: node.type,
     ...node.data,
   }
+}
+
+function fillForm(node) {
+  const kind = node?.kind || node?.type
+  if (kind === 'allocated') {
+    form.value = {
+      id: node.prefix_id || node.id,
+      namespace_id: node.namespace_id,
+      prefix: node.title,
+      description: node.description ?? '',
+      vrf_id: node.vrf_id || 0,
+      dhcp_enabled: !!node.dhcp_enabled,
+      dhcp_range_start: node.dhcp_range_start ?? '',
+      dhcp_range_end: node.dhcp_range_end ?? '',
+      dhcp_gateway: node.dhcp_gateway ?? '',
+      dhcp_dns_servers: node.dhcp_dns_servers ?? '',
+    }
+    return
+  }
+  if (kind === 'namespace' || kind === 'vrf') {
+    form.value = {
+      id: node.id,
+      namespace_id: node.namespace_id,
+      name: node.title ?? '',
+      description: node.description ?? '',
+    }
+    return
+  }
+  form.value = {}
+}
+
+function onActivate(node) {
+  const payload = selectedPayload(node)
+  selected.value = payload
+  fillForm(payload)
+  emit('select', payload)
+}
+
+function prefixPayload(f) {
+  const payload = {
+    prefix: (f.prefix ?? '').trim(),
+    vrf_id: Number(f.vrf_id) || 0,
+    description: f.description ?? '',
+  }
+  if (authStore.dhcpEnabled) {
+    payload.dhcp_enabled = !!f.dhcp_enabled
+    payload.dhcp_range_start = (f.dhcp_range_start ?? '').trim()
+    payload.dhcp_range_end = (f.dhcp_range_end ?? '').trim()
+    payload.dhcp_gateway = (f.dhcp_gateway ?? '').trim()
+    payload.dhcp_dns_servers = f.dhcp_dns_servers ?? ''
+  }
+  return payload
+}
+
+function errMsg(err, fallback) {
+  return err.response?.data?.error ?? fallback
+}
+
+function saveSelected() {
+  if (!canSaveSelected.value) return
+  const f = form.value
+  const kind = selectedKind.value
+  const revealKeys = selected.value?.key ? keyPath(selected.value.key) : []
+  let req
+  if (kind === 'allocated') {
+    if (!f.id || !f.namespace_id) return
+    req = updatePrefix(f.namespace_id, f.id, prefixPayload(f))
+  } else if (kind === 'namespace') {
+    const name = (f.name ?? '').trim()
+    if (!f.id || !name) return
+    req = updateNamespace(f.id, { name, description: f.description ?? '' })
+  } else if (kind === 'vrf') {
+    const name = (f.name ?? '').trim()
+    if (!f.id || !f.namespace_id || !name) return
+    req = updateVrf(f.namespace_id, f.id, { name, description: f.description ?? '' })
+  } else {
+    return
+  }
+  saving.value = true
+  req
+    .then(() => load(revealKeys))
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Request failed.') }),
+    )
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function startResize(event) {
+  event.preventDefault()
+  treeResizing.value = true
+  const startX = event.clientX
+  const startWidth = treeWidth.value
+  const parent = event.currentTarget?.parentElement
+  const max = Math.max(TREE_WIDTH_MIN, Math.floor((parent?.clientWidth ?? window.innerWidth) * 0.7))
+  document.body.style.cursor = 'col-resize'
+  function onMove(moveEvent) {
+    const next = startWidth + (moveEvent.clientX - startX)
+    treeWidth.value = Math.min(max, Math.max(TREE_WIDTH_MIN, next))
+  }
+  function onUp() {
+    treeResizing.value = false
+    document.body.style.cursor = ''
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    resizeMove = null
+    resizeUp = null
+    localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth.value))
+  }
+  resizeMove = onMove
+  resizeUp = onUp
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
 }
 
 function renderCell(e) {
@@ -144,9 +294,6 @@ function renderCell(e) {
     switch (col.id) {
       case 'kind':
         col.elem.textContent = kindLabel(data.kind || e.node.type)
-        break
-      case 'vrf':
-        col.elem.textContent = data.kind === 'allocated' ? data.vrf_name || '—' : '—'
         break
       case 'dhcp':
         col.elem.textContent = data.kind === 'allocated' && data.dhcp_enabled ? 'On' : ''
@@ -194,6 +341,7 @@ function bindContextMenu() {
   onContextMenu = (ev) => {
     ev.preventDefault()
     const node = Wunderbaum.getNode(ev)
+    if (node) node.setActive()
     emit('contextmenu', {
       x: ev.clientX,
       y: ev.clientY,
@@ -203,16 +351,38 @@ function bindContextMenu() {
   el.value.addEventListener('contextmenu', onContextMenu)
 }
 
+function persistColWidths() {
+  if (!tree?.columns) return
+  const widths = {}
+  for (const col of tree.columns) {
+    if (Number.isFinite(col.customWidthPx) && col.customWidthPx > 0) {
+      widths[col.id] = Math.round(col.customWidthPx)
+    }
+  }
+  const json = JSON.stringify(widths)
+  if (json === '{}' && !localStorage.getItem(COL_WIDTHS_KEY)) return
+  localStorage.setItem(COL_WIDTHS_KEY, json)
+}
+
+function schedulePersistColWidths() {
+  clearTimeout(persistColsTimer)
+  persistColsTimer = setTimeout(persistColWidths, 250)
+}
+
 function treeColumns() {
+  const saved = loadColWidths()
   const cols = [
-    { id: '*', title: 'Name', width: '320px' },
-    { id: 'kind', title: 'Kind', width: '110px' },
-    { id: 'vrf', title: 'VRF', width: '120px' },
+    { id: '*', title: 'Name', width: '320px', minWidth: '140px' },
+    { id: 'kind', title: 'Kind', width: '110px', minWidth: '70px' },
   ]
   if (authStore.dhcpEnabled) {
-    cols.push({ id: 'dhcp', title: 'DHCP', width: '70px' })
+    cols.push({ id: 'dhcp', title: 'DHCP', width: '70px', minWidth: '50px' })
   }
-  cols.push({ id: 'description', title: 'Description', width: '*' })
+  cols.push({ id: 'description', title: 'Description', width: '*', minWidth: '80px' })
+  for (const col of cols) {
+    const n = Number(saved[col.id])
+    if (Number.isFinite(n) && n > 0) col.customWidthPx = n
+  }
   return cols
 }
 
@@ -240,6 +410,7 @@ function buildTree(source) {
     },
     source,
     columns: treeColumns(),
+    columnsResizable: true,
     types: {
       namespace: { icon: false },
       pool: { icon: false },
@@ -248,6 +419,11 @@ function buildTree(source) {
     },
     lazyLoad: (e) => getForest(e.node.key).then((rows) => toWbForest(rows)),
     render: renderCell,
+    update: schedulePersistColWidths,
+    activate: (e) => {
+      if (!e.node) return
+      onActivate(e.node)
+    },
   })
   bindContextMenu()
   expandFirstLevel()
@@ -280,6 +456,7 @@ async function reveal(keys) {
 }
 
 function load(revealKeys) {
+  const keepKey = selected.value?.key
   return getForest()
     .then((rows) => {
       const source = toWbForest(rows)
@@ -288,7 +465,17 @@ function load(revealKeys) {
       }
       buildTree(source)
     })
-    .then(() => reveal(revealKeys))
+    .then(async () => {
+      await reveal(revealKeys)
+      if (!keepKey) return
+      const node = tree?.findKey(keepKey)
+      if (node) {
+        node.setActive()
+        return
+      }
+      selected.value = null
+      fillForm(null)
+    })
     .catch(() => {
       if (!tree) buildTree([])
     })
@@ -342,6 +529,11 @@ function collapseNode(key) {
   else collapseAll()
 }
 
+function selectKey(key) {
+  const node = key ? tree?.findKey(key) : null
+  if (node) node.setActive()
+}
+
 onMounted(load)
 watch(
   () => props.reloadKey,
@@ -349,7 +541,14 @@ watch(
     load()
   },
 )
-onBeforeUnmount(destroyTree)
+onBeforeUnmount(() => {
+  clearTimeout(persistColsTimer)
+  persistColWidths()
+  destroyTree()
+  if (resizeMove) window.removeEventListener('mousemove', resizeMove)
+  if (resizeUp) window.removeEventListener('mouseup', resizeUp)
+  document.body.style.cursor = ''
+})
 
 defineExpose({
   filter,
@@ -360,9 +559,71 @@ defineExpose({
   reloadNode,
   reload: load,
   keyPath,
+  selectKey,
 })
 </script>
 
 <template>
-  <div ref="el" class="ipam-tree" />
+  <div
+    class="flex min-h-0 h-full flex-1 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
+    :class="{ 'select-none': treeResizing }"
+  >
+    <div
+      class="flex min-h-80 min-w-0 flex-col overflow-hidden max-lg:!w-full lg:min-h-0 lg:shrink-0"
+      :style="{ width: treeWidth + 'px' }"
+    >
+      <div ref="el" class="ipam-tree min-h-0 flex-1" />
+    </div>
+    <div
+      class="hidden lg:block w-1 shrink-0 cursor-col-resize self-stretch hover:bg-primary/30"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize prefix tree"
+      @mousedown="startResize"
+    />
+    <div
+      class="mt-4 flex min-h-80 min-w-0 flex-1 flex-col overflow-hidden lg:mt-0 lg:min-h-0 lg:pl-3"
+    >
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto max-w-lg">
+        <div v-if="!selected" class="text-muted-color text-sm">Select a row to see details.</div>
+        <template v-else>
+          <div>
+            <h5 class="m-0">{{ isNamedRow ? form.name || selected.title : selected.title }}</h5>
+            <div class="text-sm text-muted-color mt-1">{{ kindLabel(selectedKind) }}</div>
+          </div>
+          <IpamPrefixForm
+            v-if="isAllocated"
+            v-model="form"
+            prefix-disabled
+            :disabled="!authStore.canWrite"
+            :show-vrf="!!selected.vrf_name"
+            :vrf-name="selected.vrf_name || ''"
+          />
+          <template v-else-if="isNamedRow">
+            <div>
+              <label class="block font-bold mb-2">Name</label>
+              <UInput v-model="form.name" :disabled="!authStore.canWrite" class="w-full" />
+            </div>
+            <div>
+              <label class="block font-bold mb-2">Description</label>
+              <UInput v-model="form.description" :disabled="!authStore.canWrite" class="w-full" />
+            </div>
+          </template>
+          <template v-else>
+            <div>
+              <label class="block font-bold mb-2">Name</label>
+              <UInput :model-value="selected.title" disabled class="w-full" />
+            </div>
+            <div v-if="selectedKind !== 'pool'">
+              <label class="block font-bold mb-2">Description</label>
+              <UInput :model-value="selected.description || ''" disabled class="w-full" />
+            </div>
+          </template>
+          <div v-if="canSaveSelected" class="flex justify-end">
+            <UButton label="Save" :loading="saving" @click="saveSelected" />
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
 </template>

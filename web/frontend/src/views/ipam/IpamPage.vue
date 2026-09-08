@@ -8,10 +8,8 @@ import {
   deleteNamespace,
   deletePrefix,
   deleteVrf,
-  updateNamespace,
-  updatePrefix,
-  updateVrf,
 } from '@/api/ipam'
+import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
 import IpamPrefixTree from '@/components/IpamPrefixTree.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -56,7 +54,6 @@ function itemsFor(node) {
       items.push(
         { id: 'add-prefix', label: 'Add prefix' },
         { id: 'add-vrf', label: 'Add VRF' },
-        { id: 'rename-ns', label: 'Rename' },
         { id: 'sep2' },
         { id: 'del-ns', label: 'Delete namespace', danger: true },
       )
@@ -64,7 +61,6 @@ function itemsFor(node) {
     case 'vrf':
       items.push(
         { id: 'add-prefix', label: 'Add prefix' },
-        { id: 'rename-vrf', label: 'Rename' },
         { id: 'sep2' },
         { id: 'del-vrf', label: 'Delete VRF', danger: true },
       )
@@ -87,6 +83,13 @@ function onContextMenu({ x, y, node }) {
   menu.value = { open: true, x, y, node }
 }
 
+function openEditPrefix(node) {
+  if (!node) return
+  const kind = node.kind || node.type
+  if (kind !== 'allocated') return
+  treeRef.value?.selectKey(node.key)
+}
+
 function closeMenu() {
   menu.value = { ...menu.value, open: false }
 }
@@ -107,23 +110,8 @@ async function runMenu(id) {
     dialog.value = 'ns'
     return
   }
-  if (id === 'rename-ns') {
-    form.value = { id: node.id, name: node.title, description: node.description ?? '' }
-    dialog.value = 'ns'
-    return
-  }
   if (id === 'add-vrf') {
     form.value = { namespace_id: node.namespace_id, name: '', description: '' }
-    dialog.value = 'vrf'
-    return
-  }
-  if (id === 'rename-vrf') {
-    form.value = {
-      namespace_id: node.namespace_id,
-      id: node.id,
-      name: node.title,
-      description: node.description ?? '',
-    }
     dialog.value = 'vrf'
     return
   }
@@ -148,19 +136,7 @@ async function runMenu(id) {
     return
   }
   if (id === 'edit-prefix') {
-    form.value = {
-      id: node.prefix_id || node.id,
-      namespace_id: node.namespace_id,
-      prefix: node.title,
-      description: node.description ?? '',
-      parent_key: node.key,
-      dhcp_enabled: !!node.dhcp_enabled,
-      dhcp_range_start: node.dhcp_range_start ?? '',
-      dhcp_range_end: node.dhcp_range_end ?? '',
-      dhcp_gateway: node.dhcp_gateway ?? '',
-      dhcp_dns_servers: node.dhcp_dns_servers ?? '',
-    }
-    dialog.value = 'prefix'
+    openEditPrefix(node)
     return
   }
   if (id === 'del-ns') {
@@ -211,31 +187,6 @@ function prefixPayload(f) {
   return payload
 }
 
-function defaultGatewayHint(prefix) {
-  const s = (prefix || '').trim()
-  const slash = s.lastIndexOf('/')
-  if (slash < 0) return ''
-  const addr = s.slice(0, slash)
-  const bits = Number(s.slice(slash + 1))
-  if (!Number.isInteger(bits)) return ''
-  if (addr.includes('.')) {
-    const parts = addr.split('.').map((p) => Number(p))
-    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-      return ''
-    }
-    if (bits > 30) return addr
-    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
-    let n = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
-    n = (n & mask) + 1
-    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
-  }
-  if (bits <= 126 && addr.includes(':')) {
-    if (addr.endsWith('::')) return `${addr}1`
-    if (addr.endsWith('::0')) return addr.slice(0, -1) + '1'
-  }
-  return ''
-}
-
 function saveDialog() {
   const f = form.value
   saving.value = true
@@ -246,25 +197,21 @@ function saveDialog() {
       saving.value = false
       return
     }
-    req = f.id ? updateNamespace(f.id, payload) : createNamespace(payload)
+    req = createNamespace(payload)
   } else if (dialog.value === 'vrf') {
     const payload = { name: (f.name ?? '').trim(), description: f.description ?? '' }
     if (!payload.name) {
       saving.value = false
       return
     }
-    req = f.id ? updateVrf(f.namespace_id, f.id, payload) : createVrf(f.namespace_id, payload)
+    req = createVrf(f.namespace_id, payload)
   } else if (dialog.value === 'prefix') {
     const payload = prefixPayload(f)
-    if (f.id) {
-      req = updatePrefix(f.namespace_id, f.id, payload)
-    } else {
-      if (!(f.prefix ?? '').trim()) {
-        saving.value = false
-        return
-      }
-      req = createPrefix(f.namespace_id, payload)
+    if (!(f.prefix ?? '').trim()) {
+      saving.value = false
+      return
     }
+    req = createPrefix(f.namespace_id, payload)
   }
   if (!req) {
     saving.value = false
@@ -319,7 +266,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 </script>
 
 <template>
-  <div class="card flex min-h-0 flex-1 flex-col">
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-3 shrink-0">
       <h4 class="m-0">IPAM</h4>
       <div class="flex flex-wrap gap-2 items-center">
@@ -356,7 +303,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </div>
     <p class="text-muted-color text-sm mb-3 shrink-0">
       Right-click a namespace to add a prefix (or an extra VRF). Prefixes under a VRF cannot overlap
-      the namespace root or any other VRF. Click [+] / [−] to expand or collapse.
+      the namespace root or any other VRF. Click a row to see details. Click [+] / [−] to expand or
+      collapse.
     </p>
     <IpamPrefixTree ref="treeRef" class="min-h-0 flex-1" @contextmenu="onContextMenu" />
   </div>
@@ -415,73 +363,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
   <UModal
     :open="dialog === 'prefix'"
-    :title="form.id ? 'Edit prefix' : 'Add prefix'"
+    title="Add prefix"
     @update:open="(v) => !v && (dialog = null)"
   >
     <template #body>
-      <div class="flex flex-col gap-4">
-        <div>
-          <label class="block font-bold mb-2">Prefix</label>
-          <UInput
-            v-model="form.prefix"
-            placeholder="10.0.1.0/24"
-            :disabled="!!form.id"
-            :autofocus="!form.id"
-          />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Description</label>
-          <UInput v-model="form.description" :autofocus="!!form.id" />
-        </div>
-        <template v-if="authStore.dhcpEnabled">
-          <div class="flex items-center gap-2">
-            <USwitch v-model="form.dhcp_enabled" id="prefix_dhcp_enabled" />
-            <label for="prefix_dhcp_enabled" class="font-bold">DHCP server</label>
-          </div>
-          <template v-if="form.dhcp_enabled">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block font-bold mb-2">Range start</label>
-                <UInput v-model="form.dhcp_range_start" placeholder="192.0.2.100" />
-              </div>
-              <div>
-                <label class="block font-bold mb-2">Range end</label>
-                <UInput v-model="form.dhcp_range_end" placeholder="192.0.2.200" />
-              </div>
-            </div>
-            <small class="text-muted-color -mt-2"
-              >Must sit inside the prefix. Leave empty for reservations only.</small
-            >
-            <div>
-              <label class="block font-bold mb-2">Default gateway</label>
-              <UInput
-                v-model="form.dhcp_gateway"
-                :placeholder="defaultGatewayHint(form.prefix) || 'first address in prefix'"
-                class="w-full"
-              />
-              <small class="block text-muted-color mt-1"
-                >Empty uses the first usable address in the prefix.</small
-              >
-            </div>
-            <div>
-              <label class="block font-bold mb-2">DNS servers</label>
-              <UTextarea
-                v-model="form.dhcp_dns_servers"
-                :rows="2"
-                placeholder="Leave empty to use the default"
-                class="w-full"
-              />
-              <small class="text-muted-color"
-                >One IP per line. Empty uses Settings → Factum → Default DNS servers.</small
-              >
-            </div>
-          </template>
-        </template>
-      </div>
+      <IpamPrefixForm v-model="form" autofocus-prefix />
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton :label="form.id ? 'Save' : 'Add'" :loading="saving" @click="saveDialog" />
+      <UButton label="Add" :loading="saving" @click="saveDialog" />
     </template>
   </UModal>
 

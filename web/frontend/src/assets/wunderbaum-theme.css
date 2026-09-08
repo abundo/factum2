@@ -59,6 +59,18 @@
   font-size: 0.8rem;
 }
 
+.ipam-tree .wb-header span.wb-col-resizer-active {
+  width: 8px;
+  right: -4px;
+  border-right-width: 2px;
+  border-right-color: transparent;
+}
+
+.ipam-tree .wb-header span.wb-col-resizer-active:hover,
+.ipam-tree.wb-col-resizing .wb-header span.wb-col-resizer-active {
+  border-right-color: var(--ui-primary);
+}
+
 .ipam-tree .wb-row {
   font-size: 0.875rem;
 }

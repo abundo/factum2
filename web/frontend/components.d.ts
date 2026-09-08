@@ -18,6 +18,7 @@ declare module 'vue' {
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
     GoTemplateEditor: typeof import('./src/components/GoTemplateEditor.vue')['default']
     GoTemplateField: typeof import('./src/components/GoTemplateField.vue')['default']
+    IpamPrefixForm: typeof import('./src/components/IpamPrefixForm.vue')['default']
     IpamPrefixTree: typeof import('./src/components/IpamPrefixTree.vue')['default']
     LdapTreeBrowser: typeof import('./src/components/LdapTreeBrowser.vue')['default']
     OxidizedNodeDialog: typeof import('./src/components/OxidizedNodeDialog.vue')['default']
