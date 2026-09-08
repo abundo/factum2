@@ -31,6 +31,7 @@ const snmpVersionOptions = [
 const destinationTab = ref('dns')
 const destinationTabItems = [
   { label: 'DNS', value: 'dns', slot: 'dns' },
+  { label: 'DHCP', value: 'dhcp', slot: 'dhcp' },
   { label: 'Icinga', value: 'icinga', slot: 'icinga' },
   { label: 'LibreNMS', value: 'librenms', slot: 'librenms' },
   { label: 'Oxidized', value: 'oxidized', slot: 'oxidized' },
@@ -198,11 +199,39 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
-            <div class="font-semibold">Kea DHCP</div>
+          </div>
+        </template>
+
+        <template #dhcp>
+          <div class="flex flex-col gap-6 py-4">
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.dhcp_enabled"
+                id="dhcp_enabled"
+                @update:model-value="settings.dhcp_enabled = $event"
+              />
+              <label for="dhcp_enabled" class="font-bold">Enabled</label>
+            </div>
             <small class="text-muted-color -mt-4"
-              >Used when DHCP server management is on (Settings → Factum). Empty fields fall back to
-              the Ubuntu Kea layout from dnsmgr2's example config.</small
+              >Per-prefix DHCP in IPAM (range, gateway, DNS servers) and a MAC column on DNS zone
+              records for static reservations. Off by default. Turning this off hides the UI; it
+              does not delete stored DHCP data. Empty Kea fields fall back to the Ubuntu layout from
+              dnsmgr2's example config.</small
             >
+            <div v-if="settings.dhcp_enabled">
+              <label for="dhcp_dns_servers" class="block font-bold mb-3">Default DNS servers</label>
+              <UTextarea
+                id="dhcp_dns_servers"
+                v-model="settings.dhcp_dns_servers"
+                :rows="3"
+                placeholder="One IP address per line"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Offered to DHCP clients unless a prefix overrides them. Domain name is the default
+                domain on Settings → Factum.</small
+              >
+            </div>
             <div>
               <label for="dhcp_host_template" class="block font-bold mb-3"
                 >Host template name</label

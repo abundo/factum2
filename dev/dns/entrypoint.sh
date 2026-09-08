@@ -4,7 +4,7 @@
 set -euo pipefail
 
 mkdir -p /etc/bind /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 \
-	/run/named /run/factum2-worker /etc/dnsmgr2
+	/run/named /run/factum2-worker /etc/dnsmgr2 /etc/kea
 chown bind:bind /var/cache/bind /var/lib/bind /run/named
 
 if [[ ! -f /etc/bind/rndc.key ]]; then

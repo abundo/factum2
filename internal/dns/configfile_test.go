@@ -165,6 +165,30 @@ func TestRenderDnsmgrConfigDHCP(t *testing.T) {
 	}
 }
 
+func TestRenderDnsmgrConfigDHCPOmitsEmptyGlobalDNSServers(t *testing.T) {
+	cfg := &Config{
+		ConfigDNS: util.ConfigDNS{
+			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+			DestFile:     "/etc/dnsmgr2/records",
+		},
+		DhcpEnabled: true,
+		DHCP: ConfigDHCP{
+			Prefixes: []ConfigDHCPPrefix{{Name: "192.0.2.0/24"}},
+		},
+	}
+	out, err := RenderDnsmgrConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "host_dhcp_template: isc_kea") {
+		t.Errorf("yaml missing kea host\n%s", s)
+	}
+	if strings.Contains(s, "dns_servers:") {
+		t.Errorf("empty global dns_servers should be omitted\n%s", s)
+	}
+}
+
 func TestWriteZoneRecordsSkipsCommentAndDomain(t *testing.T) {
 	ttl := uint(600)
 	var buf strings.Builder

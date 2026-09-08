@@ -11,7 +11,7 @@ RUN apt-get update \
 		tzdata \
 	&& rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /run/named \
-		/run/factum2-worker /etc/dnsmgr2 \
+		/run/factum2-worker /etc/dnsmgr2 /etc/kea \
 	&& chown bind:bind /var/cache/bind /var/lib/bind /run/named
 COPY dns/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh

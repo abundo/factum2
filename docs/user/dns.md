@@ -28,24 +28,23 @@ template default.
 
 ## DHCP
 
-Optional. Turn it on under **Admin → Settings → Factum**. Off by default.
-Turning it off hides the IPAM DHCP fields and the zone-editor MAC
-column; it does not delete stored values.
+Optional. Turn it on under **Admin → Settings → Destinations → DHCP**.
+Off by default. Turning it off hides the IPAM DHCP fields and the
+zone-editor MAC column; it does not delete stored values.
 
 When it is on:
 
 - Each allocated prefix in IPAM can enable a DHCP server,
   with a dynamic range (must sit inside the prefix), a default gateway
   (empty = first usable address in the prefix), and DNS servers (empty =
-  the Factum default DNS server list).
+  the Destinations → DHCP default DNS server list).
 - A/AAAA records in the zone editor gain a **MAC** column. That is a
   DHCP host reservation, not a DNS comment. `factum2-dns` writes it as
   a `mac` field on the JSON A/AAAA record so dnsmgr2 can emit a Kea
   reservation.
 
-Default DNS servers for DHCP clients are on **Settings → Factum**. Kea
-paths (config dir, include file, restart command) are on
-**Destinations → DNS**, same as BIND.
+Default DNS servers for DHCP clients and Kea paths (config dir, include
+file, restart command) are on **Destinations → DHCP**.
 
 When DHCP is on and **Destinations → DNS → Config file** is set,
 `factum2-dns` includes `dhcp:` / `host_dhcp_template` / prefixes in the
