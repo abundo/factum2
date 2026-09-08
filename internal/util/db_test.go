@@ -230,6 +230,7 @@ func TestMigrateDatabaseAddsDNSZoneEditorOnAdoptedSchema(t *testing.T) {
 	if err := db.Exec(`
 		ALTER TABLE settings DROP COLUMN IF EXISTS dns_zones_enabled;
 		ALTER TABLE settings DROP COLUMN IF EXISTS dhcp_enabled;
+		ALTER TABLE settings DROP COLUMN IF EXISTS dns_db_file;
 		ALTER TABLE IF EXISTS ipam_prefixes DROP COLUMN IF EXISTS dhcp_enabled;
 		DROP TABLE IF EXISTS dns_zone_records, dns_zones, dns_template_nameservers, dns_templates, dns_soa_templates, dns_dnssec_policies CASCADE;
 		DELETE FROM goose_db_version WHERE version_id > 1;
@@ -257,6 +258,18 @@ func TestMigrateDatabaseAddsDNSZoneEditorOnAdoptedSchema(t *testing.T) {
 	if !hasCol {
 		t.Fatal("expected settings.dns_zones_enabled after migrate")
 	}
+	if err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'settings'
+			  AND column_name = 'dns_db_file'
+		)`).Scan(&hasCol).Error; err != nil {
+		t.Fatalf("dns_db_file column check: %v", err)
+	}
+	if !hasCol {
+		t.Fatal("expected settings.dns_db_file after migrate")
+	}
 	if !db.Migrator().HasTable("dns_zones") {
 		t.Fatal("expected dns_zones after migrate")
 	}
@@ -264,7 +277,48 @@ func TestMigrateDatabaseAddsDNSZoneEditorOnAdoptedSchema(t *testing.T) {
 	if err := db.Raw(`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version).Error; err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if version < 2 {
-		t.Fatalf("stamped version = %d, want >= 2", version)
+	if version < 3 {
+		t.Fatalf("stamped version = %d, want >= 3", version)
+	}
+}
+
+func TestMigrateDatabaseAddsDnsDbFileAfterV2(t *testing.T) {
+	db := openPostgresTestDB(t)
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("setup migrate: %v", err)
+	}
+
+	// v1.0.8 applied 00002 without dns_db_file. Adopted DBs are at goose
+	// version 2 and still lack the column; loading Settings then fails.
+	if err := db.Exec(`
+		ALTER TABLE settings DROP COLUMN IF EXISTS dns_db_file;
+		DELETE FROM goose_db_version WHERE version_id > 2;
+	`).Error; err != nil {
+		t.Fatalf("strip dns_db_file: %v", err)
+	}
+
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("migrate after v2: %v", err)
+	}
+
+	var hasCol bool
+	if err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'settings'
+			  AND column_name = 'dns_db_file'
+		)`).Scan(&hasCol).Error; err != nil {
+		t.Fatalf("column check: %v", err)
+	}
+	if !hasCol {
+		t.Fatal("expected settings.dns_db_file after migrate")
+	}
+	var version int64
+	if err := db.Raw(`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version).Error; err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if version < 3 {
+		t.Fatalf("stamped version = %d, want >= 3", version)
 	}
 }

@@ -11,6 +11,7 @@ ALTER TABLE public.settings
     ADD COLUMN IF NOT EXISTS dns_zones_enabled boolean,
     ADD COLUMN IF NOT EXISTS dhcp_enabled boolean,
     ADD COLUMN IF NOT EXISTS dns_config_file text,
+    ADD COLUMN IF NOT EXISTS dns_db_file text,
     ADD COLUMN IF NOT EXISTS dns_host_template text,
     ADD COLUMN IF NOT EXISTS dns_bind_type text,
     ADD COLUMN IF NOT EXISTS dns_bind_config_dir text,
