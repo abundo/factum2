@@ -808,6 +808,214 @@ class ComposeLabTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
 
+    def test_compose_lab_restarts_running_dest_workers(self) -> None:
+        """up -d does not re-exec bind-mounted binaries; dests must restart."""
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw) / "repo"
+            compose_dir = Path(raw) / "dev"
+            repo.mkdir()
+            compose_dir.mkdir()
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            (compose_dir / "factum2.yaml").write_text("db: {}\n")
+            build = repo / "build"
+            build.mkdir()
+            for name in install.KNOWN_BINARIES:
+                (build / name).write_bytes(b"x")
+
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            running = {
+                "postgres",
+                "factum-web",
+                "factum-worker",
+                "dns",
+                "icinga",
+                "librenms",
+            }
+
+            def fake_running(_compose_dir: Path, service: str) -> bool:
+                return service in running
+
+            with (
+                patch.object(install, "run", fake_run),
+                patch.object(install, "compose_service_running", fake_running),
+                patch.object(
+                    install, "git_describe", return_value="v1.0.5-22-g40dc744"
+                ),
+            ):
+                rc = install.install_compose_lab(
+                    repo, compose_dir, skip_build=True, dry_run=False
+                )
+            self.assertEqual(rc, 0)
+
+            stop = next(c for c in calls if "stop" in c)
+            self.assertEqual(stop[-2:], ["stop", "factum-web"])
+
+            restart = next(c for c in calls if "restart" in c)
+            self.assertEqual(
+                restart[restart.index("restart") + 1 :],
+                ["dns", "icinga", "librenms"],
+            )
+            self.assertNotIn("factum-web", restart)
+            self.assertNotIn("factum-worker", restart)
+            self.assertNotIn("oxidized", restart)
+            self.assertNotIn("prometheus", restart)
+
+            recreate = next(c for c in calls if "--force-recreate" in c)
+            self.assertEqual(
+                recreate[recreate.index("up") :],
+                ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
+            )
+
+            up = next(
+                c
+                for c in calls
+                if "up" in c and "--force-recreate" not in c
+            )
+            self.assertEqual(
+                up[-len(install.COMPOSE_FACTUM_SERVICES) :],
+                list(install.COMPOSE_FACTUM_SERVICES),
+            )
+            self.assertLess(calls.index(restart), calls.index(recreate))
+            self.assertLess(calls.index(recreate), calls.index(up))
+
+    def test_compose_lab_starts_without_restart_when_dests_down(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw) / "repo"
+            compose_dir = Path(raw) / "dev"
+            repo.mkdir()
+            compose_dir.mkdir()
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            (compose_dir / "factum2.yaml").write_text("db: {}\n")
+            build = repo / "build"
+            build.mkdir()
+            for name in install.KNOWN_BINARIES:
+                (build / name).write_bytes(b"x")
+
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with (
+                patch.object(install, "run", fake_run),
+                patch.object(
+                    install,
+                    "compose_service_running",
+                    side_effect=lambda _d, s: s == "postgres",
+                ),
+                patch.object(install, "git_describe", return_value="v1.0.0"),
+            ):
+                rc = install.install_compose_lab(
+                    repo, compose_dir, skip_build=True, dry_run=False
+                )
+            self.assertEqual(rc, 0)
+            self.assertFalse(any("restart" in c for c in calls))
+            recreate = next(c for c in calls if "--force-recreate" in c)
+            self.assertEqual(
+                recreate[recreate.index("up") :],
+                ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
+            )
+            self.assertTrue(any("up" in c for c in calls))
+
+    _PODMAN_PS = """\
+CONTAINER ID  IMAGE                                     COMMAND               CREATED      STATUS                PORTS                                                                                 NAMES
+93e291465cdb  docker.io/library/postgres:18-alpine      postgres              2 hours ago  Up 2 hours (healthy)  0.0.0.0:15432->5432/tcp                                                               factum-dev_postgres_1
+eddfdc49f628  docker.io/icinga/icinga2:2.16.5                                 2 hours ago  Up 2 hours (healthy)  0.0.0.0:15665->5665/tcp, 0.0.0.0:18445->8443/tcp                                      factum-dev_icinga_1
+00c9c669709c  docker.io/icinga/icingadb:1.5.1           icingadb --databa...  2 hours ago  Up 2 hours                                                                                                  factum-dev_icingadb_1
+dbed178ee341  docker.io/icinga/icingaweb2:2.14.0        bash -eo pipefail...  2 hours ago  Up 2 hours (healthy)  0.0.0.0:18002->8080/tcp                                                               factum-dev_icingaweb_1
+b90c76d2b92e  localhost/factum-dev:local                /opt/factum2/fact...  2 hours ago  Up 2 hours (healthy)  0.0.0.0:18091->8091/tcp                                                               factum-dev_factum-web_1
+73d225bab149  localhost/factum-dev:local                /opt/factum2/fact...  2 hours ago  Up 2 hours (healthy)  0.0.0.0:18443->8443/tcp                                                               factum-dev_factum-worker_1
+"""
+
+    _DOCKER_PS = """\
+NAME                           IMAGE                               COMMAND                  SERVICE             CREATED        STATUS                  PORTS
+factum-dev-postgres-1          postgres:18-alpine                  "docker-entrypoint.s…"   postgres            2 hours ago    Up 2 hours (healthy)    0.0.0.0:15432->5432/tcp
+factum-dev-icinga-1            icinga/icinga2:2.16.5               "/entrypoint.sh"         icinga              2 hours ago    Up 2 hours (healthy)    0.0.0.0:15665->5665/tcp
+factum-dev-icingadb-1          icinga/icingadb:1.5.1               "icingadb"               icingadb            2 hours ago    Up 2 hours
+factum-dev-factum-web-1        factum-dev:local                    "/opt/factum2/factum…"   factum-web          2 hours ago    Up 2 hours (healthy)    0.0.0.0:18091->8091/tcp
+factum-dev-factum-worker-1     factum-dev:local                    "/opt/factum2/factum…"   factum-worker       2 hours ago    Up 2 hours (healthy)    0.0.0.0:18443->8443/tcp
+"""
+
+    def test_compose_ps_has_service_podman_names(self) -> None:
+        self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "postgres"))
+        self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "factum-web"))
+        self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "factum-worker"))
+        self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "icinga"))
+        self.assertFalse(install.compose_ps_has_service(self._PODMAN_PS, "missing"))
+        self.assertFalse(
+            install.compose_ps_has_service(
+                self._PODMAN_PS.replace("factum-dev_icinga_1", "gone"), "icinga"
+            )
+        )
+
+    def test_compose_ps_has_service_docker_names(self) -> None:
+        self.assertTrue(install.compose_ps_has_service(self._DOCKER_PS, "postgres"))
+        self.assertTrue(install.compose_ps_has_service(self._DOCKER_PS, "factum-web"))
+        self.assertTrue(install.compose_ps_has_service(self._DOCKER_PS, "factum-worker"))
+        self.assertTrue(install.compose_ps_has_service(self._DOCKER_PS, "icinga"))
+        self.assertFalse(install.compose_ps_has_service(self._DOCKER_PS, "missing"))
+
+    def test_compose_service_running_docker_ps_q(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="abc123\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "compose.sh").write_text("#!/bin/sh\n")
+            with patch.object(install.subprocess, "run", fake_run):
+                self.assertTrue(
+                    install.compose_service_running(Path(raw), "postgres")
+                )
+        self.assertEqual(calls[0][-3:], ["ps", "-q", "postgres"])
+        self.assertEqual(len(calls), 1)
+
+    def test_compose_service_running_podman_fallback(self) -> None:
+        def fake_run(cmd, **kwargs):
+            if cmd[-3:] == ["ps", "-q", "postgres"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    2,
+                    stdout="",
+                    stderr="podman-compose: error: unrecognized arguments: postgres\n",
+                )
+            if cmd[-1] == "ps":
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout=self._PODMAN_PS, stderr=""
+                )
+            raise AssertionError(cmd)
+
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "compose.sh").write_text("#!/bin/sh\n")
+            with patch.object(install.subprocess, "run", fake_run):
+                self.assertTrue(
+                    install.compose_service_running(Path(raw), "postgres")
+                )
+
+    def test_compose_service_running_podman_down(self) -> None:
+        def fake_run(cmd, **kwargs):
+            if cmd[-3:] == ["ps", "-q", "postgres"]:
+                return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="err\n")
+            if cmd[-1] == "ps":
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="CONTAINER ID  NAMES\n", stderr=""
+                )
+            raise AssertionError(cmd)
+
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "compose.sh").write_text("#!/bin/sh\n")
+            with patch.object(install.subprocess, "run", fake_run):
+                self.assertFalse(
+                    install.compose_service_running(Path(raw), "postgres")
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

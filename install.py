@@ -3068,14 +3068,40 @@ def compose_argv(compose_dir: Path) -> list[str]:
     return [str(script)]
 
 
+def compose_ps_has_service(ps_text: str, service: str) -> bool:
+    """True if `compose ps` table output includes a container for service.
+
+    Docker Compose v2 names `{project}-{service}-{n}`; podman-compose /
+    Compose v1 names `{project}_{service}_{n}`. The replica suffix keeps
+    `icinga` from matching `icingadb` / `icingaweb`.
+    """
+    pat = re.compile(
+        rf"(?:^|[\s/])(?:[^\s/]*[_\-])?{re.escape(service)}[_\-]\d+(?:\s|$)"
+    )
+    return any(pat.search(line) for line in ps_text.splitlines())
+
+
 def compose_service_running(compose_dir: Path, service: str) -> bool:
+    argv = compose_argv(compose_dir)
+    # Docker Compose v2: `ps -q SERVICE` prints that service's container ID.
+    # podman-compose 1.x accepts `ps -q` but rejects a service name (exit 2).
     proc = subprocess.run(
-        compose_argv(compose_dir) + ["ps", "-q", service],
+        argv + ["ps", "-q", service],
         check=False,
         capture_output=True,
         text=True,
     )
-    return proc.returncode == 0 and bool((proc.stdout or "").strip())
+    if proc.returncode == 0:
+        return bool((proc.stdout or "").strip())
+    proc = subprocess.run(
+        argv + ["ps"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return False
+    return compose_ps_has_service(proc.stdout or "", service)
 
 
 def install_compose_lab(
@@ -3134,7 +3160,33 @@ def install_compose_lab(
         [str(build_dir / "factum2-web"), "-f", str(host_yaml), "migrate"],
         dry_run=False,
     )
-    log(f"==> Restarting {', '.join(services)}")
+    # `up -d` is a no-op for already-running containers when compose config
+    # did not change. Bind-mounted binaries are replaced on disk, but a
+    # running factum2-worker keeps the previous inode (and stamped version)
+    # until it re-execs — the hub handshake then 409s with version mismatch.
+    # factum-web was stopped for migrate; dest workers and factum-worker
+    # were not. Restart dests first so they pick up the new stamp before
+    # the hub comes back. factum-worker's PID 1 *is* the bind-mounted
+    # binary: a mixed `compose restart` with the dests has left that
+    # container running the deleted inode, so recreate it on its own.
+    dest_services = [
+        s for s in services if s not in ("factum-web", "factum-worker")
+    ]
+    running_dest = [
+        s for s in dest_services if compose_service_running(compose_dir, s)
+    ]
+    if running_dest:
+        log(
+            f"==> Restarting {', '.join(running_dest)} "
+            "(bind-mounted binaries)"
+        )
+        run(argv + ["restart", *running_dest], dry_run=False)
+    log("==> Recreating factum-worker (bind-mounted binary)")
+    run(
+        argv + ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
+        dry_run=False,
+    )
+    log(f"==> Starting {', '.join(services)}")
     run(argv + ["up", "-d", "--no-deps", *services], dry_run=False)
     log("==> Done")
     log(f"    GUI at http://127.0.0.1:8091  (binaries from {build_dir})")
