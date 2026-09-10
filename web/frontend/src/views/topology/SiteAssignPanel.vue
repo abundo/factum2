@@ -26,11 +26,17 @@ function hasSite(d) {
   return !!(d?.site && d.site !== 'Default')
 }
 
+// NetBox latitude is Decimal(8, 6), longitude Decimal(9, 6) — xx.yyyyyy.
+function roundGps(n) {
+  if (n == null || Number.isNaN(Number(n))) return n
+  return Number(Number(n).toFixed(6))
+}
+
 function formatCoord(lat, lng) {
   if (lat == null || lng == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) {
     return ''
   }
-  return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`
+  return `${roundGps(lat).toFixed(6)}, ${roundGps(lng).toFixed(6)}`
 }
 
 function hardwareLabel(d) {
@@ -133,8 +139,8 @@ function submit() {
   if (!canSubmit.value) return
   const coords = effectiveCoords.value
   const payload = {
-    latitude: coords.lat,
-    longitude: coords.lng,
+    latitude: roundGps(coords.lat),
+    longitude: roundGps(coords.lng),
   }
   const name = siteName.value.trim()
   if (name) payload.site_name = name

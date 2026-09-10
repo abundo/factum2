@@ -741,8 +741,12 @@ onMounted(() => {
 
   map.on('click', (e) => {
     if (!pickingCoords.value) return
-    pickedCoords.value = { lat: e.lngLat.lat, lng: e.lngLat.lng }
-    lookupPickedAddress(e.lngLat.lat, e.lngLat.lng)
+    // NetBox GPS fields are xx.yyyyyy (6 decimal places); a raw map click
+    // has more digits and NetBox rejects the site POST with 400.
+    const lat = Number(e.lngLat.lat.toFixed(6))
+    const lng = Number(e.lngLat.lng.toFixed(6))
+    pickedCoords.value = { lat, lng }
+    lookupPickedAddress(lat, lng)
     rebuild()
   })
 

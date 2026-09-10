@@ -1,8 +1,10 @@
 package netbox
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/models"
@@ -56,6 +58,8 @@ func AssignDeviceLocation(db *gorm.DB, nb *netboxtool.NetboxClient, device model
 	if device.NetboxID == 0 {
 		return nil, invalidLocation("device is not synced from netbox")
 	}
+	in.Latitude = roundCoordPtr(in.Latitude)
+	in.Longitude = roundCoordPtr(in.Longitude)
 	if err := validateCoords(in.Latitude, in.Longitude); err != nil {
 		return nil, err
 	}
@@ -127,8 +131,8 @@ func assignDeviceCoordinates(db *gorm.DB, nb *netboxtool.NetboxClient, device mo
 	}
 	lat, lng := *in.Latitude, *in.Longitude
 	if err := nb.UpdateDevice(device.NetboxID, map[string]any{
-		"latitude":  lat,
-		"longitude": lng,
+		"latitude":  netboxCoord(lat),
+		"longitude": netboxCoord(lng),
 	}); err != nil {
 		return nil, err
 	}
@@ -143,6 +147,39 @@ func assignDeviceCoordinates(db *gorm.DB, nb *netboxtool.NetboxClient, device mo
 		return nil, err
 	}
 	return &AssignLocationResult{Device: outDevice}, nil
+}
+
+// NetBox Site/Device latitude is Decimal(8, 6) and longitude Decimal(9, 6)
+// (help text: "GPS coordinate in decimal format (xx.yyyyyy)"). Map clicks
+// produce more digits than that; posting the raw float gets a 400:
+// "ensure that there are no more than 8/9 digits in total".
+const netboxCoordDecimals = 6
+
+func formatNetboxCoord(v float64) string {
+	return strconv.FormatFloat(v, 'f', netboxCoordDecimals, 64)
+}
+
+func roundCoord(v float64) float64 {
+	r, err := strconv.ParseFloat(formatNetboxCoord(v), 64)
+	if err != nil {
+		return v
+	}
+	return r
+}
+
+func roundCoordPtr(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	r := roundCoord(*v)
+	return &r
+}
+
+// netboxCoord is a JSON number with exactly six decimal places so Django's
+// DecimalField max_digits check sees xx.yyyyyy / xxx.yyyyyy, not a float
+// with leftover binary precision.
+func netboxCoord(v float64) json.Number {
+	return json.Number(formatNetboxCoord(v))
 }
 
 func validateCoords(lat, lng *float64) error {
@@ -163,8 +200,8 @@ func validateCoords(lat, lng *float64) error {
 
 func siteCoordFields(lat, lng float64, address string) map[string]any {
 	fields := map[string]any{
-		"latitude":  lat,
-		"longitude": lng,
+		"latitude":  netboxCoord(lat),
+		"longitude": netboxCoord(lng),
 	}
 	if address != "" {
 		fields["physical_address"] = address

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -411,6 +412,70 @@ func TestAssignDeviceLocation_NotInNetbox(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidLocation) {
 		t.Fatalf("err = %v, want ErrInvalidLocation", err)
+	}
+}
+
+func TestNetboxCoord_SixDecimalPlaces(t *testing.T) {
+	// Map-click style values have more digits than NetBox Decimal(8,6)/Decimal(9,6).
+	if got := netboxCoord(59.329323599123456); got != "59.329324" {
+		t.Errorf("lat = %q, want 59.329324", got)
+	}
+	if got := netboxCoord(18.068580123456789); got != "18.068580" {
+		t.Errorf("lng = %q, want 18.068580", got)
+	}
+	if got := netboxCoord(-179.1234567); got != "-179.123457" {
+		t.Errorf("west lng = %q, want -179.123457", got)
+	}
+}
+
+func TestAssignDeviceLocation_RoundsCoordsForNetbox(t *testing.T) {
+	db := newImportTestDB(t)
+	dev := models.Device{Name: "rtr1", NetboxID: 42, CfSource: "netbox"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeSiteNetbox()
+	got, err := AssignDeviceLocation(db, fake.client(t), dev, AssignLocationInput{
+		SiteName:  "Stockholm",
+		Latitude:  ptr(59.329323599123456),
+		Longitude: ptr(18.068580123456789),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.created) != 1 {
+		t.Fatalf("created sites = %d, want 1", len(fake.created))
+	}
+	if s := formatCoordAny(fake.created[0]["latitude"]); s != "59.329324" {
+		t.Errorf("posted lat = %s, want 59.329324", s)
+	}
+	if s := formatCoordAny(fake.created[0]["longitude"]); s != "18.068580" {
+		t.Errorf("posted lng = %s, want 18.068580", s)
+	}
+	if got.Device.Latitude == nil || formatCoordAny(*got.Device.Latitude) != "59.329324" {
+		t.Errorf("stored lat = %v", got.Device.Latitude)
+	}
+	if got.Site == nil || formatCoordAny(got.Site.Latitude) != "59.329324" {
+		t.Errorf("stored site lat = %v", got.Site)
+	}
+}
+
+func formatCoordAny(v any) string {
+	switch n := v.(type) {
+	case float64:
+		return strconv.FormatFloat(n, 'f', 6, 64)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return string(n)
+		}
+		return strconv.FormatFloat(f, 'f', 6, 64)
+	default:
+		f := floatFrom(v)
+		if f == nil {
+			return ""
+		}
+		return strconv.FormatFloat(*f, 'f', 6, 64)
 	}
 }
 
