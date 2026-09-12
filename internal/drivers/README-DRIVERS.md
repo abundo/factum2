@@ -90,7 +90,11 @@ cross-device ELINE) plus a patch-panel entry cross-connecting this device's
 subinterface to it, or directly to another local subinterface for a
 same-device ELINE. The whole change runs inside an EOS "configure session"
 (`eosELINESession`) so it commits atomically - either everything lands, or
-the session aborts and nothing changes. Stale pseudowire/patch/subinterface
+the session aborts and nothing changes. GUI service push
+(`web.ApiServicePush`) records the operator on the device when the
+platform supports it: EOS as `configure session NAME description "..."`,
+SR OS as `commit comment "..."`, IOS-XR as unquoted `commit comment ...`.
+Stale pseudowire/patch/subinterface
 config from a previous apply of the same service is deleted first via the
 `cleanup` define in `templates/eos_eline.tmpl` (ApplyELINE renders the full
 template; RemoveELINE renders only `cleanup`), keyed deterministically by

@@ -83,6 +83,67 @@ func (ctrl *Controller) newDriverForDevice(device *models.Device, creds deviceCr
 	})
 }
 
+// deviceSyncCredentials is the username/password internal/device-sync would
+// use for deviceName: an exact DeviceSyncAuth row if one exists, otherwise
+// the literal "default" row. Service push/delete use this instead of
+// credentials typed in the browser (interface refresh/update still take
+// per-request creds).
+func (ctrl *Controller) deviceSyncCredentials(deviceName string) (deviceCredentialsRequest, error) {
+	var rows []models.DeviceSyncAuth
+	if err := ctrl.DB.Where("name IN ?", []string{deviceName, "default"}).Find(&rows).Error; err != nil {
+		return deviceCredentialsRequest{}, err
+	}
+	var exact, fallback *models.DeviceSyncAuth
+	for i := range rows {
+		switch rows[i].Name {
+		case deviceName:
+			exact = &rows[i]
+		case "default":
+			fallback = &rows[i]
+		}
+	}
+	auth := exact
+	if auth == nil {
+		auth = fallback
+	}
+	if auth == nil {
+		return deviceCredentialsRequest{}, fmt.Errorf("no device-sync credentials for %q (and no default)", deviceName)
+	}
+	if auth.Username == "" || auth.Password == "" {
+		return deviceCredentialsRequest{}, fmt.Errorf("device-sync credentials %q are incomplete", auth.Name)
+	}
+	return deviceCredentialsRequest{Username: auth.Username, Password: auth.Password}, nil
+}
+
+// sessionUserLabel is the logged-in operator's display name (Name, else
+// Username) for device commit comments. Empty when the caller is a service
+// token rather than a session user.
+func sessionUserLabel(c *echo.Context) string {
+	user, ok := c.Get("user").(models.User)
+	if !ok {
+		return ""
+	}
+	if name := strings.TrimSpace(user.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(user.Username)
+}
+
+// serviceCommitComment is the text a GUI-driven service push or teardown
+// records on the device (EOS session description, SR OS/IOS-XR commit
+// comment), e.g. "factum push CN00042 by Alice Andersson".
+func serviceCommitComment(c *echo.Context, serviceID, action string) string {
+	id := strings.TrimSpace(serviceID)
+	if id == "" {
+		id = "service"
+	}
+	who := sessionUserLabel(c)
+	if who == "" {
+		return fmt.Sprintf("factum %s %s", action, id)
+	}
+	return fmt.Sprintf("factum %s %s by %s", action, id, who)
+}
+
 func (ctrl *Controller) newNetboxClient(settings *models.Settings) (*netboxtool.NetboxClient, error) {
 	return netboxtool.NewNetboxClient(netboxtool.ConfigNetbox{
 		URL:   settings.NetboxApiURL,

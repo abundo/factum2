@@ -520,6 +520,11 @@ device, then replace, then add on the new device).
 No `PrepareELINEApply` on this path. Failures are per device; no automatic
 rollback of siblings.
 
+Device login uses `DeviceSyncAuth` (same credentials as device-sync: exact
+device name, else `default`). EOS records the operator on the
+configure-session description; SR OS and IOS-XR put it on the commit
+comment.
+
 Default tree delete of a service node **detaches** it. Devices are
 attach-only; Detach never deletes the DCIM row.
 

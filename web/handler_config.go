@@ -953,7 +953,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 				"old_device_id", old.AppliedDeviceID,
 				"old_iface", old.AppliedIface)
 		}
-		results, err := ctrl.removeEndpointSnapshotsFromDevices(c, &svc, toRemove, eps, body.Username, body.Password)
+		results, err := ctrl.removeEndpointSnapshotsFromDevices(c, &svc, toRemove, eps)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
@@ -988,7 +988,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
-		creds := deviceCredentialsRequest{Username: body.Username, Password: body.Password}
+		comment := serviceCommitComment(c, svc.ServiceID, "push")
 		fetchIDs := []uint{}
 		seenFetch := map[uint]bool{}
 		for _, ep := range rows {
@@ -1033,7 +1033,13 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 					return c.JSON(http.StatusBadGateway, map[string]any{"error": "device not found after rebind"})
 				}
 				slog.Info("service endpoint add", "service_id", svc.ID, "new_device_id", device.ID)
-				res := ctrl.applyServiceCLIToDevice(&svc, &device, addByDev[deviceID], rows, creds, settings)
+				creds, credErr := ctrl.deviceSyncCredentials(device.Name)
+				if credErr != nil {
+					return c.JSON(http.StatusBadGateway, map[string]any{
+						"error": fmt.Sprintf("endpoints saved but failed to add config on %s: %s", device.Name, credErr.Error()),
+					})
+				}
+				res := ctrl.applyServiceCLIToDevice(&svc, &device, addByDev[deviceID], rows, creds, settings, comment)
 				if res.Error != "" {
 					slog.Error("service endpoint add failed after replace", "service_id", svc.ID, "device", res.Device, "err", res.Error)
 					return c.JSON(http.StatusBadGateway, map[string]any{
@@ -1051,7 +1057,10 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	return c.JSON(http.StatusOK, rows)
 }
 
-// ApiServicePush renders the translation CLI object and applies CLI sessions.
+// ApiServicePush renders the translation CLI object and applies CLI
+// sessions. Device login uses DeviceSyncAuth (same credentials as
+// factum2-device-sync). EOS records the operator on the configure-session
+// description; SR OS and IOS-XR put it on `commit comment`.
 func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -1065,10 +1074,7 @@ func (ctrl *Controller) ApiServicePush(c *echo.Context) error {
 }
 
 func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Service) error {
-	var creds deviceCredentialsRequest
-	if err := c.Bind(&creds); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
+	comment := serviceCommitComment(c, svc.ServiceID, "push")
 	eps, err := cfgmgmt.ListEndpoints(ctrl.DB, svc.ID)
 	if err != nil {
 		return configWriteError(c, err)
@@ -1109,6 +1115,11 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 				Device: "device #" + strconv.FormatUint(uint64(deviceID), 10),
 				Error:  "device not found",
 			})
+			continue
+		}
+		creds, credErr := ctrl.deviceSyncCredentials(device.Name)
+		if credErr != nil {
+			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: credErr.Error()})
 			continue
 		}
 
@@ -1184,7 +1195,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: pushErr})
 			continue
 		}
-		if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
+		if err := applier.ApplyCLISession(svc.ServiceID, cmds, comment); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
 			continue
 		}

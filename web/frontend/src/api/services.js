@@ -38,8 +38,8 @@ export function updateServiceType(id, payload) {
   return http.put(`/service/${id}/type`, payload).then((res) => res.data)
 }
 
-export function pushService(id, payload) {
-  return http.post(`/service/${id}/push`, payload).then((res) => res.data)
+export function pushService(id) {
+  return http.post(`/service/${id}/push`).then((res) => res.data)
 }
 
 export function getServiceEndpoints(id) {
@@ -50,9 +50,11 @@ export function putServiceEndpoints(id, payload) {
   return http.put(`/service/${id}/endpoints`, payload).then((res) => res.data)
 }
 
-// payload is optional - {remove_from_netbox, remove_from_device, username,
-// password}, used to tear down NetBox objects and/or device config as
-// part of the delete (web.ApiServiceDelete/ServiceDeleteRequest).
+// payload is optional - {remove_from_netbox, remove_from_device}, used to
+// tear down NetBox objects and/or device config as part of the delete
+// (web.ApiServiceDelete/ServiceDeleteRequest). Device login uses Admin →
+// Device sync credentials, not the request body. Omitted entirely, this is
+// a plain local-only delete.
 export function deleteService(id, payload) {
   return http.delete(`/service/${id}`, { data: payload }).then((res) => res.data)
 }

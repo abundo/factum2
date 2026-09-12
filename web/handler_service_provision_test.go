@@ -23,7 +23,7 @@ type sessionStub struct {
 	applyErr error
 }
 
-func (s *sessionStub) ApplyCLISession(_ string, cmds []string) error {
+func (s *sessionStub) ApplyCLISession(_ string, cmds []string, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applied = true

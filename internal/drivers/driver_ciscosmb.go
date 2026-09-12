@@ -518,7 +518,7 @@ func (driver *CiscoSMBDriver) smbCLISession(cmds []string) error {
 }
 
 // ApplyCLISession implements CLISessionApplier for Cisco SMB.
-func (driver *CiscoSMBDriver) ApplyCLISession(_ string, cmds []string) error {
+func (driver *CiscoSMBDriver) ApplyCLISession(_ string, cmds []string, _ string) error {
 	return driver.smbCLISession(cmds)
 }
 

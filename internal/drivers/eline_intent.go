@@ -101,8 +101,10 @@ type ELINERemover interface {
 
 // CLISessionApplier applies already-rendered CLI lines in a config session.
 // EOS uses sessionName for "configure session"; other platforms ignore it.
+// comment names the operator when the platform supports it: EOS session
+// description, SR OS/IOS-XR `commit comment`. Empty means no annotation.
 type CLISessionApplier interface {
-	ApplyCLISession(sessionName string, cmds []string) error
+	ApplyCLISession(sessionName string, cmds []string, comment string) error
 }
 
 // ELINEPrepareChecker runs platform guards that ApplyELINE would have

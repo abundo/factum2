@@ -55,8 +55,9 @@ function normalizeIds(deviceIds) {
 
 /**
  * Shared device SSH credentials for interactive driver actions (interface
- * refresh/update, VLAN push, ELINE push/delete). Keyed per device so a
- * failed lab login does not wipe credentials for production boxes.
+ * refresh/update, VLAN push). Keyed per device so a failed lab login does
+ * not wipe credentials for production boxes. Service push/delete does not
+ * use this store — those logins come from DeviceSyncAuth on the server.
  */
 export const useDeviceCredentialsStore = defineStore('deviceCredentials', {
   state: () => {

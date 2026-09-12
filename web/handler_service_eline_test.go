@@ -20,7 +20,7 @@ func (s *elinePackStub) PrepareELINEApply(*drivers.ELINEIntent) error {
 	s.prepared = true
 	return s.prepareErr
 }
-func (s *elinePackStub) ApplyCLISession(string, []string) error {
+func (s *elinePackStub) ApplyCLISession(string, []string, string) error {
 	s.applied = true
 	return nil
 }
@@ -377,7 +377,7 @@ func TestApplyELINECmdsPackPathRunsPrepare(t *testing.T) {
 			PseudowireID: 1000001,
 		},
 	}
-	err := ctrl.applyELINECmds(stub, &models.Device{Name: "sros1", Platform: "sros"}, intent)
+	err := ctrl.applyELINECmds(stub, &models.Device{Name: "sros1", Platform: "sros"}, intent, "")
 	if err == nil || !strings.Contains(err.Error(), "sdp 127 already exists") {
 		t.Fatalf("err = %v, want SDP conflict", err)
 	}

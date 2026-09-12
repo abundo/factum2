@@ -121,6 +121,54 @@ func DeviceFQDN(name string, defaultDomain string) string {
 	return name + "." + defaultDomain
 }
 
+// commitCommentMax is a conservative length for `commit comment ...` text.
+// Nokia MD-CLI comments are historically 80 characters; EOS and XR allow
+// more, so 80 is the common floor.
+const commitCommentMax = 80
+
+// sanitizeCommitComment collapses whitespace and strips quotes/control
+// characters that would break `commit comment "..."` (EOS/SR OS) or
+// unquoted `commit comment ...` (IOS-XR). Empty after sanitizing means
+// the caller should emit a bare "commit".
+func sanitizeCommitComment(comment string) string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(comment))
+	for _, r := range comment {
+		switch {
+		case r == '"' || r == '\'' || r == '\\' || r == ';' || r == '|':
+			b.WriteByte(' ')
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Join(strings.Fields(b.String()), " ")
+	if len(out) > commitCommentMax {
+		out = strings.TrimSpace(out[:commitCommentMax])
+	}
+	return out
+}
+
+// CommitCLI is the last command of a candidate-session apply. Platforms
+// that support a commit comment (EOS, SR OS, IOS-XR) get
+// `commit comment "..."` (quoted=true) or `commit comment ...`
+// (quoted=false, XR) when comment is non-empty; otherwise a bare "commit".
+func CommitCLI(comment string, quoted bool) string {
+	comment = sanitizeCommitComment(comment)
+	if comment == "" {
+		return "commit"
+	}
+	if quoted {
+		return `commit comment "` + comment + `"`
+	}
+	return "commit comment " + comment
+}
+
 // NewDriverName builds a driver for the device called name, looking up
 // everything it needs over the primary's REST API rather than from Postgres:
 // the device itself (GET /api/device/name/:name, for its platform) and

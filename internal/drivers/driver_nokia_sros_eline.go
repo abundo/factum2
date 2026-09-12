@@ -142,9 +142,9 @@ func srosELINECommands(intent *ELINEIntent) ([]string, error) {
 // write with a single idle wait, not one wait per line: see
 // README-DRIVERS.md's "SR OS ELINE" section for why that matters for
 // ApplyELINE's latency.
-func (driver *NokiaDriver) srosELINESession(cmds []string) error {
+func (driver *NokiaDriver) srosELINESession(cmds []string, comment string) error {
 	full := append([]string{"//environment no more", "edit-config exclusive"}, cmds...)
-	full = append(full, "commit", "discard", "exit all", "quit-config")
+	full = append(full, CommitCLI(comment, true), "discard", "exit all", "quit-config")
 
 	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", full, nil)
 	if err != nil {
@@ -157,8 +157,8 @@ func (driver *NokiaDriver) srosELINESession(cmds []string) error {
 }
 
 // ApplyCLISession implements CLISessionApplier for Nokia SR OS.
-func (driver *NokiaDriver) ApplyCLISession(_ string, cmds []string) error {
-	return driver.srosELINESession(cmds)
+func (driver *NokiaDriver) ApplyCLISession(_ string, cmds []string, comment string) error {
+	return driver.srosELINESession(cmds, comment)
 }
 
 // PrepareELINEApply implements ELINEPrepareChecker: same SDP far-end guard
@@ -206,7 +206,7 @@ func (driver *NokiaDriver) ApplyELINE(intent *ELINEIntent) error {
 	if err != nil {
 		return err
 	}
-	return driver.srosELINESession(cmds)
+	return driver.srosELINESession(cmds, "")
 }
 
 // RemoveELINE implements ELINERemover for Nokia SR OS: deletes
@@ -218,5 +218,5 @@ func (driver *NokiaDriver) RemoveELINE(removal *ELINERemoval) error {
 	if err != nil {
 		return err
 	}
-	return driver.srosELINESession(cmds)
+	return driver.srosELINESession(cmds, "")
 }

@@ -67,9 +67,13 @@ CLI when a previous push snapshot exists.
 
 **Show configuration** on the edit dialog renders that CLI for the
 devices and interfaces currently selected (including unsaved picks). It
-does not contact the devices. Push still needs write permission and
-device credentials. Preview from the [Config](config.md) page before you
-rely on a new CLI object in production.
+does not contact the devices. Push still needs write permission. Devices
+are logged into with the credentials under **Admin → Device sync** (a
+per-device override, or the `default` row). On Arista EOS the configure-session description records who pushed; on
+Nokia SR OS and Cisco IOS-XR it is the commit comment, for example
+`factum push CN00042 by Alice Andersson`. Preview from the
+[Config](config.md) page before you rely on a new CLI object in
+production.
 
 NetBox L2VPN import fills endpoints on matching Factum services after
 device-sync and `factum2-netbox sync`; it does not create service rows.

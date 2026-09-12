@@ -15,9 +15,7 @@ import {
 } from '@/api/services'
 import { getServicePath, putServicePath } from '@/api/optical'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
-import PasswordInput from '@/components/PasswordInput.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
-import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import {
   findServiceScope,
   findServicesFolderId,
@@ -27,16 +25,6 @@ import {
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
-const {
-  credentialsDialog,
-  promptUsername,
-  promptPassword,
-  withCredentials,
-  submitCredentials,
-  cancelCredentials,
-  rememberSuccess,
-  rememberFailure,
-} = useDeviceCredentials()
 
 const props = defineProps({
   serviceId: { type: Number, default: null },
@@ -322,20 +310,8 @@ watch(
   { deep: true },
 )
 
-function endpointBindingsChanged() {
-  const oldKeys = (service.value.endpoints ?? [])
-    .map((ep) => `${ep.device_id}:${ep.interface_id}`)
-    .sort()
-    .join(',')
-  const newKeys = genericEndpoints.value
-    .map((ep) => `${ep.device_id}:${ep.interface_id}`)
-    .sort()
-    .join(',')
-  return oldKeys !== newKeys
-}
-
-function genericEndpointsPayload(username, password) {
-  const payload = {
+function genericEndpointsPayload() {
+  return {
     endpoints: genericEndpoints.value.map((ep) => ({
       role: 'interface',
       device_id: ep.device_id,
@@ -343,98 +319,66 @@ function genericEndpointsPayload(username, password) {
       fields: ep.fields || {},
     })),
   }
-  if (username) {
-    payload.username = username
-    payload.password = password
-  }
-  return payload
 }
 
 function saveGenericEndpoints() {
-  const needCreds = Boolean(service.value.applied_to_device) && endpointBindingsChanged()
-  const run = (username, password) => {
-    genericSaving.value = true
-    putServiceEndpoints(service.value.id, genericEndpointsPayload(username, password))
-      .then((rows) => {
-        if (username && password) {
-          rememberSuccess(genericDeviceIds(), username, password)
-        }
-        service.value.endpoints = rows
-        return getService(service.value.id)
+  genericSaving.value = true
+  putServiceEndpoints(service.value.id, genericEndpointsPayload())
+    .then((rows) => {
+      service.value.endpoints = rows
+      return getService(service.value.id)
+    })
+    .then((data) => {
+      if (data) {
+        service.value = { ...service.value, ...data }
+      }
+      toast.add({
+        color: 'success',
+        title: 'Successful',
+        description: 'Endpoints saved',
+        duration: 3000,
       })
-      .then((data) => {
-        if (data) {
-          service.value = { ...service.value, ...data }
-        }
-        toast.add({
-          color: 'success',
-          title: 'Successful',
-          description: 'Endpoints saved',
-          duration: 3000,
-        })
-        emit('saved')
+      emit('saved')
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+        duration: 4000,
       })
-      .catch((err) => {
-        if (username && password) {
-          rememberFailure(genericDeviceIds(), username, password)
-        }
-        toast.add({
-          color: 'error',
-          title: 'Error',
-          description: err?.response?.data?.error ?? 'Failed to save endpoints.',
-          duration: 4000,
-        })
-      })
-      .finally(() => {
-        genericSaving.value = false
-      })
-  }
-  if (needCreds) {
-    withCredentials(genericDeviceIds(), run, () => {
+    })
+    .finally(() => {
       genericSaving.value = false
     })
-    return
-  }
-  run('', '')
-}
-
-function genericDeviceIds() {
-  return [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
 }
 
 function saveAndPushGeneric() {
-  withCredentials(genericDeviceIds(), (username, password) => {
-    genericSaving.value = true
-    putServiceEndpoints(service.value.id, genericEndpointsPayload(username, password))
-      .then((rows) => {
-        service.value.endpoints = rows
-        emit('saved')
-        doPushGeneric(username, password)
+  genericSaving.value = true
+  putServiceEndpoints(service.value.id, genericEndpointsPayload())
+    .then((rows) => {
+      service.value.endpoints = rows
+      emit('saved')
+      doPushGeneric()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+        duration: 4000,
       })
-      .catch((err) => {
-        rememberFailure(genericDeviceIds(), username, password)
-        toast.add({
-          color: 'error',
-          title: 'Error',
-          description: err?.response?.data?.error ?? 'Failed to save endpoints.',
-          duration: 4000,
-        })
-      })
-      .finally(() => {
-        genericSaving.value = false
-      })
-  }, () => {
-    genericSaving.value = false
-  })
+    })
+    .finally(() => {
+      genericSaving.value = false
+    })
 }
 
-function doPushGeneric(username, password) {
-  const deviceIds = genericDeviceIds()
+function doPushGeneric() {
   genericPushing.value = true
-  pushService(service.value.id, { username, password })
+  pushService(service.value.id)
     .then((data) => {
       genericPushResults.value = data.results ?? []
-      rememberSuccess(deviceIds, username, password)
       const failed = genericPushResults.value.filter((r) => r.error)
       if (failed.length === 0) {
         toast.add({
@@ -453,7 +397,6 @@ function doPushGeneric(username, password) {
       }
     })
     .catch((err) => {
-      rememberFailure(deviceIds, username, password)
       toast.add({
         color: 'error',
         title: 'Push failed',
@@ -564,21 +507,15 @@ function hideDeleteDialog() {
   deleteRemoveDevice.value = false
 }
 
-function doDeleteService(username, password) {
+function doDeleteService() {
   if (!deleteTarget.value) return
 
-  const deviceIds = genericDeviceIds()
   deleting.value = true
   deleteService(deleteTarget.value.id, {
     remove_from_netbox: deleteRemoveNetbox.value,
     remove_from_device: deleteRemoveDevice.value,
-    username,
-    password,
   })
     .then(() => {
-      if (username && password) {
-        rememberSuccess(deviceIds, username, password)
-      }
       toast.add({
         color: 'success',
         title: 'Successful',
@@ -591,9 +528,6 @@ function doDeleteService(username, password) {
       emit('deleted')
     })
     .catch((err) => {
-      if (username && password) {
-        rememberFailure(deviceIds, username, password)
-      }
       toast.add({
         color: 'error',
         title: 'Error',
@@ -606,20 +540,12 @@ function doDeleteService(username, password) {
     })
 }
 
-// Removing the device config is a real device operation, so it needs
-// credentials. The backend blocks the whole delete (row kept) if that
-// cleanup fails. Closes the delete dialog first when credentials are
-// needed so UModal backdrops don't stack three deep.
+// Removing the device config is a real device operation; the backend
+// logs in with DeviceSyncAuth (same credentials as device-sync) and
+// blocks the whole delete (row kept) if that cleanup fails.
 function deleteServiceConfirmed() {
   if (!deleteTarget.value) return
-  if (deleteRemoveDevice.value) {
-    deleteDialog.value = false
-    withCredentials(genericDeviceIds(), doDeleteService, () => {
-      deleting.value = false
-    })
-  } else {
-    doDeleteService('', '')
-  }
+  doDeleteService()
 }
 
 function typePayload() {
@@ -679,17 +605,13 @@ function openUnrealize() {
   unrealizeOpen.value = true
 }
 
-function doUnrealize(username, password) {
-  const deviceIds = genericDeviceIds()
+function doUnrealize() {
   unrealizing.value = true
   unrealizeService(service.value.id, {
     remove_from_netbox: unrealizeRemoveNetbox.value,
     remove_from_device: unrealizeRemoveDevice.value,
-    username,
-    password,
   })
     .then((data) => {
-      if (username && password) rememberSuccess(deviceIds, username, password)
       unrealizeOpen.value = false
       if (data?.service) {
         service.value = { ...service.value, ...data.service }
@@ -700,7 +622,6 @@ function doUnrealize(username, password) {
       emit('saved')
     })
     .catch((err) => {
-      if (username && password) rememberFailure(deviceIds, username, password)
       toast.add({
         color: 'error',
         title: 'Error',
@@ -713,14 +634,7 @@ function doUnrealize(username, password) {
 }
 
 function confirmUnrealize() {
-  if (unrealizeRemoveDevice.value) {
-    unrealizeOpen.value = false
-    withCredentials(genericDeviceIds(), doUnrealize, () => {
-      unrealizing.value = false
-    })
-    return
-  }
-  doUnrealize('', '')
+  doUnrealize()
 }
 </script>
 
@@ -1058,48 +972,6 @@ function confirmUnrealize() {
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
       <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
-    </template>
-  </UModal>
-
-  <UModal
-    v-model:open="credentialsDialog"
-    title="Device credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-    @update:open="(isOpen) => !isOpen && cancelCredentials()"
-  >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label for="eline-prompt-username" class="text-sm text-muted-color">Username</label>
-          <UInput
-            id="eline-prompt-username"
-            v-model="promptUsername"
-            autocomplete="off"
-            autofocus
-            class="w-full"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="eline-prompt-password" class="text-sm text-muted-color">Password</label>
-          <PasswordInput
-            id="eline-prompt-password"
-            v-model="promptPassword"
-            autocomplete="new-password"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-      </div>
-    </template>
-
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
-      <UButton
-        label="Continue"
-        icon="i-lucide-check"
-        :disabled="!promptUsername || !promptPassword"
-        @click="submitCredentials"
-      />
     </template>
   </UModal>
 

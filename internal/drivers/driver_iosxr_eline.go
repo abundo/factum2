@@ -50,9 +50,10 @@ func iosxrELINECommands(intent *ELINEIntent) ([]string, error) {
 // iosxrELINESession pastes cmds inside a fresh "configure" candidate
 // session, commits, and always follows up with an unconditional "abort" -
 // see this file's package comment for why.
-func (driver *IOSXRDriver) iosxrELINESession(cmds []string) error {
+func (driver *IOSXRDriver) iosxrELINESession(cmds []string, comment string) error {
 	full := append([]string{"configure"}, cmds...)
-	full = append(full, "commit", "abort")
+	// XR's `commit comment` takes the rest of the line unquoted.
+	full = append(full, CommitCLI(comment, false), "abort")
 
 	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", full, nil)
 	if err != nil {
@@ -65,8 +66,8 @@ func (driver *IOSXRDriver) iosxrELINESession(cmds []string) error {
 }
 
 // ApplyCLISession implements CLISessionApplier for Cisco IOS-XR.
-func (driver *IOSXRDriver) ApplyCLISession(_ string, cmds []string) error {
-	return driver.iosxrELINESession(cmds)
+func (driver *IOSXRDriver) ApplyCLISession(_ string, cmds []string, comment string) error {
+	return driver.iosxrELINESession(cmds, comment)
 }
 
 // ApplyELINE implements ELINEApplier for Cisco IOS-XR.
@@ -75,7 +76,7 @@ func (driver *IOSXRDriver) ApplyELINE(intent *ELINEIntent) error {
 	if err != nil {
 		return err
 	}
-	return driver.iosxrELINESession(cmds)
+	return driver.iosxrELINESession(cmds, "")
 }
 
 // RemoveELINE implements ELINERemover for Cisco IOS-XR: tears down
@@ -89,5 +90,5 @@ func (driver *IOSXRDriver) RemoveELINE(removal *ELINERemoval) error {
 	if err != nil {
 		return err
 	}
-	return driver.iosxrELINESession(cmds)
+	return driver.iosxrELINESession(cmds, "")
 }

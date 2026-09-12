@@ -319,7 +319,7 @@ func (driver *VrpDriver) vrpCLISession(cmds []string) error {
 }
 
 // ApplyCLISession implements CLISessionApplier for Huawei VRP.
-func (driver *VrpDriver) ApplyCLISession(_ string, cmds []string) error {
+func (driver *VrpDriver) ApplyCLISession(_ string, cmds []string, _ string) error {
 	return driver.vrpCLISession(cmds)
 }
 

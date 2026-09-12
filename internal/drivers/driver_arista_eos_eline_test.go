@@ -219,6 +219,27 @@ func TestAristaApplyELINEStaleSubinterface(t *testing.T) {
 	}
 }
 
+func TestAristaApplyCLISessionCommitComment(t *testing.T) {
+	fake := newFakeEOS(t, respondText(""))
+	cmds := []string{"interface Ethernet1", "description test"}
+	if err := fake.driver(t).ApplyCLISession("CN00042", cmds, "factum push CN00042 by Alice"); err != nil {
+		t.Fatalf("ApplyCLISession: %v", err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.requests) < 2 {
+		t.Fatalf("got %d requests, want at least 2", len(fake.requests))
+	}
+	got := fake.requests[len(fake.requests)-1].Params.Cmds
+	wantFirst := `configure session factum-eline-CN00042 description "factum push CN00042 by Alice"`
+	if got[0] != wantFirst {
+		t.Errorf("first cmd = %q, want %q", got[0], wantFirst)
+	}
+	if got[len(got)-1] != "commit" {
+		t.Errorf("last cmd = %q, want %q", got[len(got)-1], "commit")
+	}
+}
+
 // ----------------------------------------------------------------------
 // RemoveELINE
 // ----------------------------------------------------------------------

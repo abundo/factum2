@@ -379,20 +379,17 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 }
 
 // ServiceDeleteRequest is the optional body for ApiServiceDelete and
-// ApiServiceUnrealize. Username/Password are only needed when
-// RemoveFromDevice is set (same per-request, never-persisted credentials
-// as deviceCredentialsRequest).
+// ApiServiceUnrealize. Device login uses DeviceSyncAuth (same credentials
+// as factum2-device-sync), not per-request username/password.
 type ServiceDeleteRequest struct {
-	RemoveFromNetbox bool   `json:"remove_from_netbox"`
-	RemoveFromDevice bool   `json:"remove_from_device"`
-	Username         string `json:"username"`
-	Password         string `json:"password"`
+	RemoveFromNetbox bool `json:"remove_from_netbox"`
+	RemoveFromDevice bool `json:"remove_from_device"`
 }
 
 func (ctrl *Controller) serviceCleanup(c *echo.Context, existing *models.Service, req ServiceDeleteRequest) (map[string]any, error) {
 	response := map[string]any{}
 	if req.RemoveFromDevice && existing.ServiceType != "" {
-		results, err := ctrl.removeServiceFromDevices(c, existing, req.Username, req.Password)
+		results, err := ctrl.removeServiceFromDevices(c, existing)
 		if err != nil {
 			return nil, &elineHTTPError{http.StatusBadRequest, err.Error()}
 		}

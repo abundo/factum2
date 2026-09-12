@@ -74,8 +74,10 @@ configured on the worker host.
 ## Device sync
 
 Credentials and options for `factum2-device-sync` (read on-device
-services into NetBox/Factum). Separate from the GUI device-interface
-refresh, which uses credentials you type in the session.
+services into NetBox/Factum). Service push and delete-from-device in the
+GUI use the same credentials (per-device override, or the `default`
+row). Separate from the GUI device-interface refresh, which still uses
+credentials you type in the session.
 
 ## AAA
 

@@ -22,7 +22,10 @@ var eosELINETemplate string
 // eosELINESession runs cmds (which must not include the surrounding
 // "configure session"/"commit" lines) inside a fresh, uniquely-named
 // configure session for name, shared by ApplyELINE and RemoveELINE.
-func (driver *AristaDriver) eosELINESession(name string, cmds []string) error {
+// comment is attached as EOS's session description
+// (`configure session NAME description "..."`) when non-empty - EOS has no
+// `commit comment` on configure sessions (see README-DRIVERS.md).
+func (driver *AristaDriver) eosELINESession(name string, cmds []string, comment string) error {
 	session := "factum-eline-" + name
 
 	// Best-effort pre-cleanup, deliberately its own request rather than the
@@ -40,7 +43,11 @@ func (driver *AristaDriver) eosELINESession(name string, cmds []string) error {
 	_, _ = eapiRunCmds(driver.p.Username, driver.p.Password, driver.p.Name,
 		[]string{"no configure session " + session}, eapiFormatText)
 
-	full := append([]string{"configure session " + session}, cmds...)
+	open := "configure session " + session
+	if desc := sanitizeCommitComment(comment); desc != "" {
+		open += ` description "` + desc + `"`
+	}
+	full := append([]string{open}, cmds...)
 	full = append(full, "commit")
 
 	_, err := eapiRunCmds(driver.p.Username, driver.p.Password, driver.p.Name, full, eapiFormatText)
@@ -57,8 +64,8 @@ func (driver *AristaDriver) eosELINESession(name string, cmds []string) error {
 }
 
 // ApplyCLISession implements CLISessionApplier for Arista EOS.
-func (driver *AristaDriver) ApplyCLISession(sessionName string, cmds []string) error {
-	return driver.eosELINESession(sessionName, cmds)
+func (driver *AristaDriver) ApplyCLISession(sessionName string, cmds []string, comment string) error {
+	return driver.eosELINESession(sessionName, cmds, comment)
 }
 
 // ApplyELINE implements ELINEApplier for Arista EOS.
@@ -69,7 +76,7 @@ func (driver *AristaDriver) ApplyELINE(intent *ELINEIntent) error {
 	if err != nil {
 		return err
 	}
-	return driver.eosELINESession(intent.Name, cmds)
+	return driver.eosELINESession(intent.Name, cmds, "")
 }
 
 // RemoveELINE implements ELINERemover for Arista EOS: tears down
@@ -85,5 +92,5 @@ func (driver *AristaDriver) RemoveELINE(removal *ELINERemoval) error {
 	if err != nil {
 		return err
 	}
-	return driver.eosELINESession(removal.Name, cmds)
+	return driver.eosELINESession(removal.Name, cmds, "")
 }

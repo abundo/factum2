@@ -3,8 +3,9 @@ import { useDeviceCredentialsStore } from '@/stores/deviceCredentials'
 
 /**
  * Prompt + cache helpers for device SSH credentials. Shared across
- * DeviceList, ServiceEditDialog, and VlanEditDialog so one successful
- * login is reused everywhere in the tab (sessionStorage-backed store).
+ * DeviceList and VlanEditDialog so one successful login is reused
+ * everywhere in the tab (sessionStorage-backed store). Service push/delete
+ * uses Admin → Device sync credentials on the server, not this cache.
  *
  * Usage:
  *   const {
@@ -14,7 +15,6 @@ import { useDeviceCredentialsStore } from '@/stores/deviceCredentials'
  *   } = useDeviceCredentials()
  *
  *   withCredentials(deviceId, (username, password) => { ... })
- *   // multi-device (ELINE): withCredentials([idA, idB], action)
  */
 export function useDeviceCredentials() {
   const store = useDeviceCredentialsStore()
