@@ -27,6 +27,7 @@ const form = reactive({
 })
 
 const canWrite = computed(() => authStore.canWrite)
+const activeTab = ref('records')
 const templateItems = computed(() => templates.value.map((s) => ({ label: s.name, value: s.id })))
 const selectedTemplate = computed(() =>
   templates.value.find((item) => Number(item.id) === Number(form.dns_template_id)),
@@ -42,6 +43,14 @@ const typeItems = [
   { label: 'Forward', value: 'forward' },
   { label: 'Reverse IPv4', value: 'reverse4' },
   { label: 'Reverse IPv6', value: 'reverse6' },
+]
+const typeLabel = computed(
+  () => typeItems.find((item) => item.value === form.type)?.label || form.type,
+)
+const tabItems = [
+  { label: 'Zone info', value: 'info', slot: 'info' },
+  { label: 'SOA', value: 'soa', slot: 'soa' },
+  { label: 'Records', value: 'records', slot: 'records' },
 ]
 
 function errMsg(err, fallback) {
@@ -169,123 +178,121 @@ async function save() {
     <div class="flex items-center gap-2 mb-4">
       <UButton to="/dns/zones" color="neutral" variant="ghost" icon="i-lucide-arrow-left" />
       <div class="font-semibold text-lg">{{ form.name }}</div>
+      <UBadge color="neutral" variant="subtle">{{ typeLabel }}</UBadge>
     </div>
     <UCard class="w-full min-w-0">
-      <form class="space-y-4" @submit.prevent="save">
-        <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" :disabled="!canWrite" />
-          </UFormField>
-          <UFormField label="Type">
-            <USelect v-model="form.type" :items="typeItems" class="w-full" :disabled="!canWrite" />
-          </UFormField>
-          <UFormField
-            label="DNS template"
-            hint="NS and SOA records come from this template."
-            class="sm:col-span-2"
-          >
-            <USelect
-              v-model="form.dns_template_id"
-              :items="templateItems"
-              class="w-full"
-              :disabled="!canWrite"
-            />
-          </UFormField>
-        </div>
-        <UCollapsible v-if="selectedSoa" class="rounded-md ring ring-default px-3 py-1.5">
-          <template #default="{ open }">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="ghost"
-              class="w-full justify-start"
-              :icon="open ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-              :aria-expanded="open"
-            >
-              <span class="font-medium">SOA</span>
-              <span class="text-muted-color text-sm font-normal truncate ms-2">
-                Values come from the selected DNS template.
-              </span>
-            </UButton>
-          </template>
-          <template #content>
-            <div class="pt-2 pb-2">
-              <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                <UFormField label="Primary nameserver (MNAME)">
-                  <UInput :model-value="selectedSoa.mname" disabled class="w-full" />
+      <form @submit.prevent="save">
+        <UTabs v-model="activeTab" :items="tabItems">
+          <template #info>
+            <div class="space-y-4 pt-4">
+              <div v-if="canWrite" class="flex">
+                <UButton type="submit" :loading="saving">Save</UButton>
+              </div>
+              <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+                <UFormField label="Name">
+                  <UInput v-model="form.name" class="w-full" :disabled="!canWrite" />
                 </UFormField>
-                <UFormField label="Email (RNAME)">
-                  <UInput :model-value="selectedSoa.rname" disabled class="w-full" />
+                <UFormField
+                  label="DNS template"
+                  hint="NS and SOA records come from this template."
+                  class="sm:col-span-2"
+                >
+                  <USelect
+                    v-model="form.dns_template_id"
+                    :items="templateItems"
+                    class="w-full"
+                    :disabled="!canWrite"
+                  />
                 </UFormField>
               </div>
-              <div class="grid grid-cols-2 gap-x-4 gap-y-3 mt-3 sm:grid-cols-5">
-                <UFormField label="Serial">
-                  <UInput model-value="Calculated" disabled class="w-full" />
-                </UFormField>
-                <UFormField label="TTL">
-                  <UInput :model-value="selectedSoa.ttl" disabled class="w-full" />
-                </UFormField>
-                <UFormField label="Refresh">
-                  <UInput :model-value="selectedSoa.refresh" disabled class="w-full" />
-                </UFormField>
-                <UFormField label="Retry">
-                  <UInput :model-value="selectedSoa.retry" disabled class="w-full" />
-                </UFormField>
-                <UFormField label="Expire">
-                  <UInput :model-value="selectedSoa.expire" disabled class="w-full" />
-                </UFormField>
-              </div>
-              <div class="mt-3">
-                <div class="text-sm font-medium mb-1">Nameservers</div>
-                <ul v-if="selectedNameservers.length" class="text-sm font-mono">
-                  <li v-for="ns in selectedNameservers" :key="ns">{{ ns }}</li>
-                </ul>
-                <p v-else class="text-muted-color text-sm">—</p>
-              </div>
+              <UFormField label="Comments" description="Operator notes. Not part of the DNS RDATA.">
+                <UTextarea
+                  v-model="form.comment"
+                  class="w-full font-mono"
+                  :rows="8"
+                  :disabled="!canWrite"
+                  placeholder="Notes for this zone…"
+                />
+              </UFormField>
             </div>
           </template>
-        </UCollapsible>
-        <UFormField label="Comments" description="Operator notes. Not part of the DNS RDATA.">
-          <UTextarea
-            v-model="form.comment"
-            class="w-full font-mono"
-            :rows="3"
-            :disabled="!canWrite"
-            placeholder="Notes for this zone…"
-          />
-        </UFormField>
-        <UFormField
-          class="w-full min-w-0"
-          label="Records"
-          description="Leave TTL empty to use the template default. SOA and apex NS come from the DNS template and are skipped on import."
-        >
-          <ZoneRecordsTable v-model="form.records" :disabled="!canWrite">
-            <template #actions>
-              <UButton
-                type="button"
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-download"
-                title="Download as a BIND zone file"
-                @click="exportZoneFile"
-              >
-                Export
-              </UButton>
-              <UButton
-                v-if="canWrite"
-                type="button"
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-upload"
-                title="Replaces all records. SOA and NS for @ are ignored."
-                @click="openImport"
-              >
-                Import
-              </UButton>
-            </template>
-          </ZoneRecordsTable>
-        </UFormField>
-        <UButton v-if="canWrite" type="submit" :loading="saving">Save</UButton>
+          <template #soa>
+            <div class="space-y-4 pt-4">
+              <p class="text-muted-color text-sm">Values come from the selected DNS template.</p>
+              <template v-if="selectedSoa">
+                <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                  <UFormField label="Primary nameserver (MNAME)">
+                    <UInput :model-value="selectedSoa.mname" disabled class="w-full" />
+                  </UFormField>
+                  <UFormField label="Email (RNAME)">
+                    <UInput :model-value="selectedSoa.rname" disabled class="w-full" />
+                  </UFormField>
+                </div>
+                <div class="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+                  <UFormField label="Serial">
+                    <UInput model-value="Calculated" disabled class="w-full" />
+                  </UFormField>
+                  <UFormField label="TTL">
+                    <UInput :model-value="selectedSoa.ttl" disabled class="w-full" />
+                  </UFormField>
+                  <UFormField label="Refresh">
+                    <UInput :model-value="selectedSoa.refresh" disabled class="w-full" />
+                  </UFormField>
+                  <UFormField label="Retry">
+                    <UInput :model-value="selectedSoa.retry" disabled class="w-full" />
+                  </UFormField>
+                  <UFormField label="Expire">
+                    <UInput :model-value="selectedSoa.expire" disabled class="w-full" />
+                  </UFormField>
+                </div>
+                <div>
+                  <div class="text-sm font-medium mb-1">Nameservers</div>
+                  <ul v-if="selectedNameservers.length" class="text-sm font-mono">
+                    <li v-for="ns in selectedNameservers" :key="ns">{{ ns }}</li>
+                  </ul>
+                  <p v-else class="text-muted-color text-sm">—</p>
+                </div>
+              </template>
+              <p v-else class="text-muted-color text-sm">Select a DNS template to see SOA values.</p>
+            </div>
+          </template>
+          <template #records>
+            <div class="pt-4">
+              <p class="text-muted-color text-sm mb-3">
+                Leave TTL empty to use the template default. SOA and apex NS come from the DNS
+                template and are skipped on import.
+              </p>
+              <ZoneRecordsTable v-model="form.records" :disabled="!canWrite">
+                <template #leading-actions>
+                  <UButton v-if="canWrite" type="submit" :loading="saving">Save</UButton>
+                </template>
+                <template #actions>
+                  <UButton
+                    type="button"
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-download"
+                    title="Download as a BIND zone file"
+                    @click="exportZoneFile"
+                  >
+                    Export
+                  </UButton>
+                  <UButton
+                    v-if="canWrite"
+                    type="button"
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-upload"
+                    title="Replaces all records. SOA and NS for @ are ignored."
+                    @click="openImport"
+                  >
+                    Import
+                  </UButton>
+                </template>
+              </ZoneRecordsTable>
+            </div>
+          </template>
+        </UTabs>
       </form>
     </UCard>
     <input

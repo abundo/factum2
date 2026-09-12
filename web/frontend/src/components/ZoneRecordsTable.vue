@@ -1,9 +1,46 @@
 <template>
   <div class="space-y-2">
+    <div
+      v-if="!disabled || $slots.actions || $slots['leading-actions']"
+      class="flex flex-wrap gap-2"
+    >
+      <slot name="leading-actions" />
+      <UButton
+        v-if="!disabled"
+        type="button"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-plus"
+        @click="addRow"
+      >
+        {{ t('zoneRecords.add') }}
+      </UButton>
+      <UButton
+        v-if="!disabled"
+        type="button"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-plus"
+        @click="addComment"
+      >
+        {{ t('zoneRecords.addComment') }}
+      </UButton>
+      <UButton
+        v-if="!disabled"
+        type="button"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-folder-plus"
+        @click="addDomain"
+      >
+        {{ t('zoneRecords.addDomain') }}
+      </UButton>
+      <slot name="actions" />
+    </div>
     <UContextMenu :items="contextItems" :disabled="disabled">
       <div
         ref="tableWrap"
-        class="zone-records-table w-full rounded-md ring ring-default overflow-auto"
+        class="zone-records-table w-full rounded-md ring ring-default overflow-auto max-h-[calc(100dvh-16rem)]"
         :data-changed-count="changedKeys.size"
         @contextmenu.capture="captureMenuRow"
       >
@@ -302,39 +339,6 @@
         </UTable>
       </div>
     </UContextMenu>
-    <div v-if="!disabled || $slots.actions" class="flex flex-wrap gap-2">
-      <UButton
-        v-if="!disabled"
-        type="button"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-plus"
-        @click="addRow"
-      >
-        {{ t('zoneRecords.add') }}
-      </UButton>
-      <UButton
-        v-if="!disabled"
-        type="button"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-plus"
-        @click="addComment"
-      >
-        {{ t('zoneRecords.addComment') }}
-      </UButton>
-      <UButton
-        v-if="!disabled"
-        type="button"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-folder-plus"
-        @click="addDomain"
-      >
-        {{ t('zoneRecords.addDomain') }}
-      </UButton>
-      <slot name="actions" />
-    </div>
   </div>
 </template>
 
