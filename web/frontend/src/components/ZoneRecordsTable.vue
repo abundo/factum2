@@ -421,11 +421,12 @@ let ghostEl = null
 let lineEl = null
 
 const COMMENT_COLSPAN = computed(() => (dhcpEnabled.value ? 6 : 5))
-const COL_MIN = { name: 72, ttl: 48, type: 72, mac: 96, description: 96 }
+const COL_MIN = { name: 72, ttl: 48, type: 72, value: 96, mac: 96, description: 96 }
 const colWidths = reactive({
   name: 144,
   ttl: 64,
   type: 96,
+  value: 200,
   mac: 160,
   description: 200,
 })
@@ -440,6 +441,7 @@ const resizeHeaderCols = computed(() => {
     { key: 'name', label: t('common.name') },
     { key: 'ttl', label: t('zones.ttl') },
     { key: 'type', label: t('zoneRecords.type') },
+    { key: 'value', label: t('zoneRecords.value') },
   ]
   if (dhcpEnabled.value) cols.push({ key: 'mac', label: t('zoneRecords.mac') })
   cols.push({ key: 'description', label: t('zoneRecords.description') })
@@ -666,6 +668,10 @@ function colWidthStyle(key) {
   return { width: `${colWidths[key]}px`, minWidth: `${colWidths[key]}px` }
 }
 
+function colFlexStyle(key) {
+  return { minWidth: `${colWidths[key]}px` }
+}
+
 function isAddressRecord(row) {
   const type = (row?.type || '').toUpperCase()
   return type === 'A' || type === 'AAAA'
@@ -773,7 +779,10 @@ const columns = computed(() => [
     accessorKey: 'value',
     header: t('zoneRecords.value'),
     enableSorting: false,
-    meta: { class: { td: spanningSkipClass } },
+    meta: {
+      class: { td: spanningSkipClass },
+      style: { th: () => colFlexStyle('value'), td: () => colFlexStyle('value') },
+    },
   },
   ...(dhcpEnabled.value
     ? [
@@ -1193,6 +1202,7 @@ function endDrag() {
 let resizeKey = null
 let resizeStartX = 0
 let resizeStartW = 0
+let resizeStartDescW = 0
 
 function startResize(key, event) {
   if (event.button !== 0) return
@@ -1200,7 +1210,14 @@ function startResize(key, event) {
   event.stopPropagation()
   resizeKey = key
   resizeStartX = event.clientX
-  resizeStartW = colWidths[key]
+  if (key === 'value') {
+    const th = event.currentTarget.closest('[data-slot="th"]')
+    resizeStartW = th?.getBoundingClientRect().width ?? colWidths.value
+    colWidths.value = resizeStartW
+    resizeStartDescW = colWidths.description
+  } else {
+    resizeStartW = colWidths[key]
+  }
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
   window.addEventListener('pointermove', onResizeMove)
@@ -1210,8 +1227,20 @@ function startResize(key, event) {
 
 function onResizeMove(event) {
   if (!resizeKey) return
+  const delta = event.clientX - resizeStartX
   const min = COL_MIN[resizeKey] ?? 48
-  colWidths[resizeKey] = Math.max(min, resizeStartW + (event.clientX - resizeStartX))
+  if (resizeKey !== 'value') {
+    colWidths[resizeKey] = Math.max(min, resizeStartW + delta)
+    return
+  }
+  const descMin = COL_MIN.description ?? 48
+  const valueW = Math.max(min, resizeStartW + delta)
+  let descW = Math.max(descMin, resizeStartDescW - delta)
+  if (delta < 0 && resizeStartW + delta <= min) {
+    descW = Math.max(descMin, resizeStartDescW + resizeStartW - min)
+  }
+  colWidths.value = valueW
+  colWidths.description = descW
 }
 
 function onResizeUp() {
