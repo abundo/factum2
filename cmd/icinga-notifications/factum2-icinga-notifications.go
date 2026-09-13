@@ -12,16 +12,25 @@
 // github.com/jessevdk/go-flags instead, using the same short/long flag
 // names as the Python script this replaces so existing Icinga2
 // NotificationCommand definitions don't need to change.
+//
+// Do not enable Icinga2's debuglog to troubleshoot this command - that
+// file records every check execution and the full argv (including huge
+// -o plugin output). This binary writes a compact per-run log of its
+// own (see --debug-log) and a one-line syslog result on failure, or on
+// success when -v/--SYSLOG is true. --dry-run renders the email to
+// stdout without sending.
 package main
 
 import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"log/slog"
+	"io"
+	"log/syslog"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,10 +78,25 @@ type commonArgs struct {
 
 	// ConfigFile/TemplateFile aren't sent by Icinga - they're this binary's
 	// own flags, added to the same NotificationCommand definition that
-	// supplies everything above.
+	// supplies everything above. DebugLog/DryRun are the same: operators
+	// pass them on a manual invocation, not from Icinga macros.
 	ConfigFile   string `long:"config-file" default:"/etc/factum2/factum2-worker.yaml"`
 	TemplateFile string `long:"template-file" default:"/etc/factum2/icinga-notification-email.tpl"`
+	DebugLog     string `long:"debug-log"`
+	DryRun       bool   `long:"dry-run"`
 }
+
+// parseOpts omits flags.PrintErrors so a missing Icinga macro does not dump
+// the full usage wall into Icinga's captured stderr (and thus debug.log).
+const parseOpts = flags.HelpFlag | flags.PassDoubleDash
+
+var (
+	fetchIcingaConfig = icinga.FetchRemoteConfig
+	newIcingaClient   = func(c util.ConfigIcinga) icingaDownFetcher {
+		return icinga.NewIcingaClient(c)
+	}
+	mailSend = mail.Send
+)
 
 type hostArgs struct {
 	commonArgs
@@ -127,7 +151,7 @@ func parseArgs(args []string) (notification, error) {
 
 	if isService {
 		var p serviceArgs
-		if _, err := flags.NewParser(&p, flags.Default).ParseArgs(rest); err != nil {
+		if _, err := flags.NewParser(&p, parseOpts).ParseArgs(rest); err != nil {
 			return n, err
 		}
 		n.commonArgs = p.commonArgs
@@ -139,7 +163,7 @@ func parseArgs(args []string) (notification, error) {
 	}
 
 	var p hostArgs
-	if _, err := flags.NewParser(&p, flags.Default).ParseArgs(rest); err != nil {
+	if _, err := flags.NewParser(&p, parseOpts).ParseArgs(rest); err != nil {
 		return n, err
 	}
 	n.commonArgs = p.commonArgs
@@ -165,51 +189,93 @@ func (n notification) subject(defaultDomain string) string {
 // --------------------------------------------------------------------------
 
 func main() {
-	if err := run(); err != nil {
+	if err := runArgs(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "factum2-icinga-notifications:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
+func runArgs(args []string) error {
+	if len(args) == 1 && args[0] == "--version" {
 		fmt.Println(buildinfo.Version)
 		return nil
 	}
 
-	n, err := parseArgs(os.Args[1:])
+	rl := newRunLogger(peekFlag(args, "--debug-log"), syslogEnabled(peekFlag(args, "-v", "--SYSLOG")))
+	defer rl.Close()
+	rl.write(fmt.Sprintf("start uid=%d gid=%d debug-log=%s args=%s", os.Getuid(), os.Getgid(), rl.path, summarizeArgs(args)), false)
+
+	n, err := parseArgs(args)
 	if err != nil {
+		rl.fail("parse", err)
 		return err
 	}
+	if syslogEnabled(n.Syslog) && rl.syslog == nil {
+		rl.syslog = openSyslog()
+	}
 
-	writeDebugLog(os.Args)
+	state := n.HostState
+	service := ""
+	if n.IsService {
+		state = n.ServiceState
+		service = n.ServiceDisplayName
+	}
+	rl.write(fmt.Sprintf("notification type=%s host=%s service=%s state=%s to=%s dry-run=%t",
+		n.NotificationType, n.HostName, service, state, n.UserEmail, n.DryRun), false)
 
 	config, err := loadConfig(n.ConfigFile)
 	if err != nil {
-		return fmt.Errorf("loading config %q: %w", n.ConfigFile, err)
+		err = fmt.Errorf("loading config %q: %w", n.ConfigFile, err)
+		rl.fail("config", err)
+		return err
 	}
+	rl.write(fmt.Sprintf("config path=%s %s", n.ConfigFile, socketStatus(&config.Factum)), false)
 
-	icingaConfig, err := icinga.FetchRemoteConfig(&config.Factum)
+	icingaConfig, err := fetchIcingaConfig(&config.Factum)
 	if err != nil {
-		return fmt.Errorf("fetching icinga config: %w", err)
+		err = fmt.Errorf("fetching icinga config: %w", err)
+		rl.fail("remote-config", err)
+		return err
 	}
+	rl.write(fmt.Sprintf("remote-config smtp_host=%s smtp_port=%d smtp_tls=%s sender=%s icinga_api=%s",
+		icingaConfig.SmtpHost, icingaConfig.SmtpPort, icingaConfig.SmtpTLSMode,
+		icingaConfig.EmailSender, icingaConfig.URL), false)
 
 	data := buildEmailData(n, icingaConfig.DefaultDomain)
-	fetchDownSummaries(icinga.NewIcingaClient(*icingaConfig), &data)
+	fetchDownSummaries(newIcingaClient(*icingaConfig), &data)
+	rl.write(fmt.Sprintf("down-summaries hosts=%d services=%d hosts_err=%s services_err=%s",
+		len(data.HostsDown), len(data.ServicesDown),
+		strconv.Quote(data.HostsDownError), strconv.Quote(data.ServicesDownError)), false)
 
 	body, err := renderTemplate(n.TemplateFile, data)
 	if err != nil {
-		return fmt.Errorf("rendering email template %q: %w", n.TemplateFile, err)
+		err = fmt.Errorf("rendering email template %q: %w", n.TemplateFile, err)
+		rl.fail("template", err)
+		return err
 	}
+	rl.write(fmt.Sprintf("template path=%s bytes=%d", n.TemplateFile, len(body)), false)
 
 	sender := n.MailFrom
 	if sender == "" {
 		sender = icingaConfig.CommonConfig.EmailSender
 	}
+	subj := n.subject(icingaConfig.DefaultDomain)
 
-	if err := mail.Send(icingaConfig.CommonConfig, sender, n.UserEmail, n.subject(icingaConfig.DefaultDomain), body); err != nil {
-		return fmt.Errorf("sending email: %w", err)
+	if n.DryRun {
+		fmt.Fprintf(os.Stdout, "From: %s\nTo: %s\nSubject: %s\n\n%s", sender, n.UserEmail, subj, body)
+		if !strings.HasSuffix(body, "\n") {
+			fmt.Fprintln(os.Stdout)
+		}
+		rl.ok("dry-run", sender, n.UserEmail, subj)
+		return nil
 	}
+
+	if err := mailSend(icingaConfig.CommonConfig, sender, n.UserEmail, subj, body); err != nil {
+		err = fmt.Errorf("sending email: %w", err)
+		rl.fail("smtp", err)
+		return err
+	}
+	rl.ok("sent", sender, n.UserEmail, subj)
 	return nil
 }
 
@@ -229,24 +295,184 @@ func loadConfig(path string) (*util.ConfigAgentRoot, error) {
 	return &config, nil
 }
 
-// writeDebugLog is a best-effort troubleshooting aid, mirroring the Python
-// script's argv dump to /tmp/mail_notification.log. Unlike the Python, a
-// failure here must never abort sending the actual alert - it's purely
-// diagnostic.
-func writeDebugLog(args []string) {
-	f, err := os.OpenFile("/tmp/mail_notification.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		slog.Warn("cannot write notification debug log", "error", err)
+// --------------------------------------------------------------------------
+//
+// # Run log
+//
+// Icinga2's debug.log is the wrong place to debug this command: it records
+// every check, API call, and the full NotificationCommand argv (including
+// huge -o plugin output). A failed notification still shows up as
+// warning/PluginNotificationTask in icinga2.log; everything else belongs
+// here. systemd PrivateTmp on icinga2.service also hides /tmp from the
+// host, so we prefer Icinga's own log directory over /tmp.
+//
+// --------------------------------------------------------------------------
+
+var defaultDebugLogPaths = []string{
+	"/var/log/icinga2/factum2-icinga-notifications.log",
+	"/var/log/factum2/icinga-notifications.log",
+	"/tmp/mail_notification.log",
+}
+
+const argValueMax = 80
+
+type runLogger struct {
+	w      io.Writer
+	closer io.Closer
+	syslog *syslog.Writer
+	start  time.Time
+	path   string
+}
+
+func newRunLogger(explicitPath string, wantSyslog bool) *runLogger {
+	l := &runLogger{start: time.Now(), path: "none"}
+	if f, path, err := openDebugLogFile(explicitPath); err == nil && f != nil {
+		l.w = f
+		l.closer = f
+		l.path = path
+	}
+	if wantSyslog {
+		l.syslog = openSyslog()
+	}
+	return l
+}
+
+func (l *runLogger) Close() {
+	if l.syslog != nil {
+		l.syslog.Close()
+		l.syslog = nil
+	}
+	if l.closer != nil {
+		l.closer.Close()
+		l.closer = nil
+	}
+}
+
+func (l *runLogger) write(msg string, fail bool) {
+	line := time.Now().UTC().Format(time.RFC3339) + " " + msg
+	if l.w != nil {
+		fmt.Fprintln(l.w, line)
+	}
+	if l.syslog != nil {
+		if fail {
+			_ = l.syslog.Err(msg)
+		} else {
+			_ = l.syslog.Info(msg)
+		}
 		return
 	}
-	defer f.Close()
-
-	fmt.Fprintln(f, strings.Join(args, " "))
-	fmt.Fprintln(f, "arguments:")
-	for i, a := range args {
-		fmt.Fprintf(f, "  %2d %s\n", i, a)
+	if fail {
+		if w := openSyslog(); w != nil {
+			_ = w.Err(msg)
+			w.Close()
+		}
 	}
-	fmt.Fprintln(f)
+}
+
+func (l *runLogger) fail(step string, err error) {
+	l.write(fmt.Sprintf("result=fail step=%s err=%s duration=%s",
+		step, strconv.Quote(err.Error()), time.Since(l.start).Round(time.Millisecond)), true)
+}
+
+func (l *runLogger) ok(result, from, to, subject string) {
+	l.write(fmt.Sprintf("result=%s from=%s to=%s subject=%s duration=%s",
+		result, from, to, strconv.Quote(subject), time.Since(l.start).Round(time.Millisecond)), false)
+}
+
+func openDebugLogFile(explicit string) (*os.File, string, error) {
+	if explicit == "none" || explicit == "0" {
+		return nil, "", nil
+	}
+	paths := defaultDebugLogPaths
+	if explicit != "" {
+		paths = []string{explicit}
+	}
+	var errs []string
+	for _, p := range paths {
+		f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+		if err == nil {
+			return f, p, nil
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", p, err))
+	}
+	return nil, "", fmt.Errorf("%s", strings.Join(errs, "; "))
+}
+
+var openSyslog = func() *syslog.Writer {
+	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "factum2-icinga-notifications")
+	if err != nil {
+		return nil
+	}
+	return w
+}
+
+func syslogEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// peekFlag returns the value of the first matching --name / --name=value /
+// -x value flag. Used to open the run log before go-flags parse, so a
+// missing required macro is still recorded.
+func peekFlag(args []string, names ...string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		for _, n := range names {
+			if a == n {
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					return args[i+1]
+				}
+				return ""
+			}
+			prefix := n + "="
+			if strings.HasPrefix(a, prefix) {
+				return strings.TrimPrefix(a, prefix)
+			}
+		}
+	}
+	return ""
+}
+
+func summarizeArgs(args []string) string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") && !strings.Contains(a, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			out = append(out, a, truncateArg(args[i+1]))
+			i++
+			continue
+		}
+		if j := strings.IndexByte(a, '='); j >= 0 && strings.HasPrefix(a, "-") {
+			out = append(out, a[:j+1]+truncateArg(a[j+1:]))
+			continue
+		}
+		out = append(out, truncateArg(a))
+	}
+	return strings.Join(out, " ")
+}
+
+func truncateArg(s string) string {
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	if len(s) <= argValueMax {
+		return s
+	}
+	return fmt.Sprintf("%s...<%d bytes>", s[:argValueMax], len(s))
+}
+
+func socketStatus(cfg *util.ConfigFactum) string {
+	p := util.HubSocketPath(cfg.Socket)
+	if p == "" {
+		return "socket=disabled"
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return fmt.Sprintf("socket=%s err=%s", p, strconv.Quote(err.Error()))
+	}
+	return fmt.Sprintf("socket=%s mode=%s", p, fi.Mode())
 }
 
 // --------------------------------------------------------------------------
