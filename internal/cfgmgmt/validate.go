@@ -590,21 +590,31 @@ func validateFieldSchema(f *models.FieldSchema, named bool, depth int) error {
 		if !fieldNameRe.MatchString(f.Name) {
 			return statusErrf(400, "invalid field name %q", f.Name)
 		}
+	} else if f.Required {
+		return statusErrf(400, "%s list items cannot set required", fieldLabel(*f))
 	}
 	if !ValidFieldType(f.Type) {
 		return statusErrf(400, "unknown field type %q", f.Type)
 	}
 	f.Type = NormalizeFieldType(f.Type)
 
-	if f.Min != nil && f.Max != nil && *f.Min > *f.Max {
-		return statusErrf(400, "%s min is greater than max", fieldLabel(*f))
-	}
 	switch f.Type {
 	case models.FieldTypeInt, models.FieldTypeVLAN, models.FieldTypeList:
 	default:
 		if f.Min != nil || f.Max != nil {
 			return statusErrf(400, "%s does not take min/max", fieldLabel(*f))
 		}
+	}
+	min, max := f.Min, f.Max
+	if f.Type == models.FieldTypeVLAN {
+		min, max = vlanBounds(*f)
+	}
+	if min != nil && max != nil && *min > *max {
+		return statusErrf(400, "%s min is greater than max", fieldLabel(*f))
+	}
+	if f.Type == models.FieldTypeVLAN {
+		clampVLANBound(f.Min)
+		clampVLANBound(f.Max)
 	}
 	if f.Unit != "" && f.Type != models.FieldTypeInt {
 		return statusErrf(400, "%s does not take unit", fieldLabel(*f))
@@ -846,6 +856,18 @@ func vlanBounds(f models.FieldSchema) (min, max *float64) {
 	return min, max
 }
 
+func clampVLANBound(v *float64) {
+	if v == nil {
+		return
+	}
+	if *v < 1 {
+		*v = 1
+	}
+	if *v > 4094 {
+		*v = 4094
+	}
+}
+
 func applyMinMaxValue(name string, n int64, min, max *float64) error {
 	if min != nil && float64(n) < *min {
 		return fmt.Errorf("%s is below minimum", name)
@@ -870,7 +892,11 @@ func typeCheckFieldList(name string, f models.FieldSchema, v any, depth int) (an
 	}
 	out := make([]any, len(items))
 	for i, item := range items {
-		checked, err := typeCheckField(fmt.Sprintf("%s[%d]", name, i), *f.Items, item, depth+1)
+		itemName := fmt.Sprintf("%s[%d]", name, i)
+		if FieldEmpty(*f.Items, item) {
+			return nil, fmt.Errorf("%s must not be empty", itemName)
+		}
+		checked, err := typeCheckField(itemName, *f.Items, item, depth+1)
 		if err != nil {
 			return nil, err
 		}

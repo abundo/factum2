@@ -57,6 +57,13 @@ func TestValidateFieldSchemaListAndResource(t *testing.T) {
 	if err := ValidateFieldSchema(&noItems, true); err == nil {
 		t.Fatal("expected list without items to fail")
 	}
+	reqItem := models.FieldSchema{
+		Name: "cidrs", Type: models.FieldTypeList,
+		Items: &models.FieldSchema{Type: models.FieldTypeString, Required: true},
+	}
+	if err := ValidateFieldSchema(&reqItem, true); err == nil {
+		t.Fatal("expected items.required to fail")
+	}
 }
 
 func TestValidateFieldSchemaEnumAndBounds(t *testing.T) {
@@ -78,6 +85,24 @@ func TestValidateFieldSchemaEnumAndBounds(t *testing.T) {
 	minmax := models.FieldSchema{Name: "n", Type: models.FieldTypeInt, Min: f64(10), Max: f64(1)}
 	if err := ValidateFieldSchema(&minmax, true); err == nil {
 		t.Fatal("expected min > max reject")
+	}
+	vlanHi := models.FieldSchema{Name: "vlan", Type: models.FieldTypeVLAN, Min: f64(5000)}
+	if err := ValidateFieldSchema(&vlanHi, true); err == nil {
+		t.Fatal("expected vlan min 5000 (default max 4094) to fail")
+	}
+	vlanMax := models.FieldSchema{Name: "vlan", Type: models.FieldTypeVLAN, Max: f64(5000)}
+	if err := ValidateFieldSchema(&vlanMax, true); err != nil {
+		t.Fatal(err)
+	}
+	if vlanMax.Max == nil || *vlanMax.Max != 4094 {
+		t.Fatalf("vlan max clamped = %v, want 4094", vlanMax.Max)
+	}
+	vlanLo := models.FieldSchema{Name: "vlan", Type: models.FieldTypeVLAN, Min: f64(0)}
+	if err := ValidateFieldSchema(&vlanLo, true); err != nil {
+		t.Fatal(err)
+	}
+	if vlanLo.Min == nil || *vlanLo.Min != 1 {
+		t.Fatalf("vlan min clamped = %v, want 1", vlanLo.Min)
 	}
 }
 
@@ -226,6 +251,16 @@ func TestTypeCheckFieldListItems(t *testing.T) {
 	}
 	if _, err := TypeCheckField(f, []any{}); err == nil {
 		t.Fatal("expected min length")
+	}
+	if _, err := TypeCheckField(f, []any{nil}); err == nil {
+		t.Fatal("expected null list item reject")
+	}
+	sidList := models.FieldSchema{
+		Name: "ids", Type: models.FieldTypeList,
+		Items: &models.FieldSchema{Type: models.FieldTypeServiceID},
+	}
+	if _, err := TypeCheckField(sidList, []any{0}); err == nil {
+		t.Fatal("expected service_id 0 list item reject")
 	}
 }
 

@@ -299,6 +299,79 @@ func TestApiServiceEndpointsPutELINE(t *testing.T) {
 	}
 }
 
+func TestApiServiceEndpointsPutValidatesServiceFields(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := models.ServiceType{
+		Name: "ELINE",
+		Schema: []models.FieldSchema{
+			{Name: "peering", Type: models.FieldTypeIPv4Prefix, Required: true},
+		},
+		Interfaces: models.ServiceInterfacesSpec{
+			Min: 2, Max: 2, Unique: true,
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.VarTypeVLAN, Required: true}},
+		},
+	}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00004", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a4", Platform: "eos", NetboxID: 401}
+	devB := models.Device{Name: "pe-b4", Platform: "eos", NetboxID: 402}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&devB).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+	epsBody := []map[string]any{
+		{"device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+		{"device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 20}},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", map[string]any{
+		"fields":    map[string]any{"peering": "10.0.0.1/24"},
+		"endpoints": epsBody,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var stored models.Service
+	if err := db.First(&stored, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.Fields) == "" || !strings.Contains(string(stored.Fields), "10.0.0.0/24") {
+		t.Fatalf("fields = %s, want canonical prefix", stored.Fields)
+	}
+	c, rec = jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", map[string]any{
+		"fields":    map[string]any{"peering": "not-a-prefix"},
+		"endpoints": epsBody,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad fields status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

@@ -743,11 +743,19 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	if err := cfgmgmt.ValidateEndpoints(ctrl.DB, st, eps); err != nil {
 		return configWriteError(c, err)
 	}
+	var canonFields json.RawMessage
+	if len(body.Fields) > 0 && string(body.Fields) != "null" {
+		canon, err := cfgmgmt.ValidateServiceFields(st, body.Fields)
+		if err != nil {
+			return configWriteError(c, err)
+		}
+		canonFields = canon
+	}
 	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
 		return configWriteError(c, err)
 	}
-	if len(body.Fields) > 0 && string(body.Fields) != "null" {
-		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Update("fields", body.Fields).Error; err != nil {
+	if canonFields != nil {
+		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Update("fields", canonFields).Error; err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 	}

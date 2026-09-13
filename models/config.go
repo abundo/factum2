@@ -232,7 +232,7 @@ type FieldSchema struct {
 	Description string `json:"description"`
 
 	// Inclusive bounds for int/vlan values and list length.
-	// VLAN defaults unset Min/Max to 1 and 4094; int is unbounded.
+	// VLAN defaults unset Min/Max to 1 and 4094 and clamps custom bounds to that range; int is unbounded.
 	Min  *float64 `json:"min,omitempty"`
 	Max  *float64 `json:"max,omitempty"`
 	Unit string   `json:"unit,omitempty"`
