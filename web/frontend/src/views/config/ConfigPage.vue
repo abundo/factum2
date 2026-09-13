@@ -678,17 +678,21 @@ function putEndpointsMaybeCreds(serviceId, rows) {
       return putServiceEndpoints(serviceId, endpointPutBody(rows))
     }
     return new Promise((resolve, reject) => {
-      withCredentials(deviceIds, (username, password) => {
-        putServiceEndpoints(serviceId, endpointPutBody(rows, username, password))
-          .then((data) => {
-            rememberSuccess(deviceIds, username, password)
-            resolve(data)
-          })
-          .catch((err) => {
-            rememberFailure(deviceIds, username, password)
-            reject(err)
-          })
-      })
+      withCredentials(
+        deviceIds,
+        (username, password) => {
+          putServiceEndpoints(serviceId, endpointPutBody(rows, username, password))
+            .then((data) => {
+              rememberSuccess(deviceIds, username, password)
+              resolve(data)
+            })
+            .catch((err) => {
+              rememberFailure(deviceIds, username, password)
+              reject(err)
+            })
+        },
+        () => reject(Object.assign(new Error('cancelled'), { cancelled: true })),
+      )
     })
   })
 }
@@ -712,9 +716,10 @@ function onRebind({ ref, target }) {
       reloadKey.value += 1
       loadScopesIndex()
     })
-    .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Rebind failed.') }),
-    )
+    .catch((err) => {
+      if (err?.cancelled) return
+      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Rebind failed.') })
+    })
 }
 
 function onMove({ id, parent_id, sort_order }) {
@@ -915,13 +920,14 @@ function performDelete() {
         loadScopesIndex()
       }
     })
-    .catch((err) =>
+    .catch((err) => {
+      if (err?.cancelled) return
       toast.add({
         color: 'error',
         title: 'Error',
         description: errMsg(err, c.kind === 'detach' ? 'Detach failed.' : 'Delete failed.'),
-      }),
-    )
+      })
+    })
     .finally(() => {
       saving.value = false
     })

@@ -23,14 +23,16 @@ export function useDeviceCredentials() {
   const promptUsername = ref('')
   const promptPassword = ref('')
   const pendingAction = ref(null)
+  const pendingCancel = ref(null)
 
-  function withCredentials(deviceIds, action) {
+  function withCredentials(deviceIds, action, onCancel) {
     const creds = store.getForDevices(deviceIds)
     if (creds) {
       action(creds.username, creds.password)
       return
     }
     pendingAction.value = action
+    pendingCancel.value = onCancel || null
     // Prefill username from any previous success so the operator only
     // retypes the password when switching environments.
     promptUsername.value = store.usernameHint()
@@ -43,14 +45,18 @@ export function useDeviceCredentials() {
     const action = pendingAction.value
     const username = promptUsername.value
     const password = promptPassword.value
-    credentialsDialog.value = false
     pendingAction.value = null
+    pendingCancel.value = null
+    credentialsDialog.value = false
     action?.(username, password)
   }
 
   function cancelCredentials() {
-    credentialsDialog.value = false
+    const cancel = pendingCancel.value
     pendingAction.value = null
+    pendingCancel.value = null
+    credentialsDialog.value = false
+    cancel?.()
   }
 
   function rememberSuccess(deviceIds, username, password) {
