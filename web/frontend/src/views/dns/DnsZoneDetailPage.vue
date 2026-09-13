@@ -5,6 +5,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
 import ZoneRecordsTable from '@/components/ZoneRecordsTable.vue'
 import { getDnsZone, listDnsTemplates, listSOATemplates, updateDnsZone } from '@/api/dns'
+import { triggerSync } from '@/api/jobs'
 import { fromApiRecord, toApiRecords, validateZoneRecords } from '@/utils/zoneRecords'
 import { formatZoneFile, parseZoneFile } from '@/utils/zoneFile'
 import { useLogPanel } from '@/layout/composables/logPanel'
@@ -176,8 +177,8 @@ async function onImportFile(event) {
   }
 }
 
-async function save() {
-  if (!canWrite.value) return
+async function save({ sync = false } = {}) {
+  if (!canWrite.value || saving.value) return
   const validation = validateZoneRecords(form.records, recordT)
   if (validation) {
     toast.add({ title: validation, color: 'error' })
@@ -196,12 +197,32 @@ async function save() {
     form.dns_template_id = data.dns_template_id
     form.comment = data.comment || ''
     form.type = data.type || form.type
-    toast.add({ title: 'Zone saved', color: 'success' })
+    if (!sync) {
+      toast.add({ title: 'Zone saved', color: 'success' })
+      return
+    }
+    try {
+      await triggerSync('dns')
+      toast.add({ title: 'Zone saved and DNS sync queued', color: 'success' })
+    } catch (err) {
+      const alreadyRunning = err.response?.status === 409
+      toast.add({
+        title: alreadyRunning
+          ? 'Zone saved; DNS sync already running'
+          : 'Zone saved, but DNS sync failed',
+        description: err.response?.data?.error ?? 'Failed to queue DNS sync.',
+        color: alreadyRunning ? 'warning' : 'error',
+      })
+    }
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to save zone'), color: 'error' })
   } finally {
     saving.value = false
   }
+}
+
+function saveAndSync() {
+  return save({ sync: true })
 }
 </script>
 
@@ -217,8 +238,9 @@ async function save() {
         <UTabs v-model="activeTab" :items="tabItems">
           <template #info>
             <div class="space-y-4 pt-4">
-              <div v-if="canWrite" class="flex">
+              <div v-if="canWrite" class="flex flex-wrap gap-2">
                 <UButton type="submit" :loading="saving">Save</UButton>
+                <UButton type="button" :loading="saving" @click="saveAndSync">Save+sync</UButton>
               </div>
               <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                 <UFormField label="Name">
@@ -297,6 +319,9 @@ async function save() {
               <ZoneRecordsTable v-model="form.records" :disabled="!canWrite">
                 <template #leading-actions>
                   <UButton v-if="canWrite" type="submit" :loading="saving">Save</UButton>
+                  <UButton v-if="canWrite" type="button" :loading="saving" @click="saveAndSync"
+                    >Save+sync</UButton
+                  >
                 </template>
                 <template #actions>
                   <UButton
