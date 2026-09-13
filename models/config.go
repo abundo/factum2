@@ -14,6 +14,7 @@ const (
 	ConfigScopeKindCLI             = "cli"
 	ConfigScopeKindService         = "service"
 	ConfigScopeKindServiceEndpoint = "service_endpoint"
+	ConfigScopeKindResource        = "resource"
 	// ConfigScopeKindServiceRef is virtual: ScopeTree injects it, it is not stored.
 	ConfigScopeKindServiceRef = "service_ref"
 
@@ -110,6 +111,8 @@ type ConfigScopePayload struct {
 	Context     *CLIContext    `json:"context,omitempty"`
 	Role        string         `json:"role,omitempty"`
 	Fields      map[string]any `json:"fields,omitempty"`
+	// CIDRs is the prefix pool for kind=resource (canonical Masked strings).
+	CIDRs []string `json:"cidrs,omitempty"`
 }
 
 // CLIContext is the optional CLI mode wrapping for a kind=cli object.

@@ -566,7 +566,8 @@ func nearestMatrixScope(db *gorm.DB, start *models.ConfigScope) (*models.ConfigS
 	}
 	switch start.Kind {
 	case models.ConfigScopeKindParameter, models.ConfigScopeKindCLI,
-		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint:
+		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint,
+		models.ConfigScopeKindResource:
 	default:
 		return start, nil
 	}

@@ -1475,3 +1475,71 @@ func TestConfigLegacyPackAndTemplateRoutesGone(t *testing.T) {
 		}
 	}
 }
+
+func TestApiConfigResourcesFree(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/scopes", map[string]any{
+		"parent_id": root.ID, "name": "peering-v4", "kind": "resource",
+		"payload": map[string]any{"cidrs": []string{"10.1.2.3/24", "10.0.0.2/31"}},
+	}, nil, nil)
+	if err := ctrl.ApiConfigScopeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.ConfigScope
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Payload.CIDRs) != 2 || created.Payload.CIDRs[0] != "10.1.2.0/24" {
+		t.Fatalf("canonical cidrs = %#v", created.Payload.CIDRs)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/scopes", map[string]any{
+		"parent_id": root.ID, "name": "peering-v4", "kind": "resource",
+	}, nil, nil)
+	if err := ctrl.ApiConfigScopeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("dup status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	dev := models.Device{Name: "orphan-pe", Platform: "eos"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/config/resources/free?device_id=" + strconv.FormatUint(uint64(dev.ID), 10) +
+		"&name=peering-v4&family=4"
+	c, rec = jsonRequest(t, http.MethodGet, path, nil, nil, nil)
+	if err := ctrl.ApiConfigResourcesFree(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("free status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got cfgmgmt.AllocatedResource
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ScopeID != created.ID {
+		t.Fatalf("scope_id = %d, want %d", got.ScopeID, created.ID)
+	}
+	if len(got.CIDRs) != 2 {
+		t.Fatalf("cidrs = %#v", got.CIDRs)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/config/resources/free?name=", nil, nil, nil)
+	if err := ctrl.ApiConfigResourcesFree(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing name status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}

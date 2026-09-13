@@ -99,3 +99,7 @@ export function deleteMacro(id) {
 export function renderConfig(payload) {
   return http.post('/config/render', payload).then((res) => res.data)
 }
+
+export function getFreeResources(params) {
+  return http.get('/config/resources/free', { params }).then((res) => res.data)
+}

@@ -413,6 +413,26 @@ type resolvedVarJSON struct {
 	Error       string `json:"error,omitempty"`
 }
 
+func (ctrl *Controller) ApiConfigResourcesFree(c *echo.Context) error {
+	var interfaceID, deviceID uint
+	var name string
+	var family int
+	_ = echo.QueryParamsBinder(c).
+		Uint("interface_id", &interfaceID).
+		Uint("device_id", &deviceID).
+		String("name", &name).
+		Int("family", &family).
+		BindError()
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name is required"})
+	}
+	out, err := cfgmgmt.AllocateResource(ctrl.DB, interfaceID, deviceID, name, family)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 func (ctrl *Controller) ApiConfigResolve(c *echo.Context) error {
 	var interfaceID uint
 	_ = echo.QueryParamsBinder(c).Uint("interface_id", &interfaceID).BindError()

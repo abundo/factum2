@@ -241,6 +241,7 @@ func TestValidScopeKind(t *testing.T) {
 		models.ConfigScopeKindCLI,
 		models.ConfigScopeKindService,
 		models.ConfigScopeKindServiceEndpoint,
+		models.ConfigScopeKindResource,
 	} {
 		if !ValidScopeKind(k) {
 			t.Errorf("ValidScopeKind(%q) = false, want true", k)

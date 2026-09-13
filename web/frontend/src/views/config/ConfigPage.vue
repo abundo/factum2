@@ -222,7 +222,7 @@ function canRename(node) {
   if (!node?.id) return false
   if (isReservedFolder(node)) return false
   if (node.kind === 'parameter' && node.title === 'parameters') return false
-  return isOrgKind(node.kind) || node.kind === 'parameter' || node.kind === 'cli'
+  return isOrgKind(node.kind) || node.kind === 'parameter' || node.kind === 'cli' || node.kind === 'resource'
 }
 
 const renameKindLabels = {
@@ -231,10 +231,15 @@ const renameKindLabels = {
   location: 'location',
   parameter: 'parameter object',
   cli: 'CLI object',
+  resource: 'resource',
 }
 
 function canAddParameter(kind) {
   return isOrgKind(kind) || kind === 'device' || kind === 'interface' || kind === 'service'
+}
+
+function canAddResource(kind) {
+  return isOrgKind(kind) || kind === 'device' || kind === 'interface'
 }
 
 function itemsFor(node) {
@@ -263,12 +268,14 @@ function itemsFor(node) {
     items.push({ id: 'add-location', label: 'Add location' })
     items.push({ id: 'attach-device', label: 'Attach device' })
     items.push({ id: 'add-parameter', label: 'Add parameter object' })
+    items.push({ id: 'add-resource', label: 'Add resource' })
     items.push({ id: 'add-cli', label: 'Add CLI object' })
     items.push({ id: 'create-service', label: 'Create service' })
     items.push({ id: 'attach-service', label: 'Attach existing service' })
   }
   if (node.kind === 'device' || node.kind === 'interface') {
     items.push({ id: 'sep-cli' }, { id: 'add-parameter', label: 'Add parameter object' })
+    items.push({ id: 'add-resource', label: 'Add resource' })
     items.push({ id: 'add-cli', label: 'Add CLI object' })
     items.push({ id: 'create-service', label: 'Create service' })
   }
@@ -307,6 +314,7 @@ function isLeafKind(kind) {
   return (
     kind === 'parameter' ||
     kind === 'cli' ||
+    kind === 'resource' ||
     kind === 'service' ||
     kind === 'service_endpoint' ||
     kind === 'service_ref'
@@ -415,6 +423,11 @@ async function runMenu(id) {
   if (id === 'add-parameter' && canAddParameter(node?.kind)) {
     form.value = { parent_id: node?.id, name: '', kind: 'parameter' }
     dialog.value = 'parameter'
+    return
+  }
+  if (id === 'add-resource' && canAddResource(node?.kind)) {
+    form.value = { parent_id: node?.id, name: '', kind: 'resource' }
+    dialog.value = 'resource'
     return
   }
   if (id === 'attach-device') {
@@ -697,6 +710,17 @@ function saveDialog() {
       name,
       kind: 'parameter',
     })
+  } else if (dialog.value === 'resource') {
+    const name = (form.value.name ?? '').trim()
+    if (!name) {
+      saving.value = false
+      return
+    }
+    req = createScope({
+      parent_id: form.value.parent_id,
+      name,
+      kind: 'resource',
+    })
   } else if (dialog.value === 'device') {
     if (!attachDeviceId.value) {
       saving.value = false
@@ -787,7 +811,7 @@ function saveDialog() {
       if (wasRename && node?.id && selected.value?.id === node.id) {
         selected.value = { ...selected.value, title: node.name }
       }
-      if (node?.id && (node.kind === 'parameter' || node.kind === 'cli')) {
+      if (node?.id && (node.kind === 'parameter' || node.kind === 'cli' || node.kind === 'resource')) {
         selected.value = {
           key: String(node.id),
           id: node.id,
@@ -1653,6 +1677,25 @@ onBeforeUnmount(() => {
       <UInput v-model="form.name" autofocus placeholder="parameters" />
       <p class="text-muted-color text-sm mt-2 m-0">
         Assignments on this node apply to its parent and that parent's descendants.
+      </p>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
+      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    </template>
+  </UModal>
+
+  <UModal
+    :open="dialog === 'resource'"
+    title="Resource"
+    @update:open="(v) => !v && (dialog = null)"
+  >
+    <template #body>
+      <label class="block font-bold mb-2">Name</label>
+      <UInput v-model="form.name" autofocus placeholder="peering-v4" />
+      <p class="text-muted-color text-sm mt-2 m-0">
+        Named CIDR pool. Prefix fields look up this name on the interface → device → ancestor
+        chain.
       </p>
     </template>
     <template #footer>

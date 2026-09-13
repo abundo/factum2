@@ -95,12 +95,15 @@ func CreateScope(db *gorm.DB, s *models.ConfigScope) (*models.ConfigScope, error
 	if err := normalizeCLIScope(s); err != nil {
 		return nil, err
 	}
+	if err := normalizeResourceScope(s); err != nil {
+		return nil, err
+	}
 	if err := assertCLIUnique(db, s, 0); err != nil {
 		return nil, err
 	}
 	s.Enabled = true
 	if err := db.Create(s).Error; err != nil {
-		return nil, err
+		return nil, uniqueConflict(err, "scope already exists")
 	}
 	return s, nil
 }
@@ -164,6 +167,23 @@ func assertScopeUnique(db *gorm.DB, s *models.ConfigScope, excludeID uint) error
 		}
 		if n > 0 {
 			return statusErr(409, "a service scope already exists for this service")
+		}
+	}
+	if s.Kind == models.ConfigScopeKindResource {
+		if s.ParentID == nil {
+			return statusErr(400, "resource requires a parent")
+		}
+		q := db.Model(&models.ConfigScope{}).
+			Where("parent_id = ? AND kind = ? AND name = ?", *s.ParentID, models.ConfigScopeKindResource, s.Name)
+		if excludeID != 0 {
+			q = q.Where("id <> ?", excludeID)
+		}
+		var n int64
+		if err := q.Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			return statusErrf(409, "a resource named %q already exists under this parent", s.Name)
 		}
 	}
 	return nil
@@ -265,10 +285,11 @@ func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScopeDTO) (*models.Co
 			existing.Payload = *patch.Payload
 		}
 		if patch.Enabled != nil {
-			if existing.Kind == models.ConfigScopeKindParameter || existing.Kind == models.ConfigScopeKindCLI {
+			if existing.Kind == models.ConfigScopeKindParameter || existing.Kind == models.ConfigScopeKindCLI ||
+				existing.Kind == models.ConfigScopeKindResource {
 				existing.Enabled = *patch.Enabled
 			} else if !*patch.Enabled {
-				return statusErr(400, "enabled is only valid for parameter and cli")
+				return statusErr(400, "enabled is only valid for parameter, cli, and resource")
 			}
 		}
 		if err := assertScopeKindIDs(existing); err != nil {
@@ -280,11 +301,14 @@ func UpdateScope(db *gorm.DB, id uint, patch *models.ConfigScopeDTO) (*models.Co
 		if err := normalizeCLIScope(existing); err != nil {
 			return err
 		}
+		if err := normalizeResourceScope(existing); err != nil {
+			return err
+		}
 		if err := assertCLIUnique(tx, existing, existing.ID); err != nil {
 			return err
 		}
 		if err := tx.Save(existing).Error; err != nil {
-			return err
+			return uniqueConflict(err, "scope already exists")
 		}
 		out = existing
 		return nil
@@ -464,6 +488,13 @@ func assertParentKind(child, parent *models.ConfigScope) error {
 			return nil
 		}
 		return statusErr(400, "cli cannot be under "+parent.Kind)
+	case models.ConfigScopeKindResource:
+		switch parent.Kind {
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
+			return nil
+		}
+		return statusErr(400, "resource cannot be under "+parent.Kind)
 	case models.ConfigScopeKindService:
 		switch parent.Kind {
 		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
@@ -611,8 +642,11 @@ func moveScopeTx(tx *gorm.DB, existing *models.ConfigScope, parentID uint, sortO
 		existing = node
 	} else if changed {
 		existing.ParentID = &parentID
-		if err := tx.Save(existing).Error; err != nil {
+		if err := assertScopeUnique(tx, existing, existing.ID); err != nil {
 			return nil, err
+		}
+		if err := tx.Save(existing).Error; err != nil {
+			return nil, uniqueConflict(err, "scope already exists")
 		}
 	}
 	if err := placeAmongSiblings(tx, existing.ID, parentID, sortOrder); err != nil {

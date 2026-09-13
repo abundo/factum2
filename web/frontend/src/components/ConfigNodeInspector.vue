@@ -63,6 +63,8 @@ const typeOptions = computed(() => [
 
 const isCLI = computed(() => props.selected?.kind === 'cli')
 const isParameter = computed(() => props.selected?.kind === 'parameter')
+const isResource = computed(() => props.selected?.kind === 'resource')
+const resourceForm = ref({ name: '', description: '', enabled: true, cidrs: [''] })
 const isServiceNode = computed(
   () => props.selected?.kind === 'service' || props.selected?.kind === 'service_endpoint',
 )
@@ -343,6 +345,52 @@ const pickerInterfaceId = computed(
   () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
 )
 
+function resetResourceForm(node) {
+  const cidrs = node?.payload?.cidrs
+  resourceForm.value = {
+    name: node?.title ?? '',
+    description: node?.payload?.description ?? '',
+    enabled: node?.enabled !== false,
+    cidrs: Array.isArray(cidrs) && cidrs.length ? [...cidrs] : [''],
+  }
+}
+
+function addResourceCIDR() {
+  resourceForm.value.cidrs = [...resourceForm.value.cidrs, '']
+}
+
+function removeResourceCIDR(i) {
+  const next = resourceForm.value.cidrs.filter((_, idx) => idx !== i)
+  resourceForm.value.cidrs = next.length ? next : ['']
+}
+
+function saveResource() {
+  if (!props.selected?.id) return
+  const name = (resourceForm.value.name ?? '').trim()
+  if (!name) {
+    toast.add({ color: 'error', title: 'Error', description: 'Name is required.' })
+    return
+  }
+  saving.value = true
+  const prev = props.selected?.payload ?? {}
+  const cidrs = (resourceForm.value.cidrs ?? []).map((s) => (s ?? '').trim()).filter(Boolean)
+  updateScope(props.selected.id, {
+    name,
+    enabled: !!resourceForm.value.enabled,
+    payload: { ...prev, description: resourceForm.value.description ?? '', cidrs },
+  })
+    .then(() => {
+      toast.add({ color: 'success', title: 'Successful', description: 'Resource saved' })
+      emit('saved')
+    })
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
+    )
+    .finally(() => {
+      saving.value = false
+    })
+}
+
 watch(
   () => props.selected,
   (node) => {
@@ -353,6 +401,9 @@ watch(
       features.value = []
       featureDrafts.value = {}
       openFeatureId.value = null
+    }
+    if (node?.kind === 'resource') {
+      resetResourceForm(node)
     }
     if (isServiceNode.value) {
       loadService(serviceRowId.value)
@@ -733,6 +784,59 @@ function toggleFeature(id) {
           </template>
         </div>
         <div v-if="!features.length" class="text-muted-color text-sm">No features.</div>
+      </template>
+
+      <template v-if="isResource">
+        <div>
+          <label class="mb-1 block font-bold">Name</label>
+          <UInput v-model="resourceForm.name" :disabled="!canWrite" class="w-full" />
+        </div>
+        <div>
+          <label class="mb-1 block font-bold">Description</label>
+          <UInput v-model="resourceForm.description" :disabled="!canWrite" class="w-full" />
+        </div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2"
+            ><USwitch v-model="resourceForm.enabled" :disabled="!canWrite" /> Enabled</label
+          >
+        </div>
+        <div>
+          <div class="mb-1 flex items-center justify-between">
+            <label class="block font-bold">CIDRs</label>
+            <UButton
+              v-if="canWrite"
+              size="sm"
+              variant="outline"
+              color="neutral"
+              icon="i-lucide-plus"
+              label="Add"
+              @click="addResourceCIDR"
+            />
+          </div>
+          <div
+            v-for="(_, i) in resourceForm.cidrs"
+            :key="i"
+            class="mb-2 flex items-center gap-2"
+          >
+            <UInput
+              v-model="resourceForm.cidrs[i]"
+              :disabled="!canWrite"
+              placeholder="10.0.0.0/31"
+              class="w-full font-mono"
+            />
+            <UButton
+              v-if="canWrite"
+              icon="i-lucide-trash-2"
+              variant="ghost"
+              color="error"
+              size="sm"
+              @click="removeResourceCIDR(i)"
+            />
+          </div>
+        </div>
+        <div v-if="canWrite" class="flex justify-end">
+          <UButton label="Save" :loading="saving" @click="saveResource" />
+        </div>
       </template>
 
       <template v-if="showAssignments">

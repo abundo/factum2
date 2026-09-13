@@ -322,6 +322,7 @@ func GUI(p *GuiParams) error {
 	cfg.DELETE("/assignments/:id", ctrl.ApiConfigAssignmentDelete, ctrl.RequireWrite)
 	cfg.GET("/resolve", ctrl.ApiConfigResolve, ctrl.RequireRead)
 	cfg.GET("/matrix", ctrl.ApiConfigMatrix, ctrl.RequireRead)
+	cfg.GET("/resources/free", ctrl.ApiConfigResourcesFree, ctrl.RequireRead)
 	cfg.GET("/service-types", ctrl.ApiConfigServiceTypeList, ctrl.RequireRead)
 	cfg.GET("/service-types/:id", ctrl.ApiConfigServiceTypeGet, ctrl.RequireRead)
 	cfg.POST("/service-types", ctrl.ApiConfigServiceTypeCreate, ctrl.RequireWrite)

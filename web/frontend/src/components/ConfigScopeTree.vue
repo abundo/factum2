@@ -101,6 +101,8 @@ function kindLabel(kind, name) {
       return 'Interface'
     case 'parameter':
       return name === 'parameters' ? 'Parameters' : 'Parameter'
+    case 'resource':
+      return 'Resource'
     case 'cli':
       return 'CLI'
     case 'service':
@@ -166,6 +168,7 @@ function buildTree(source) {
       device: { icon: false },
       interface: { icon: false },
       parameter: { icon: false },
+      resource: { icon: false },
       cli: { icon: false },
       service: { icon: false },
       service_endpoint: { icon: false },

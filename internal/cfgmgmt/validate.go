@@ -35,7 +35,8 @@ func ValidScopeKind(k string) bool {
 	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 		models.ConfigScopeKindDevice, models.ConfigScopeKindInterface,
 		models.ConfigScopeKindParameter, models.ConfigScopeKindCLI,
-		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint:
+		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint,
+		models.ConfigScopeKindResource:
 		return true
 	}
 	return false
