@@ -7,12 +7,14 @@ import ZoneRecordsTable from '@/components/ZoneRecordsTable.vue'
 import { getDnsZone, listDnsTemplates, listSOATemplates, updateDnsZone } from '@/api/dns'
 import { fromApiRecord, toApiRecords, validateZoneRecords } from '@/utils/zoneRecords'
 import { formatZoneFile, parseZoneFile } from '@/utils/zoneFile'
+import { useLogPanel } from '@/layout/composables/logPanel'
 
 defineOptions({ name: 'DnsZoneDetailPage' })
 
 const toast = useToast()
 const route = useRoute()
 const authStore = useAuthStore()
+const { append: appendLog } = useLogPanel()
 const loaded = ref(false)
 const saving = ref(false)
 const importInput = ref(null)
@@ -120,6 +122,34 @@ function exportZoneFile() {
   URL.revokeObjectURL(url)
 }
 
+function logImportProblem(message, attrs) {
+  appendLog({
+    level: 'ERROR',
+    source: 'dns',
+    message: `Zone import: ${message}`,
+    attrs,
+  })
+}
+
+function reportImportProblems(items) {
+  if (!items.length) return
+  const lines = items.map((item) => item.message)
+  const extra = lines.length > 12 ? `; …and ${lines.length - 12} more` : ''
+  toast.add({
+    title:
+      items.length === 1 ? items[0].message : `${items.length} unsupported types skipped on import`,
+    description: items.length === 1 ? undefined : `${lines.slice(0, 12).join('; ')}${extra}`,
+    color: 'error',
+  })
+  for (const item of items) {
+    logImportProblem(item.message, {
+      line: String(item.line),
+      type: item.type,
+      name: item.name || undefined,
+    })
+  }
+}
+
 async function onImportFile(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
@@ -131,7 +161,6 @@ async function onImportFile(event) {
     const skipped = []
     if (parsed.skippedSoa) skipped.push('SOA')
     if (parsed.skippedApexNs) skipped.push('NS for @')
-    if (parsed.skippedUnknown) skipped.push('unknown types')
     toast.add({
       title: `Imported ${parsed.records.length} records`,
       description: skipped.length
@@ -139,8 +168,11 @@ async function onImportFile(event) {
         : 'Save to apply.',
       color: 'success',
     })
+    reportImportProblems(parsed.unsupported || [])
   } catch (err) {
-    toast.add({ title: err.message || 'Could not import the file', color: 'error' })
+    const message = err.message || 'Could not import the file'
+    toast.add({ title: message, color: 'error' })
+    logImportProblem(message)
   }
 }
 

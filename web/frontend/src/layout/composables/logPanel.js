@@ -34,11 +34,7 @@ function connect() {
   }
   socket.onmessage = (event) => {
     if (state.paused) return
-    const data = JSON.parse(event.data)
-    state.lines.push({ id: nextId++, ...data })
-    if (state.lines.length > MAX_LINES) {
-      state.lines.splice(0, state.lines.length - MAX_LINES)
-    }
+    pushLine(JSON.parse(event.data))
   }
   socket.onclose = () => {
     state.connected = false
@@ -49,6 +45,13 @@ function connect() {
   }
   socket.onerror = () => {
     socket?.close()
+  }
+}
+
+function pushLine(data) {
+  state.lines.push({ id: nextId++, ...data })
+  if (state.lines.length > MAX_LINES) {
+    state.lines.splice(0, state.lines.length - MAX_LINES)
   }
 }
 
@@ -96,5 +99,18 @@ export function useLogPanel() {
     state.paused = !state.paused
   }
 
-  return { state, open, close, toggle, setHeight, clear, togglePause, connect, disconnect }
+  // Client-side lines (e.g. zone-file import problems). These never go
+  // through slog; they only appear in this tab's log window.
+  function append({ level = 'INFO', message, source = 'web', attrs } = {}) {
+    if (!message) return
+    pushLine({
+      time: new Date().toISOString(),
+      level,
+      message,
+      source,
+      attrs,
+    })
+  }
+
+  return { state, open, close, toggle, setHeight, clear, togglePause, append, connect, disconnect }
 }

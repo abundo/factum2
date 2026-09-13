@@ -343,8 +343,20 @@ export function parseZoneFile(text, zoneOrigin = '') {
   const records = []
   let skippedSoa = 0
   let skippedApexNs = 0
-  let skippedUnknown = 0
+  const unsupported = []
   let seenRR = false
+
+  function skipUnsupported(line, type, name = '') {
+    const owner = (name || '').trim()
+    unsupported.push({
+      line,
+      type,
+      name: owner,
+      message: owner
+        ? `Line ${line}: unsupported type ${type} for ${owner}`
+        : `Line ${line}: unsupported type ${type}`,
+    })
+  }
 
   const unfolded = unfoldZoneText(stripBom(text || ''))
   const lines = unfolded.split(/\r?\n/)
@@ -395,6 +407,7 @@ export function parseZoneFile(text, zoneOrigin = '') {
         )
         continue
       }
+      skipUnsupported(i + 1, dir)
       continue
     }
 
@@ -452,7 +465,7 @@ export function parseZoneFile(text, zoneOrigin = '') {
     }
 
     if (!ZONE_RECORD_TYPES.includes(type)) {
-      skippedUnknown++
+      skipUnsupported(i + 1, type, name)
       continue
     }
 
@@ -473,7 +486,13 @@ export function parseZoneFile(text, zoneOrigin = '') {
     throw new Error('No DNS records in the file')
   }
 
-  return { records, skippedSoa, skippedApexNs, skippedUnknown }
+  return {
+    records,
+    skippedSoa,
+    skippedApexNs,
+    skippedUnknown: unsupported.length,
+    unsupported,
+  }
 }
 
 function commentLine(text) {
