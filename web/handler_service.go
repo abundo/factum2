@@ -176,23 +176,32 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	fields := dto.Fields
 	if dto.ServiceType != "" {
-		ok, err := cfgmgmt.ServiceTypeExists(ctrl.DB, dto.ServiceType)
+		st, err := cfgmgmt.LookupServiceType(ctrl.DB, dto.ServiceType)
 		if err != nil {
+			if se := cfgmgmt.AsStatusError(err); se != nil {
+				return c.JSON(se.Status, map[string]any{"error": se.Message})
+			}
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
-		if !ok {
-			return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid service_type"})
+		canon, err := cfgmgmt.ValidateServiceFields(st, dto.Fields)
+		if err != nil {
+			if se := cfgmgmt.AsStatusError(err); se != nil {
+				return c.JSON(se.Status, map[string]any{"error": se.Message})
+			}
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
+		fields = canon
 	}
 
 	updates := map[string]any{
 		"service_type":      dto.ServiceType,
-		"bandwidth_mbps":    columnFromFields(dto.BandwidthMbps, dto.Fields, models.SchemaFieldBandwidthMbps),
-		"max_mac_addresses": columnFromFields(dto.MaxMacAddresses, dto.Fields, models.SchemaFieldMaxMacAddresses),
+		"bandwidth_mbps":    columnFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
+		"max_mac_addresses": columnFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
 	}
-	if len(dto.Fields) > 0 && string(dto.Fields) != "null" {
-		updates["fields"] = dto.Fields
+	if len(fields) > 0 && string(fields) != "null" {
+		updates["fields"] = fields
 	}
 	if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})

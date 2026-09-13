@@ -508,13 +508,13 @@ func (ctrl *Controller) ApiConfigServiceTypeCreate(c *echo.Context) error {
 	if dto.Name == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name is required"})
 	}
-	if err := cfgmgmt.ValidateInterfacesSpec(dto.Interfaces); err != nil {
-		return configWriteError(c, err)
-	}
 	row := models.ServiceType{
 		Name: dto.Name, Description: dto.Description,
 		Schema: dto.Schema, Interfaces: dto.Interfaces,
 		SyncSource: dto.SyncSource, NetboxType: dto.NetboxType,
+	}
+	if err := cfgmgmt.ValidateServiceType(&row); err != nil {
+		return configWriteError(c, err)
 	}
 	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&row).Error; err != nil {
@@ -544,13 +544,18 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if err := cfgmgmt.ValidateInterfacesSpec(dto.Interfaces); err != nil {
-		return configWriteError(c, err)
-	}
 	oldName := existing.Name
 	newName := oldName
 	if dto.Name != "" {
 		newName = dto.Name
+	}
+	existing.Description = dto.Description
+	existing.Schema = dto.Schema
+	existing.Interfaces = dto.Interfaces
+	existing.SyncSource = dto.SyncSource
+	existing.NetboxType = dto.NetboxType
+	if err := cfgmgmt.ValidateServiceType(&existing); err != nil {
+		return configWriteError(c, err)
 	}
 	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
 		if newName != oldName {
@@ -570,11 +575,6 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 			}
 			existing.Name = newName
 		}
-		existing.Description = dto.Description
-		existing.Schema = dto.Schema
-		existing.Interfaces = dto.Interfaces
-		existing.SyncSource = dto.SyncSource
-		existing.NetboxType = dto.NetboxType
 		return tx.Save(&existing).Error
 	}); err != nil {
 		if se := cfgmgmt.AsStatusError(err); se != nil {

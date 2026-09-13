@@ -81,18 +81,30 @@ func CreateServiceRecord(tx *gorm.DB, dto *models.ServiceDTO) (*models.Service, 
 			return nil, statusErrf(400, "service ID %q is already in use", serviceID)
 		}
 	}
+	fields := dto.Fields
+	if dto.ServiceType != "" {
+		st, err := LookupServiceType(tx, dto.ServiceType)
+		if err != nil {
+			return nil, err
+		}
+		canon, err := ValidateServiceFields(st, dto.Fields)
+		if err != nil {
+			return nil, err
+		}
+		fields = canon
+	}
 	created := models.Service{
 		CustomerID:      dto.CustomerID,
 		Comment:         dto.Comment,
 		ServiceID:       serviceID,
 		ServiceType:     dto.ServiceType,
-		BandwidthMbps:   intFromFields(dto.BandwidthMbps, dto.Fields, models.SchemaFieldBandwidthMbps),
-		MaxMacAddresses: intFromFields(dto.MaxMacAddresses, dto.Fields, models.SchemaFieldMaxMacAddresses),
+		BandwidthMbps:   intFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
+		MaxMacAddresses: intFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
 		DeliveryPoint1:  dto.DeliveryPoint1,
 		DeliveryPoint2:  dto.DeliveryPoint2,
 		Product:         dto.Product,
 		Service:         dto.Service,
-		Fields:          dto.Fields,
+		Fields:          fields,
 	}
 	if err := tx.Create(&created).Error; err != nil {
 		return nil, err

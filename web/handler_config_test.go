@@ -359,6 +359,47 @@ func TestCannotDeleteServiceTypeInUse(t *testing.T) {
 	}
 }
 
+func TestApiConfigServiceTypeValidatesSchema(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/service-types", map[string]any{
+		"name": "BAD",
+		"schema": []map[string]any{
+			{"name": "VLAN", "type": "vlan"},
+		},
+	}, nil, nil)
+	if err := ctrl.ApiConfigServiceTypeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/config/service-types", map[string]any{
+		"name": "POLARIX",
+		"schema": []map[string]any{
+			{"name": "addr", "type": "snpa"},
+			{"name": "cidrs", "type": "list", "items": map[string]any{"type": "ipv4_prefix", "resource": "peering-v4"}},
+		},
+	}, nil, nil)
+	if err := ctrl.ApiConfigServiceTypeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.ServiceType
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Schema) != 2 || created.Schema[0].Type != models.FieldTypeMAC {
+		t.Fatalf("snpa not normalized: %+v", created.Schema)
+	}
+	if created.Schema[1].Items == nil || created.Schema[1].Items.Resource != "peering-v4" {
+		t.Fatalf("items.resource = %+v", created.Schema[1].Items)
+	}
+}
+
 func TestApiConfigServiceTypeRejectsEndpointRoles(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

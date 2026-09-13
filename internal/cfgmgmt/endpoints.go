@@ -71,25 +71,18 @@ func ValidateEndpoints(db *gorm.DB, st *models.ServiceType, eps []models.Service
 			}
 			seen[k] = true
 		}
-		fields := fieldsMap(ep.Fields)
-		for _, f := range st.Interfaces.Fields {
-			v, ok := fields[f.Name]
-			if !f.Required {
-				if !ok || v == nil {
-					continue
-				}
-			} else if !ok || v == nil {
-				return statusErrf(400, "endpoint missing required field %q", f.Name)
+		checked, err := checkFields(st.Interfaces.Fields, fieldsMap(ep.Fields), "endpoint missing required field %q")
+		if err != nil {
+			if se := AsStatusError(err); se != nil {
+				return err
 			}
-			def := &models.ConfigVariableDef{Name: f.Name, Type: f.Type}
-			checked, err := TypeCheck(def, v)
-			if err != nil {
-				return statusErr(400, err.Error())
-			}
-			if f.Required && checked == nil {
-				return statusErrf(400, "endpoint missing required field %q", f.Name)
-			}
+			return statusErr(400, err.Error())
 		}
+		b, err := json.Marshal(checked)
+		if err != nil {
+			return err
+		}
+		ep.Fields = b
 	}
 	n := len(eps)
 	if st.Interfaces.Min > 0 && n < st.Interfaces.Min {

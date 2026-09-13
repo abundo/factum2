@@ -484,3 +484,418 @@ func TypeCheckRaw(def *models.ConfigVariableDef, raw json.RawMessage) (any, erro
 func NormalizePlatform(p string) string {
 	return strings.ToLower(strings.TrimSpace(p))
 }
+
+var knownFieldTypes = map[string]bool{
+	models.FieldTypeString:     true,
+	models.FieldTypeInt:        true,
+	models.FieldTypeBool:       true,
+	models.FieldTypeEnum:       true,
+	models.FieldTypeVLAN:       true,
+	models.FieldTypeMAC:        true,
+	models.FieldTypeSNPA:       true,
+	models.FieldTypeIPv4:       true,
+	models.FieldTypeIPv6:       true,
+	models.FieldTypeIP:         true,
+	models.FieldTypeIPv4Prefix: true,
+	models.FieldTypeIPv6Prefix: true,
+	models.FieldTypePrefix:     true,
+	models.FieldTypeServiceID:  true,
+	models.FieldTypeList:       true,
+}
+
+var fieldNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+func ValidFieldType(t string) bool { return knownFieldTypes[t] }
+
+func NormalizeFieldType(t string) string {
+	t = strings.TrimSpace(t)
+	if t == models.FieldTypeSNPA {
+		return models.FieldTypeMAC
+	}
+	return t
+}
+
+func isPrefixFieldType(t string) bool {
+	switch NormalizeFieldType(t) {
+	case models.FieldTypePrefix, models.FieldTypeIPv4Prefix, models.FieldTypeIPv6Prefix:
+		return true
+	}
+	return false
+}
+
+// FieldEmpty is the fill/required empty rule: missing, JSON null, "", and
+// service_id 0. false and [] are present values.
+func FieldEmpty(f models.FieldSchema, v any) bool {
+	if v == nil {
+		return true
+	}
+	if s, ok := v.(string); ok && s == "" {
+		return true
+	}
+	if NormalizeFieldType(f.Type) == models.FieldTypeServiceID {
+		if n, ok := asInt(v); ok && n == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateServiceType checks schema and interfaces.fields (unique names,
+// types, constraints) and rewrites snpa to mac.
+func ValidateServiceType(st *models.ServiceType) error {
+	if st == nil {
+		return statusErr(400, "service type is required")
+	}
+	if err := ValidateInterfacesSpec(st.Interfaces); err != nil {
+		return err
+	}
+	if err := validateNamedFields("schema", st.Schema); err != nil {
+		return err
+	}
+	if err := validateNamedFields("interfaces.fields", st.Interfaces.Fields); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNamedFields(where string, fields []models.FieldSchema) error {
+	seen := map[string]bool{}
+	for i := range fields {
+		f := &fields[i]
+		if err := ValidateFieldSchema(f, true); err != nil {
+			return err
+		}
+		if seen[f.Name] {
+			return statusErrf(400, "duplicate %s field %q", where, f.Name)
+		}
+		seen[f.Name] = true
+	}
+	return nil
+}
+
+// ValidateFieldSchema checks one definition field. named is true for
+// schema[] and interfaces.fields[]; list items are nameless.
+func ValidateFieldSchema(f *models.FieldSchema, named bool) error {
+	return validateFieldSchema(f, named, 0)
+}
+
+func validateFieldSchema(f *models.FieldSchema, named bool, depth int) error {
+	if f == nil {
+		return statusErr(400, "field schema is required")
+	}
+	if depth > maxTypeDepth {
+		return statusErr(400, "type nesting too deep")
+	}
+	if named {
+		if !fieldNameRe.MatchString(f.Name) {
+			return statusErrf(400, "invalid field name %q", f.Name)
+		}
+	}
+	if !ValidFieldType(f.Type) {
+		return statusErrf(400, "unknown field type %q", f.Type)
+	}
+	f.Type = NormalizeFieldType(f.Type)
+
+	if f.Min != nil && f.Max != nil && *f.Min > *f.Max {
+		return statusErrf(400, "%s min is greater than max", fieldLabel(*f))
+	}
+	switch f.Type {
+	case models.FieldTypeInt, models.FieldTypeVLAN, models.FieldTypeList:
+	default:
+		if f.Min != nil || f.Max != nil {
+			return statusErrf(400, "%s does not take min/max", fieldLabel(*f))
+		}
+	}
+	if f.Unit != "" && f.Type != models.FieldTypeInt {
+		return statusErrf(400, "%s does not take unit", fieldLabel(*f))
+	}
+	if (f.BoolTrueLabel != "" || f.BoolFalseLabel != "") && f.Type != models.FieldTypeBool {
+		return statusErrf(400, "%s does not take bool labels", fieldLabel(*f))
+	}
+	if f.Resource != "" {
+		if !isPrefixFieldType(f.Type) {
+			return statusErrf(400, "%s cannot set resource", fieldLabel(*f))
+		}
+	}
+	if len(f.Enum) > 0 && f.Type != models.FieldTypeEnum {
+		return statusErrf(400, "%s does not take enum values", fieldLabel(*f))
+	}
+
+	switch f.Type {
+	case models.FieldTypeEnum:
+		if len(f.Enum) == 0 {
+			return statusErrf(400, "%s enum requires at least one value", fieldLabel(*f))
+		}
+		seen := map[string]bool{}
+		for _, e := range f.Enum {
+			if e.Value == "" {
+				return statusErrf(400, "%s enum value is required", fieldLabel(*f))
+			}
+			if seen[e.Value] {
+				return statusErrf(400, "%s duplicate enum value %q", fieldLabel(*f), e.Value)
+			}
+			seen[e.Value] = true
+		}
+	case models.FieldTypeList:
+		if f.Items == nil {
+			return statusErrf(400, "%s list requires items", fieldLabel(*f))
+		}
+		if NormalizeFieldType(f.Items.Type) == models.FieldTypeList {
+			return statusErrf(400, "%s nested lists are not allowed", fieldLabel(*f))
+		}
+		if err := validateFieldSchema(f.Items, false, depth+1); err != nil {
+			return err
+		}
+	default:
+		if f.Items != nil {
+			return statusErrf(400, "%s does not take items", fieldLabel(*f))
+		}
+	}
+	return nil
+}
+
+func fieldLabel(f models.FieldSchema) string {
+	if f.Name != "" {
+		return f.Name
+	}
+	if f.Type != "" {
+		return f.Type
+	}
+	return "field"
+}
+
+// ValidateServiceFields type-checks service-level fields against st.Schema
+// and returns canonical JSON (MAC/prefix). Required uses FieldEmpty.
+func ValidateServiceFields(st *models.ServiceType, raw json.RawMessage) (json.RawMessage, error) {
+	if st == nil {
+		return raw, nil
+	}
+	out, err := checkFields(st.Schema, fieldsMap(raw), "missing required field %q")
+	if err != nil {
+		if se := AsStatusError(err); se != nil {
+			return nil, err
+		}
+		return nil, statusErr(400, err.Error())
+	}
+	if len(out) == 0 {
+		if len(raw) == 0 || string(raw) == "null" {
+			return raw, nil
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func checkFields(schema []models.FieldSchema, fields map[string]any, requiredFmt string) (map[string]any, error) {
+	out := make(map[string]any, len(fields))
+	for k, v := range fields {
+		out[k] = v
+	}
+	for _, f := range schema {
+		v, ok := fields[f.Name]
+		empty := !ok || FieldEmpty(f, v)
+		if f.Required && empty {
+			return nil, fmt.Errorf(requiredFmt, f.Name)
+		}
+		if empty {
+			continue
+		}
+		checked, err := TypeCheckField(f, v)
+		if err != nil {
+			return nil, err
+		}
+		out[f.Name] = checked
+	}
+	return out, nil
+}
+
+// TypeCheckField coerces and validates v against a definition field.
+// MAC is stored as aabb.ccdd.eeff; prefixes as netip Prefix.Masked().
+func TypeCheckField(f models.FieldSchema, v any) (any, error) {
+	return typeCheckField(fieldLabel(f), f, v, 0)
+}
+
+func typeCheckField(name string, f models.FieldSchema, v any, depth int) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	if depth > maxTypeDepth {
+		return nil, fmt.Errorf("%s: type nesting too deep", name)
+	}
+	typ := NormalizeFieldType(f.Type)
+	if typ == "" {
+		return v, nil
+	}
+	if !ValidFieldType(typ) {
+		return nil, fmt.Errorf("%s: unknown type %q", name, typ)
+	}
+	switch typ {
+	case models.FieldTypeString:
+		s, ok := asString(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string", name)
+		}
+		return s, nil
+	case models.FieldTypeInt:
+		n, ok := asInt(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an integer", name)
+		}
+		if err := applyMinMaxValue(name, n, f.Min, f.Max); err != nil {
+			return nil, err
+		}
+		return n, nil
+	case models.FieldTypeVLAN:
+		n, ok := asInt(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an integer VLAN id", name)
+		}
+		min, max := vlanBounds(f)
+		if err := applyMinMaxValue(name, n, min, max); err != nil {
+			return nil, err
+		}
+		return int(n), nil
+	case models.FieldTypeBool:
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a boolean", name)
+		}
+		return b, nil
+	case models.FieldTypeEnum:
+		s, ok := asString(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string", name)
+		}
+		if len(f.Enum) == 0 {
+			return s, nil
+		}
+		for _, e := range f.Enum {
+			if e.Value == s {
+				return s, nil
+			}
+		}
+		return nil, fmt.Errorf("%s is not one of the allowed values", name)
+	case models.FieldTypeMAC:
+		s, ok := asString(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a MAC address string", name)
+		}
+		canon, err := canonicalMAC(s)
+		if err != nil {
+			return nil, fmt.Errorf("%s is not a valid MAC address", name)
+		}
+		return canon, nil
+	case models.FieldTypeIPv4, models.FieldTypeIPv6, models.FieldTypeIP:
+		s, ok := asString(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an IP address string", name)
+		}
+		addr, err := netip.ParseAddr(s)
+		if err != nil {
+			return nil, fmt.Errorf("%s is not a valid IP address", name)
+		}
+		if typ == models.FieldTypeIPv4 && !addr.Is4() {
+			return nil, fmt.Errorf("%s must be an IPv4 address", name)
+		}
+		if typ == models.FieldTypeIPv6 && !addr.Is6() {
+			return nil, fmt.Errorf("%s must be an IPv6 address", name)
+		}
+		return addr.String(), nil
+	case models.FieldTypeIPv4Prefix, models.FieldTypeIPv6Prefix, models.FieldTypePrefix:
+		s, ok := asString(v)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a CIDR prefix string", name)
+		}
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("%s is not a valid prefix", name)
+		}
+		p = p.Masked()
+		if typ == models.FieldTypeIPv4Prefix && !p.Addr().Is4() {
+			return nil, fmt.Errorf("%s must be an IPv4 prefix", name)
+		}
+		if typ == models.FieldTypeIPv6Prefix && !p.Addr().Is6() {
+			return nil, fmt.Errorf("%s must be an IPv6 prefix", name)
+		}
+		return p.String(), nil
+	case models.FieldTypeServiceID:
+		n, ok := asInt(v)
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("%s must be a service id", name)
+		}
+		return uint64(n), nil
+	case models.FieldTypeList:
+		return typeCheckFieldList(name, f, v, depth)
+	default:
+		return nil, fmt.Errorf("%s: unknown type %q", name, typ)
+	}
+}
+
+func vlanBounds(f models.FieldSchema) (min, max *float64) {
+	one, four := 1.0, 4094.0
+	min, max = &one, &four
+	if f.Min != nil {
+		min = f.Min
+	}
+	if f.Max != nil {
+		max = f.Max
+	}
+	return min, max
+}
+
+func applyMinMaxValue(name string, n int64, min, max *float64) error {
+	if min != nil && float64(n) < *min {
+		return fmt.Errorf("%s is below minimum", name)
+	}
+	if max != nil && float64(n) > *max {
+		return fmt.Errorf("%s is above maximum", name)
+	}
+	return nil
+}
+
+func typeCheckFieldList(name string, f models.FieldSchema, v any, depth int) (any, error) {
+	items, ok := asList(v)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a list", name)
+	}
+	c := varConstraints{Min: f.Min, Max: f.Max}
+	if err := applyMinMaxCount(name, len(items), c); err != nil {
+		return nil, err
+	}
+	if f.Items == nil {
+		return items, nil
+	}
+	out := make([]any, len(items))
+	for i, item := range items {
+		checked, err := typeCheckField(fmt.Sprintf("%s[%d]", name, i), *f.Items, item, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = checked
+	}
+	return out, nil
+}
+
+func canonicalMAC(s string) (string, error) {
+	hex := make([]byte, 0, 12)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ':' || c == '-' || c == '.':
+			continue
+		case c >= 'A' && c <= 'F':
+			hex = append(hex, c+'a'-'A')
+		case c >= 'a' && c <= 'f' || c >= '0' && c <= '9':
+			hex = append(hex, c)
+		default:
+			return "", fmt.Errorf("invalid MAC")
+		}
+	}
+	if len(hex) != 12 {
+		return "", fmt.Errorf("invalid MAC")
+	}
+	return string(hex[0:4]) + "." + string(hex[4:8]) + "." + string(hex[8:12]), nil
+}

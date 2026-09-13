@@ -200,12 +200,52 @@ const (
 // EndpointRoleInterface is the sentinel stored in ServiceEndpoint.Role.
 const EndpointRoleInterface = "interface"
 
+const (
+	FieldTypeString     = VarTypeString
+	FieldTypeInt        = VarTypeInt
+	FieldTypeBool       = VarTypeBool
+	FieldTypeEnum       = VarTypeEnum
+	FieldTypeVLAN       = VarTypeVLAN
+	FieldTypeMAC        = "mac"
+	FieldTypeSNPA       = "snpa" // alias of mac; stored as mac
+	FieldTypeIPv4       = "ipv4"
+	FieldTypeIPv6       = "ipv6"
+	FieldTypeIP         = VarTypeIP
+	FieldTypeIPv4Prefix = "ipv4_prefix"
+	FieldTypeIPv6Prefix = "ipv6_prefix"
+	FieldTypePrefix     = VarTypePrefix
+	FieldTypeServiceID  = "service_id"
+	FieldTypeList       = VarTypeList
+)
+
+type EnumChoice struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 // FieldSchema is one typed field on a service type or interfaces spec.
+// Nested Items is the same shape; list items are nameless.
 type FieldSchema struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Required    bool   `json:"required"`
 	Description string `json:"description"`
+
+	// Inclusive bounds for int/vlan values and list length.
+	// VLAN defaults unset Min/Max to 1 and 4094; int is unbounded.
+	Min  *float64 `json:"min,omitempty"`
+	Max  *float64 `json:"max,omitempty"`
+	Unit string   `json:"unit,omitempty"`
+
+	BoolTrueLabel  string `json:"bool_true_label,omitempty"`
+	BoolFalseLabel string `json:"bool_false_label,omitempty"`
+
+	Enum []EnumChoice `json:"enum,omitempty"`
+
+	Items *FieldSchema `json:"items,omitempty"`
+
+	// Resource names a kind=resource pool. Prefix-typed nodes only, including items.
+	Resource string `json:"resource,omitempty"`
 }
 
 // ServiceInterfacesSpec is the homogeneous UNI spec for a service type.

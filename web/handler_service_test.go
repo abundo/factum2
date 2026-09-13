@@ -211,6 +211,66 @@ func TestApiServiceCreate_PrefersTopLevelBandwidthOverFields(t *testing.T) {
 	}
 }
 
+func TestApiServiceTypeUpdateRequiresFields(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := models.ServiceType{
+		Name: "ELINE",
+		Schema: []models.FieldSchema{
+			{Name: "bandwidth_mbps", Type: models.FieldTypeInt, Required: true},
+			{Name: "service_id", Type: models.FieldTypeServiceID, Required: true},
+		},
+	}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{ServiceID: "CN00999"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/type", map[string]any{
+		"service_type": "ELINE",
+		"fields":       map[string]any{"bandwidth_mbps": 100, "service_id": 0},
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	c, rec = jsonRequest(t, http.MethodPut, "/api/service/x/type", map[string]any{
+		"service_type": "ELINE",
+		"fields":       map[string]any{"bandwidth_mbps": 100, "service_id": svc.ID},
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestApiServiceCreate_RejectsMissingRequiredFields(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := models.ServiceType{
+		Name:   "ELINE",
+		Schema: []models.FieldSchema{{Name: "bandwidth_mbps", Type: models.FieldTypeInt, Required: true}},
+	}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service", map[string]any{
+		"category": "CN", "service_type": "ELINE",
+	}, nil, nil)
+	if err := ctrl.ApiServiceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiServiceCreate_RejectsMissingServiceTypeForExternalCustomerPrefix(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
