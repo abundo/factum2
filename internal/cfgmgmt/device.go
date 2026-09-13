@@ -363,7 +363,19 @@ func sameEndpoint(a, b *models.ServiceEndpoint) bool {
 	if a.ID != 0 && b.ID != 0 {
 		return a.ID == b.ID
 	}
-	return a.DeviceID == b.DeviceID && a.InterfaceID == b.InterfaceID && a.Role == b.Role
+	aa, bb := *a, *b
+	if aa.ServiceID == 0 {
+		aa.ServiceID = bb.ServiceID
+	} else if bb.ServiceID == 0 {
+		bb.ServiceID = aa.ServiceID
+	}
+	if aa.Role == "" {
+		aa.Role = models.EndpointRoleInterface
+	}
+	if bb.Role == "" {
+		bb.Role = models.EndpointRoleInterface
+	}
+	return EndpointIdentity(aa) == EndpointIdentity(bb)
 }
 
 func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, filled map[string]any, currentDeviceID uint, commercialCache map[uint]*RenderCommercial) (RenderEndpoint, error) {
@@ -393,7 +405,7 @@ func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Servic
 	if currentDeviceID != 0 && device != nil && device.ID != currentDeviceID {
 		re.NeighborIP = loopbackAddr(db, device)
 	}
-	comm, err := resolveCommercial(db, svc, filled, fieldsMap(svc.Fields), commercialCache)
+	comm, err := resolveCommercial(db, st, svc, filled, fieldsMap(svc.Fields), commercialCache)
 	if err != nil {
 		return re, err
 	}
@@ -401,13 +413,31 @@ func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Servic
 	return re, nil
 }
 
-func resolveCommercial(db *gorm.DB, svc *models.Service, epFields, svcFields map[string]any, cache map[uint]*RenderCommercial) (*RenderCommercial, error) {
+func hasServiceIDField(st *models.ServiceType) bool {
+	if st == nil {
+		return false
+	}
+	check := func(fields []models.FieldSchema) bool {
+		for _, f := range fields {
+			if f.Name == fieldServiceID || NormalizeFieldType(f.Type) == models.FieldTypeServiceID {
+				return true
+			}
+		}
+		return false
+	}
+	return check(st.Schema) || check(st.Interfaces.Fields)
+}
+
+func resolveCommercial(db *gorm.DB, st *models.ServiceType, svc *models.Service, epFields, svcFields map[string]any, cache map[uint]*RenderCommercial) (*RenderCommercial, error) {
 	id := FieldUint(epFields, fieldServiceID)
 	if id == 0 {
 		id = FieldUint(svcFields, fieldServiceID)
 	}
 	if id == 0 {
-		if svc == nil || svc.ID == 0 {
+		// Same-row: no service_id picker on the definition, so the technical
+		// instance is the commercial row. A service_id field that is unset
+		// means no commercial CN (two-row / not yet picked).
+		if svc == nil || svc.ID == 0 || hasServiceIDField(st) {
 			return nil, nil
 		}
 		id = svc.ID

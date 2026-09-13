@@ -201,6 +201,115 @@ func TestGenericDataOthersNeighborIP(t *testing.T) {
 	}
 }
 
+func TestGenericDataOthersSamePortDifferentVLAN(t *testing.T) {
+	db := newTestDB(t)
+	st := models.ServiceType{
+		Name: "TWOvLAN",
+		Interfaces: models.ServiceInterfacesSpec{
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.FieldTypeVLAN, Required: true}},
+		},
+	}
+	mustCreate(t, db, &st)
+	dev := models.Device{Name: "pe-2vlan", Platform: "eos", NetboxID: 910}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 911}
+	mustCreate(t, db, &ifc)
+	svc := models.Service{ServiceID: "CN00300", ServiceType: "TWOvLAN"}
+	mustCreate(t, db, &svc)
+	eps := []models.ServiceEndpoint{
+		{ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(10, 0, 0)},
+		{ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(20, 0, 0)},
+	}
+	data, err := genericData(db, &svc, &eps[0], &dev, &ifc, eps, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Interfaces) != 2 || len(data.Others) != 1 {
+		t.Fatalf("Interfaces=%d Others=%d, want 2/1 for draft same-port UNIs", len(data.Interfaces), len(data.Others))
+	}
+	vlan, _ := asInt(data.Others[0].Fields["vlan"])
+	if vlan != 20 {
+		t.Errorf("other vlan = %#v, want 20", data.Others[0].Fields["vlan"])
+	}
+	cur, _ := asInt(data.Current.Fields["vlan"])
+	if cur != 10 {
+		t.Errorf("current vlan = %#v", data.Current.Fields["vlan"])
+	}
+}
+
+func TestResolveCommercialSameRowVsUnset(t *testing.T) {
+	db := newTestDB(t)
+	cust := models.Customer{Name: "Acme"}
+	mustCreate(t, db, &cust)
+	dev := models.Device{Name: "pe-cn", Platform: "eos", NetboxID: 920}
+	mustCreate(t, db, &dev)
+	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 921}
+	mustCreate(t, db, &ifc)
+
+	noPicker := models.ServiceType{
+		Name: "NOPICK",
+		Interfaces: models.ServiceInterfacesSpec{
+			Min: 1, Max: 1,
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.FieldTypeVLAN, Required: true}},
+		},
+	}
+	mustCreate(t, db, &noPicker)
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00400", Name: "same-row", ServiceType: "NOPICK"}
+	mustCreate(t, db, &svc)
+	ep := models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: models.EndpointRoleInterface,
+		DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(5, 0, 0),
+	}
+	mustCreate(t, db, &ep)
+	data, err := GenericData(db, &svc, &ep, &dev, &ifc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.Current.Commercial == nil || data.Current.Commercial.ID != svc.ID {
+		t.Fatalf("same-row Commercial = %+v, want technical row", data.Current.Commercial)
+	}
+
+	picker := models.ServiceType{
+		Name: "PICK",
+		Schema: []models.FieldSchema{
+			{Name: "service_id", Type: models.FieldTypeServiceID},
+		},
+		Interfaces: models.ServiceInterfacesSpec{
+			Min: 1, Max: 1,
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.FieldTypeVLAN, Required: true}},
+		},
+	}
+	mustCreate(t, db, &picker)
+	tech := models.Service{CustomerID: cust.ID, ServiceID: "CN00401", Name: "technical", ServiceType: "PICK"}
+	mustCreate(t, db, &tech)
+	ep2 := models.ServiceEndpoint{
+		ServiceID: tech.ID, Role: models.EndpointRoleInterface,
+		DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(6, 0, 0),
+	}
+	mustCreate(t, db, &ep2)
+	data, err = GenericData(db, &tech, &ep2, &dev, &ifc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.Current.Commercial != nil {
+		t.Fatalf("unset service_id Commercial = %+v, want nil", data.Current.Commercial)
+	}
+
+	comm := models.Service{CustomerID: cust.ID, ServiceID: "CN00402", Name: "picked"}
+	mustCreate(t, db, &comm)
+	tech.Fields = jsonRaw(t, map[string]any{"service_id": comm.ID})
+	if err := db.Save(&tech).Error; err != nil {
+		t.Fatal(err)
+	}
+	data, err = GenericData(db, &tech, &ep2, &dev, &ifc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.Current.Commercial == nil || data.Current.Commercial.ID != comm.ID || data.Current.Commercial.ServiceID != "CN00402" {
+		t.Fatalf("picked Commercial = %+v", data.Current.Commercial)
+	}
+}
+
 func TestRenderFuncMapSDPIDAndMAC(t *testing.T) {
 	db := newTestDB(t)
 	out, err := Render(db, `{{ sdpid (index .Others 0).NeighborIP }} {{ macColon "aabb.ccdd.eeff" }} {{ macHyphen "AA:BB:CC:DD:EE:FF" }} {{ macCisco "aa-bb-cc-dd-ee-ff" }}`, "", GenericRenderData{
