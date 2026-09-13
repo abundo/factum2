@@ -61,6 +61,7 @@ exclude_docs: |
   *.go
   cfgmgmt-service-design.md
   cfgmgmt-tree-objects.md
+  cfgmgmt-service-definitions.md
   wdm-roadm-optical-model.md
   generated/**
   generated/sbom.md

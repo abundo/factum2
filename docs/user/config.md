@@ -5,25 +5,26 @@ order: 40
 
 # Config
 
-**Config** is the tree where capacity services, parameter objects, and
-device CLI live. It is not the YAML file on disk
+**Config** is the tree where capacity services, parameter objects,
+resource pools, and device CLI live. It is not the YAML file on disk
 (`/etc/factum2/factum2.yaml`); that file only has database, web, worker,
 and similar process settings.
 
 ## Tree (primary)
 
 The page is a **tree** with an inspector and a **Preview** dock. Right-click
-to add folders, sites, locations, parameter objects, CLI objects, and
-services, or to attach a device. Drag to move a node (the API rejects
-illegal parents).
+to add folders, sites, locations, parameter objects, resource objects,
+CLI objects, and services, or to attach a device. Drag to move a node
+(the API rejects illegal parents).
 
 | Kind | What it is |
 | --- | --- |
 | Folder / site / location | Organizational. Site and location are folder variants. |
 | Device | An existing DCIM device **attached** here. Detach does not delete inventory. Interfaces are managed children. |
 | Parameter object | Named assignments (MTU, AS number, …). They apply to the parent and its descendants. |
+| Resource | Named CIDR list used by prefix fields on a service definition. Place on a site, device, or interface — not under a service node. |
 | CLI object | Per-NOS command templates (features with add/remove). Baseline objects sit on the ancestor chain; service translation lives under `_catalog/cli`. |
-| Service | A capacity `Service` row (create or attach). Endpoints are edited in the inspector. Virtual refs appear under involved devices. |
+| Service | A capacity `Service` row (create or attach a **definition**). Endpoints are homogeneous interfaces in the inspector. Virtual refs appear under involved ports. |
 
 Reserved folders (`global`, `_catalog`, `_services`) are system folders
 and cannot be dragged. Interfaces cannot be dragged either (they follow
@@ -44,7 +45,7 @@ the update field is hidden.
 **Context** (inspector) is optional wrapping, not a free-form regex:
 
 - Empty / `global` — emit remove then add as-is. Use this for SR OS
-  block-paste and for seeded ELINE.
+  block-paste and for whole-service add/remove blobs.
 - `enter` set (for example `interface {{.LocalIface}}`) — one enter,
   then remove, then add, then exit. Tick **remove at root** if teardown
   must stay at configure root (`no` / `delete` of a service object).
@@ -60,11 +61,13 @@ this tree. **Detach** removes the device from the tree and its config
 children (parameters, CLI, interfaces). The inventory row stays.
 
 A **service** node is the same CN/CI row as on the Services page. Create
-from the tree writes the inventory row with **no endpoints** — fill them
-in the inspector (ELINE needs both A and B before save). Virtual refs
-show under each involved port (two VLANs on one port are two refs).
-Default delete on the tree **detaches** the node; the service row
-remains.
+from the tree: pick a **definition** (Catalog → Service types — Factum
+ships none), then the form for that definition. The row is written with
+**no endpoints** unless you fill the interface slots; save must meet the
+definition’s min/max. Virtual refs show under each involved port (two
+VLANs on one port are two refs). Default delete on the tree **detaches**
+the node; the service row remains. **Unrealize** (inspector or Services
+dialog) drops type and endpoints and keeps a Lime/commercial row.
 
 ## Catalog
 
@@ -74,13 +77,13 @@ tree nodes:
 | Panel | What it is |
 | --- | --- |
 | Variables | Typed knobs. Assign values on a parameter object. |
-| Service types | ELINE, ELAN, … — roles, schema, NetBox mapping |
+| Service types | Definitions you create: fields, interfaces (min/max), connection types, NetBox mapping. No built-in products. |
 | Macros | Reusable CLI fragments (`include "name"`) |
 
 Operators with write permission add variable defs, types, and macros
 here. CLI objects are added from the tree (translation under
 `_catalog/cli/<type>/<platform>`). Adding a capacity product is a
-database change, not a new Go package.
+catalog definition plus CLI objects, not a new Go package.
 
 ## How a push uses this
 
@@ -102,3 +105,8 @@ A parameter object applies to its parent and that parent's descendants: a
 variable set on a site-level object applies to devices under that site
 unless a closer object overrides it. Attach a device under the site so it
 picks up those values.
+
+A **resource** is a named CIDR list. Prefix fields on a definition that
+set `resource` pick a free prefix from the closest matching resource on
+the interface → device → ancestors → global walk (not from a pool under
+the service node). Occupancy is last-write-wins.

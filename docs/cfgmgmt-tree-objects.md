@@ -2,19 +2,20 @@
 
 | Field | Value |
 | ----- | ----- |
-| Status | Implemented (merged as #16 + #26, 2026-09-06) |
+| Status | Implemented (tree/refs/CLI objects kept; seed/roles/ELINE GenericData superseded) |
 | Author | Factum |
-| Date | 2026-09-06 |
+| Date | 2026-09-13 |
 | Audience | Factum maintainers (cfgmgmt, web, GUI) |
-| Related | `docs/cfgmgmt-service-design.md` (operator how-to), `docs/user/config.md`, `docs/user/services.md`, `AGENTS.md` (capacity service types) |
+| Related | `docs/cfgmgmt-service-design.md` (operator how-to), `docs/cfgmgmt-service-definitions.md` (definition product), `docs/user/config.md`, `docs/user/services.md`, `AGENTS.md` (capacity service types) |
+| Supersedes in this file | Seeded builtin ELINE/ELAN/L3VPN/POLARIX and ELINE CLI; named `EndpointRole`s; JSON schema/roles textareas; ELINE-only `.Remote` / `.PeerLocal*` / `.SDPID` / `.LocalVLAN` render |
 
 ## Overview
 
-Factum's configuration management (`internal/cfgmgmt`) already has a nested **scope tree**, typed variables assigned onto scopes, a **ServiceType** catalog, per-NOS **PlatformPack** Go templates, and baseline **ConfigTemplate** snippets. Operators still cannot define a service and the CLI that implements it *as tree objects*: types and packs live on separate Config tabs, commercial `models.Service` rows live on the Services page, and "assign variable" is a side panel on whatever scope happens to be selected.
+This document is the **tree architecture**: polymorphic `config_scopes`, parameter / CLI / service objects, canonical node + virtual `service_ref`, move/detach, feature wrap policy. It is not the product how-to.
 
-This design redesigns cfgmgmt around one **configuration tree** whose nodes are folders, devices (and their auto-managed interfaces), **parameter objects**, **CLI objects**, and **service objects**. The operator adds, updates, removes, and **moves** those objects in the existing Config GUI (`web/frontend/src/views/config/ConfigPage.vue`). Vendor-agnostic service metadata is stored on a service object and **translated** by per-platform CLI objects into command lists that `internal/drivers` already applies (`CLISessionApplier.ApplyCLISession`, `payload_kind=cli` only).
+**Superseded (do not implement from the historical sections below):** `cfgmgmt.Seed` does **not** insert service types or translation CLI. Definitions are Catalog `ServiceType` rows with a form-built `Schema`, homogeneous `Interfaces` (min/max, no named roles), optional connection types, and optional NetBox mapping — see [cfgmgmt-service-design.md](cfgmgmt-service-design.md). Templates use `.Interfaces` / `.Others` / `.Current.Fields` / `.ConnectionType` / `.FieldMeta` (`index .Others 0`, not `.Remote`). Goose `00004_service_definitions.sql` wiped types, translation CLI, and all `services` rows once; Seed never repeats that wipe.
 
-`docs/cfgmgmt-service-design.md` is **kept and rewritten as the operator how-to** once this model lands. It is not replaced by this document and not split into multiple how-tos. This document is the architecture; that file remains "how to design a type in the GUI."
+The tree is folders, attached devices (and auto-managed interfaces), **parameter objects**, **resource objects** (named CIDR lists), **CLI objects**, and **service objects**. Vendor-agnostic instance data lives on `models.Service` + `service_endpoints`; per-platform CLI objects translate it for `CLISessionApplier.ApplyCLISession` (`payload_kind=cli` only).
 
 ## Background & Motivation
 
@@ -22,12 +23,12 @@ This design redesigns cfgmgmt around one **configuration tree** whose nodes are 
 
 The tree is `models.ConfigScope` (`models/config.go`) with kinds `folder`, `site`, `location`, `device`, `interface`. Seed creates a `global` root folder (`cfgmgmt.Seed` → `seedRootScope`). The GUI can add child folders and **attach** an existing DCIM device (`cfgmgmt.AttachDevice`); attaching also creates interface-kind children. There is **no drag-and-drop move**. Delete refuses nodes with children (`cfgmgmt.DeleteScope`). Variable **definitions** live in `config_variable_defs`; **values** live in `config_assignments` keyed `(variable_def_id, scope_id)`. Resolve (`cfgmgmt.Resolve` / `WalkParents`) walks interface → device → ancestors → root and takes the first assignment, then the def's default. Required vars with no value fail that var; `ResolveMap` skips failures rather than aborting the device.
 
-Capacity services are a **parallel** system:
+Capacity services are no longer a parallel pack/template system:
 
-- `ServiceType` + `EndpointRole` + `FieldSchema` — vendor-agnostic class (ELINE, ELAN, L3VPN, POLARIX), seeded builtin.
-- `PlatformPack` — one Go `text/template` apply/cleanup per `(service_type_id, platform)`. Seeded ELINE packs from `internal/drivers/templates/{eos,iosxr,sros}_eline.tmpl` refresh on migrate only when `seed_checksum` still matches the stored body.
-- `models.Service` — commercial CN/CI inventory (Lime or wizard). Wavelength (VL/VI) and dark fiber (LF/LI) have no `ServiceType`.
-- `ServiceEndpoint` — role + device + interface + fields. Render (`cfgmgmt.RenderDevice` / `RenderService`) walks terminating endpoints, looks up the pack, renders cleanup once then each apply body, and pushes via `web.apiServiceGenericPush`.
+- `ServiceType` — operator-owned Catalog definition (`Schema`, homogeneous `Interfaces`, connection types). **Zero** seeded types; **zero** seeded translation CLI. Historical `EndpointRole` / `endpoint_roles` / builtin ELINE/ELAN/L3VPN/POLARIX are gone (goose 00004).
+- Translation is a `kind=cli` object with `service_type_id` set, looked up by `(definition name, platform)` (`LookupCLIObject`). Embed `internal/drivers/templates/*.tmpl` files may remain as examples; Seed does not write them.
+- `models.Service` — commercial CN/CI inventory (Lime or wizard) and, when realized, the technical instance (`service_type` = definition name). Wavelength (VL/VI) and dark fiber (LF/LI) have no `ServiceType`.
+- `ServiceEndpoint` — `role` is always `"interface"` + device + interface + fields. Render walks terminating endpoints, looks up the CLI object, fills same-name defaults, renders cleanup once then each add body (`GenericRenderData`: `.Others`, not `.Remote`).
 
 Baseline golden config is a third system: `ConfigTemplate` attached to a `scope_id`, included in `RenderDevice` when the template's platform matches and the scope is on the device's ancestor chain.
 
@@ -44,7 +45,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 ### What stays
 
 - Go + Echo + Gorm/Postgres + Vue 3 / Nuxt UI Config page. No new product.
-- Drivers still execute; CLI objects are data. Huawei `vrp` implements `CLISessionApplier` (SSH `system-view` session) alongside EOS / IOS-XR / SR OS / Cisco SMB. `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupPlatformPack` today).
+- Drivers still execute; CLI objects are data. Huawei `vrp` implements `CLISessionApplier` (SSH `system-view` session) alongside EOS / IOS-XR / SR OS / Cisco SMB. `sros-md` continues to inherit `sros` translation when no dedicated object exists (`cfgmgmt.LookupCLIObject`).
 - Lime-owned commercial fields stay Lime-owned (`Service.Source == "lime"`).
 - Secrets remain `***` on **read** of variable defs and assignments (`cfgmgmt.RedactAssignmentSecrets`, `RedactVariableSecrets`). PUT-unchanged for `***` / omit / JSON null exists today **only** for variable-def defaults (`ApiConfigVariableUpdate`). Assignment upsert (`UpsertAssignment`) currently always saves `dto.Value` and will persist `"***"` if the GUI re-saves a redacted cell. Parameter objects must **implement** that contract on assignment write; it is not already there.
 - Wavelength / dark fiber stay inventory-only. No CLI objects for them.
@@ -60,7 +61,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 - Replace "assign variables onto a scope" with a **parameter object** that holds one or more assignments.
 - **CLI object**: per platform; features with add / optional update / remove command sets; context pattern (regex) naming the CLI mode; missing update ⇒ remove then add.
 - **Service object**: vendor-agnostic metadata (schema + endpoints) translated by CLI objects. Multi-device services have one canonical tree node plus **virtual references** under every involved device/interface.
-- Incremental migration from current scopes, assignments, types, packs, templates, macros, and ELINE endpoints. Seeded ELINE packs keep the checksum-refresh contract.
+- Incremental migration from current scopes, assignments, types, packs, templates, macros, and endpoints. **No** seeded product types or ELINE CLI after goose 00004.
 - Config page becomes tree-first; catalog surfaces (variable defs, service types, macros) remain, but packs and templates cease to be primary tabs.
 
 ### Non-Goals
@@ -83,7 +84,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 
 3. **CLI objects replace PlatformPack and ConfigTemplate.** One object per platform (and, for service translation, per service type). Features are rows with add / update / remove **command blobs**. Each blob is **one** Go `text/template`, then `splitCLI` on the output — same as `cfgmgmt.Render` today. `{{if}}` / `{{range}}` / `{{define}}` are legal inside a blob. Whole-file packs as the operator’s composition unit go away; `text/template` **stays**, same FuncMap (`join`, `include`, `eq`, `ne`) and `missingkey=error`. Rationale: seeded ELINE files are not line-independent; per-line execute would break golden CLI.
 
-4. **Service objects are views onto `models.Service` + `service_endpoints`, not a second inventory.** `ServiceType` remains the catalog (schema, roles, `sync_source`, `netbox_type`). A tree service node has `service_id` → `services.id`. Lime rows can be attached and have type/endpoints edited; company/delivery points/product/comment stay Lime-owned. Rationale: constraint 6 — do not fork two "service" concepts.
+4. **Service objects are views onto `models.Service` + `service_endpoints`, not a second inventory.** `ServiceType` remains the catalog (schema, homogeneous interfaces, `sync_source`, `netbox_type`) — **not** a tree node and **not** a built-in product. A tree service node has `service_id` → `services.id`. Lime rows can be attached and have type/endpoints edited; company/delivery points/product/comment stay Lime-owned. Rationale: constraint 6 — do not fork two "service" concepts.
 
 5. **Canonical service node + virtual refs, not "one side owns the service."** The canonical node is created under a folder/site/location (**not** the device node — that is the rejected owner-side model). Operators may still **move** a service under a device later as a grouping folder (parent matrix allows it). Endpoint bindings are children of that node (`kind=service_endpoint`), **projected from `service_endpoints` by `projectEndpointScopes`** — called from `ReplaceEndpoints` (same transaction; every table writer) **and** from attach-existing / migrate (no dummy table replace). The GUI **materializes** `service_ref` children from the **table** at tree-read time, keyed by `endpointIdentity` (not `service_endpoints.id` — replace-all allocates new IDs). Render/push continues to query `service_endpoints` by `device_id`. `ValidateEndpoints` stays on GUI/API writes only; NetBox import may write incomplete sets. Rationale: Lime/NetBox never hit the tree handler; HTTP-only dual-write would drift.
 
@@ -160,8 +161,9 @@ User-requested kinds, plus two that already exist and one that must stay for DCI
 | `interface` | yes, auto | scope.`interface_id` → `interfaces` | Not in the user's kind list; kept as managed children of device. Operators do not create/delete them. |
 | `parameter` | yes | scope + `config_assignments` | Replaces "assign variables" on folders/devices/interfaces. |
 | `cli` | yes | scope + `config_cli_features` | Baseline (no `service_type_id`) applies when its **parent** is on the device ancestor chain. Service translation (`service_type_id` set) is looked up globally. |
+| `resource` | yes | scope + `payload.cidrs` | Named CIDR list. Unique `(parent_id, kind, name)` for this kind. Allocate walks interface → device → ancestors → global. **Not** under `service`. |
 | `service` | yes | scope.`service_id` → `services` | Canonical node. Unique per `services.id`. |
-| `service_endpoint` | yes, under service | scope + dual-write `service_endpoints` | Role + device + interface + fields. |
+| `service_endpoint` | yes, under service | scope + dual-write `service_endpoints` | `role` always `"interface"` + device + interface + fields. |
 | `service_ref` | **virtual** | computed in `ScopeTree` | Shown under device/interface; not a row. |
 
 Site and location stay because they already exist in `ValidScopeKind` and `ConfigScope.SiteID` is populated on attach from `Device.SiteID`. The GUI never offered "Add site"; this design adds them as folder variants with an optional DCIM site picker. They are **not** replaced by parameter/CLI/service kinds.
@@ -170,7 +172,7 @@ Reserved folders (seeded, not deletable, not renameable):
 
 - `global` — existing root (`models.ConfigRootName`). **Global baseline CLI** (migrated `ConfigTemplate` with `scope_id IS NULL`, plus operator-wide NTP/banner objects) are **direct children of `global`**. `global` is on every device’s ancestor chain, so the collection rule below actually applies them. Today a nil-`ScopeID` template skips the ancestor check (`RenderDevice`); parenting at `global` is the tree equivalent.
 - `global / _catalog` — **service-translation CLI only**. It is a child of `global`, not an ancestor of a PE under Site-A, so baseline objects placed here would never be collected. Do not put golden config here.
-- `global / _catalog / cli / <ServiceType.Name> / <platform>` — one translation CLI object per seeded or operator pack (global lookup by type+platform, tree location ignored).
+- `global / _catalog / cli / <ServiceType.Name> / <platform>` — one translation CLI object per operator definition (global lookup by type+platform, tree location ignored). Creating a definition ensures the type folder; it does not seed per-platform CLI.
 - `global / _services` — default parent for migrated / newly created canonical service nodes that have no better folder.
 
 Leading underscore marks these as system folders in the GUI (not hidden; operators may add children). Test: a template with `scope_id=null` still appears in `RenderDevice` after migrate (as a `kind=cli` child of `global`).
@@ -192,8 +194,9 @@ Rules are enforced by one `assertParentKind(child, parent)` used by **Create, Up
 | folder, site, location | folder, site, location | Not under device/interface/parameter/cli/service. Cannot reparent `global`. |
 | device | folder, site, location | Unique `device_id`. Moving calls the same path as `AttachDevice` (refresh interface children). |
 | interface | its device only | Move rejected (409). |
-| parameter | folder, site, location, device, interface, service | Not under parameter/cli/endpoint. |
+| parameter | folder, site, location, device, interface, service | Not under parameter/cli/endpoint/resource. |
 | cli | folder, site, location, device, interface | Service-translation CLI (`service_type_id` set) may live anywhere but lookup is global; GUI defaults to `_catalog/cli/<type>`. |
+| resource | folder, site, location, device, **interface** | **Not** under service/parameter/cli/endpoint/resource. Name unique among resource siblings. |
 | service | folder, site, location, device | Not under interface (that is what refs are for). |
 | service_endpoint | its service only | Changing parent rejected. Rebind is an update of `device_id` / `interface_id`. |
 | service_ref | n/a | Drag onto another interface **rebinds** that endpoint; drag elsewhere rejected. |
@@ -211,9 +214,9 @@ Delete:
 | folder / site / location | Reject if children (keep today's 409). Recursive folder delete is a follow-up (`?recursive=1`); not in v1. |
 | device | **`DetachDevice`**, not `DeleteScope`. `DeleteScope` 409s because attach always created interface children. Detach (transaction): reparent `kind=service` children to the device’s former parent (or `_services` if that parent is gone); recursively delete remaining config descendants (interfaces, parameter, CLI) via `deleteScopeSubtree` (see below); delete the device scope. **Never** `DELETE FROM devices`. Endpoints on that device remain. GUI “Detach” calls `POST /api/config/scopes/:id/detach`, not `DELETE /scopes/:id`. |
 | interface | 409 "managed by device". |
-| parameter / cli | `deleteScopeSubtree`: `DELETE FROM config_assignments WHERE scope_id IN (…)` for every parameter scope removed (there is **no FK**; `DeleteScope` today would orphan rows, and COPY doubles them). If the node is the reserved migrated `parameters` child, also delete matching originals on the **parent** `(variable_def_id, parent.ID)` so dual-read does not resurrect values. Extra named objects (`ntp`) stay child-only. CLI features have `ON DELETE CASCADE` on `scope_id`. Then delete the scope row(s). |
-| service | Default: **detach** (same helper: delete canonical node + endpoint child scopes + any parameter children and their assignments; leave `services` / `service_endpoints`). Explicit "Delete service…" calls existing `DELETE /api/service/:id` (Lime 403; optional NetBox/device teardown). |
-| service_endpoint | Remove that termination via `ReplaceEndpoints` (validate remaining roles; ELINE A/B checks still apply). |
+| parameter / cli / resource | `deleteScopeSubtree`: `DELETE FROM config_assignments` and `config_cli_features` for every scope removed (there is **no SQL FK CASCADE** in baseline). If the node is the reserved migrated `parameters` child, also delete matching originals on the **parent** `(variable_def_id, parent.ID)` so dual-read does not resurrect values. Extra named objects (`ntp`) stay child-only. Then delete the scope row(s). |
+| service | Default: **detach** (same helper: delete canonical node + endpoint child scopes + any parameter children and their assignments; leave `services` / `service_endpoints`). Explicit "Delete service…" calls existing `DELETE /api/service/:id` (Lime 403; optional NetBox/device teardown for **any** definition). Unrealize (`POST /api/service/:id/unrealize`) drops realization and keeps the commercial row (allowed on Lime). |
+| service_endpoint | Remove that termination via `ReplaceEndpoints` after `ValidateEndpoints` (homogeneous `interfaces` min/max/unique; no ELINE A/B shape). |
 | service_ref | Inspector action "Remove this endpoint" — same as deleting the endpoint in the table. |
 
 ### Device in the tree vs DCIM
@@ -272,7 +275,7 @@ No new assignment table. After MOVE, new assignments live on parameter nodes; PU
 `ConfigScope` for `kind=parameter`:
 
 - `Name`, `ParentID`, `SortOrder`.
-- `Enabled` — meaningful for `parameter` and `cli` only (default true). Other kinds ignore it on read and reject a write that sets `enabled=false` (400).
+- `Enabled` — meaningful for `parameter`, `cli`, and `resource` (default true). Other kinds ignore it on read and reject a write that sets `enabled=false` (400).
 - `Payload` (`ConfigScopePayload`): `{ "description": "...", "platforms": ["eos"] }` — object-level platform filter, **in addition to** `ConfigVariableDef.Platforms`.
 
 #### Inheritance
@@ -315,6 +318,10 @@ Parameter children of a **service** node are merged into `.Vars` for that servic
 #### Secrets
 
 `RedactAssignmentSecrets` already redacts by variable def on **GET**. Parameter-object reads go through the same helper. **New in the parameter PR:** `UpsertAssignment` (or its handler) applies `SecretDefaultUnchanged`: PUT of `***` / JSON null / omitted value leaves the stored secret. Test: GET redacts, PUT `***` does not persist the placeholder. The GUI `saveAssign` path must send omit/`null` rather than the redacted string when the box is untouched. This is **not** current behavior (`UpsertAssignment` always `Save`s `dto.Value`).
+
+### Resource objects
+
+`kind=resource` is a named CIDR list (`Payload.cidrs`, cap 256, stored `Masked()`). Parents: folder, site, location, device, **interface**. **Not** under `service` — `AllocateResource` walks interface → device → ancestors → global only. Unique `(parent_id, kind, name)` for this kind (409). Occupancy is a global scan of service/endpoint fields whose schema `resource` matches the name (including list `items`). Allocate does not write (last-write-wins). Free-CIDR API: `GET /api/config/resources/free?interface_id=&name=&family=`. Operator how-to: [cfgmgmt-service-design.md](cfgmgmt-service-design.md).
 
 ### CLI objects, features, and context
 
@@ -440,7 +447,7 @@ type BaselineRenderData struct {
 }
 ```
 
-Service translation keeps `GenericRenderData`. Baseline objects must not reference `.Fields`, `.Remote`, or `.Endpoint`.
+Service translation keeps `GenericRenderData` (`.Interfaces`, `.Others`, `.Current`, `.ConnectionType`, `.FieldMeta` — **not** `.Remote` / `.LocalVLAN` / `.PeerLocal*` / `.SDPID`). Baseline objects must not reference `.Fields` or endpoint peers.
 
 Macros (`config_macros`) stay. Blobs may `{{include "eline-defaults"}}`. Macros are **not** tree nodes.
 
@@ -460,7 +467,7 @@ Uniqueness: one service-translation CLI per `(service_type_id, platform)`. Basel
 
 #### Catalog
 
-`ServiceType` remains the catalog: `Name`, `Description`, `Schema`, `EndpointRoles`, `Builtin`, `SyncSource`, `NetboxType`. Edited from the Service types catalog (form, not raw JSON — see GUI). Builtin types cannot be renamed or deleted. Wavelength/fiber never get a type.
+`ServiceType` remains the catalog: `Name`, `Description`, `Schema`, homogeneous `Interfaces` (min/max/unique/fields), `SyncSource`, `NetboxType`, `ConnectionTypes`. Edited from the Service types catalog **form builder** (not JSON schema/roles textareas). `Builtin` is unused; any type may be renamed (cascades `services.service_type` + `_catalog/cli/<name>`) or deleted (409 if in use). Wavelength/fiber never get a type. Factum ships **no** built-in products.
 
 The type is **not** a tree node. Instantiating a type creates a **service object** (and usually a `models.Service` row).
 
@@ -474,15 +481,15 @@ The type is **not** a tree node. Instantiating a type creates a **service object
 
 Children: one `kind=service_endpoint` per termination (`Role` in payload, `DeviceID`, `InterfaceID`, fields JSON). These children are a **projection of `service_endpoints`**, not an independent write.
 
-`cfgmgmt.ReplaceEndpoints` **replaces the table and projects tree children**. It does **not** call `ValidateEndpoints`. Today `applyL2VPNEndsToService` (`internal/netbox/service_eline_import.go`) builds a **partial** `want` list (skips unresolved ports, may emit one ELINE side) and calls `ReplaceEndpoints` with no validation. ELINE roles `a`/`b` are min=1 each — validating inside `ReplaceEndpoints` would 400 imports that succeed today.
+`cfgmgmt.ReplaceEndpoints` **replaces the table and projects tree children**. It does **not** call `ValidateEndpoints`. NetBox reverse-import (`internal/netbox/service_eline_import.go`) may still write a **partial** `want` list and calls `ReplaceEndpoints` with no validation. Homogeneous `interfaces.max` may be 2 (point-to-point) — validating inside `ReplaceEndpoints` would 400 imports that succeed today.
 
 Split:
 
-1. **GUI/API writes** (`ApiServiceEndpointsPut`, tree rebind of a complete set): `ValidateEndpoints` (and `ValidateELINEShape` for ELINE) **then** `ReplaceEndpoints`. `createServiceFromTree` does **not** write endpoints.
-2. **`ReplaceEndpoints`:** delete-all + insert (`ID = 0`, unchanged) **then** `projectEndpointScopes(serviceID)` in the same transaction. Import/device-sync keep calling this without validation.
+1. **GUI/API writes** (`ApiServiceEndpointsPut`, tree rebind of a complete set): `ValidateEndpoints` **then** rebind teardown (Applied* on old device) **then** `ReplaceEndpoints`. `createServiceFromTree` does **not** write endpoints. Role is always `"interface"`.
+2. **`ReplaceEndpoints`:** delete-all + insert (`ID = 0`) **then** copy Applied* when `EndpointIdentity` is unchanged **then** `projectEndpointScopes(serviceID)` in the same transaction. Import/device-sync keep calling this without validation.
 3. **`projectEndpointScopes(serviceID)`:** if a canonical `kind=service` scope exists, upsert/delete `kind=service_endpoint` children to match the table using `endpointIdentity` (below); if none, no-op. Also called from attach-existing and migrate **without** a dummy table replace.
 
-`endpointIdentity` is shared by projection upsert and virtual refs. `ValidateEndpoints` does **not** require `(device_id, interface_id)` uniqueness except ELINE’s extra shape check. Seeded ELAN is role `endpoint` min=1 max=0 with required `vlan` — two SAPs on one physical port (VLAN 100 and 200) are normal and must be two children / two refs:
+`endpointIdentity` is shared by projection upsert and virtual refs. `ValidateEndpoints` requires `(device_id, interface_id)` uniqueness only when `interfaces.unique` is set. Two UNIs on one physical port (VLAN 100 and 200) are normal when unique is false and must be two children / two refs:
 
 ```
 endpointIdentity(ep) = service_id + ":" + role + ":" + device_id + ":" + interface_id + ":" + disc
@@ -504,8 +511,8 @@ flowchart TB
     G[global]
     SvcFolder["_services or a customer folder"]
     SvcNode["service CN00012 kind=service"]
-    EPA["service_endpoint role=a"]
-    EPB["service_endpoint role=b"]
+    EPA["service_endpoint interface"]
+    EPB["service_endpoint interface"]
     SiteA[Site-A]
     PE1["device pe1"]
     I1["interface Ethernet1"]
@@ -520,8 +527,8 @@ flowchart TB
   end
 
   subgraph virtual [Computed in ScopeTree]
-    R1["service_ref CN00012 a"]
-    R2["service_ref CN00012 b"]
+    R1["service_ref CN00012"]
+    R2["service_ref CN00012"]
     I1 -.-> R1
     I2 -.-> R2
   end
@@ -535,11 +542,11 @@ Rejected alternatives:
 
 GUI:
 
-- Under a device/interface, refs show as children with kind label `Service` and title `CN00012 (a)`. Clicking selects the **canonical** node (inspector is the full service).
+- Under a device/interface, refs show as children with kind label `Service` and title `CN00012`. Clicking selects the **canonical** node (inspector is the full service).
 - Drag a ref onto another interface of a (possibly different) device = rebind that role. Drag a ref to a folder = rejected.
 - Moving the canonical node does not move devices; refs follow the endpoint table.
 - Deleting one side's ref = remove that endpoint (role min/max may then fail until the operator adds a replacement).
-- Creating a service from the **interface** context menu: parent the canonical node at `deviceScope.ParentID` **if that parent is folder, site, or location**, else `_services`. **Not** under the device node. Commit **zero endpoints**; pre-fill one unsaved row in the inspector. Do **not** `ReplaceEndpoints` with a one-sided ELINE (roles `a`/`b` each min=1 — `ValidateEndpoints` would 400). The later full-set PUT validates.
+- Creating a service from the **interface** context menu: parent the canonical node at `deviceScope.ParentID` **if that parent is folder, site, or location**, else `_services`. **Not** under the device node. Commit **zero endpoints**; pre-fill one unsaved row in the inspector (`role: "interface"`). Do **not** `ReplaceEndpoints` until the set satisfies `interfaces.min`. The later full-set PUT validates.
 
 #### Add / update / remove service
 
@@ -595,7 +602,7 @@ sequenceDiagram
 4. **Baseline CLI (preview only)** — all enabled `kind=cli` with `service_type_id IS NULL` whose **parent** is in `{deviceScope} ∪ ancestors(deviceScope) ∪ interface-children-of-device`, platform match (`sros-md` accepts `sros` objects unless a dedicated `sros-md` object exists **on that same parent**). Children of `global` match every device. Children of `_catalog` do **not**. Data is `BaselineRenderData`.
    - Order: ancestors **root→leaf** (global before site before device), then device-parented CLI by `sort_order`, then each interface (name) and its CLI.
    - Within an object: features by `sort_order`; each feature: execute remove blob, then add blob; wrap in enter/exit only when `enter` is non-empty and not `RemoveAtRoot` for remove.
-5. **Services** — `service_endpoints` for `device_id=D`, grouped by service. For each service, `LookupCLIObject(ServiceType, platform)`. Same cleanup-once-then-bodies rule as `renderGenericForDevice` today, implemented as: first endpoint on this device emits every feature's remove blob once, then each endpoint emits add. ELINE still fills `.Remote` / `.PeerLocal*` / `.SDPID` / `.StaleSubinterfaces` via `genericData`. Missing translator → source error `"no CLI object for ELINE/eos"` (same as missing pack).
+5. **Services** — `service_endpoints` for `device_id=D`, grouped by service. For each service, `LookupCLIObject(ServiceType, platform)`. Same cleanup-once-then-bodies rule: first endpoint on this device emits every feature's remove blob once, then each endpoint emits add. `GenericData` fills same-name defaults and `.Others` / `.NeighborIP` (empty for same-device peers). Missing translator → source error `"no CLI object for <Name>/eos"`.
 6. **Preview drafts** — `POST /api/config/render` with `endpoints` + `fields` overlay remains for the service dialog (`RenderServiceEndpoints`). Tree inspector is save-then-preview in v1 (no unsaved tree draft overlay). **Matrix and Preview** start from the nearest folder/site/location/device ancestor when the selection is `parameter`, `cli`, `service`, `service_endpoint`, or `service_ref` (selecting a `parameters` child must not yield zero Matrix rows). A device node (or that ancestor) fills the Preview panel.
 
 Push (`apiServiceGenericPush`):
@@ -604,7 +611,7 @@ Push (`apiServiceGenericPush`):
 - Command list built by the service-translation renderer instead of `RenderPackApplyBody`.
 - `RequireCLIPack` becomes `RequireCLIObject` (must be `payload_kind=cli`, the **column**).
 - `isSupportedDriverPlatform` includes `vrp` and `ciscosmb`; VRP implements `CLISessionApplier` (`system-view` … `return`), Cisco SMB `configure` … `end`. The `"CLI object exists but this platform cannot apply CLI sessions yet"` error remains for platforms whose driver does not.
-- ELINE: `PrepareELINEApply`, `stampELINEApplied`, abandoned-device teardown unchanged.
+- Generic path only: `LookupCLIObject`, `GenericData`, `ApplyCLISession`, stamp Applied* by `EndpointIdentity`. **Do not** call `PrepareELINEApply`. Rebind teardown runs inside `PUT .../endpoints` when device/iface changed and Applied* is set.
 - No automatic rollback of sibling devices (same as today).
 - Idempotency: feature remove blobs must be safe no-ops; this is an operator/seed contract, not something the engine proves.
 
@@ -618,9 +625,9 @@ First GUI-touching PR extracts `ConfigNodeInspector.vue` so later PRs do not all
 
 Context menu (write users):
 
-- Folder/site/location: Add folder, Add site, Add location, Attach device, Add parameter object, Add CLI object, Add service, Delete.
-- Device: Add parameter, Add CLI, Add service, Refresh interfaces, Detach (`POST .../detach`). No `DELETE /scopes/:id` on devices.
-- Interface: Add parameter, Add CLI, Add service (pre-bound endpoint).
+- Folder/site/location: Add folder, Add site, Add location, Attach device, Add parameter object, Add resource, Add CLI object, Add service, Delete.
+- Device: Add parameter, Add resource, Add CLI, Add service, Refresh interfaces, Detach (`POST .../detach`). No `DELETE /scopes/:id` on devices.
+- Interface: Add parameter, Add resource, Add CLI, Add service (pre-bound endpoint).
 - Parameter / CLI / service: Edit (select), Duplicate (optional later), Delete.
 - Service ref: Open service, Rebind, Remove endpoint.
 
@@ -638,7 +645,7 @@ Tabs after rollout:
 | Preview | Docked right of tree (device from selection or picker). Keep as a tab until the dock exists. |
 | Matrix | Keep. Walks interfaces under the selected **folder/device** (or nearest such ancestor if the selection is parameter/cli/service/ref). Source name is the parameter object when the winning assignment lives there. |
 | Variables | Catalog drawer / secondary tab. Defs are not tree nodes. |
-| Service types | Catalog drawer / secondary tab. Form editor for schema and roles (not a JSON textarea as the long-term UI; JSON acceptable in the first GUI PR). |
+| Service types | Catalog drawer. Form builder for schema, homogeneous interfaces, connection types + images (not JSON schema/roles textareas). |
 | Platform packs | **Removed** once CLI objects render. |
 | Templates | **Removed** once baseline CLI objects render. |
 | Macros | Catalog drawer. |
@@ -680,6 +687,7 @@ type ConfigScopePayload struct {
     Description string            `json:"description,omitempty"`
     Platforms   []string          `json:"platforms,omitempty"` // parameter object filter
     Context     *CLIContext       `json:"context,omitempty"`   // CLI object
+    CIDRs       []string          `json:"cidrs,omitempty"`     // kind=resource
 }
 
 type CLIContext struct {
@@ -752,7 +760,7 @@ Create inventory + node in one transaction (`createServiceFromTree`):
 }
 ```
 
-`attach` runs the same validation and numbering as `ApiServiceCreate` inside `db.Transaction`, then inserts the canonical scope with **zero endpoints**. There is no “optional first endpoint” in this payload — that would fail `ValidateEndpoints` for ELINE (`a`/`b` each min=1). Lime create is not offered. Inspector updates never go through this payload.
+`attach` runs the same validation and numbering as `ApiServiceCreate` inside `db.Transaction`, then inserts the canonical scope with **zero endpoints**. There is no “optional first endpoint” in this payload — that would fail `ValidateEndpoints` when `interfaces.min` is unmet. Lime create is not offered. Inspector updates never go through this payload.
 
 ### Render
 
@@ -798,7 +806,7 @@ Indexes (in `ensureScopeUniqueIndexes`):
 - `idx_config_scopes_cli_type_plat` on `(service_type_id, platform) WHERE kind = 'cli' AND service_type_id IS NOT NULL`
 - existing `idx_config_scopes_one_device` / `idx_config_scopes_one_interface`
 
-`payload_kind` is a **column** (same role as `PlatformPack.PayloadKind`) so `RequireCLIObject` does not query JSON. `ValidScopeKind` adds `parameter`, `cli`, `service`, `service_endpoint`. `service_ref` is not stored.
+`payload_kind` is a **column** (same role as `PlatformPack.PayloadKind`) so `RequireCLIObject` does not query JSON. `ValidScopeKind` adds `parameter`, `cli`, `service`, `service_endpoint`, `resource`. `service_ref` is not stored.
 
 `internal/util/db.go` AutoMigrate already lists `ConfigScope`; add `ConfigCLIFeature`. `factum2-web migrate` only (start does not AutoMigrate).
 

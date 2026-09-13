@@ -112,29 +112,37 @@ per-prefix DHCP on `models.IpamPrefix` (`DhcpEnabled` / range / gateway /
 on JSON A/AAAA records when the flag is on. Turning the flag off only
 hides the UI.
 
-**Capacity service types (cfgmgmt):** CN/CI types (ELINE, ELAN, L3VPN, …)
-are a `ServiceType` + per-NOS CLI objects in the DB, not a new Go
-package. Endpoints live in `service_endpoints`. Each type can carry
-`sync_source` / `netbox_type` so device-sync and NetBox reverse-import
-are not ELINE-hardcoded. The Config **tree** holds folders, attached
-devices (detach never deletes DCIM), parameter objects, CLI objects, and
+**Capacity service types (cfgmgmt):** there is **no built-in ELINE (or
+ELAN/L3VPN/POLARIX) package**. A type is a Catalog **definition**
+(`ServiceType`: form-built schema, homogeneous interfaces, optional
+connection types) plus per-NOS **CLI objects** in the DB, not a new Go
+package. `cfgmgmt.Seed` does not insert types or translation CLI. Endpoints
+live in `service_endpoints` (`role` is always `"interface"`). Each
+definition can carry `sync_source` / `netbox_type` so device-sync and
+NetBox reverse-import are not hardcoded to a type name. The Config
+**tree** holds folders, attached devices (detach never deletes DCIM),
+parameter objects, resource objects (CIDR lists), CLI objects, and
 service objects (views onto `models.Service`, virtual refs on ports).
-Translation CLI lives under `_catalog/cli/<type>/<platform>`; baseline
-CLI is a child of `global` or a site/device, never `_catalog`. How to
-design one:
+Translation CLI lives under `_catalog/cli/<definition>/<platform>`;
+baseline CLI is a child of `global` or a site/device, never `_catalog`.
+How to design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
-Architecture of the tree (parameter / CLI / service objects):
-[docs/cfgmgmt-tree-objects.md](docs/cfgmgmt-tree-objects.md).
+Architecture of the tree (parameter / CLI / service / resource objects):
+[docs/cfgmgmt-tree-objects.md](docs/cfgmgmt-tree-objects.md). Product
+design:
+[docs/cfgmgmt-service-definitions.md](docs/cfgmgmt-service-definitions.md).
 
 **L2VPN path (device → Netbox → factum Service):**
 `factum2-device-sync` writes on-device services using cfgmgmt mappings
-(ELINE→EVPL L2VPN, ELAN→VPLS, L3VPN→VRF) plus terminations. `factum2-netbox
+(`sync_source` eline/elan/l3vpn → `netbox_type` evpl/vpls/vrf) plus
+terminations. Operators set those mapping fields on the definition they
+create. `factum2-netbox
 sync` then reverse-imports L2VPNs onto matching factum `Service` rows
 (`internal/netbox.syncServiceEndpointsFromL2VPNs`): match by
 `Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`, resolve
 terminations to physical ports + VLAN/subinterface, set `ServiceType`
-from the mapping (ELINE/ELAN/…) and `service_endpoints` (roles from the
-type). Does not create Service rows (Lime/manual still own that). Skips
+from the mapping and `service_endpoints` (`role=interface`, count from
+the definition). Does not create Service rows (Lime/manual still own that). Skips
 services whose `ServiceType` is already set to something other than the
 mapped type or empty.
 
