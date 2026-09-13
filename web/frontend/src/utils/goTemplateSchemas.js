@@ -145,6 +145,30 @@ const cfgmgmtFunctions = [
     insert: '{{ if ne .X .Y }}{{ end }}',
     description: 'Inequality via fmt.Sprint',
   },
+  {
+    name: 'sdpid',
+    args: 'neighborIP',
+    insert: '{{ sdpid (index .Others 0).NeighborIP }}',
+    description: 'SR OS SDP id from a neighbor IPv4 last octet. Errors on empty/non-IPv4.',
+  },
+  {
+    name: 'macColon',
+    args: 'mac',
+    insert: '{{ macColon . }}',
+    description: 'Format a MAC as aa:bb:cc:dd:ee:ff',
+  },
+  {
+    name: 'macHyphen',
+    args: 'mac',
+    insert: '{{ macHyphen . }}',
+    description: 'Format a MAC as aa-bb-cc-dd-ee-ff',
+  },
+  {
+    name: 'macCisco',
+    args: 'mac',
+    insert: '{{ macCisco . }}',
+    description: 'Format a MAC as aabb.ccdd.eeff',
+  },
 ]
 
 const cfgmgmtVarsNote = {
@@ -156,14 +180,14 @@ const cfgmgmtVarsNote = {
 
 export const cfgmgmtPackSchema = {
   notes:
-    'CLI object feature blob, rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. ELINE-only fields (.Remote, .PeerLocal*, .SDPID, .StaleSubinterfaces) are zero on other types. Teardown goes in the feature remove blob (or {{define "cleanup"}} inside add).',
+    'CLI object feature blob, rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. Peers are .Others (use {{index .Others 0}}, not .Others0). Same-device peers have empty NeighborIP. Teardown goes in the feature remove blob (or {{define "cleanup"}} inside add).',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Service.ServiceID (e.g. CN00012)' },
     {
       name: '.Description',
       type: 'string',
-      description: 'Service.Comment (ELINE: "ID=<ServiceID> <customer>")',
+      description: 'Service.Comment',
     },
     {
       name: '.ServiceNumericID',
@@ -171,21 +195,20 @@ export const cfgmgmtPackSchema = {
       description: 'Service.PseudowireID, else Fields["service_numeric_id"]',
     },
     {
+      name: '.ConnectionType',
+      type: 'string',
+      description: 'Chosen connection type name (empty if none)',
+    },
+    {
       name: '.Fields',
       type: 'map',
       description: 'Service.Fields (per-service schema values). Access as .Fields.name.',
     },
-    { name: '.Endpoint.Role', type: 'string', description: "This termination's role" },
-    { name: '.Endpoint.DeviceID', type: 'uint', description: "This termination's device id" },
     {
-      name: '.Endpoint.InterfaceID',
-      type: 'uint',
-      description: "This termination's interface id",
-    },
-    {
-      name: '.Endpoint.Fields',
+      name: '.FieldMeta',
       type: 'map',
-      description: "This termination's fields. Access as .Endpoint.Fields.name.",
+      insert: '{{ (index .FieldMeta "bandwidth_mbps").Unit }}',
+      description: 'Definition metadata by field name (Name, Type, Unit, Description).',
     },
     cfgmgmtVarsNote,
     { name: '.Device', type: 'DCIMDevice', description: 'Read-only inventory for this endpoint' },
@@ -197,39 +220,28 @@ export const cfgmgmtPackSchema = {
     { name: '.Interface.Type', type: 'string', description: 'Interface type' },
     { name: '.LocalIface', type: 'string', description: 'Interface.Name' },
     {
-      name: '.LocalVLAN',
-      type: 'int',
-      description: 'Endpoint.Fields["vlan"], else 0. Name the VLAN field vlan to populate this.',
-    },
-    { name: '.Role', type: 'string', description: 'Same as Endpoint.Role' },
-    {
-      name: '.PeerLocalIface',
-      type: 'string',
-      description: 'ELINE: other endpoint on the same device',
-    },
-    { name: '.PeerLocalVLAN', type: 'int', description: 'ELINE: VLAN of the same-device peer' },
-    {
-      name: '.Remote',
-      type: '*ELINERemote',
-      description: 'ELINE: other endpoint on a different device. Guard with {{if .Remote}}.',
-    },
-    { name: '.Remote.NeighborIP', type: 'string', description: 'ELINE: peer loopback address' },
-    { name: '.Remote.PseudowireID', type: 'int', description: 'ELINE: Service.PseudowireID' },
-    { name: '.Remote.MTU', type: 'int', description: 'ELINE: pseudowire MTU' },
-    { name: '.Remote.ControlWord', type: 'bool', description: 'ELINE: control-word flag' },
-    { name: '.Remote.DeviceName', type: 'string', description: 'ELINE: peer device name' },
-    { name: '.Remote.RemoteIface', type: 'string', description: 'ELINE: peer interface name' },
-    { name: '.Remote.RemoteVLAN', type: 'int', description: 'ELINE: peer VLAN' },
-    {
-      name: '.SDPID',
-      type: 'int',
-      description: 'ELINE: SR OS shared SDP id from neighbor last octet',
+      name: '.Current',
+      type: 'RenderEndpoint',
+      description: 'This termination (Device, Interface, LocalIface, Fields, Commercial, NeighborIP)',
     },
     {
-      name: '.StaleSubinterfaces',
-      type: '[]ELINEStale',
-      insert: '{{ range .StaleSubinterfaces }}\nno interface {{ .Iface }}.{{ .VLAN }}\n{{ end }}',
-      description: 'ELINE leftover subinterfaces from a previous apply (.Iface, .VLAN)',
+      name: '.Current.Fields',
+      type: 'map',
+      insert: '{{ index .Current.Fields "vlan" }}',
+      description: "This termination's fields after same-name service defaults are filled",
+    },
+    {
+      name: '.Interfaces',
+      type: '[]RenderEndpoint',
+      insert: '{{ range .Interfaces }}{{ .LocalIface }}{{ end }}',
+      description: 'All homogeneous UNIs including Current',
+    },
+    {
+      name: '.Others',
+      type: '[]RenderEndpoint',
+      insert: '{{ (index .Others 0).NeighborIP }}',
+      description:
+        'Interfaces without Current. NeighborIP is the peer loopback when the peer device differs; empty for same-device peers.',
     },
   ],
 }
@@ -304,9 +316,23 @@ export function withCfgmgmtContext(
     if (!field?.name || seenEndpointField.has(field.name)) continue
     seenEndpointField.add(field.name)
     vars.push({
-      name: `.Endpoint.Fields.${field.name}`,
+      name: `.Current.Fields.${field.name}`,
       type: field.type || '',
+      insert: `{{ index .Current.Fields ${JSON.stringify(field.name)} }}`,
       description: field.description || field.name,
+    })
+  }
+  const seenMeta = new Set()
+  for (const field of [...(serviceType?.schema ?? []), ...(serviceType?.interfaces?.fields ?? [])]) {
+    if (!field?.name || seenMeta.has(field.name)) continue
+    seenMeta.add(field.name)
+    vars.push({
+      name: `.FieldMeta.${field.name}`,
+      type: 'FieldMeta',
+      insert: `{{ (index .FieldMeta ${JSON.stringify(field.name)}).Unit }}`,
+      description: field.unit
+        ? `Definition metadata for ${field.name} (unit ${field.unit})`
+        : `Definition metadata for ${field.name}`,
     })
   }
   return { ...schema, functions, variables: vars }

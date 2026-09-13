@@ -984,7 +984,7 @@ func TestApiConfigRender_ServiceDraftEndpoints(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
 	st := createTestELINEType(t, db)
-	createTestTranslationCLI(t, db, st, "eos", "interface {{.LocalIface}}.{{.LocalVLAN}}")
+	createTestTranslationCLI(t, db, st, "eos", `interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}`)
 
 	cust := models.Customer{Name: "Acme"}
 	if err := db.Create(&cust).Error; err != nil {

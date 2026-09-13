@@ -63,30 +63,11 @@ func DCIMFromInterface(iface *models.Interface) DCIMInterface {
 }
 
 const (
-	// DefaultELINEMTU/DefaultELINEControlWord are hardcoded for v1 rather
-	// than service fields — matches the EOS fixture.
-	DefaultELINEMTU         = 9100
-	DefaultELINEControlWord = true
-
 	FieldVLAN                 = "vlan"
 	FieldSubinterfaceNetboxID = "subinterface_netbox_id"
 	FieldTerminationNetboxID  = "termination_netbox_id"
+	fieldServiceID            = "service_id"
 )
-
-type ELINERemote struct {
-	NeighborIP   string
-	PseudowireID int
-	MTU          int
-	ControlWord  bool
-	DeviceName   string
-	RemoteIface  string
-	RemoteVLAN   int
-}
-
-type ELINEStale struct {
-	Iface string
-	VLAN  int
-}
 
 // SDPIDFromNeighbor is the SR OS shared SDP ID (last IPv4 octet).
 func SDPIDFromNeighbor(neighborIP string) (int, error) {
@@ -106,26 +87,48 @@ func IsSROS(platform string) bool {
 	return p == "sros" || p == "sros-md"
 }
 
-// GenericRenderData is the template context for service-translation CLI
-// objects. ELINE uses the extra Peer/Remote/SDPID/Stale fields; other types
-// leave them zero.
+// FieldMeta is definition metadata exposed to templates (not stored values).
+type FieldMeta struct {
+	Name        string
+	Type        string
+	Unit        string
+	Description string
+}
+
+// GenericRenderData is the template context for service-translation CLI objects.
 type GenericRenderData struct {
-	Name               string
-	Description        string
-	ServiceNumericID   int
-	Fields             map[string]any
-	Endpoint           map[string]any
-	Vars               map[string]any
-	Device             DCIMDevice
-	Interface          DCIMInterface
-	LocalIface         string
-	LocalVLAN          int
-	Role               string
-	PeerLocalIface     string
-	PeerLocalVLAN      int
-	Remote             *ELINERemote
-	StaleSubinterfaces []ELINEStale
-	SDPID              int
+	Name             string
+	Description      string
+	ServiceNumericID int
+	ConnectionType   string
+	Fields           map[string]any
+	FieldMeta        map[string]FieldMeta
+	Vars             map[string]any
+	Device           DCIMDevice
+	Interface        DCIMInterface
+	LocalIface       string
+	Current          RenderEndpoint
+	Interfaces       []RenderEndpoint
+	Others           []RenderEndpoint
+}
+
+// RenderEndpoint is one homogeneous UNI in the template context.
+type RenderEndpoint struct {
+	Device     DCIMDevice
+	Interface  DCIMInterface
+	LocalIface string
+	Fields     map[string]any
+	Commercial *RenderCommercial
+	// NeighborIP is the peer device loopback when Device.ID != current device.
+	NeighborIP string
+}
+
+// RenderCommercial is the resolved commercial Service row for an endpoint.
+type RenderCommercial struct {
+	ID        uint
+	ServiceID string
+	Name      string
+	Customer  string
 }
 
 func fieldsMap(raw json.RawMessage) map[string]any {
@@ -182,23 +185,29 @@ func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 			vars = m
 		}
 	}
-	epFields := fieldsMap(ep.Fields)
+	svcFields := fieldsMap(svc.Fields)
+	var st *models.ServiceType
+	if svc.ServiceType != "" {
+		found, err := LookupServiceType(db, svc.ServiceType)
+		if err != nil {
+			return nil, err
+		}
+		st = found
+	}
+	filled := FillEndpointDefaults(st, svcFields, fieldsMap(ep.Fields))
+	if err := requiredInterfaceFields(st, filled); err != nil {
+		return nil, err
+	}
+
 	data := &GenericRenderData{
-		Name:        svc.ServiceID,
-		Description: svc.Comment,
-		Fields:      fieldsMap(svc.Fields),
-		Endpoint: map[string]any{
-			"Role":        ep.Role,
-			"DeviceID":    ep.DeviceID,
-			"InterfaceID": ep.InterfaceID,
-			"Fields":      epFields,
-		},
-		Vars:       vars,
-		Device:     DCIMFromDevice(device),
-		Interface:  DCIMFromInterface(iface),
-		LocalIface: "",
-		LocalVLAN:  vlanFromFields(epFields),
-		Role:       ep.Role,
+		Name:           svc.ServiceID,
+		Description:    svc.Comment,
+		ConnectionType: connectionTypeName(db, svc.ConnectionTypeID),
+		Fields:         svcFields,
+		FieldMeta:      fieldMetaMap(st),
+		Vars:           vars,
+		Device:         DCIMFromDevice(device),
+		Interface:      DCIMFromInterface(iface),
 	}
 	if iface != nil {
 		data.LocalIface = iface.Name
@@ -208,129 +217,222 @@ func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 	} else if n, ok := asInt(data.Fields["service_numeric_id"]); ok {
 		data.ServiceNumericID = int(n)
 	}
-	if svc.ServiceType == "ELINE" {
-		if !siblingsSet {
-			var err error
-			siblings, err = ListEndpoints(db, svc.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		data.Description = elineDescription(svc.ServiceID, customerName(db, svc.CustomerID))
-		if err := fillELINEPeer(db, svc, ep, device, data, siblings); err != nil {
+
+	if !siblingsSet {
+		var err error
+		siblings, err = ListEndpoints(db, svc.ID)
+		if err != nil {
 			return nil, err
 		}
-		data.StaleSubinterfaces = staleOnDevice(db, svc, ep.DeviceID, siblings)
+	}
+
+	currentDeviceID := uint(0)
+	if device != nil {
+		currentDeviceID = device.ID
+	} else {
+		currentDeviceID = ep.DeviceID
+	}
+
+	commercialCache := map[uint]*RenderCommercial{}
+	currentRE, err := buildRenderEndpoint(db, st, svc, ep, device, iface, filled, 0, commercialCache)
+	if err != nil {
+		return nil, err
+	}
+	data.Current = currentRE
+
+	seenCurrent := false
+	for i := range siblings {
+		sib := &siblings[i]
+		if sib.DeviceID == 0 || sib.InterfaceID == 0 {
+			continue
+		}
+		if sameEndpoint(ep, sib) {
+			seenCurrent = true
+			data.Interfaces = append(data.Interfaces, currentRE)
+			continue
+		}
+		re, err := buildRenderEndpoint(db, st, svc, sib, nil, nil, nil, currentDeviceID, commercialCache)
+		if err != nil {
+			return nil, err
+		}
+		data.Interfaces = append(data.Interfaces, re)
+		data.Others = append(data.Others, re)
+	}
+	if !seenCurrent {
+		data.Interfaces = append([]RenderEndpoint{currentRE}, data.Interfaces...)
 	}
 	return data, nil
 }
 
-func fillELINEPeer(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, data *GenericRenderData, siblings []models.ServiceEndpoint) error {
-	other := otherEndpoint(ep, siblings)
-	if other == nil {
-		return nil
+// FillEndpointDefaults copies same-name service-level values into empty
+// interface fields. It does not persist; stored endpoint JSON stays empty.
+func FillEndpointDefaults(st *models.ServiceType, serviceFields, epFields map[string]any) map[string]any {
+	out := copyFieldMap(epFields)
+	if st == nil {
+		return out
 	}
-	if other.DeviceID == ep.DeviceID {
-		peerIface, err := loadInterface(db, other.InterfaceID)
-		if err != nil {
-			return err
-		}
-		data.PeerLocalIface = peerIface.Name
-		data.PeerLocalVLAN = vlanFromFields(fieldsMap(other.Fields))
-		return nil
-	}
-	peerDev, err := loadDevice(db, other.DeviceID)
-	if err != nil {
-		return err
-	}
-	peerIface, _ := loadInterface(db, other.InterfaceID)
-	remoteIface := ""
-	if peerIface != nil {
-		remoteIface = peerIface.Name
-	}
-	neighbor := loopbackAddr(db, peerDev)
-	if neighbor == "" {
-		return fmt.Errorf("device %q has no %s address", peerDev.Name, loopbackIfaceName(peerDev.Platform))
-	}
-	data.Remote = &ELINERemote{
-		NeighborIP:   neighbor,
-		PseudowireID: svc.PseudowireID,
-		MTU:          DefaultELINEMTU,
-		ControlWord:  DefaultELINEControlWord,
-		DeviceName:   peerDev.Name,
-		RemoteIface:  remoteIface,
-		RemoteVLAN:   vlanFromFields(fieldsMap(other.Fields)),
-	}
-	if IsSROS(device.Platform) {
-		id, err := SDPIDFromNeighbor(neighbor)
-		if err != nil {
-			return err
-		}
-		data.SDPID = id
-	}
-	return nil
-}
-
-func otherEndpoint(ep *models.ServiceEndpoint, siblings []models.ServiceEndpoint) *models.ServiceEndpoint {
-	for i := range siblings {
-		s := &siblings[i]
-		if s.DeviceID == 0 || s.InterfaceID == 0 {
+	for _, f := range st.Interfaces.Fields {
+		ev, eok := out[f.Name]
+		if eok && !FieldEmpty(f, ev) {
 			continue
 		}
-		if ep.ID != 0 && s.ID == ep.ID {
+		sv, sok := serviceFields[f.Name]
+		if !sok {
 			continue
 		}
-		if ep.ID == 0 && s.DeviceID == ep.DeviceID && s.InterfaceID == ep.InterfaceID && s.Role == ep.Role {
+		sf, ok := schemaFieldByName(st.Schema, f.Name)
+		if !ok {
+			sf = f
+		}
+		if FieldEmpty(sf, sv) {
 			continue
 		}
-		return s
-	}
-	return nil
-}
-
-func staleOnDevice(db *gorm.DB, _ *models.Service, deviceID uint, eps []models.ServiceEndpoint) []ELINEStale {
-	current := map[string]bool{}
-	for _, ep := range eps {
-		if ep.DeviceID != deviceID {
-			continue
-		}
-		iface, err := loadInterface(db, ep.InterfaceID)
-		if err != nil {
-			continue
-		}
-		key := fmt.Sprintf("%s\x00%d", iface.Name, vlanFromFields(fieldsMap(ep.Fields)))
-		current[key] = true
-	}
-	var applied []struct {
-		deviceID uint
-		iface    string
-		vlan     int
-	}
-	for _, ep := range eps {
-		if ep.AppliedDeviceID == 0 || ep.AppliedIface == "" {
-			continue
-		}
-		vlan := VLANFromFields(ep.AppliedFields)
-		applied = append(applied, struct {
-			deviceID uint
-			iface    string
-			vlan     int
-		}{ep.AppliedDeviceID, ep.AppliedIface, vlan})
-	}
-	var out []ELINEStale
-	seen := map[string]bool{}
-	for _, a := range applied {
-		if a.deviceID != deviceID || a.iface == "" {
-			continue
-		}
-		key := fmt.Sprintf("%s\x00%d", a.iface, a.vlan)
-		if current[key] || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, ELINEStale{Iface: a.iface, VLAN: a.vlan})
+		out[f.Name] = sv
 	}
 	return out
+}
+
+func requiredInterfaceFields(st *models.ServiceType, filled map[string]any) error {
+	if st == nil {
+		return nil
+	}
+	for _, f := range st.Interfaces.Fields {
+		if !f.Required {
+			continue
+		}
+		v, ok := filled[f.Name]
+		if !ok || FieldEmpty(f, v) {
+			return fmt.Errorf("endpoint missing required field %q", f.Name)
+		}
+	}
+	return nil
+}
+
+func copyFieldMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func schemaFieldByName(fields []models.FieldSchema, name string) (models.FieldSchema, bool) {
+	for _, f := range fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return models.FieldSchema{}, false
+}
+
+func fieldMetaMap(st *models.ServiceType) map[string]FieldMeta {
+	out := map[string]FieldMeta{}
+	if st == nil {
+		return out
+	}
+	add := func(fields []models.FieldSchema) {
+		for _, f := range fields {
+			if f.Name == "" {
+				continue
+			}
+			out[f.Name] = FieldMeta{
+				Name: f.Name, Type: f.Type, Unit: f.Unit, Description: f.Description,
+			}
+		}
+	}
+	add(st.Schema)
+	add(st.Interfaces.Fields)
+	return out
+}
+
+func connectionTypeName(db *gorm.DB, id *uint) string {
+	if id == nil || *id == 0 {
+		return ""
+	}
+	var ct models.ServiceConnectionType
+	if err := db.First(&ct, *id).Error; err != nil {
+		return ""
+	}
+	return ct.Name
+}
+
+func sameEndpoint(a, b *models.ServiceEndpoint) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.ID != 0 && b.ID != 0 {
+		return a.ID == b.ID
+	}
+	return a.DeviceID == b.DeviceID && a.InterfaceID == b.InterfaceID && a.Role == b.Role
+}
+
+func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, filled map[string]any, currentDeviceID uint, commercialCache map[uint]*RenderCommercial) (RenderEndpoint, error) {
+	if filled == nil {
+		filled = FillEndpointDefaults(st, fieldsMap(svc.Fields), fieldsMap(ep.Fields))
+	}
+	re := RenderEndpoint{Fields: filled}
+	if device == nil && ep.DeviceID != 0 {
+		d, err := loadDevice(db, ep.DeviceID)
+		if err != nil {
+			return re, err
+		}
+		device = d
+	}
+	if iface == nil && ep.InterfaceID != 0 {
+		ifc, err := loadInterface(db, ep.InterfaceID)
+		if err != nil {
+			return re, err
+		}
+		iface = ifc
+	}
+	re.Device = DCIMFromDevice(device)
+	re.Interface = DCIMFromInterface(iface)
+	if iface != nil {
+		re.LocalIface = iface.Name
+	}
+	if currentDeviceID != 0 && device != nil && device.ID != currentDeviceID {
+		re.NeighborIP = loopbackAddr(db, device)
+	}
+	comm, err := resolveCommercial(db, svc, filled, fieldsMap(svc.Fields), commercialCache)
+	if err != nil {
+		return re, err
+	}
+	re.Commercial = comm
+	return re, nil
+}
+
+func resolveCommercial(db *gorm.DB, svc *models.Service, epFields, svcFields map[string]any, cache map[uint]*RenderCommercial) (*RenderCommercial, error) {
+	id := FieldUint(epFields, fieldServiceID)
+	if id == 0 {
+		id = FieldUint(svcFields, fieldServiceID)
+	}
+	if id == 0 {
+		if svc == nil || svc.ID == 0 {
+			return nil, nil
+		}
+		id = svc.ID
+	}
+	if cache != nil {
+		if c, ok := cache[id]; ok {
+			return c, nil
+		}
+	}
+	var row models.Service
+	if svc != nil && svc.ID == id {
+		row = *svc
+	} else if err := db.First(&row, id).Error; err != nil {
+		return nil, fmt.Errorf("service_id %d: %w", id, err)
+	}
+	c := &RenderCommercial{
+		ID:        row.ID,
+		ServiceID: row.ServiceID,
+		Name:      row.Name,
+		Customer:  customerName(db, row.CustomerID),
+	}
+	if cache != nil {
+		cache[id] = c
+	}
+	return c, nil
 }
 
 func loopbackIfaceName(platform string) string {
@@ -377,10 +479,6 @@ func customerName(db *gorm.DB, customerID uint) string {
 		return ""
 	}
 	return c.Name
-}
-
-func elineDescription(serviceID, customer string) string {
-	return fmt.Sprintf("ID=%s %s", serviceID, customer)
 }
 
 func renderGenericForDevice(db *gorm.DB, svc *models.Service, device *models.Device, eps, all []models.ServiceEndpoint) []RenderedSource {

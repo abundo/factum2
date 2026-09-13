@@ -1,6 +1,7 @@
 package optical
 
 import (
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
@@ -88,8 +89,10 @@ func DeviceDownImpact(db *gorm.DB, deviceID uint) (DeviceImpact, error) {
 		}
 		for _, s := range svcs {
 			src := "endpoint"
-			if s.ServiceType == "ELINE" {
-				src = "eline"
+			if s.ServiceType != "" {
+				if st, err := cfgmgmt.LookupServiceType(db, s.ServiceType); err == nil && st.SyncSource != "" {
+					src = st.SyncSource
+				}
 			}
 			add(s, src)
 		}

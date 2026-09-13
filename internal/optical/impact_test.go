@@ -16,16 +16,18 @@ func TestDeviceDownImpactELINE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Device{}, &models.Customer{}, &models.Service{}, &models.ServiceEndpoint{}, &models.ServiceHop{}, &models.ServicePath{}); err != nil {
+	if err := db.AutoMigrate(&models.Device{}, &models.Customer{}, &models.Service{}, &models.ServiceEndpoint{}, &models.ServiceHop{}, &models.ServicePath{}, &models.ServiceType{}); err != nil {
 		t.Fatal(err)
 	}
 	cust := models.Customer{Name: "Acme"}
 	db.Create(&cust)
 	dev := models.Device{Name: "pe1", Status: "offline"}
 	db.Create(&dev)
+	st := models.ServiceType{Name: "ELINE", SyncSource: models.SyncSourceELINE}
+	db.Create(&st)
 	svc := models.Service{ServiceID: "CN00001", CustomerID: cust.ID, ServiceType: "ELINE"}
 	db.Create(&svc)
-	db.Create(&models.ServiceEndpoint{ServiceID: svc.ID, Role: "a", DeviceID: dev.ID, InterfaceID: 1})
+	db.Create(&models.ServiceEndpoint{ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: 1})
 
 	out, err := DeviceDownImpact(db, dev.ID)
 	if err != nil {
@@ -36,6 +38,50 @@ func TestDeviceDownImpactELINE(t *testing.T) {
 	}
 	if out.Services[0].Source != "eline" {
 		t.Errorf("source=%s, want eline", out.Services[0].Source)
+	}
+}
+
+func TestDeviceDownImpactUsesSyncSourceNotTypeName(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:impact-src?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&models.Device{}, &models.Customer{}, &models.Service{}, &models.ServiceEndpoint{}, &models.ServiceHop{}, &models.ServicePath{}, &models.ServiceType{}); err != nil {
+		t.Fatal(err)
+	}
+	cust := models.Customer{Name: "Acme"}
+	db.Create(&cust)
+	dev := models.Device{Name: "pe2", Status: "offline"}
+	db.Create(&dev)
+	st := models.ServiceType{Name: "FOO", SyncSource: "elan"}
+	db.Create(&st)
+	svc := models.Service{ServiceID: "CN00002", CustomerID: cust.ID, ServiceType: "FOO"}
+	db.Create(&svc)
+	db.Create(&models.ServiceEndpoint{ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: 1})
+
+	out, err := DeviceDownImpact(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Services) != 1 || out.Services[0].Source != "elan" {
+		t.Fatalf("source=%v, want elan from mapping", out.Services)
+	}
+
+	unmapped := models.Service{ServiceID: "CN00003", CustomerID: cust.ID, ServiceType: "BARE"}
+	db.Create(&unmapped)
+	db.Create(&models.ServiceEndpoint{ServiceID: unmapped.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: 2})
+	out, err = DeviceDownImpact(db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range out.Services {
+		got[s.ServiceRef] = s.Source
+	}
+	if got["CN00003"] != "endpoint" {
+		t.Errorf("unmapped source=%q, want endpoint", got["CN00003"])
 	}
 }
 

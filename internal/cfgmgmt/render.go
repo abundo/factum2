@@ -97,7 +97,8 @@ func packToCLIBlobs(apply, cleanup string) (add, remove string) {
 const maxIncludeDepth = 8
 
 // Render executes Go text/template body (or a named define) against data.
-// FuncMap is limited: include (named ConfigMacro), join. No file/HTTP/shell.
+// FuncMap is limited: include, join, eq/ne, sdpid, macColon/macHyphen/macCisco.
+// No file/HTTP/shell. missingkey=error.
 func Render(db *gorm.DB, body, define string, data any) ([]string, error) {
 	text, err := executeTemplate(db, body, define, data, 0)
 	if err != nil {
@@ -119,8 +120,12 @@ func executeTemplate(db *gorm.DB, body, define string, data any, depth int) (str
 			}
 			return executeTemplate(db, m.Body, "", data, depth+1)
 		},
-		"eq": eqAny,
-		"ne": func(a, b any) bool { return !eqAny(a, b) },
+		"eq":        eqAny,
+		"ne":        func(a, b any) bool { return !eqAny(a, b) },
+		"sdpid":     SDPIDFromNeighbor,
+		"macColon":  macColon,
+		"macHyphen": macHyphen,
+		"macCisco":  macCisco,
 	}
 	tmpl, err := template.New("cfg").Funcs(funcs).Option("missingkey=error").Parse(body)
 	if err != nil {
@@ -140,6 +145,34 @@ func executeTemplate(db *gorm.DB, body, define string, data any, depth int) (str
 
 func eqAny(a, b any) bool {
 	return fmt.Sprint(a) == fmt.Sprint(b)
+}
+
+func macHex(s string) (string, error) {
+	canon, err := canonicalMAC(s)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(canon, ".", ""), nil
+}
+
+func macColon(s string) (string, error) {
+	h, err := macHex(s)
+	if err != nil {
+		return "", err
+	}
+	return h[0:2] + ":" + h[2:4] + ":" + h[4:6] + ":" + h[6:8] + ":" + h[8:10] + ":" + h[10:12], nil
+}
+
+func macHyphen(s string) (string, error) {
+	h, err := macHex(s)
+	if err != nil {
+		return "", err
+	}
+	return h[0:2] + "-" + h[2:4] + "-" + h[4:6] + "-" + h[6:8] + "-" + h[8:10] + "-" + h[10:12], nil
+}
+
+func macCisco(s string) (string, error) {
+	return canonicalMAC(s)
 }
 
 func splitCLI(text string) []string {

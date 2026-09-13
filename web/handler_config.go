@@ -818,24 +818,11 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 
 	order := []uint{}
 	byDev := map[uint][]models.ServiceEndpoint{}
-	currentDeviceIDs := map[uint]bool{}
 	for _, ep := range eps {
 		if _, ok := byDev[ep.DeviceID]; !ok {
 			order = append(order, ep.DeviceID)
 		}
 		byDev[ep.DeviceID] = append(byDev[ep.DeviceID], ep)
-		currentDeviceIDs[ep.DeviceID] = true
-	}
-
-	if svc.ServiceType == "ELINE" {
-		seenAbandoned := map[uint]bool{}
-		for _, ep := range eps {
-			id := ep.AppliedDeviceID
-			if id != 0 && !currentDeviceIDs[id] && !seenAbandoned[id] {
-				seenAbandoned[id] = true
-				order = append(order, id)
-			}
-		}
 	}
 
 	fetchIDs := append([]uint{}, order...)
@@ -849,30 +836,14 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 	}
 
 	results := []ApiServiceElinePushResult{}
-	deviceOK := map[uint]bool{}
-	abandonedErr := map[uint]string{}
 
 	for _, deviceID := range order {
 		device, ok := devicesByID[deviceID]
 		if !ok {
-			res := ApiServiceElinePushResult{
+			results = append(results, ApiServiceElinePushResult{
 				Device: "device #" + strconv.FormatUint(uint64(deviceID), 10),
 				Error:  "device not found",
-			}
-			if !currentDeviceIDs[deviceID] {
-				res.Error = "abandoned ELINE endpoint device no longer exists in factum - stale config was not removed"
-				abandonedErr[deviceID] = res.Error
-			}
-			results = append(results, res)
-			continue
-		}
-		if !currentDeviceIDs[deviceID] {
-			res := ctrl.removeELINEFromDevice(&device, creds, settings, &drivers.ELINERemoval{
-				Name:               svc.ServiceID,
-				StaleSubinterfaces: abandonedSubsForDevice(eps, deviceID),
 			})
-			abandonedErr[deviceID] = res.Error
-			results = append(results, res)
 			continue
 		}
 
@@ -915,7 +886,6 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		}
 
 		var cmds []string
-		var firstData *cfgmgmt.GenericRenderData
 		label := device.Name
 		pushErr := ""
 		cleanupDone := false
@@ -937,9 +907,6 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 				pushErr = err.Error()
 				break
 			}
-			if firstData == nil {
-				firstData = data
-			}
 			part, err := cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
 			if err != nil {
 				pushErr = err.Error()
@@ -952,95 +919,12 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: pushErr})
 			continue
 		}
-		if firstData != nil {
-			if prep, ok := drv.(drivers.ELINEPrepareChecker); ok {
-				if err := prep.PrepareELINEApply(elineIntentFromData(firstData)); err != nil {
-					results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
-					continue
-				}
-			}
-		}
 		if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
 			continue
 		}
-		deviceOK[deviceID] = true
 		results = append(results, ApiServiceElinePushResult{Device: label})
 	}
 
-	if svc.ServiceType == "ELINE" {
-		ctrl.stampELINEApplied(svc, eps, deviceOK, abandonedErr)
-	}
 	return c.JSON(http.StatusOK, map[string]any{"results": results})
-}
-
-func (ctrl *Controller) stampELINEApplied(_ *models.Service, eps []models.ServiceEndpoint, deviceOK map[uint]bool, abandonedErr map[uint]string) {
-	for _, ep := range eps {
-		if !deviceOK[ep.DeviceID] {
-			continue
-		}
-		if ep.AppliedDeviceID != 0 && ep.AppliedDeviceID != ep.DeviceID && abandonedErr[ep.AppliedDeviceID] != "" {
-			continue
-		}
-		var iface models.Interface
-		if err := ctrl.DB.First(&iface, ep.InterfaceID).Error; err != nil {
-			continue
-		}
-		platform := ""
-		var device models.Device
-		if err := ctrl.DB.First(&device, ep.DeviceID).Error; err == nil {
-			platform = cfgmgmt.NormalizePlatform(device.Platform)
-		}
-		_ = ctrl.DB.Model(&models.ServiceEndpoint{}).Where("id = ?", ep.ID).Updates(map[string]any{
-			"applied_device_id": ep.DeviceID,
-			"applied_iface":     iface.Name,
-			"applied_platform":  platform,
-			"applied_fields":    ep.Fields,
-		}).Error
-	}
-}
-
-func abandonedSubsForDevice(eps []models.ServiceEndpoint, deviceID uint) []drivers.ELINEStaleSubinterface {
-	var out []drivers.ELINEStaleSubinterface
-	for _, ep := range eps {
-		if ep.AppliedDeviceID != deviceID || ep.AppliedIface == "" {
-			continue
-		}
-		vlan := cfgmgmt.VLANFromFields(ep.AppliedFields)
-		if vlan == 0 {
-			vlan = cfgmgmt.VLANFromFields(ep.Fields)
-		}
-		out = append(out, drivers.ELINEStaleSubinterface{Iface: ep.AppliedIface, VLAN: vlan})
-	}
-	return out
-}
-
-func elineIntentFromData(data *cfgmgmt.GenericRenderData) *drivers.ELINEIntent {
-	if data == nil {
-		return &drivers.ELINEIntent{}
-	}
-	intent := &drivers.ELINEIntent{
-		Name:             data.Name,
-		Description:      data.Description,
-		LocalIface:       data.LocalIface,
-		LocalVLAN:        data.LocalVLAN,
-		PeerLocalIface:   data.PeerLocalIface,
-		PeerLocalVLAN:    data.PeerLocalVLAN,
-		ServiceNumericID: data.ServiceNumericID,
-	}
-	for _, s := range data.StaleSubinterfaces {
-		intent.StaleSubinterfaces = append(intent.StaleSubinterfaces, drivers.ELINEStaleSubinterface{Iface: s.Iface, VLAN: s.VLAN})
-	}
-	if data.Remote != nil {
-		intent.Remote = &drivers.ELINERemotePeer{
-			NeighborIP:   data.Remote.NeighborIP,
-			PseudowireID: data.Remote.PseudowireID,
-			MTU:          data.Remote.MTU,
-			ControlWord:  data.Remote.ControlWord,
-			DeviceName:   data.Remote.DeviceName,
-			RemoteIface:  data.Remote.RemoteIface,
-			RemoteVLAN:   data.Remote.RemoteVLAN,
-		}
-	}
-	return intent
 }

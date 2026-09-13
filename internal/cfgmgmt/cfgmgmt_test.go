@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abundo/factum2/internal/drivers/templates"
 	"github.com/abundo/factum2/models"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -92,20 +91,17 @@ func mustELANType(t *testing.T, db *gorm.DB) *models.ServiceType {
 	return &st
 }
 
+const genericELINEAdd = `interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+{{range .Others}}{{if .NeighborIP}}neighbor {{.NeighborIP}}
+{{end}}{{end}}`
+
+const genericELINERemove = `no interface {{.LocalIface}}`
+
 func mustELINECLI(t *testing.T, db *gorm.DB, st *models.ServiceType) {
 	t.Helper()
-	for _, p := range []struct {
-		platform string
-		body     string
-	}{
-		{"eos", templates.EOSEline},
-		{"ios-xr", templates.IOSXREline},
-		{"sros", templates.SROSEline},
-		{"sros-md", templates.SROSEline},
-	} {
-		add, remove := packToCLIBlobs(p.body, "")
-		if err := writeTranslationCLI(db, st.ID, st.Name, p.platform, models.PayloadKindCLI, add, remove); err != nil {
-			t.Fatalf("write CLI %s: %v", p.platform, err)
+	for _, plat := range []string{"eos", "ios-xr", "sros", "sros-md"} {
+		if err := writeTranslationCLI(db, st.ID, st.Name, plat, models.PayloadKindCLI, genericELINEAdd, genericELINERemove); err != nil {
+			t.Fatalf("write CLI %s: %v", plat, err)
 		}
 	}
 }
@@ -683,24 +679,18 @@ func TestUpsertTypedListAndMap(t *testing.T) {
 	}
 }
 
-func TestRenderELINECLIMatchesEmbed(t *testing.T) {
+func TestRenderGenericCLIUsesInterfacesOthers(t *testing.T) {
 	db := newTestDB(t)
 	mustELINECLI(t, db, mustELINEType(t, db))
 	intent := GenericRenderData{
-		Name:        "CN00570",
-		Description: "ID=CN00570 Acme AB",
-		LocalIface:  "Ethernet1",
-		LocalVLAN:   100,
-		Remote: &ELINERemote{
-			NeighborIP:   "172.27.250.28",
-			PseudowireID: 1000570,
-			MTU:          9100,
-			ControlWord:  true,
-		},
-	}
-	want, err := Render(db, templates.EOSEline, "", intent)
-	if err != nil {
-		t.Fatalf("embed render: %v", err)
+		Name:       "CN00570",
+		LocalIface: "Ethernet1",
+		Current:    RenderEndpoint{LocalIface: "Ethernet1", Fields: map[string]any{"vlan": 100}},
+		Others: []RenderEndpoint{{
+			NeighborIP: "172.27.250.28",
+			LocalIface: "Ethernet2",
+			Fields:     map[string]any{"vlan": 200},
+		}},
 	}
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
@@ -710,30 +700,16 @@ func TestRenderELINECLIMatchesEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CLI render: %v", err)
 	}
+	want := []string{"no interface Ethernet1", "interface Ethernet1.100", "neighbor 172.27.250.28"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("CLI cmds =\n%v\nwant embed\n%v", got, want)
+		t.Errorf("CLI cmds =\n%v\nwant\n%v", got, want)
 	}
-	feats, err := ListCLIFeatures(db, obj.ID)
-	if err != nil || len(feats) != 1 {
-		t.Fatalf("features: %v %+v", err, feats)
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "interface Ethernet1.100") {
+		t.Errorf("missing local subinterface in %v", got)
 	}
-	add, err := Render(db, feats[0].AddCommands, "", intent)
-	if err != nil {
-		t.Fatalf("add blob: %v", err)
-	}
-	for _, line := range add {
-		if strings.Contains(line, "no pseudowire") || strings.Contains(line, "no patch") {
-			t.Fatalf("add blob still includes cleanup: %v", add)
-		}
-	}
-	foundIface := false
-	for _, line := range add {
-		if line == "interface Ethernet1" {
-			foundIface = true
-		}
-	}
-	if !foundIface {
-		t.Fatalf("add blob missing interface config: %v", add)
+	if !strings.Contains(joined, "neighbor 172.27.250.28") {
+		t.Errorf("missing neighbor in %v", got)
 	}
 }
 
@@ -2057,40 +2033,17 @@ func TestRenderDeviceIncludesBaselineCLI(t *testing.T) {
 	}
 }
 
-func elineRenderIntent() GenericRenderData {
-	return GenericRenderData{
-		Name:             "CN00570",
-		Description:      "ID=CN00570 Acme AB",
-		LocalIface:       "Ethernet1",
-		LocalVLAN:        100,
-		ServiceNumericID: 1000570,
-		SDPID:            28,
-		Remote: &ELINERemote{
-			NeighborIP:   "172.27.250.28",
-			PseudowireID: 1000570,
-			MTU:          9100,
-			ControlWord:  true,
-			DeviceName:   "pe2",
-			RemoteIface:  "Ethernet2",
-			RemoteVLAN:   200,
-		},
-	}
-}
-
-func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
+func TestRenderGenericCLIPerPlatform(t *testing.T) {
 	db := newTestDB(t)
 	mustELINECLI(t, db, mustELINEType(t, db))
-	intent := elineRenderIntent()
-	embeds := map[string]string{
-		"eos":    templates.EOSEline,
-		"ios-xr": templates.IOSXREline,
-		"sros":   templates.SROSEline,
+	intent := GenericRenderData{
+		Name:       "CN00570",
+		LocalIface: "Ethernet1",
+		Current:    RenderEndpoint{LocalIface: "Ethernet1", Fields: map[string]any{"vlan": 100}},
+		Others:     []RenderEndpoint{{NeighborIP: "172.27.250.28"}},
 	}
-	for plat, body := range embeds {
-		want, err := Render(db, body, "", intent)
-		if err != nil {
-			t.Fatalf("%s embed: %v", plat, err)
-		}
+	want := []string{"no interface Ethernet1", "interface Ethernet1.100", "neighbor 172.27.250.28"}
+	for _, plat := range []string{"eos", "ios-xr", "sros"} {
 		obj, err := LookupCLIObject(db, "ELINE", plat)
 		if err != nil || obj == nil {
 			t.Fatalf("%s CLI: %v %#v", plat, err, obj)
@@ -2100,7 +2053,7 @@ func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
 			t.Fatalf("%s CLI render: %v", plat, err)
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s CLI cmds =\n%v\nwant embed\n%v", plat, got, want)
+			t.Errorf("%s CLI cmds =\n%v\nwant\n%v", plat, got, want)
 		}
 	}
 }
