@@ -203,15 +203,15 @@ func upsertFactumSubinterface(db *gorm.DB, deviceID, netboxID, parentNetboxID ui
 // interfaces table (elineInterfaceDescription). Deletes are best-effort: if
 // the old objects are already gone (e.g. removed by hand in Netbox), it
 // logs and continues rather than blocking a legitimate edit.
-func reconcileELineSubinterface(db *gorm.DB, nb *netboxtool.NetboxClient, ep *eLineEndpoint, prevSubinterfaceNetboxID, prevTerminationNetboxID uint, description, label string) (*eLineReconcileResult, error) {
+func reconcileELineSubinterface(db *gorm.DB, nb serviceNetboxAPI, ep *eLineEndpoint, prevSubinterfaceNetboxID, prevTerminationNetboxID uint, description, label string) (*eLineReconcileResult, error) {
 	if prevTerminationNetboxID != 0 {
 		if err := nb.DeleteL2VPNTermination(prevTerminationNetboxID); err != nil {
-			slog.Warn("eline: failed to delete old l2vpn termination", "endpoint", label, "err", err)
+			slog.Warn("service netbox: failed to delete old l2vpn termination", "endpoint", label, "err", err)
 		}
 	}
 	if prevSubinterfaceNetboxID != 0 {
 		if err := nb.InterfaceDelete(int(prevSubinterfaceNetboxID)); err != nil {
-			slog.Warn("eline: failed to delete old subinterface", "endpoint", label, "err", err)
+			slog.Warn("service netbox: failed to delete old subinterface", "endpoint", label, "err", err)
 		}
 		deleteFactumInterfaceByNetboxID(db, prevSubinterfaceNetboxID, label)
 	}
@@ -260,16 +260,177 @@ func elinePersistError(c *echo.Context, err error) error {
 	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 }
 
-// persistELINEEndpoints writes generic service_endpoints for an ELINE
-// and optionally reconciles NetBox L2VPN + subinterfaces.
-func (ctrl *Controller) persistELINEEndpoints(ctx context.Context, svc *models.Service, eps []models.ServiceEndpoint) error {
-	var customer models.Customer
-	if err := ctrl.DB.First(&customer, svc.CustomerID).Error; err != nil {
-		return &elineHTTPError{http.StatusBadRequest, "service has no valid customer"}
+// serviceNetboxAPI is the NetBox surface generic service reconcile/teardown uses.
+type serviceNetboxAPI interface {
+	CreateInterfaceWithOptions(deviceID uint, name string, extra map[string]any) (*netboxtool.NetboxInterfaceREST, error)
+	InterfaceDelete(interfaceID int) error
+	GetL2VPNByName(name string) (*netboxtool.NBL2VPN, error)
+	GetL2VPNByIdentifier(identifier int) (*netboxtool.NBL2VPN, error)
+	CreateL2VPN(name, slug, l2vpnType string, identifier int) (*netboxtool.NBL2VPN, error)
+	UpdateL2VPN(l2vpnID uint, changes map[string]any) error
+	DeleteL2VPN(l2vpnID uint) error
+	CreateL2VPNTermination(l2vpnID, interfaceID uint) (*netboxtool.NBL2VPNTermination, error)
+	DeleteL2VPNTermination(terminationID uint) error
+	GetVRFByName(name string) (*netboxtool.NBVRF, error)
+	CreateVRF(name, rd, description string) (*netboxtool.NBVRF, error)
+	DeleteVRF(id uint) error
+}
+
+type liveNetbox struct {
+	*netboxtool.NetboxClient
+}
+
+func (l liveNetbox) DeleteVRF(id uint) error {
+	if id == 0 {
+		return nil
 	}
-	pseudowireID, err := pseudowireIDFromServiceID(svc.ServiceID)
+	endpoint := "/api/ipam/vrfs/" + strconv.FormatUint(uint64(id), 10) + "/"
+	base := strings.TrimRight(l.P.URL, "/")
+	req, err := http.NewRequest(http.MethodDelete, base+endpoint, nil)
 	if err != nil {
-		return &elineHTTPError{http.StatusBadRequest, err.Error()}
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Token "+l.P.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("netbox DELETE %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("netbox DELETE %s failed: %s", endpoint, resp.Status)
+	}
+	return nil
+}
+
+func (ctrl *Controller) serviceNetbox(settings *models.Settings) (serviceNetboxAPI, error) {
+	if ctrl.netboxFn != nil {
+		return ctrl.netboxFn(settings)
+	}
+	nb, err := ctrl.newNetboxClient(settings)
+	if err != nil {
+		return nil, err
+	}
+	return liveNetbox{nb}, nil
+}
+
+func netboxObjectName(svc *models.Service) string {
+	if svc == nil {
+		return ""
+	}
+	return svc.ServiceID
+}
+
+func netboxSlug(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 100 {
+		out = strings.Trim(out[:100], "-")
+	}
+	if out == "" {
+		return "l2vpn"
+	}
+	return out
+}
+
+func serviceHasNetboxMapping(st *models.ServiceType) bool {
+	return st != nil && (st.SyncSource != "" || st.NetboxType != "")
+}
+
+func matchPrevEndpoint(prev []models.ServiceEndpoint, ep models.ServiceEndpoint) models.ServiceEndpoint {
+	for _, p := range prev {
+		if p.DeviceID == ep.DeviceID && p.InterfaceID == ep.InterfaceID {
+			return p
+		}
+	}
+	vlan := cfgmgmt.VLANFromFields(ep.Fields)
+	found := -1
+	for i := range prev {
+		if cfgmgmt.VLANFromFields(prev[i].Fields) != vlan {
+			continue
+		}
+		if found != -1 {
+			return models.ServiceEndpoint{}
+		}
+		found = i
+	}
+	if found >= 0 {
+		return prev[found]
+	}
+	return models.ServiceEndpoint{}
+}
+
+func ifaceOnDevice(device *models.Device, id uint) *models.Interface {
+	if device == nil {
+		return nil
+	}
+	for i := range device.Interfaces {
+		if device.Interfaces[i].ID == id {
+			return &device.Interfaces[i]
+		}
+	}
+	return nil
+}
+
+func ifaceByName(device *models.Device, name string) *models.Interface {
+	if device == nil || name == "" {
+		return nil
+	}
+	for i := range device.Interfaces {
+		if device.Interfaces[i].Name == name {
+			return &device.Interfaces[i]
+		}
+	}
+	return nil
+}
+
+// reconcileServiceNetbox upserts L2VPN/VRF + terminations when the definition
+// has a NetBox mapping and integration is active. Mutates eps fields in place
+// with stored netbox ids. Does not ReplaceEndpoints.
+func (ctrl *Controller) reconcileServiceNetbox(ctx context.Context, svc *models.Service, st *models.ServiceType, eps []models.ServiceEndpoint) error {
+	if svc == nil || !serviceHasNetboxMapping(st) {
+		return nil
+	}
+	settings, err := util.GetOrCreateSettings(ctrl.DB)
+	if err != nil {
+		return err
+	}
+	if !netboxConfigured(settings) {
+		return nil
+	}
+	if st.NetboxType == "" {
+		return nil
+	}
+	nb, err := ctrl.serviceNetbox(settings)
+	if err != nil {
+		return &elineHTTPError{http.StatusBadGateway, "netbox client unavailable: " + err.Error()}
+	}
+
+	existing, err := cfgmgmt.ListEndpoints(ctrl.DB, svc.ID)
+	if err != nil {
+		return err
+	}
+
+	name := netboxObjectName(svc)
+	var customer models.Customer
+	hasCustomer := svc.CustomerID != 0 && ctrl.DB.First(&customer, svc.CustomerID).Error == nil
+	description := name
+	if hasCustomer {
+		description = elineInterfaceDescription(name, customer.Name)
 	}
 
 	ids := make([]uint, 0, len(eps))
@@ -285,80 +446,154 @@ func (ctrl *Controller) persistELINEEndpoints(ctx context.Context, svc *models.S
 		devicesByID[d.ID] = d
 	}
 
-	existing, err := cfgmgmt.ListEndpoints(ctrl.DB, svc.ID)
-	if err != nil {
-		return err
-	}
-	prevByRole := map[string]models.ServiceEndpoint{}
-	for _, e := range existing {
-		prevByRole[e.Role] = e
-	}
+	usedPrev := map[uint]bool{}
+	objectID := svc.L2VPNNetboxID
 
-	resolved := make([]*eLineEndpoint, len(eps))
-	for i := range eps {
-		vlan := cfgmgmt.VLANFromFields(eps[i].Fields)
-		ep, err := resolveELineEndpoint(devicesByID, eps[i].DeviceID, eps[i].InterfaceID, vlan, eps[i].Role)
-		if err != nil {
-			return &elineHTTPError{http.StatusBadRequest, err.Error()}
-		}
-		resolved[i] = ep
-	}
-
-	settings, err := util.GetOrCreateSettings(ctrl.DB)
-	if err != nil {
-		return err
-	}
-
-	l2vpnID := svc.L2VPNNetboxID
-	if netboxConfigured(settings) {
-		nb, err := ctrl.newNetboxClient(settings)
-		if err != nil {
-			slog.Warn("eline: netbox client unavailable, persisting locally", "err", err)
-		} else {
-			tenant, err := netbox.FindOrCreateTenant(nb, customer)
+	switch st.NetboxType {
+	case models.NetboxTypeEVPL, models.NetboxTypeVPLS:
+		l2vpnType := st.NetboxType
+		pw := 0
+		if l2vpnType == models.NetboxTypeEVPL {
+			pw, err = pseudowireIDFromServiceID(name)
 			if err != nil {
-				return &elineHTTPError{http.StatusBadGateway, "failed to resolve netbox tenant for customer: " + err.Error()}
+				return &elineHTTPError{http.StatusBadRequest, err.Error()}
 			}
-			description := elineInterfaceDescription(svc.ServiceID, customer.Name)
-			for i := range eps {
-				prev := prevByRole[eps[i].Role]
-				oldSub, oldTerm := cfgmgmt.NetboxIDsFromFields(prev.Fields)
-				res, err := reconcileELineSubinterface(ctrl.DB, nb, resolved[i], oldSub, oldTerm, description, eps[i].Role)
+		}
+		if objectID == 0 {
+			existingL2, err := nb.GetL2VPNByName(name)
+			if err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "lookup netbox l2vpn: " + err.Error()}
+			}
+			if existingL2 == nil && pw > 0 {
+				existingL2, err = nb.GetL2VPNByIdentifier(pw)
+				if err != nil {
+					return &elineHTTPError{http.StatusBadGateway, "lookup netbox l2vpn identifier: " + err.Error()}
+				}
+			}
+			if existingL2 != nil {
+				objectID = existingL2.NetboxID
+			} else {
+				created, err := nb.CreateL2VPN(name, netboxSlug(name), l2vpnType, pw)
+				if err != nil {
+					return &elineHTTPError{http.StatusBadGateway, "failed to create netbox l2vpn: " + err.Error()}
+				}
+				objectID = created.NetboxID
+			}
+		}
+		if l2vpnType == models.NetboxTypeEVPL && pw > 0 {
+			if err := nb.UpdateL2VPN(objectID, map[string]any{"identifier": pw}); err != nil {
+				slog.Warn("service netbox: failed to set l2vpn identifier", "err", err)
+			}
+			svc.PseudowireID = pw
+		}
+		for i := range eps {
+			device, ok := devicesByID[eps[i].DeviceID]
+			if !ok {
+				return &elineHTTPError{http.StatusBadRequest, "endpoint device not found"}
+			}
+			ifc := ifaceOnDevice(&device, eps[i].InterfaceID)
+			if ifc == nil {
+				return &elineHTTPError{http.StatusBadRequest, "endpoint interface not found"}
+			}
+			prev := matchPrevEndpoint(existing, eps[i])
+			if prev.ID != 0 {
+				usedPrev[prev.ID] = true
+			}
+			oldSub, oldTerm := cfgmgmt.NetboxIDsFromFields(prev.Fields)
+			vlan := cfgmgmt.VLANFromFields(eps[i].Fields)
+			termOn := ifc.NetboxID
+			subID := uint(0)
+			if vlan > 0 {
+				resolved := &eLineEndpoint{device: &device, iface: *ifc, vlan: vlan}
+				res, err := reconcileELineSubinterface(ctrl.DB, nb, resolved, oldSub, oldTerm, description, eps[i].Role)
 				if err != nil {
 					return &elineHTTPError{http.StatusBadGateway, err.Error()}
 				}
-				if l2vpnID == 0 {
-					created, err := nb.CreateL2VPN(svc.ServiceID, strings.ToLower(svc.ServiceID), "evpl", pseudowireID)
-					if err != nil {
-						return &elineHTTPError{http.StatusBadGateway, "failed to create netbox l2vpn: " + err.Error()}
+				subID = res.subinterfaceNetboxID
+				termOn = subID
+			} else {
+				if oldTerm != 0 {
+					if err := nb.DeleteL2VPNTermination(oldTerm); err != nil {
+						slog.Warn("service netbox: failed to delete old l2vpn termination", "err", err)
 					}
-					l2vpnID = created.NetboxID
 				}
-				term, err := nb.CreateL2VPNTermination(l2vpnID, res.subinterfaceNetboxID)
-				if err != nil {
-					return &elineHTTPError{http.StatusBadGateway, "failed to create l2vpn termination " + eps[i].Role + ": " + err.Error()}
+				if oldSub != 0 {
+					if err := nb.InterfaceDelete(int(oldSub)); err != nil {
+						slog.Warn("service netbox: failed to delete old subinterface", "err", err)
+					}
+					deleteFactumInterfaceByNetboxID(ctrl.DB, oldSub, eps[i].Role)
 				}
-				eps[i].Fields = cfgmgmt.EncodeEndpointFields(resolved[i].vlan, res.subinterfaceNetboxID, term.NetboxID)
 			}
-			if err := nb.UpdateL2VPN(l2vpnID, map[string]any{"tenant": tenant.NetboxID}); err != nil {
+			term, err := nb.CreateL2VPNTermination(objectID, termOn)
+			if err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "failed to create l2vpn termination: " + err.Error()}
+			}
+			eps[i].Fields = cfgmgmt.MergeEndpointNetboxIDs(eps[i].Fields, subID, term.NetboxID)
+		}
+		if live, ok := unwrapNetbox(nb); ok && hasCustomer && live != nil {
+			tenant, err := netbox.FindOrCreateTenant(live, customer)
+			if err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "failed to resolve netbox tenant for customer: " + err.Error()}
+			}
+			if err := nb.UpdateL2VPN(objectID, map[string]any{"tenant": tenant.NetboxID}); err != nil {
 				return &elineHTTPError{http.StatusBadGateway, "failed to set netbox l2vpn tenant: " + err.Error()}
 			}
 		}
+	case models.NetboxTypeVRF:
+		existingVRF, err := nb.GetVRFByName(name)
+		if err != nil {
+			return &elineHTTPError{http.StatusBadGateway, "lookup netbox vrf: " + err.Error()}
+		}
+		if existingVRF != nil {
+			objectID = existingVRF.NetboxID
+		} else {
+			created, err := nb.CreateVRF(name, "", description)
+			if err != nil {
+				return &elineHTTPError{http.StatusBadGateway, "failed to create netbox vrf: " + err.Error()}
+			}
+			objectID = created.NetboxID
+		}
 	}
 
-	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, svc.ID, eps); err != nil {
-		return err
+	for _, prev := range existing {
+		if usedPrev[prev.ID] {
+			continue
+		}
+		sub, term := cfgmgmt.NetboxIDsFromFields(prev.Fields)
+		if term != 0 {
+			if err := nb.DeleteL2VPNTermination(term); err != nil {
+				slog.Warn("service netbox: failed to delete removed endpoint termination", "err", err)
+			}
+		}
+		if sub != 0 {
+			if err := nb.InterfaceDelete(int(sub)); err != nil {
+				slog.Warn("service netbox: failed to delete removed endpoint subinterface", "err", err)
+			}
+			deleteFactumInterfaceByNetboxID(ctrl.DB, sub, prev.Role)
+		}
 	}
-	updates := map[string]any{"pseudowire_id": pseudowireID}
-	if l2vpnID != 0 {
-		updates["l2_vpn_netbox_id"] = l2vpnID
+
+	updates := map[string]any{}
+	if objectID != 0 {
+		updates["l2_vpn_netbox_id"] = objectID
+		svc.L2VPNNetboxID = objectID
 	}
-	if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error; err != nil {
-		return err
+	if svc.PseudowireID != 0 && st.NetboxType == models.NetboxTypeEVPL {
+		updates["pseudowire_id"] = svc.PseudowireID
 	}
-	svc.PseudowireID = pseudowireID
-	svc.L2VPNNetboxID = l2vpnID
+	if len(updates) > 0 {
+		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func unwrapNetbox(nb serviceNetboxAPI) (*netboxtool.NetboxClient, bool) {
+	if v, ok := nb.(liveNetbox); ok && v.NetboxClient != nil {
+		return v.NetboxClient, true
+	}
+	return nil, false
 }
 
 // --------------------------------------------------------------------------
@@ -525,42 +760,238 @@ func (ctrl *Controller) removeELINECmds(drv drivers.DriverClient, device *models
 	return remover.RemoveELINE(removal)
 }
 
-// removeELINEServiceFromDevices tears down service's ELINE config on every
-// device it was actually pushed to (service_endpoints.applied_*), used by
-// ApiServiceDelete's optional "remove from device" cleanup. Returns
-// (nil, nil) if the service was never pushed to any device.
-func (ctrl *Controller) removeELINEServiceFromDevices(c *echo.Context, service *models.Service, username, password string) ([]ApiServiceElinePushResult, error) {
+func appliedSnapshot(ep models.ServiceEndpoint) models.ServiceEndpoint {
+	out := ep
+	if ep.AppliedDeviceID != 0 {
+		out.DeviceID = ep.AppliedDeviceID
+		if ep.AppliedIface != "" {
+			out.AppliedIface = ep.AppliedIface
+		}
+		if len(ep.AppliedFields) > 0 && string(ep.AppliedFields) != "null" {
+			out.Fields = ep.AppliedFields
+		}
+	}
+	return out
+}
+
+func bindingUnchanged(old, neu models.ServiceEndpoint) bool {
+	return old.DeviceID == neu.DeviceID && old.InterfaceID == neu.InterfaceID
+}
+
+func endpointsNeedingTeardown(existing, next []models.ServiceEndpoint) []models.ServiceEndpoint {
+	var out []models.ServiceEndpoint
+	for _, old := range existing {
+		if old.AppliedDeviceID == 0 {
+			continue
+		}
+		kept := false
+		for _, neu := range next {
+			if bindingUnchanged(old, neu) {
+				kept = true
+				break
+			}
+		}
+		if !kept {
+			out = append(out, old)
+		}
+	}
+	return out
+}
+
+func stampAppliedOnDevice(db *gorm.DB, device *models.Device, eps []models.ServiceEndpoint) error {
+	if device == nil {
+		return nil
+	}
+	plat := cfgmgmt.NormalizePlatform(device.Platform)
+	for i := range eps {
+		ifc := ifaceOnDevice(device, eps[i].InterfaceID)
+		name := ""
+		if ifc != nil {
+			name = ifc.Name
+		}
+		if name == "" {
+			name = eps[i].AppliedIface
+		}
+		updates := map[string]any{
+			"applied_device_id": device.ID,
+			"applied_iface":     name,
+			"applied_platform":  plat,
+			"applied_fields":    eps[i].Fields,
+		}
+		if err := db.Model(&models.ServiceEndpoint{}).Where("id = ?", eps[i].ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ctrl *Controller) applyServiceCLIToDevice(svc *models.Service, device *models.Device, epsOnDevice, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings) ApiServiceElinePushResult {
+	result := ApiServiceElinePushResult{Device: device.Name}
+	if !isSupportedDriverPlatform(device) {
+		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
+		return result
+	}
+	cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, svc.ServiceType, device.Platform)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if cliObj == nil {
+		result.Error = cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, device.Platform)
+		return result
+	}
+	if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	applier, ok := drv.(drivers.CLISessionApplier)
+	if !ok {
+		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
+		return result
+	}
+	var cmds []string
+	cleanupDone := false
+	label := device.Name
+	for i := range epsOnDevice {
+		ep := &epsOnDevice[i]
+		ifc := ifaceOnDevice(device, ep.InterfaceID)
+		if ifc != nil {
+			label = device.Name + " " + ifc.Name
+		}
+		data, err := cfgmgmt.GenericDataWithSiblings(ctrl.DB, svc, ep, device, ifc, siblings)
+		if err != nil {
+			result.Device = label
+			result.Error = err.Error()
+			return result
+		}
+		part, err := cfgmgmt.RenderCLITranslation(ctrl.DB, cliObj, data, !cleanupDone)
+		if err != nil {
+			result.Device = label
+			result.Error = err.Error()
+			return result
+		}
+		cmds = append(cmds, part...)
+		cleanupDone = true
+	}
+	result.Device = label
+	if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if err := stampAppliedOnDevice(ctrl.DB, device, epsOnDevice); err != nil {
+		result.Error = err.Error()
+	}
+	return result
+}
+
+func (ctrl *Controller) removeServiceCLIFromDevice(svc *models.Service, device *models.Device, snapshots, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings) ApiServiceElinePushResult {
+	result := ApiServiceElinePushResult{Device: device.Name}
+	if !isSupportedDriverPlatform(device) {
+		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
+		return result
+	}
+	platform := device.Platform
+	if len(snapshots) > 0 && snapshots[0].AppliedPlatform != "" {
+		platform = snapshots[0].AppliedPlatform
+	}
+	cliObj, err := cfgmgmt.LookupCLIObject(ctrl.DB, svc.ServiceType, platform)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if cliObj == nil {
+		result.Error = cfgmgmt.MissingCLIObjectMessage(svc.ServiceType, platform)
+		return result
+	}
+	if err := cfgmgmt.RequireCLIObject(cliObj); err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	applier, ok := drv.(drivers.CLISessionApplier)
+	if !ok {
+		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
+		return result
+	}
+	var cmds []string
+	label := device.Name
+	for i := range snapshots {
+		ep := snapshots[i]
+		snap := appliedSnapshot(ep)
+		ifc := ifaceByName(device, ep.AppliedIface)
+		if ifc == nil {
+			ifc = ifaceOnDevice(device, snap.InterfaceID)
+		}
+		if ifc != nil {
+			label = device.Name + " " + ifc.Name
+			snap.InterfaceID = ifc.ID
+		}
+		data, err := cfgmgmt.GenericDataWithSiblings(ctrl.DB, svc, &snap, device, ifc, siblings)
+		if err != nil {
+			result.Device = label
+			result.Error = err.Error()
+			return result
+		}
+		part, err := cfgmgmt.RenderCLIObjectRemove(ctrl.DB, cliObj, data)
+		if err != nil {
+			result.Device = label
+			result.Error = err.Error()
+			return result
+		}
+		cmds = append(cmds, part...)
+	}
+	result.Device = label
+	if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
+		result.Error = err.Error()
+	}
+	return result
+}
+
+// removeServiceFromDevices tears down translation CLI on every device the
+// service was pushed to (Applied* if set, else current endpoints).
+func (ctrl *Controller) removeServiceFromDevices(c *echo.Context, service *models.Service, username, password string) ([]ApiServiceElinePushResult, error) {
 	eps, err := cfgmgmt.ListEndpoints(ctrl.DB, service.ID)
 	if err != nil {
 		return nil, err
 	}
-	subsByDevice := map[uint][]drivers.ELINEStaleSubinterface{}
-	var deviceIDs []uint
-	addSide := func(deviceID uint, iface string, vlan int) {
-		if deviceID == 0 {
-			return
+	return ctrl.removeEndpointSnapshotsFromDevices(c, service, eps, nil, username, password)
+}
+
+func (ctrl *Controller) removeEndpointSnapshotsFromDevices(c *echo.Context, service *models.Service, snapshots, siblings []models.ServiceEndpoint, username, password string) ([]ApiServiceElinePushResult, error) {
+	order := []uint{}
+	byDev := map[uint][]models.ServiceEndpoint{}
+	for _, ep := range snapshots {
+		snap := appliedSnapshot(ep)
+		devID := snap.DeviceID
+		if ep.AppliedDeviceID != 0 {
+			devID = ep.AppliedDeviceID
 		}
-		if _, ok := subsByDevice[deviceID]; !ok {
-			deviceIDs = append(deviceIDs, deviceID)
+		if devID == 0 {
+			continue
 		}
-		subsByDevice[deviceID] = append(subsByDevice[deviceID], drivers.ELINEStaleSubinterface{Iface: iface, VLAN: vlan})
+		if _, ok := byDev[devID]; !ok {
+			order = append(order, devID)
+		}
+		byDev[devID] = append(byDev[devID], ep)
 	}
-	for _, ep := range eps {
-		vlan := cfgmgmt.VLANFromFields(ep.AppliedFields)
-		if vlan == 0 {
-			vlan = cfgmgmt.VLANFromFields(ep.Fields)
-		}
-		addSide(ep.AppliedDeviceID, ep.AppliedIface, vlan)
-	}
-	if len(deviceIDs) == 0 {
+	if len(order) == 0 {
 		return nil, nil
 	}
 	if username == "" || password == "" {
-		return nil, fmt.Errorf("device credentials are required to remove ELINE config from device(s)")
+		return nil, fmt.Errorf("device credentials are required to remove config from device(s)")
 	}
 	creds := deviceCredentialsRequest{Username: username, Password: password}
 
-	devices, err := fetchDevices(c.Request().Context(), ctrl.DB, deviceIDs)
+	devices, err := fetchDevices(c.Request().Context(), ctrl.DB, order)
 	if err != nil {
 		return nil, err
 	}
@@ -568,14 +999,13 @@ func (ctrl *Controller) removeELINEServiceFromDevices(c *echo.Context, service *
 	for _, d := range devices {
 		devicesByID[d.ID] = d
 	}
-
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return nil, err
 	}
 
-	results := make([]ApiServiceElinePushResult, 0, len(deviceIDs))
-	for _, deviceID := range deviceIDs {
+	results := make([]ApiServiceElinePushResult, 0, len(order))
+	for _, deviceID := range order {
 		device, ok := devicesByID[deviceID]
 		if !ok {
 			results = append(results, ApiServiceElinePushResult{
@@ -584,31 +1014,22 @@ func (ctrl *Controller) removeELINEServiceFromDevices(c *echo.Context, service *
 			})
 			continue
 		}
-		results = append(results, ctrl.removeELINEFromDevice(&device, creds, settings, &drivers.ELINERemoval{
-			Name:               service.ServiceID,
-			StaleSubinterfaces: subsByDevice[deviceID],
-		}))
+		results = append(results, ctrl.removeServiceCLIFromDevice(service, &device, byDev[deviceID], siblings, creds, settings))
 	}
 	return results, nil
 }
 
-// removeELINEServiceFromNetbox tears down every Netbox object
-// ApiServiceElineUpdate created for service: both sides' L2VPN
-// terminations and subinterfaces, then the L2VPN itself - used by
-// ApiServiceDelete's optional "remove from netbox" cleanup. Unlike
-// reconcileELineSubinterface's best-effort deletes (log-and-continue,
-// since a legitimate re-provisioning edit shouldn't be blocked by stale
-// bookkeeping), this fails fast on the first error: ApiServiceDelete uses
-// success here as its gate for actually deleting the row, so a real
-// failure (as opposed to "already removed by hand", which the operator
-// signals by simply unchecking this option) must stop the delete rather
-// than be swallowed.
-func (ctrl *Controller) removeELINEServiceFromNetbox(service *models.Service) error {
+// removeServiceFromNetbox deletes stored L2VPN/VRF terminations, subinterfaces,
+// and the parent object. Fails fast so delete/unrealize can abort.
+func (ctrl *Controller) removeServiceFromNetbox(service *models.Service) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return err
 	}
-	nb, err := ctrl.newNetboxClient(settings)
+	if !netboxConfigured(settings) {
+		return fmt.Errorf("netbox is not configured")
+	}
+	nb, err := ctrl.serviceNetbox(settings)
 	if err != nil {
 		return err
 	}
@@ -617,6 +1038,7 @@ func (ctrl *Controller) removeELINEServiceFromNetbox(service *models.Service) er
 	if err != nil {
 		return err
 	}
+	st, _ := cfgmgmt.LookupServiceType(ctrl.DB, service.ServiceType)
 	for _, ep := range eps {
 		sub, term := cfgmgmt.NetboxIDsFromFields(ep.Fields)
 		if term != 0 {
@@ -631,10 +1053,17 @@ func (ctrl *Controller) removeELINEServiceFromNetbox(service *models.Service) er
 			deleteFactumInterfaceByNetboxID(ctrl.DB, sub, ep.Role)
 		}
 	}
-	if service.L2VPNNetboxID != 0 {
-		if err := nb.DeleteL2VPN(service.L2VPNNetboxID); err != nil {
-			return fmt.Errorf("l2vpn: %w", err)
+	if service.L2VPNNetboxID == 0 {
+		return nil
+	}
+	if st != nil && st.NetboxType == models.NetboxTypeVRF {
+		if err := nb.DeleteVRF(service.L2VPNNetboxID); err != nil {
+			return fmt.Errorf("vrf: %w", err)
 		}
+		return nil
+	}
+	if err := nb.DeleteL2VPN(service.L2VPNNetboxID); err != nil {
+		return fmt.Errorf("l2vpn: %w", err)
 	}
 	return nil
 }

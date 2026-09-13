@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -895,6 +897,8 @@ func (ctrl *Controller) ApiServiceEndpointsGet(c *echo.Context) error {
 type serviceEndpointsBody struct {
 	Fields    json.RawMessage             `json:"fields"`
 	Endpoints []models.ServiceEndpointDTO `json:"endpoints"`
+	Username  string                      `json:"username"`
+	Password  string                      `json:"password"`
 }
 
 func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
@@ -934,7 +938,38 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 			return configWriteError(c, err)
 		}
 		canonFields = canon
+		svc.Fields = canon
 	}
+
+	existing, err := cfgmgmt.ListEndpoints(ctrl.DB, id)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	toRemove := endpointsNeedingTeardown(existing, eps)
+	if len(toRemove) > 0 {
+		for _, old := range toRemove {
+			slog.Info("service endpoint teardown",
+				"service_id", svc.ID,
+				"old_device_id", old.AppliedDeviceID,
+				"old_iface", old.AppliedIface)
+		}
+		results, err := ctrl.removeEndpointSnapshotsFromDevices(c, &svc, toRemove, eps, body.Username, body.Password)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+		for _, r := range results {
+			if r.Error != "" {
+				return c.JSON(http.StatusBadGateway, map[string]any{
+					"error": fmt.Sprintf("failed to remove config from device %s: %s", r.Device, r.Error),
+				})
+			}
+		}
+	}
+
+	if err := ctrl.reconcileServiceNetbox(c.Request().Context(), &svc, st, eps); err != nil {
+		return elinePersistError(c, err)
+	}
+
 	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
 		return configWriteError(c, err)
 	}
@@ -943,6 +978,54 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 	}
+
+	if len(toRemove) > 0 {
+		rows, err := cfgmgmt.ListEndpoints(ctrl.DB, id)
+		if err != nil {
+			return configWriteError(c, err)
+		}
+		settings, err := util.GetOrCreateSettings(ctrl.DB)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		creds := deviceCredentialsRequest{Username: body.Username, Password: body.Password}
+		addIDs := []uint{}
+		addByDev := map[uint][]models.ServiceEndpoint{}
+		for _, ep := range rows {
+			if ep.AppliedDeviceID == 0 || ep.AppliedDeviceID != ep.DeviceID {
+				if _, ok := addByDev[ep.DeviceID]; !ok {
+					addIDs = append(addIDs, ep.DeviceID)
+				}
+				addByDev[ep.DeviceID] = append(addByDev[ep.DeviceID], ep)
+			}
+		}
+		if len(addIDs) > 0 {
+			fetched, err := fetchDevices(c.Request().Context(), ctrl.DB, addIDs)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			}
+			devicesByID := map[uint]models.Device{}
+			for _, d := range fetched {
+				devicesByID[d.ID] = d
+			}
+			for _, deviceID := range addIDs {
+				device, ok := devicesByID[deviceID]
+				if !ok {
+					slog.Error("service endpoint add: device missing after replace", "device_id", deviceID, "service_id", svc.ID)
+					return c.JSON(http.StatusBadGateway, map[string]any{"error": "device not found after rebind"})
+				}
+				slog.Info("service endpoint add", "service_id", svc.ID, "new_device_id", device.ID)
+				res := ctrl.applyServiceCLIToDevice(&svc, &device, addByDev[deviceID], rows, creds, settings)
+				if res.Error != "" {
+					slog.Error("service endpoint add failed after replace", "service_id", svc.ID, "device", res.Device, "err", res.Error)
+					return c.JSON(http.StatusBadGateway, map[string]any{
+						"error": fmt.Sprintf("endpoints saved but failed to add config on %s: %s", res.Device, res.Error),
+					})
+				}
+			}
+		}
+	}
+
 	rows, err := cfgmgmt.ListEndpoints(ctrl.DB, id)
 	if err != nil {
 		return configWriteError(c, err)
@@ -1084,6 +1167,10 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			continue
 		}
 		if err := applier.ApplyCLISession(svc.ServiceID, cmds); err != nil {
+			results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
+			continue
+		}
+		if err := stampAppliedOnDevice(ctrl.DB, &device, byDev[deviceID]); err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: label, Error: err.Error()})
 			continue
 		}

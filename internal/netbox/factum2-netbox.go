@@ -646,7 +646,7 @@ func syncCustomersToNetbox(db *gorm.DB, nb tenantAPI, reporter jobevent.Reporter
 // FindOrCreateTenant returns the Netbox tenant for customer, matched via the
 // same "source"="factum"/"source_id"=<customer.ID> custom fields
 // syncCustomersToNetbox uses. Provisioning paths (currently
-// persistELINEEndpoints, when it assigns a service's L2VPN to its
+// generic service NetBox reconcile, when it assigns a service's L2VPN to its
 // customer's tenant) call this directly instead of waiting for the next
 // scheduled Netbox sync, so a customer's first service still gets a tenant
 // even if Netbox sync hasn't run since the customer was created.

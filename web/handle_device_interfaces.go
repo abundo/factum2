@@ -72,6 +72,9 @@ func isGlobalVlanPlatform(device *models.Device) bool {
 }
 
 func (ctrl *Controller) newDriverForDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error) {
+	if ctrl.driverFn != nil {
+		return ctrl.driverFn(device, creds, settings)
+	}
 	return drivers.NewDriver(drivers.DriverParam{
 		Name:     drivers.DeviceFQDN(device.Name, settings.DefaultDomain),
 		Platform: strings.ToLower(device.Platform),

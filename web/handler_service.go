@@ -317,13 +317,10 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 	return c.JSON(http.StatusCreated, created)
 }
 
-// ServiceDeleteRequest is ApiServiceDelete's optional request body - for an
-// ELINE service, lets the caller ask for the NetBox objects and/or device
-// config a prior eline/update and eline/push left behind to be torn down
-// as part of the delete, rather than orphaned. Ignored entirely for
-// non-ELINE services. Username/Password are only needed when
+// ServiceDeleteRequest is the optional body for ApiServiceDelete and
+// ApiServiceUnrealize. Username/Password are only needed when
 // RemoveFromDevice is set (same per-request, never-persisted credentials
-// convention as deviceCredentialsRequest).
+// as deviceCredentialsRequest).
 type ServiceDeleteRequest struct {
 	RemoveFromNetbox bool   `json:"remove_from_netbox"`
 	RemoveFromDevice bool   `json:"remove_from_device"`
@@ -331,17 +328,54 @@ type ServiceDeleteRequest struct {
 	Password         string `json:"password"`
 }
 
-// ApiServiceDelete mirrors ApiServiceUpdate's Lime-source guard, then -
-// unlike a plain generic-CRUD delete - optionally tears down an ELINE
-// service's NetBox/device state first (removeELINEServiceFromDevices/
-// removeELINEServiceFromNetbox, web/handler_service_eline.go) before
-// hard-deleting the row. Any requested cleanup step failing aborts the
-// whole delete (row is left in place) rather than leaving a deleted local
-// record with orphaned NetBox objects or live device config and no way to
-// find it again - the operator can retry, or uncheck that option and
-// clean up by hand. Used both for an explicit admin delete and for
-// cleaning up an aborted create-wizard draft (which never sets the
-// cleanup flags, so behaves exactly as before).
+func (ctrl *Controller) serviceCleanup(c *echo.Context, existing *models.Service, req ServiceDeleteRequest) (map[string]any, error) {
+	response := map[string]any{}
+	if req.RemoveFromDevice && existing.ServiceType != "" {
+		results, err := ctrl.removeServiceFromDevices(c, existing, req.Username, req.Password)
+		if err != nil {
+			return nil, &elineHTTPError{http.StatusBadRequest, err.Error()}
+		}
+		for _, r := range results {
+			if r.Error != "" {
+				return nil, &elineHTTPError{http.StatusBadGateway, fmt.Sprintf("failed to remove config from device %s: %s", r.Device, r.Error)}
+			}
+		}
+		response["device_results"] = results
+	}
+	if req.RemoveFromNetbox {
+		st, _ := cfgmgmt.LookupServiceType(ctrl.DB, existing.ServiceType)
+		hasIDs := existing.L2VPNNetboxID != 0
+		if !hasIDs {
+			eps, _ := cfgmgmt.ListEndpoints(ctrl.DB, existing.ID)
+			for _, ep := range eps {
+				sub, term := cfgmgmt.NetboxIDsFromFields(ep.Fields)
+				if sub != 0 || term != 0 {
+					hasIDs = true
+					break
+				}
+			}
+		}
+		if hasIDs && (serviceHasNetboxMapping(st) || existing.L2VPNNetboxID != 0) {
+			if err := ctrl.removeServiceFromNetbox(existing); err != nil {
+				return nil, &elineHTTPError{http.StatusBadGateway, "failed to remove from netbox: " + err.Error()}
+			}
+			response["netbox_removed"] = true
+		}
+	}
+	return response, nil
+}
+
+func serviceCleanupError(c *echo.Context, err error) error {
+	var he *elineHTTPError
+	if errors.As(err, &he) {
+		return c.JSON(he.status, map[string]any{"error": he.msg})
+	}
+	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+}
+
+// ApiServiceDelete refuses Lime-sourced rows (use unrealize to drop
+// realization). Optional RemoveFromDevice / RemoveFromNetbox apply to any
+// definition. Cleanup failure aborts the delete.
 func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Service, models.ServiceDTO]) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		id, err := echo.PathParam[uint](c, "id")
@@ -361,30 +395,11 @@ func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Serv
 			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
 
-		response := map[string]any{}
-		cleanupRequested := existing.ServiceType == "ELINE" && (req.RemoveFromNetbox || req.RemoveFromDevice)
-
-		if req.RemoveFromDevice && existing.ServiceType == "ELINE" {
-			results, err := ctrl.removeELINEServiceFromDevices(c, &existing, req.Username, req.Password)
-			if err != nil {
-				return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-			}
-			for _, r := range results {
-				if r.Error != "" {
-					return c.JSON(http.StatusBadGateway, map[string]any{
-						"error": fmt.Sprintf("failed to remove ELINE config from device %s: %s", r.Device, r.Error),
-					})
-				}
-			}
-			response["device_results"] = results
+		response, err := ctrl.serviceCleanup(c, &existing, req)
+		if err != nil {
+			return serviceCleanupError(c, err)
 		}
-
-		if req.RemoveFromNetbox && existing.ServiceType == "ELINE" && existing.L2VPNNetboxID != 0 {
-			if err := ctrl.removeELINEServiceFromNetbox(&existing); err != nil {
-				return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to remove ELINE from netbox: " + err.Error()})
-			}
-			response["netbox_removed"] = true
-		}
+		cleanupRequested := req.RemoveFromNetbox || req.RemoveFromDevice
 
 		if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
 			if err := cfgmgmt.DetachServiceByRowID(tx, existing.ID); err != nil {
@@ -406,4 +421,54 @@ func (ctrl *Controller) ApiServiceDelete(services *SecureCRUDHandler[models.Serv
 		}
 		return c.JSON(http.StatusOK, response)
 	}
+}
+
+// ApiServiceUnrealize drops realization (type, endpoints, tree node, cfgmgmt
+// fields) but keeps the commercial row. Allowed on Lime. Honors the same
+// cleanup flags as delete.
+func (ctrl *Controller) ApiServiceUnrealize(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
+	var existing models.Service
+	if err := ctrl.DB.First(&existing, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+
+	var req ServiceDeleteRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+
+	response, err := ctrl.serviceCleanup(c, &existing, req)
+	if err != nil {
+		return serviceCleanupError(c, err)
+	}
+
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := cfgmgmt.DetachServiceByRowID(tx, existing.ID); err != nil {
+			return err
+		}
+		if err := tx.Where("service_id = ?", existing.ID).Delete(&models.ServiceEndpoint{}).Error; err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"service_type":       "",
+			"fields":             json.RawMessage(`{}`),
+			"connection_type_id": nil,
+			"pseudowire_id":      0,
+			"l2_vpn_netbox_id":   0,
+		}
+		return tx.Model(&models.Service{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	var updated models.Service
+	if err := ctrl.DB.First(&updated, existing.ID).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	response["service"] = updated
+	return c.JSON(http.StatusOK, response)
 }

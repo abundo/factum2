@@ -130,7 +130,7 @@ func copyApplied(dst *models.ServiceEndpoint, src models.ServiceEndpoint) {
 // carryAppliedSnapshots copies Applied* from previous rows onto the new set.
 // Unchanged bindings match EndpointIdentity. Rebinds (device/iface changed)
 // match leftover rows by disc (VLAN), then a single leftover pair, so
-// AppliedDeviceID can still be the old PE until PUT-time teardown exists.
+// Applied* still names the old PE until a successful push stamps the new one.
 func carryAppliedSnapshots(serviceID uint, prev, eps []models.ServiceEndpoint) {
 	usedPrev := make([]bool, len(prev))
 	matchedNew := make([]bool, len(eps))
@@ -368,6 +368,27 @@ func EncodeEndpointFields(vlan int, subNetboxID, termNetboxID uint) json.RawMess
 	b, err := json.Marshal(m)
 	if err != nil {
 		return json.RawMessage(`{}`)
+	}
+	return b
+}
+
+// MergeEndpointNetboxIDs copies subinterface/termination NetBox ids into
+// existing endpoint fields without dropping other keys (vlan, bandwidth, …).
+func MergeEndpointNetboxIDs(fields json.RawMessage, subNetboxID, termNetboxID uint) json.RawMessage {
+	m := fieldsMap(fields)
+	if subNetboxID != 0 {
+		m[FieldSubinterfaceNetboxID] = subNetboxID
+	} else {
+		delete(m, FieldSubinterfaceNetboxID)
+	}
+	if termNetboxID != 0 {
+		m[FieldTerminationNetboxID] = termNetboxID
+	} else {
+		delete(m, FieldTerminationNetboxID)
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return fields
 	}
 	return b
 }

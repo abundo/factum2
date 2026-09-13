@@ -2625,6 +2625,22 @@ func TestReplaceEndpointsCopiesAppliedOnRebind(t *testing.T) {
 	}
 }
 
+func TestMergeEndpointNetboxIDsPreservesFields(t *testing.T) {
+	in := json.RawMessage(`{"vlan":10,"bandwidth_mbps":100}`)
+	out := MergeEndpointNetboxIDs(in, 9, 8)
+	m := fieldsMap(out)
+	if vlanFromFields(m) != 10 {
+		t.Fatalf("vlan dropped: %s", out)
+	}
+	if n, ok := asInt(m["bandwidth_mbps"]); !ok || n != 100 {
+		t.Fatalf("bandwidth dropped: %s", out)
+	}
+	sub, term := NetboxIDsFromFields(out)
+	if sub != 9 || term != 8 {
+		t.Fatalf("netbox ids = %d,%d", sub, term)
+	}
+}
+
 func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
 	db := newTestDB(t)
 	st := mustELINEType(t, db)

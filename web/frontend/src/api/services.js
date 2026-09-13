@@ -38,10 +38,12 @@ export function putServiceEndpoints(id, payload) {
 }
 
 // payload is optional - {remove_from_netbox, remove_from_device, username,
-// password}, used to also tear down an ELINE service's NetBox objects
-// and/or device config as part of the delete (see
-// web.ApiServiceDelete/ServiceDeleteRequest). Omitted entirely, this is a
-// plain local-only delete, same as before.
+// password}, used to tear down NetBox objects and/or device config as
+// part of the delete (web.ApiServiceDelete/ServiceDeleteRequest).
 export function deleteService(id, payload) {
   return http.delete(`/service/${id}`, { data: payload }).then((res) => res.data)
+}
+
+export function unrealizeService(id, payload) {
+  return http.post(`/service/${id}/unrealize`, payload).then((res) => res.data)
 }

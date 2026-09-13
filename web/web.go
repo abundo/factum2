@@ -9,6 +9,7 @@ import (
 	"os"
 
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobscheduler"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/internal/worker"
@@ -45,6 +46,8 @@ type Controller struct {
 	DB            *gorm.DB
 	LogHub        *LogHub
 	RemoteManager *worker.RemoteManager
+	driverFn      func(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error)
+	netboxFn      func(settings *models.Settings) (serviceNetboxAPI, error)
 }
 
 // ----- GUI -----
@@ -183,6 +186,7 @@ func GUI(p *GuiParams) error {
 	api.PUT("/service/:id", ctrl.ApiServiceUpdate(services_), ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/service", ctrl.ApiServiceCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/service/:id", ctrl.ApiServiceDelete(services_), ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.POST("/service/:id/unrealize", ctrl.ApiServiceUnrealize, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/service/:id/type", ctrl.ApiServiceTypeUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/service/:id/eline", ctrl.ApiServiceElineUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/service/:id/eline/push", ctrl.ApiServiceElinePush, ctrl.RequireAPIAuth, ctrl.RequireWrite)

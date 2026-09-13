@@ -177,6 +177,12 @@ func GenericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 	return genericData(db, svc, ep, device, iface, nil, false)
 }
 
+// GenericDataWithSiblings is GenericData using siblings for .Interfaces/.Others
+// instead of the persisted endpoint table (rebind teardown/add).
+func GenericDataWithSiblings(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, siblings []models.ServiceEndpoint) (*GenericRenderData, error) {
+	return genericData(db, svc, ep, device, iface, siblings, true)
+}
+
 func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, siblings []models.ServiceEndpoint, siblingsSet bool) (*GenericRenderData, error) {
 	vars := map[string]any{}
 	if iface != nil {
