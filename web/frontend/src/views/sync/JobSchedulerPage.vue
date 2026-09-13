@@ -340,8 +340,9 @@ onUnmounted(() => {
     </UTable>
   </div>
 
-  <UModal
+  <FormModal
     v-model:open="dialog"
+    :source="form"
     :title="isCreate ? 'New schedule' : 'Edit schedule'"
     :ui="{ content: 'sm:max-w-md' }"
   >
@@ -430,7 +431,7 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal v-model:open="deleteDialog" title="Delete schedule" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>

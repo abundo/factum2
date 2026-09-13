@@ -438,8 +438,9 @@ function metaFor(state) {
 </script>
 
 <template>
-  <UModal
+  <FormModal
     v-model:open="open"
+    :dirty="hasChanges"
     :title="deviceName ? `VLANs — ${deviceName}` : 'VLANs'"
     :ui="{
       content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
@@ -575,10 +576,11 @@ function metaFor(state) {
         @click="save"
       />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     v-model:open="credentialsDialog"
+    :source="{ username: promptUsername, password: promptPassword }"
     title="Device credentials"
     :ui="{ content: 'sm:max-w-sm' }"
     @update:open="(isOpen) => !isOpen && cancelCredentials()"
@@ -617,5 +619,5 @@ function metaFor(state) {
         @click="submitCredentials"
       />
     </template>
-  </UModal>
+  </FormModal>
 </template>

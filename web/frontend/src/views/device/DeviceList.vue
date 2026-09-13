@@ -186,6 +186,10 @@ function isDescriptionChanged(iface) {
 // those out to the device/Netbox.
 const originalDescriptions = ref(new Map())
 
+const interfacesDirty = computed(() =>
+  (device.value?.interfaces ?? []).some((iface) => isDescriptionChanged(iface)),
+)
+
 function snapshotDescriptions() {
   originalDescriptions.value = new Map(
     (device.value?.interfaces ?? []).map((iface) => [iface.id, iface.description]),
@@ -649,7 +653,12 @@ onMounted(loadDevices)
           />
 
           <label for="device-model" class="font-bold whitespace-nowrap">Model</label>
-          <UInput id="device-model" :model-value="device.model_name || ''" disabled class="w-full" />
+          <UInput
+            id="device-model"
+            :model-value="device.model_name || ''"
+            disabled
+            class="w-full"
+          />
 
           <label for="device-platform" class="font-bold whitespace-nowrap">Platform</label>
           <UInput
@@ -726,8 +735,9 @@ onMounted(loadDevices)
     </template>
   </UModal>
 
-  <UModal
+  <FormModal
     v-model:open="interfacesDialog"
+    :dirty="interfacesDirty"
     :title="device?.name ? `${device.name} - Interfaces` : 'Interfaces'"
     :ui="{ content: 'w-[95vw] h-[90vh] sm:max-w-none' }"
   >
@@ -769,9 +779,8 @@ onMounted(loadDevices)
             @click="openVlan"
           />
           <span v-if="!isSupportedDriverPlatform" class="text-sm text-muted-color"
-            >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this device is "{{
-              device?.platform || 'unknown'
-            }}").</span
+            >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this device is
+            "{{ device?.platform || 'unknown' }}").</span
           >
         </div>
 
@@ -886,8 +895,7 @@ onMounted(loadDevices)
           <ul v-if="xconnects.length" class="mb-2">
             <li v-for="x in xconnects" :key="x.id" class="flex items-center gap-2">
               <span>
-                {{ xcKindLabels[x.kind] || x.kind }} ·
-                {{ interfaceNameById(x.interface_a_id) }} ↔
+                {{ xcKindLabels[x.kind] || x.kind }} · {{ interfaceNameById(x.interface_a_id) }} ↔
                 {{ interfaceNameById(x.interface_b_id) }}
               </span>
               <UButton
@@ -934,10 +942,11 @@ onMounted(loadDevices)
     <template #footer>
       <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="interfacesDialog = false" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     v-model:open="credentialsDialog"
+    :source="{ username: promptUsername, password: promptPassword }"
     title="Device credentials"
     :ui="{ content: 'sm:max-w-sm' }"
     @update:open="(open) => !open && cancelCredentials()"
@@ -976,7 +985,7 @@ onMounted(loadDevices)
         @click="submitCredentials"
       />
     </template>
-  </UModal>
+  </FormModal>
 
   <ServiceEditDialog
     v-model:open="serviceDialogOpen"

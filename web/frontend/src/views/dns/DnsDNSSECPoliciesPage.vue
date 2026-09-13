@@ -157,7 +157,7 @@ onMounted(load)
     </UTable>
   </div>
 
-  <UModal v-model:open="dialog">
+  <FormModal v-model:open="dialog" :source="form">
     <template #content>
       <UCard>
         <template #header>{{ editing ? 'Edit DNSSEC policy' : 'New DNSSEC policy' }}</template>
@@ -200,5 +200,5 @@ onMounted(load)
         </form>
       </UCard>
     </template>
-  </UModal>
+  </FormModal>
 </template>

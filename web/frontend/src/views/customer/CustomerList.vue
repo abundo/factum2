@@ -261,7 +261,13 @@ onMounted(loadCustomers)
     </UTable>
   </div>
 
-  <UModal v-model:open="detailDialog" :title="dialogTitle" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal
+    v-model:open="detailDialog"
+    :source="form"
+    :loading="customerLoading"
+    :title="dialogTitle"
+    :ui="{ content: 'sm:max-w-lg' }"
+  >
     <template #body>
       <div v-if="customerLoading" class="flex justify-center p-4">
         <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
@@ -340,7 +346,7 @@ onMounted(loadCustomers)
         </div>
       </div>
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal v-model:open="deleteDialog" title="Delete customer" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>

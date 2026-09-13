@@ -16,6 +16,7 @@ declare module 'vue' {
     ConfigNodeInspector: typeof import('./src/components/ConfigNodeInspector.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
+    FormModal: typeof import('./src/components/FormModal.vue')['default']
     GoTemplateEditor: typeof import('./src/components/GoTemplateEditor.vue')['default']
     GoTemplateField: typeof import('./src/components/GoTemplateField.vue')['default']
     IpamPrefixForm: typeof import('./src/components/IpamPrefixForm.vue')['default']

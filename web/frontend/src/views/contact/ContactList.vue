@@ -267,7 +267,13 @@ onMounted(loadContacts)
     </UTable>
   </div>
 
-  <UModal v-model:open="detailDialog" :title="dialogTitle" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal
+    v-model:open="detailDialog"
+    :source="{ form, selectedCustomers }"
+    :loading="contactLoading"
+    :title="dialogTitle"
+    :ui="{ content: 'sm:max-w-lg' }"
+  >
     <template #body>
       <div v-if="contactLoading" class="flex justify-center p-4">
         <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
@@ -332,7 +338,7 @@ onMounted(loadContacts)
         </div>
       </div>
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal v-model:open="deleteDialog" title="Delete contact" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>

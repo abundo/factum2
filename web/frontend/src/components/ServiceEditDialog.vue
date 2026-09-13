@@ -244,6 +244,19 @@ watch(open, (isOpen) => {
   loadServiceTypes().then(() => loadServiceById(props.serviceId))
 })
 
+const formSource = computed(() => ({
+  service: service.value,
+  schemaValues: schemaValues.value,
+  pathA: pathA.value,
+  pathZ: pathZ.value,
+  endpoints: genericEndpoints.value.map((ep) => ({
+    role: ep.role,
+    device_id: ep.device_id,
+    interface_id: ep.interface_id,
+    fields: ep.fields ?? {},
+  })),
+}))
+
 watch(
   () => service.value.service_type,
   (t, prev) => {
@@ -639,8 +652,10 @@ function confirmUnrealize() {
 </script>
 
 <template>
-  <UModal
+  <FormModal
     v-model:open="open"
+    :source="formSource"
+    :loading="loading"
     :title="readOnly ? 'Service Details (synced from Lime)' : 'Service Details'"
     :ui="{ content: 'sm:max-w-2xl' }"
   >
@@ -942,7 +957,7 @@ function confirmUnrealize() {
         </div>
       </div>
     </template>
-  </UModal>
+  </FormModal>
 
   <DeviceInterfacePicker
     :open="!!pathPicker"

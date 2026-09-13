@@ -144,7 +144,7 @@ onMounted(loadRoles)
     </UTable>
   </div>
 
-  <UModal v-model:open="roleDialog" title="Role Details" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="roleDialog" :source="role" title="Role Details" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>
       <div class="flex flex-col gap-6">
         <div>
@@ -170,5 +170,5 @@ onMounted(loadRoles)
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
       <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveRole" />
     </template>
-  </UModal>
+  </FormModal>
 </template>

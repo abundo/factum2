@@ -140,7 +140,7 @@ onMounted(load)
     </UTable>
   </div>
 
-  <UModal v-model:open="dialog">
+  <FormModal v-model:open="dialog" :source="form">
     <template #content>
       <UCard>
         <template #header>New zone</template>
@@ -166,5 +166,5 @@ onMounted(load)
         </form>
       </UCard>
     </template>
-  </UModal>
+  </FormModal>
 </template>

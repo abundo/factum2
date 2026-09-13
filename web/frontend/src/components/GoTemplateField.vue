@@ -53,8 +53,9 @@ function apply() {
       :ui="{ base: 'bg-muted' }"
     />
 
-    <UModal
+    <FormModal
       v-model:open="open"
+      :source="draft"
       :title="`Edit ${label}`"
       description="Go text/template"
       :ui="{
@@ -78,6 +79,6 @@ function apply() {
         <UButton label="Cancel" variant="ghost" @click="open = false" />
         <UButton label="Apply" icon="i-lucide-check" @click="apply" />
       </template>
-    </UModal>
+    </FormModal>
   </div>
 </template>

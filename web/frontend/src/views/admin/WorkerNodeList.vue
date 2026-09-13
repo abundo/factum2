@@ -195,7 +195,7 @@ onMounted(loadWorkerNodes)
     </UTable>
   </div>
 
-  <UModal v-model:open="nodeDialog" title="Worker Node Details" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal v-model:open="nodeDialog" :source="node" title="Worker Node Details" :ui="{ content: 'sm:max-w-lg' }">
     <template #body>
       <div class="flex flex-col gap-6">
         <div>
@@ -290,5 +290,5 @@ onMounted(loadWorkerNodes)
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
       <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveWorkerNode" />
     </template>
-  </UModal>
+  </FormModal>
 </template>

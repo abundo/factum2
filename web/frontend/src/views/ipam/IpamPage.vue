@@ -323,7 +323,12 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </template>
   </div>
 
-  <UModal :open="dialog === 'ns'" title="Namespace" @update:open="(v) => !v && (dialog = null)">
+  <FormModal
+    :open="dialog === 'ns'"
+    :source="form"
+    title="Namespace"
+    @update:open="(v) => !v && (dialog = null)"
+  >
     <template #body>
       <div class="flex flex-col gap-4">
         <div>
@@ -340,9 +345,14 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal :open="dialog === 'vrf'" title="VRF" @update:open="(v) => !v && (dialog = null)">
+  <FormModal
+    :open="dialog === 'vrf'"
+    :source="form"
+    title="VRF"
+    @update:open="(v) => !v && (dialog = null)"
+  >
     <template #body>
       <div class="flex flex-col gap-4">
         <div>
@@ -359,10 +369,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'prefix'"
+    :source="form"
     title="Add prefix"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -373,7 +384,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Add" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal :open="!!confirm" title="Delete" @update:open="(v) => !v && (confirm = null)">
     <template #body>

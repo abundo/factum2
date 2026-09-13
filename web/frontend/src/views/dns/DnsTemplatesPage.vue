@@ -172,7 +172,7 @@ onMounted(load)
     </UTable>
   </div>
 
-  <UModal v-model:open="dialog">
+  <FormModal v-model:open="dialog" :source="form">
     <template #content>
       <UCard>
         <template #header>{{ editing ? 'Edit DNS template' : 'New DNS template' }}</template>
@@ -228,5 +228,5 @@ onMounted(load)
         </form>
       </UCard>
     </template>
-  </UModal>
+  </FormModal>
 </template>

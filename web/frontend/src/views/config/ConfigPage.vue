@@ -1925,8 +1925,9 @@ onBeforeUnmount(() => {
     </template>
   </div>
 
-  <UModal
+  <FormModal
     :open="dialog === 'rename'"
+    :source="form"
     :title="`Rename ${renameKindLabels[form.kind] || 'item'}`"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1938,7 +1939,7 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Rename" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal
     v-model:open="previewOpen"
@@ -1961,8 +1962,9 @@ onBeforeUnmount(() => {
     </template>
   </UModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'folder'"
+    :source="form"
     :title="orgKindTitles[form.kind] || 'Folder'"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1974,10 +1976,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'parameter'"
+    :source="form"
     title="Parameter object"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -1992,10 +1995,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'resource'"
+    :source="form"
     title="Resource"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2011,9 +2015,14 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal :open="dialog === 'cli'" title="CLI object" @update:open="(v) => !v && (dialog = null)">
+  <FormModal
+    :open="dialog === 'cli'"
+    :source="form"
+    title="CLI object"
+    @update:open="(v) => !v && (dialog = null)"
+  >
     <template #body>
       <div class="flex flex-col gap-3">
         <div>
@@ -2036,10 +2045,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'device'"
+    :source="{ attachDeviceId }"
     title="Attach device"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2057,10 +2067,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Attach" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'create-service'"
+    :source="form"
     title="Create technical service"
     :ui="{ content: 'sm:max-w-2xl' }"
     @update:open="(v) => !v && (dialog = null)"
@@ -2150,10 +2161,11 @@ onBeforeUnmount(() => {
         @click="saveDialog"
       />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'attach-service'"
+    :source="{ attachServiceId }"
     title="Attach existing service"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2171,10 +2183,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Attach" :loading="saving" @click="saveDialog" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'assign'"
+    :source="form"
     :title="form.id ? 'Edit assignment' : 'Assignment'"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2233,10 +2246,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveAssign" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'variable'"
+    :source="form"
     title="Variable"
     :ui="{ content: 'sm:max-w-md' }"
     @update:open="(v) => !v && (dialog = null)"
@@ -2291,10 +2305,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" type="button" @click="dialog = null" />
       <UButton label="Save" :loading="saving" type="button" @click="saveVariable" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'type'"
+    :source="form"
     title="Service type"
     :ui="{ content: 'sm:max-w-3xl max-h-[90vh]' }"
     @update:open="(v) => !v && (dialog = null)"
@@ -2411,10 +2426,11 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveType" />
     </template>
-  </UModal>
+  </FormModal>
 
-  <UModal
+  <FormModal
     :open="dialog === 'macro'"
+    :source="form"
     title="Macro"
     :ui="{
       content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
@@ -2446,7 +2462,7 @@ onBeforeUnmount(() => {
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
       <UButton label="Save" :loading="saving" @click="saveMacro" />
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal
     :open="!!confirm"

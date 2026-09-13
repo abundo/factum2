@@ -80,6 +80,8 @@ const atMax = computed(() => {
   return existingEndpoints.value.length >= max
 })
 
+const hydrating = ref(false)
+
 watch(open, (isOpen) => {
   if (!isOpen) return
   submitted.value = false
@@ -93,19 +95,24 @@ watch(open, (isOpen) => {
   roleFields.value = {}
   existingEndpoints.value = []
   createdNode.value = null
-  listServiceTypes()
-    .then((rows) => {
-      serviceTypes.value = rows ?? []
-      if (!selectedTypeName.value) {
-        selectedTypeName.value = serviceTypes.value[0]?.name ?? null
-      }
-    })
-    .catch(() => {})
-  getServices()
-    .then((rows) => {
-      services.value = rows ?? []
-    })
-    .catch(() => {})
+  hydrating.value = true
+  Promise.all([
+    listServiceTypes()
+      .then((rows) => {
+        serviceTypes.value = rows ?? []
+        if (!selectedTypeName.value) {
+          selectedTypeName.value = serviceTypes.value[0]?.name ?? null
+        }
+      })
+      .catch(() => {}),
+    getServices()
+      .then((rows) => {
+        services.value = rows ?? []
+      })
+      .catch(() => {}),
+  ]).finally(() => {
+    hydrating.value = false
+  })
 })
 
 watch(selectedServiceId, (id) => {
@@ -326,8 +333,18 @@ function submit() {
 </script>
 
 <template>
-  <UModal
+  <FormModal
     v-model:open="open"
+    :source="{
+      mode,
+      selectedServiceId,
+      selectedTypeName,
+      category,
+      schemaValues,
+      roleName,
+      roleFields,
+    }"
+    :loading="hydrating"
     title="Add service to interface"
     :ui="{ content: 'sm:max-w-lg' }"
     @update:open="(v) => (open = v)"
@@ -399,5 +416,5 @@ function submit() {
       <UButton label="Cancel" variant="ghost" @click="open = false" />
       <UButton label="Attach" icon="i-lucide-link" :loading="saving" @click="submit" />
     </template>
-  </UModal>
+  </FormModal>
 </template>

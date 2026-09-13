@@ -241,7 +241,7 @@ onMounted(load)
     </UTable>
   </div>
 
-  <UModal v-model:open="createOpen" title="New maintenance window" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal v-model:open="createOpen" :source="form" title="New maintenance window" :ui="{ content: 'sm:max-w-lg' }">
     <template #body>
       <div class="flex flex-col gap-3">
         <UInput v-model="form.title" placeholder="Title" />
@@ -289,7 +289,7 @@ onMounted(load)
     <template #footer>
       <UButton label="Create" :loading="saving" @click="save" />
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal
     :open="!!detail"

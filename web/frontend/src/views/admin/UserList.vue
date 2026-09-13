@@ -203,7 +203,7 @@ onMounted(() => {
     </UTable>
   </div>
 
-  <UModal v-model:open="userDialog" title="User Details" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="userDialog" :source="user" title="User Details" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>
       <div class="flex flex-col gap-6">
         <div>
@@ -245,7 +245,7 @@ onMounted(() => {
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
       <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveUser" />
     </template>
-  </UModal>
+  </FormModal>
 
   <UModal v-model:open="deleteDialog" title="Confirm" :ui="{ content: 'sm:max-w-sm' }">
     <template #body>

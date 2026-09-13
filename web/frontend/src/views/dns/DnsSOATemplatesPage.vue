@@ -142,7 +142,7 @@ onMounted(load)
     </UTable>
   </div>
 
-  <UModal v-model:open="dialog">
+  <FormModal v-model:open="dialog" :source="form">
     <template #content>
       <UCard>
         <template #header>{{ editing ? 'Edit SOA template' : 'New SOA template' }}</template>
@@ -181,5 +181,5 @@ onMounted(load)
         </form>
       </UCard>
     </template>
-  </UModal>
+  </FormModal>
 </template>
