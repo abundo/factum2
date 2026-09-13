@@ -915,12 +915,13 @@ function saveDialog() {
     const company = optionValue(form.value.company)
     const realizeId = fieldServiceId(fields)
     const endpointsBody = { endpoints: createEndpointsBody() }
-    const afterNode = (node, servicePk) =>
-      putServiceEndpoints(servicePk, endpointsBody).then(() => {
-        createResult.value = node
+    const afterNode = (node, servicePk) => {
+      createResult.value = node
+      return putServiceEndpoints(servicePk, endpointsBody).then(() => {
         selectCreatedNode(node)
         return node
       })
+    }
     if (realizeId) {
       req = updateServiceRowType(realizeId, {
         service_type: def.name,
