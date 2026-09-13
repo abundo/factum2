@@ -20,9 +20,12 @@ section before adding tests there.
   `/opt/factum2/factum2-web` process reading `/etc/factum2/factum2.yaml` and
   the real `factum2` Postgres database. Do not log into it, seed data into
   it, or point a Vite proxy at it to "verify" a change.
-- **UI verification:** use the `run-factum2-web` skill
-  (`.grok/skills/run-factum2-web`). It provisions an isolated
-  `factum2_skilltest` DB and serves the GUI on `127.0.0.1:18090`.
+- **UI verification:** the live `:8090` instance is off limits. Use the
+  `factum2-dev` skill (`.grok/skills/factum2-dev`) for the `dev/` compose
+  lab — it reuses running containers, starts stopped ones, or runs
+  `make dev-up`, and installs Chromium in a sidecar when a browser is
+  needed. Use `run-factum2-web` only for a throwaway GUI-only DB on
+  `127.0.0.1:18090` with no NetBox/Icinga/LibreNMS.
 - **Postgres is Docker**, not a local `postgres` OS user. Container name
   and superuser are local environment (the `run-factum2-web` skill defaults
   to `postgresql-db-1` / `factum2_user`, overridable via
@@ -40,8 +43,9 @@ section before adding tests there.
   do not migrate. `web.GuiParams.Bind` defaults
   to `:8090` and overrides YAML `web.bind` — always pass `-b` for an
   isolated instance or it collides with the live process.
-- **Browser:** `chromium-cli` is not installed. The skill drives
-  `playwright-core` against `/usr/bin/google-chrome-stable` with
+- **Browser:** `chromium-cli` is not installed. The `factum2-dev` skill
+  drives `playwright-core` against Chromium inside `factum-dev-browser`.
+  `run-factum2-web` drives host `/usr/bin/google-chrome-stable` with
   `--no-sandbox`.
 - **Device SSH:** reuse one SSH connection per device for the process
   lifetime; do not reconnect per command.
@@ -638,4 +642,4 @@ redirects to `/login` except for `/me` and `/login` themselves, which use
 grouped by domain under `src/views/<domain>/`, matching the backend's
 resource grouping. Vite's `/api` proxy targets `localhost:8090` — that is
 the **live** instance, so do not use `npm run dev` to verify a change;
-use the `run-factum2-web` skill instead.
+use the `factum2-dev` lab GUI or the `run-factum2-web` skill instead.
