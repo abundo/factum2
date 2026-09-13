@@ -949,7 +949,8 @@ func vlanIntsEqual(a, b []int) bool {
 // references as its untagged/tagged VLAN without a matching global
 // declaration (e.g. VRP's "port trunk allow-pass vlan" can list VIDs never
 // defined via a "vlan" block) - exists in the configured global Netbox VLAN
-// group (Settings.DeviceSyncVlanGroupName), creating or renaming as needed.
+// group (Settings.DeviceSyncVlanGroupName), creating as needed. Existing
+// vlans that already have a name are left alone (see NetboxMgr.EnsureVlan).
 // A no-op if VLAN sync is disabled or the device has no global VLANs
 // (bridge-domain platforms never populate GlobalVLANs - see
 // drivers.Interface's doc comment).

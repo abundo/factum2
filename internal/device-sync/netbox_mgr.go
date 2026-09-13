@@ -331,12 +331,17 @@ func (m *NetboxMgr) EnsureVlanGroup(name string) (uint, error) {
 }
 
 // EnsureVlan creates vid in the resolved VLAN group if it doesn't already
-// exist there, or updates its name if it does but the name differs.
-// Records the VLAN's Netbox ID in m.vlanIDsByVID either way, for
-// DeviceSync.syncInterfaceVlans to resolve later. Locked because it's a
-// check-then-create/update, same race as EnsurePrefix: two devices sharing
-// a VID, synced concurrently, would otherwise both see it missing and race
-// to create it.
+// exist there. If it already exists and already has a name, that name is
+// left alone (a warning is logged if the requested name differs) — a VID
+// is typically shared by many devices, each with its own local name, and
+// rewriting on every pair (or from the web interface-VLAN path's generated
+// "VLAN-<vid>" fallback) would flip the Netbox name twice or more per
+// sync. An existing vlan with a blank name is still filled in, since
+// Netbox rejects blank names on later writes. Records the VLAN's Netbox
+// ID in m.vlanIDsByVID either way, for DeviceSync.syncInterfaceVlans to
+// resolve later. Locked because it's a check-then-create/update, same
+// race as EnsurePrefix: two devices sharing a VID, synced concurrently,
+// would otherwise both see it missing and race to create it.
 func (m *NetboxMgr) EnsureVlan(vid int, name string) (*netboxtool.NBVlan, error) {
 	m.sharedMu.Lock()
 	defer m.sharedMu.Unlock()
@@ -346,13 +351,15 @@ func (m *NetboxMgr) EnsureVlan(vid int, name string) (*netboxtool.NBVlan, error)
 		return nil, err
 	}
 	if existing != nil {
-		if existing.Name != name {
+		if existing.Name == "" {
 			if err := m.api.UpdateVlan(existing.NetboxID, map[string]any{"name": name}); err != nil {
 				m.reporter.Emit(jobevent.Error, "update vlan %d name: %v", vid, err)
 				return nil, err
 			}
 			m.reporter.Emit(jobevent.Info, "vlan %d: name -> %q", vid, name)
 			existing.Name = name
+		} else if name != "" && existing.Name != name {
+			m.reporter.Emit(jobevent.Warning, "vlan %d: already named %q, not renaming to %q", vid, existing.Name, name)
 		}
 		m.vlanIDsByVID[vid] = existing.NetboxID
 		return existing, nil

@@ -1227,9 +1227,9 @@ func TestSyncPrefixesSkipsExisting(t *testing.T) {
 
 // ----- Vlans -----
 
-func TestSyncVlansCreatesAndRenamesGroup(t *testing.T) {
+func TestSyncVlansCreatesAndDoesNotRename(t *testing.T) {
 	fake := newFakeNetboxAPI()
-	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{VlanGroupName: "Global VLANs"})
+	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{VlanGroupName: "Global VLANs"})
 
 	if _, err := ds.nb.EnsureVlanGroup(ds.cfg.VlanGroupName); err != nil {
 		t.Fatalf("EnsureVlanGroup: %v", err)
@@ -1246,17 +1246,64 @@ func TestSyncVlansCreatesAndRenamesGroup(t *testing.T) {
 		t.Fatalf("createdVlans = %+v, want one vlan 10 (servers)", fake.createdVlans)
 	}
 
-	// A second device reporting the same VID with a changed name should
-	// rename the existing vlan rather than create a duplicate.
+	// A second device reporting the same VID with a different name must
+	// not rename the existing vlan: a VID is typically shared across many
+	// devices, each with its own local name, and rewriting on every pair
+	// would flip the Netbox name twice or more per sync.
 	dc2 := drivers.NewDeviceConfig()
 	dc2.GlobalVLANs[10] = &drivers.VLAN{ID: 10, Name: "renamed"}
 	ds.syncVlans(&devicePair{nbDevice: &models.Device{Name: "sw2"}, config: dc2})
 
 	if len(fake.createdVlans) != 1 {
-		t.Fatalf("createdVlans = %+v, want still just one (renamed, not duplicated)", fake.createdVlans)
+		t.Fatalf("createdVlans = %+v, want still just one (not duplicated)", fake.createdVlans)
+	}
+	if len(fake.updatedVlans) != 0 {
+		t.Fatalf("updatedVlans = %v, want none (existing name kept)", fake.updatedVlans)
+	}
+	got, err := fake.GetVlan(10, ds.nb.vlanGroupID)
+	if err != nil {
+		t.Fatalf("GetVlan: %v", err)
+	}
+	if got == nil || got.Name != "servers" {
+		t.Errorf("vlan 10 name = %+v, want servers (unchanged)", got)
+	}
+	found := false
+	for _, line := range reporter.lines {
+		if strings.Contains(line, `already named "servers"`) && strings.Contains(line, `"renamed"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("reporter.lines = %v, want a warning about not renaming vlan 10", reporter.lines)
+	}
+}
+
+// TestEnsureVlanFillsBlankName covers the one case we still rename: a vlan
+// that already exists in Netbox but has an empty name (Netbox rejects
+// blank names on later writes). The first real name we see should stick.
+func TestEnsureVlanFillsBlankName(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{VlanGroupName: "Global VLANs"})
+	if _, err := ds.nb.EnsureVlanGroup(ds.cfg.VlanGroupName); err != nil {
+		t.Fatalf("EnsureVlanGroup: %v", err)
+	}
+	if _, err := fake.CreateVlan(10, "", ds.nb.vlanGroupID); err != nil {
+		t.Fatalf("CreateVlan: %v", err)
+	}
+
+	if _, err := ds.nb.EnsureVlan(10, "servers"); err != nil {
+		t.Fatalf("EnsureVlan: %v", err)
 	}
 	if len(fake.updatedVlans) != 1 {
-		t.Fatalf("updatedVlans = %v, want one name update", fake.updatedVlans)
+		t.Fatalf("updatedVlans = %v, want one name fill-in", fake.updatedVlans)
+	}
+	got, err := fake.GetVlan(10, ds.nb.vlanGroupID)
+	if err != nil {
+		t.Fatalf("GetVlan: %v", err)
+	}
+	if got == nil || got.Name != "servers" {
+		t.Errorf("vlan 10 name = %+v, want servers", got)
 	}
 }
 
