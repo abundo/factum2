@@ -61,7 +61,7 @@ this tree. **Detach** removes the device from the tree and its config
 children (parameters, CLI, interfaces). The inventory row stays.
 
 A **service** node is the same CN/CI row as on the Services page. Create
-from the tree: pick a **definition** (Catalog → Service types — Factum
+from the tree: pick a **definition** (Config → **Catalog** → Service types — Factum
 ships none), then the form for that definition. The row is written with
 **no endpoints** unless you fill the interface slots; save must meet the
 definition’s min/max. Virtual refs show under each involved port (two

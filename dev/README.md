@@ -44,6 +44,9 @@ after them), waits for those apps, migrates factum, seeds
 Settings/admin/tokens (all lab features on, including the DNS zone
 editor), registers the NetBox webhook and custom fields
 (`factum2-netbox check --update`), then starts factum-web and factum-worker.
+After web is up it posts **sample service definitions** (ELINE, ELAN,
+POLARIX) into Catalog → Service types — Factum itself ships none. Re-run
+`./dev/service_definitions.py` on an already-running lab.
 Each step prints elapsed seconds (`==> wait-apps +45s`). Each dest container (dns, icinga,
 librenms, oxidized, prometheus) runs its own factum2-worker with only that
 dest's command, matching production. factum-worker handles netbox and
