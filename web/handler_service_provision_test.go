@@ -33,6 +33,15 @@ func (s *sessionStub) ApplyCLISession(_ string, cmds []string, _ string) error {
 	return s.applyErr
 }
 
+func seedDeviceSyncAuth(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Create(&models.DeviceSyncAuth{
+		Name: "default", Username: "u", Password: "p",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type fakeServiceNetbox struct {
 	mu           sync.Mutex
 	next         uint
@@ -306,6 +315,7 @@ func TestApiServiceUnrealizeKeepsLimeRow(t *testing.T) {
 
 func TestApiServiceDeleteCleansNonELINEType(t *testing.T) {
 	db := newTestDB(t)
+	seedDeviceSyncAuth(t, db)
 	ctrl := &Controller{DB: db}
 	st := createTestELANType(t, db)
 	createTestTranslationCLI(t, db, st, "eos", "add {{.Name}}")
@@ -334,7 +344,7 @@ func TestApiServiceDeleteCleansNonELINEType(t *testing.T) {
 	}
 	services := NewSecureCRUDHandler[models.Service, models.ServiceDTO](db)
 	c, rec := jsonRequest(t, http.MethodDelete, "/api/service/x", map[string]any{
-		"remove_from_device": true, "username": "u", "password": "p",
+		"remove_from_device": true,
 	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
 	if err := ctrl.ApiServiceDelete(services)(c); err != nil {
 		t.Fatal(err)
@@ -446,6 +456,7 @@ func TestApiServiceEndpointsPutDoesNotAssignPseudowireWithoutNetbox(t *testing.T
 
 func TestApiServicePushStampsApplied(t *testing.T) {
 	db := newTestDB(t)
+	seedDeviceSyncAuth(t, db)
 	ctrl := &Controller{DB: db}
 	st := createTestELINEType(t, db)
 	createTestTranslationCLI(t, db, st, "eos", "add {{.Name}}")
@@ -468,9 +479,7 @@ func TestApiServicePushStampsApplied(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	c, rec := jsonRequest(t, http.MethodPost, "/api/service/x/push", map[string]any{
-		"username": "u", "password": "p",
-	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service/x/push", map[string]any{}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
 	if err := ctrl.ApiServicePush(c); err != nil {
 		t.Fatal(err)
 	}
@@ -493,6 +502,7 @@ func TestApiServicePushStampsApplied(t *testing.T) {
 
 func TestApiServiceEndpointsPutTeardownOnRebind(t *testing.T) {
 	db := newTestDB(t)
+	seedDeviceSyncAuth(t, db)
 	ctrl := &Controller{DB: db}
 	st := createTestELANType(t, db)
 	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
@@ -535,7 +545,6 @@ func TestApiServiceEndpointsPutTeardownOnRebind(t *testing.T) {
 		return &sessionStub{applyErr: errTeardown}, nil
 	}
 	body := map[string]any{
-		"username": "u", "password": "p",
 		"endpoints": []map[string]any{
 			{"device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 10}},
 		},
@@ -587,6 +596,7 @@ func TestApiServiceEndpointsPutTeardownOnRebind(t *testing.T) {
 
 func TestApiServiceEndpointsPutTeardownSameDeviceIface(t *testing.T) {
 	db := newTestDB(t)
+	seedDeviceSyncAuth(t, db)
 	ctrl := &Controller{DB: db}
 	st := createTestELANType(t, db)
 	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
@@ -629,7 +639,6 @@ func TestApiServiceEndpointsPutTeardownSameDeviceIface(t *testing.T) {
 		return okStub, nil
 	}
 	body := map[string]any{
-		"username": "u", "password": "p",
 		"endpoints": []map[string]any{
 			{"device_id": devA.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 10}},
 		},
@@ -664,6 +673,7 @@ func TestApiServiceEndpointsPutTeardownSameDeviceIface(t *testing.T) {
 
 func TestApiServiceDeleteTeardownRendersOthers(t *testing.T) {
 	db := newTestDB(t)
+	seedDeviceSyncAuth(t, db)
 	ctrl := &Controller{DB: db}
 	st := createTestELINEType(t, db)
 	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
@@ -712,7 +722,7 @@ func TestApiServiceDeleteTeardownRendersOthers(t *testing.T) {
 	}
 	services := NewSecureCRUDHandler[models.Service, models.ServiceDTO](db)
 	c, rec := jsonRequest(t, http.MethodDelete, "/api/service/x", map[string]any{
-		"remove_from_device": true, "username": "u", "password": "p",
+		"remove_from_device": true,
 	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
 	if err := ctrl.ApiServiceDelete(services)(c); err != nil {
 		t.Fatal(err)
