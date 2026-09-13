@@ -198,6 +198,8 @@ async function loadFeatures(scopeId) {
   featureDrafts.value = drafts
   if (openFeatureId.value && !drafts[openFeatureId.value]) {
     openFeatureId.value = features.value[0]?.id ?? null
+  } else if (!openFeatureId.value && features.value.length === 1) {
+    openFeatureId.value = features.value[0].id
   }
 }
 
@@ -416,18 +418,18 @@ function saveResource() {
 }
 
 watch(
-  () => props.selected,
-  (node) => {
-    if (node?.kind === 'cli') {
-      resetCLIForm(node)
-      loadFeatures(node.id)
+  () => [props.selected?.id, props.selected?.kind],
+  ([id, kind]) => {
+    if (kind === 'cli' && id) {
+      resetCLIForm(props.selected)
+      loadFeatures(id)
     } else {
       features.value = []
       featureDrafts.value = {}
       openFeatureId.value = null
     }
-    if (node?.kind === 'resource') {
-      resetResourceForm(node)
+    if (kind === 'resource') {
+      resetResourceForm(props.selected)
     }
     if (isServiceNode.value) {
       loadService(serviceRowId.value)
@@ -452,6 +454,23 @@ watch(
     })
   },
 )
+
+function featurePayload(draft) {
+  return {
+    name: draft.name,
+    sort_order: draft.sort_order ?? 0,
+    add_commands: draft.add_commands ?? '',
+    update_commands: draft.update_commands ?? '',
+    remove_commands: draft.remove_commands ?? '',
+    remove_at_root: !!draft.remove_at_root,
+  }
+}
+
+function patchFeatureDraft(id, field, value) {
+  const draft = featureDrafts.value[id]
+  if (!draft) return
+  draft[field] = value
+}
 
 function saveCLI() {
   if (!props.selected?.id) return
@@ -480,6 +499,15 @@ function saveCLI() {
     payload: merged,
   }
   updateScope(props.selected.id, payload)
+    .then(() =>
+      Promise.all(
+        features.value.map((feat) => {
+          const draft = featureDrafts.value[feat.id]
+          if (!draft) return null
+          return updateFeature(feat.id, featurePayload(draft))
+        }),
+      ),
+    )
     .then(() => {
       toast.add({ color: 'success', title: 'Successful', description: 'CLI object saved' })
       emit('saved')
@@ -517,14 +545,7 @@ function saveFeature(id) {
   const draft = featureDrafts.value[id]
   if (!draft) return
   saving.value = true
-  updateFeature(id, {
-    name: draft.name,
-    sort_order: draft.sort_order ?? 0,
-    add_commands: draft.add_commands ?? '',
-    update_commands: draft.update_commands ?? '',
-    remove_commands: draft.remove_commands ?? '',
-    remove_at_root: !!draft.remove_at_root,
-  })
+  updateFeature(id, featurePayload(draft))
     .then(() => {
       toast.add({ color: 'success', title: 'Successful', description: 'Feature saved' })
       return loadFeatures(props.selected.id)
@@ -748,19 +769,33 @@ function toggleFeature(id) {
             <div>
               <label class="mb-1 block font-bold">Add commands</label>
               <GoTemplateEditor
-                v-model="featureDrafts[feat.id].add_commands"
-                class="min-h-64 flex-1"
+                :model-value="featureDrafts[feat.id].add_commands"
+                compact
+                :autofocus="false"
                 :schema="cliSchema"
                 placeholder="Go text/template. One CLI command per output line."
+                @update:model-value="(v) => patchFeatureDraft(feat.id, 'add_commands', v)"
+                @apply="saveFeature(feat.id)"
               />
             </div>
             <div>
               <label class="mb-1 block font-bold">Remove commands</label>
               <GoTemplateEditor
-                v-model="featureDrafts[feat.id].remove_commands"
-                class="min-h-64 flex-1"
+                :model-value="featureDrafts[feat.id].remove_commands"
+                compact
+                :autofocus="false"
                 :schema="cliSchema"
                 placeholder="Go text/template. Idempotent teardown."
+                @update:model-value="(v) => patchFeatureDraft(feat.id, 'remove_commands', v)"
+                @apply="saveFeature(feat.id)"
+              />
+            </div>
+            <div v-if="canWrite" class="flex justify-end">
+              <UButton
+                label="Save commands"
+                :loading="saving"
+                type="button"
+                @click="saveFeature(feat.id)"
               />
             </div>
           </template>

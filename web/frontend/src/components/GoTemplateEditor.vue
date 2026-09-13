@@ -6,6 +6,8 @@ import { findTemplateIssues, snippetForItem, TEMPLATE_BUILTINS } from '@/utils/g
 const props = defineProps({
   schema: { type: Object, default: () => ({}) },
   placeholder: { type: String, default: '' },
+  compact: { type: Boolean, default: false },
+  autofocus: { type: Boolean, default: true },
 })
 
 const model = defineModel({ type: String, default: '' })
@@ -48,8 +50,10 @@ onMounted(async () => {
     onApply: () => emit('apply'),
   })
   ready.value = true
-  editor.setCursor((model.value ?? '').length)
-  editor.focus()
+  if (props.autofocus) {
+    editor.setCursor((model.value ?? '').length)
+    editor.focus()
+  }
 })
 
 watch(
@@ -80,11 +84,12 @@ function insertBuiltin(name) {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-3 lg:flex-row">
+  <div class="flex min-h-0 flex-col gap-3" :class="compact ? '' : 'h-full lg:flex-row'">
     <div class="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref="host"
-        class="min-h-48 flex-1 overflow-hidden rounded-md border border-default bg-muted lg:min-h-64"
+        class="overflow-hidden rounded-md border border-default bg-muted"
+        :class="compact ? 'h-48' : 'min-h-48 flex-1 lg:min-h-64'"
         :aria-busy="!ready"
       />
       <p v-if="issue" class="mt-2 text-sm text-red-500">{{ issue }}</p>
@@ -92,6 +97,7 @@ function insertBuiltin(name) {
     </div>
 
     <aside
+      v-if="!compact"
       class="flex max-h-48 shrink-0 flex-col overflow-auto rounded-md border border-default p-3 lg:max-h-none lg:w-80"
     >
       <p v-if="notes" class="mb-3 text-sm text-muted">{{ notes }}</p>
