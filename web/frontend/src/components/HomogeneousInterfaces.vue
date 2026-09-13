@@ -22,9 +22,8 @@ const min = computed(() => props.spec?.min ?? 0)
 const max = computed(() => props.spec?.max ?? 0)
 const unique = computed(() => !!props.spec?.unique)
 const ifaceFields = computed(() => props.spec?.fields ?? [])
-const fixedSlots = computed(() => min.value > 0 && min.value === max.value)
-const canAdd = computed(() => !fixedSlots.value && (max.value === 0 || endpoints.value.length < max.value))
-const canRemove = computed(() => !fixedSlots.value && endpoints.value.length > min.value)
+const canAdd = computed(() => max.value === 0 || endpoints.value.length < max.value)
+const canRemove = computed(() => endpoints.value.length > min.value)
 
 function emptyEndpoint() {
   return { role: 'interface', device_id: null, interface_id: null, fields: {}, label: '' }

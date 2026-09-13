@@ -24,7 +24,7 @@ import {
   resolveInterface,
   updateMacro,
   updateScope,
-  updateServiceType,
+  updateServiceType as updateCatalogServiceType,
   updateVariable,
   upsertAssignment,
 } from '@/api/config'
@@ -35,7 +35,7 @@ import {
   getServiceEndpoints,
   getServices,
   putServiceEndpoints,
-  updateServiceType,
+  updateServiceType as updateServiceRowType,
 } from '@/api/services'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
@@ -47,6 +47,12 @@ import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
+import {
+  endpointsReady,
+  findServiceScope,
+  schemaMissingRequired,
+  swallowAttachConflict,
+} from '@/utils/serviceEndpoints'
 
 defineOptions({ name: 'ConfigPage' })
 
@@ -89,6 +95,7 @@ const createFields = ref({})
 const createConnectionTypeId = ref(null)
 const createEndpoints = ref([])
 const createSubmitted = ref(false)
+const createResult = ref(null)
 
 const assignments = ref([])
 const variables = ref([])
@@ -418,6 +425,7 @@ function openCreateService(node) {
   createConnectionTypeId.value = null
   createEndpoints.value = []
   createSubmitted.value = false
+  createResult.value = null
   if (!customers.value.length) {
     getCustomers()
       .then((rows) => {
@@ -894,13 +902,27 @@ function saveDialog() {
       saving.value = false
       return
     }
+    const fields = { ...createFields.value }
+    if (schemaMissingRequired(def.schema, fields)) {
+      saving.value = false
+      return
+    }
+    if (!endpointsReady(def.interfaces, createEndpoints.value)) {
+      saving.value = false
+      return
+    }
     const category = optionValue(form.value.category) || 'CN'
     const company = optionValue(form.value.company)
-    const fields = { ...createFields.value }
     const realizeId = fieldServiceId(fields)
     const endpointsBody = { endpoints: createEndpointsBody() }
+    const afterNode = (node, servicePk) =>
+      putServiceEndpoints(servicePk, endpointsBody).then(() => {
+        createResult.value = node
+        selectCreatedNode(node)
+        return node
+      })
     if (realizeId) {
-      req = updateServiceType(realizeId, {
+      req = updateServiceRowType(realizeId, {
         service_type: def.name,
         fields,
         connection_type_id: createConnectionTypeId.value || null,
@@ -912,14 +934,15 @@ function saveDialog() {
             parent_id: form.value.parent_id,
             kind: 'service',
             service_id: realizeId,
-          }),
+          }).catch((err) =>
+            swallowAttachConflict(err, findServiceScope(listScopes, realizeId)),
+          ),
         )
         .then((node) =>
-          putServiceEndpoints(realizeId, endpointsBody).then(() => {
-            selectCreatedNode(node)
-            return node
-          }),
+          afterNode(node || { id: 0, name: '', kind: 'service', service_id: realizeId }, realizeId),
         )
+    } else if (createResult.value?.service_id) {
+      req = afterNode(createResult.value, createResult.value.service_id)
     } else {
       req = createScope({
         parent_id: form.value.parent_id,
@@ -931,12 +954,7 @@ function saveDialog() {
           fields,
           connection_type_id: createConnectionTypeId.value || null,
         },
-      }).then((node) =>
-        putServiceEndpoints(node.service_id, endpointsBody).then(() => {
-          selectCreatedNode(node)
-          return node
-        }),
-      )
+      }).then((node) => afterNode(node, node.service_id))
     }
   } else if (dialog.value === 'attach-service') {
     if (!attachServiceId.value) {
@@ -1413,7 +1431,7 @@ async function saveType() {
   }
   try {
     const saved = form.value.id
-      ? await updateServiceType(form.value.id, payload)
+      ? await updateCatalogServiceType(form.value.id, payload)
       : await createServiceType(payload)
     form.value.id = saved.id
     const cts = saved.connection_types ?? []

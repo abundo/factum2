@@ -15,6 +15,10 @@ import PasswordInput from '@/components/PasswordInput.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import {
+  endpointBindingsChanged,
+  reshapeEndpoints,
+} from '@/utils/serviceEndpoints'
+import {
   cfgmgmtBaselineSchema,
   cfgmgmtPackSchema,
   withCfgmgmtContext,
@@ -217,24 +221,6 @@ function loadEndpointLabel(deviceId, interfaceId) {
     .catch(() => '')
 }
 
-function addGenericEndpoint(extra = {}) {
-  genericEndpoints.value.push({
-    role: 'interface',
-    device_id: extra.device_id ?? null,
-    interface_id: extra.interface_id ?? null,
-    fields: { ...extra.fields },
-    label: extra.label ?? '',
-  })
-}
-
-function seedEndpointsForType(typeName) {
-  const st = props.serviceTypes.find((x) => x.name === typeName)
-  const n = st?.interfaces?.min || 0
-  for (let i = 0; i < n; i++) {
-    addGenericEndpoint()
-  }
-}
-
 function loadService(id) {
   if (!id) {
     serviceRow.value = null
@@ -252,21 +238,20 @@ function loadService(id) {
       if (schemaValues.value.max_mac_addresses == null && data.max_mac_addresses) {
         schemaValues.value.max_mac_addresses = data.max_mac_addresses
       }
-      genericEndpoints.value = (data.endpoints ?? []).map((ep) => ({
-        role: ep.role,
+      const mapped = (data.endpoints ?? []).map((ep) => ({
+        role: 'interface',
         device_id: ep.device_id,
         interface_id: ep.interface_id,
         fields: { ...ep.fields },
         label: '',
       }))
-      if (genericEndpoints.value.length === 0) {
-        const draft = props.draftEndpoint
-        if (draft && (!draft.service_id || draft.service_id === id)) {
-          addGenericEndpoint(draft)
-        } else {
-          seedEndpointsForType(data.service_type)
-        }
-      }
+      const st = props.serviceTypes.find((x) => x.name === data.service_type)
+      const draft = props.draftEndpoint
+      genericEndpoints.value = reshapeEndpoints(
+        st?.interfaces,
+        mapped,
+        draft && (!draft.service_id || draft.service_id === id) ? draft : null,
+      )
       genericEndpoints.value.forEach((ep, i) => {
         loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
           if (genericEndpoints.value[i]) genericEndpoints.value[i].label = label
@@ -354,7 +339,10 @@ function saveServiceEndpoints() {
         genericSaving.value = false
       })
   }
-  if (serviceRow.value.applied_to_device) {
+  const needCreds =
+    Boolean(serviceRow.value.applied_to_device) &&
+    endpointBindingsChanged(serviceRow.value.endpoints, genericEndpoints.value)
+  if (needCreds) {
     withCredentials(deviceIds, run, () => {
       genericSaving.value = false
     })
@@ -486,6 +474,20 @@ watch(
     }
   },
   { immediate: true },
+)
+
+watch(
+  () => serviceRow.value?.service_type,
+  (t, prev) => {
+    if (!t || t === prev || serviceLoading.value) return
+    const st = props.serviceTypes.find((x) => x.name === t)
+    genericEndpoints.value = reshapeEndpoints(st?.interfaces, genericEndpoints.value)
+    genericEndpoints.value.forEach((ep, i) => {
+      loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
+        if (genericEndpoints.value[i] && label) genericEndpoints.value[i].label = label
+      })
+    })
+  },
 )
 
 function saveCLI() {

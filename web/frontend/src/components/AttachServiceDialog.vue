@@ -1,10 +1,17 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, ref, watch } from 'vue'
-import { listServiceTypes } from '@/api/config'
-import { createService, getService, getServices, putServiceEndpoints } from '@/api/services'
+import { createScope, listScopes, listServiceTypes } from '@/api/config'
+import { getService, getServices, putServiceEndpoints, updateServiceType } from '@/api/services'
 import SchemaFields from '@/components/SchemaFields.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import {
+  endpointsReady,
+  findServiceScope,
+  findServicesFolderId,
+  schemaMissingRequired,
+  swallowAttachConflict,
+} from '@/utils/serviceEndpoints'
 
 const props = defineProps({
   deviceId: { type: Number, default: null },
@@ -36,6 +43,7 @@ const connectionTypeId = ref(null)
 const endpoints = ref([])
 const roleFields = ref({})
 const existingEndpoints = ref([])
+const createdNode = ref(null)
 
 const categoryOptions = [
   { label: 'CN — External customer', value: 'CN' },
@@ -84,6 +92,7 @@ watch(open, (isOpen) => {
   endpoints.value = []
   roleFields.value = {}
   existingEndpoints.value = []
+  createdNode.value = null
   listServiceTypes()
     .then((rows) => {
       serviceTypes.value = rows ?? []
@@ -121,6 +130,7 @@ watch(selectedTypeName, () => {
 watch(mode, () => {
   existingEndpoints.value = []
   roleFields.value = {}
+  createdNode.value = null
   if (mode.value === 'new') seedNewEndpoints()
 })
 
@@ -157,38 +167,50 @@ function seedNewEndpoints() {
 }
 
 function roleFieldsMissing() {
-  return ifaceFields.value.some((f) => {
-    if (!f.required) return false
-    const v = roleFields.value[f.name]
-    return v === null || v === undefined || v === '' || (f.type === 'service_id' && !v)
-  })
+  return schemaMissingRequired(ifaceFields.value, roleFields.value)
 }
 
-function attachPayload(serviceId) {
-  const extra = {
-    role: 'interface',
-    device_id: props.deviceId,
-    interface_id: props.interfaceId,
-    fields: { ...roleFields.value },
+function endpointsBodyFor(serviceIdMode) {
+  if (serviceIdMode === 'new') {
+    return endpoints.value.map((ep) => ({
+      role: 'interface',
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    }))
   }
-  const endpointsBody =
-    mode.value === 'new'
-      ? endpoints.value.map((ep) => ({
-          role: 'interface',
-          device_id: ep.device_id,
-          interface_id: ep.interface_id,
-          fields: ep.fields || {},
-        }))
-      : [
-          ...existingEndpoints.value.map((ep) => ({
-            role: 'interface',
-            device_id: ep.device_id,
-            interface_id: ep.interface_id,
-            fields: ep.fields || {},
-          })),
-          extra,
-        ]
-  return putServiceEndpoints(serviceId, { endpoints: endpointsBody })
+  return [
+    ...existingEndpoints.value.map((ep) => ({
+      role: 'interface',
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    })),
+    {
+      role: 'interface',
+      device_id: props.deviceId,
+      interface_id: props.interfaceId,
+      fields: { ...roleFields.value },
+    },
+  ]
+}
+
+async function treeParentId() {
+  const rows = await listScopes()
+  const deviceNode = (rows ?? []).find((s) => s.kind === 'device' && s.device_id === props.deviceId)
+  if (deviceNode?.parent_id) {
+    const p = (rows ?? []).find((s) => s.id === deviceNode.parent_id)
+    if (p && (p.kind === 'folder' || p.kind === 'site' || p.kind === 'location')) return p.id
+  }
+  return findServicesFolderId(async () => rows)
+}
+
+function attachExistingPk(parentId, pk) {
+  return createScope({
+    parent_id: parentId,
+    kind: 'service',
+    service_id: pk,
+  }).catch((err) => swallowAttachConflict(err, findServiceScope(listScopes, pk)))
 }
 
 function submit() {
@@ -199,7 +221,11 @@ function submit() {
     if (roleFieldsMissing()) return
   }
   if (mode.value === 'new') {
-    if (!selectedTypeName.value) return
+    const def = selectedType.value
+    if (!def?.name) return
+    if ((def.connection_types ?? []).length && !connectionTypeId.value) return
+    if (schemaMissingRequired(def.schema, schemaValues.value)) return
+    if (!endpointsReady(def.interfaces, endpoints.value)) return
   }
 
   saving.value = true
@@ -224,8 +250,11 @@ function submit() {
   }
 
   if (mode.value === 'existing') {
-    attachPayload(selectedServiceId.value)
-      .then(() => getService(selectedServiceId.value))
+    const pk = selectedServiceId.value
+    treeParentId()
+      .then((parentId) => attachExistingPk(parentId, pk))
+      .then(() => putServiceEndpoints(pk, { endpoints: endpointsBodyFor('existing') }))
+      .then(() => getService(pk))
       .then(done)
       .catch(fail)
       .finally(() => {
@@ -234,16 +263,60 @@ function submit() {
     return
   }
 
+  const def = selectedType.value
   const fields = { ...schemaValues.value }
-  createService({
-    category: category.value,
-    service_type: selectedTypeName.value,
-    bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
-    fields,
-    max_mac_addresses: Number(fields.max_mac_addresses) || 0,
-    connection_type_id: connectionTypeId.value || null,
-  })
-    .then((created) => attachPayload(created.id).then(() => created))
+  const realizeId = Number(fields.service_id) || 0
+  const putEps = (pk) => putServiceEndpoints(pk, { endpoints: endpointsBodyFor('new') }).then(() => getService(pk))
+
+  if (realizeId > 0) {
+    treeParentId()
+      .then((parentId) =>
+        updateServiceType(realizeId, {
+          service_type: def.name,
+          fields,
+          connection_type_id: connectionTypeId.value || null,
+          bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
+          max_mac_addresses: Number(fields.max_mac_addresses) || 0,
+        }).then(() => attachExistingPk(parentId, realizeId)),
+      )
+      .then(() => putEps(realizeId))
+      .then(done)
+      .catch(fail)
+      .finally(() => {
+        saving.value = false
+      })
+    return
+  }
+
+  const continueCreated = (node) => {
+    createdNode.value = node
+    return putEps(node.service_id)
+  }
+
+  if (createdNode.value?.service_id) {
+    continueCreated(createdNode.value)
+      .then(done)
+      .catch(fail)
+      .finally(() => {
+        saving.value = false
+      })
+    return
+  }
+
+  treeParentId()
+    .then((parentId) =>
+      createScope({
+        parent_id: parentId,
+        kind: 'service',
+        attach: {
+          category: category.value,
+          service_type: def.name,
+          fields,
+          connection_type_id: connectionTypeId.value || null,
+        },
+      }),
+    )
+    .then(continueCreated)
     .then(done)
     .catch(fail)
     .finally(() => {

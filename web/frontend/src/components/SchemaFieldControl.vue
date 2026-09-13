@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { getFreeResources } from '@/api/config'
-import { searchCommercialServices } from '@/api/services'
+import { getService, searchCommercialServices } from '@/api/services'
 import SearchInput from '@/components/SearchInput.vue'
 
 defineOptions({ name: 'SchemaFieldControl' })
@@ -110,11 +110,30 @@ function emptyItem() {
   return ''
 }
 
+function listMin() {
+  const n = Number(props.field.min)
+  return Number.isFinite(n) ? n : 0
+}
+
+function listMax() {
+  const n = Number(props.field.max)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+const canAddList = computed(() => {
+  const max = listMax()
+  return max === 0 || listValue().length < max
+})
+
+const canRemoveList = computed(() => listValue().length > listMin())
+
 function addItem() {
+  if (!canAddList.value) return
   model.value = [...listValue(), emptyItem()]
 }
 
 function removeItem(i) {
+  if (!canRemoveList.value) return
   const next = [...listValue()]
   next.splice(i, 1)
   model.value = next
@@ -126,13 +145,39 @@ function setItem(i, v) {
   model.value = next
 }
 
+const resolvedService = ref(null)
+
+function formatServiceRow(row) {
+  if (!row) return ''
+  const extra = typeof row.company === 'string' && row.company ? ` — ${row.company}` : ''
+  return `${row.service_id}${extra}`
+}
+
 const serviceLabel = computed(() => {
-  const id = model.value
+  const id = Number(model.value)
   if (!id) return ''
+  if (resolvedService.value?.id === id) return formatServiceRow(resolvedService.value)
   const row = pickerRows.value.find((s) => s.id === id)
-  if (row) return `${row.service_id}${row.company ? ` — ${row.company}` : ''}`
+  if (row) return formatServiceRow(row)
   return `#${id}`
 })
+
+watch(
+  () => Number(model.value) || 0,
+  (id) => {
+    if (!id) {
+      resolvedService.value = null
+      return
+    }
+    if (resolvedService.value?.id === id) return
+    getService(id)
+      .then((data) => {
+        if (Number(model.value) === id) resolvedService.value = data
+      })
+      .catch(() => {})
+  },
+  { immediate: true },
+)
 
 function loadPicker() {
   pickerLoading.value = true
@@ -161,6 +206,7 @@ watch(pickerQ, () => {
 
 function pickService(row) {
   model.value = row.id
+  resolvedService.value = row
   pickerOpen.value = false
 }
 
@@ -218,15 +264,17 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
   <div>
     <label v-if="!hideLabel && field.name" class="block font-bold mb-2">{{ labelOf(field) }}</label>
 
-    <URadioGroup
-      v-if="type === 'bool'"
-      :model-value="Boolean(model)"
-      :items="boolItems"
-      :disabled="disabled"
-      value-key="value"
-      label-key="label"
-      @update:model-value="model = Boolean($event)"
-    />
+    <div v-if="type === 'bool'">
+      <URadioGroup
+        :model-value="typeof model === 'boolean' ? model : undefined"
+        :items="boolItems"
+        :disabled="disabled"
+        value-key="value"
+        label-key="label"
+        @update:model-value="model = $event === true || $event === 'true'"
+      />
+      <small v-if="typeof model !== 'boolean'" class="text-muted-color">Not set</small>
+    </div>
 
     <UInputNumber
       v-else-if="type === 'vlan'"
@@ -316,7 +364,7 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
           @update:model-value="setItem(i, $event)"
         />
         <UButton
-          v-if="!disabled"
+          v-if="!disabled && canRemoveList"
           icon="i-lucide-trash-2"
           variant="ghost"
           color="error"
@@ -326,7 +374,7 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
         />
       </div>
       <UButton
-        v-if="!disabled"
+        v-if="!disabled && canAddList"
         icon="i-lucide-plus"
         size="xs"
         variant="outline"

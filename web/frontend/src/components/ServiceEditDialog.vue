@@ -18,6 +18,12 @@ import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
+import {
+  findServiceScope,
+  findServicesFolderId,
+  reshapeEndpoints,
+  swallowAttachConflict,
+} from '@/utils/serviceEndpoints'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -203,8 +209,8 @@ function loadServiceById(id) {
     .then((data) => {
       service.value = { ...data }
       loadPath(data.id)
-      genericEndpoints.value = (data.endpoints ?? []).map((ep) => ({
-        role: ep.role,
+      const mapped = (data.endpoints ?? []).map((ep) => ({
+        role: 'interface',
         device_id: ep.device_id,
         interface_id: ep.interface_id,
         fields: { ...ep.fields },
@@ -217,9 +223,8 @@ function loadServiceById(id) {
       if (schemaValues.value.max_mac_addresses == null && data.max_mac_addresses) {
         schemaValues.value.max_mac_addresses = data.max_mac_addresses
       }
-      if (genericEndpoints.value.length === 0) {
-        seedEndpointsForType(data.service_type)
-      }
+      const st = serviceTypeRows.value.find((x) => x.name === data.service_type)
+      genericEndpoints.value = reshapeEndpoints(st?.interfaces, mapped)
       genericEndpoints.value.forEach((ep, i) => {
         loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
           genericEndpoints.value[i].label = label
@@ -253,34 +258,21 @@ watch(open, (isOpen) => {
 
 watch(
   () => service.value.service_type,
-  (t) => {
-    if (genericEndpoints.value.length === 0) {
-      seedEndpointsForType(t)
-    }
+  (t, prev) => {
+    if (!t || t === prev || loading.value) return
+    const st = serviceTypeRows.value.find((x) => x.name === t)
+    genericEndpoints.value = reshapeEndpoints(st?.interfaces, genericEndpoints.value)
+    genericEndpoints.value.forEach((ep, i) => {
+      loadEndpointLabel(ep.device_id, ep.interface_id).then((label) => {
+        if (genericEndpoints.value[i] && label) genericEndpoints.value[i].label = label
+      })
+    })
   },
 )
-
-function seedEndpointsForType(typeName) {
-  const st = serviceTypeRows.value.find((x) => x.name === typeName)
-  const n = st?.interfaces?.min || 0
-  for (let i = 0; i < n; i++) {
-    addGenericEndpoint()
-  }
-}
 
 function hideDialog() {
   open.value = false
   submitted.value = false
-}
-
-function addGenericEndpoint() {
-  genericEndpoints.value.push({
-    role: 'interface',
-    device_id: null,
-    interface_id: null,
-    fields: {},
-    label: '',
-  })
 }
 
 function loadConfigPreview() {
@@ -630,15 +622,6 @@ function deleteServiceConfirmed() {
   }
 }
 
-async function findServicesFolderId() {
-  const rows = await listScopes()
-  const root = (rows ?? []).find((s) => s.kind === 'folder' && s.name === 'global' && !s.parent_id)
-  const folder = (rows ?? []).find(
-    (s) => s.kind === 'folder' && s.name === '_services' && s.parent_id === root?.id,
-  )
-  return folder?.id
-}
-
 function typePayload() {
   return {
     service_type: service.value.service_type ?? '',
@@ -656,17 +639,16 @@ function realizeCommercial() {
   updateServiceType(service.value.id, typePayload())
     .then((data) => {
       service.value = { ...service.value, ...data }
-      return findServicesFolderId()
+      return findServicesFolderId(listScopes)
     })
     .then((parentId) =>
       createScope({
         parent_id: parentId,
         kind: 'service',
         service_id: service.value.id,
-      }).catch((err) => {
-        if (err?.response?.status === 409) return null
-        throw err
-      }),
+      }).catch((err) =>
+        swallowAttachConflict(err, findServiceScope(listScopes, service.value.id)),
+      ),
     )
     .then(() => putServiceEndpoints(service.value.id, genericEndpointsPayload()))
     .then(() => getService(service.value.id))
