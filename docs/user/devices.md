@@ -15,7 +15,10 @@ brought in.
 model, and primary IPv4. Open a row to:
 
 - Inspect interfaces and addresses
-- Refresh interface state from the device (needs write permission)
+- Refresh interfaces from the device (needs write permission): descriptions
+  are reloaded, and interfaces that no longer exist on the device are
+  removed from Factum and NetBox (ports defined by the device type's
+  template are kept)
 - Edit VLANs on an interface
 - Attach or open a [service](services.md)
 - Open the Oxidized backup for that node, when Oxidized is enabled

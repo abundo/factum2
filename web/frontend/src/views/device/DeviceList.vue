@@ -436,7 +436,7 @@ function refreshInterfaces() {
       toast.add({
         color: 'success',
         title: 'Interfaces refreshed',
-        description: 'Descriptions were reloaded from the device.',
+        description: 'Interfaces were reloaded from the device.',
         duration: 3000,
       })
     })

@@ -966,6 +966,14 @@ func upsertOpticalPortRole(db *gorm.DB, interfaceID uint, role string) error {
 	return db.Model(&port).Update("role", role).Error
 }
 
+// DeleteFactumInterface removes a factum interfaces row together with its
+// addresses, tags, cables, and optical rows. GUI interface refresh calls
+// this after deleting the matching Netbox object (or when the factum row
+// had no Netbox ID).
+func DeleteFactumInterface(db *gorm.DB, interfaceID uint) error {
+	return deleteInterface(db, interfaceID)
+}
+
 // deleteInterface removes an interface together with its addresses, tags
 // and any Connection referencing it as either end - a single-device sync
 // (e.g. the Netbox webhook) never runs syncCables (that's fullSync-gated),

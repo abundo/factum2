@@ -13,13 +13,16 @@ import (
 	"github.com/abundo/factum2/models"
 	"github.com/abundo/netboxtool"
 	"github.com/labstack/echo/v5"
+	"gorm.io/gorm"
 )
 
 // --------------------------------------------------------------------------
 //
 //	API: device interfaces (driver-backed refresh/update)
 //
-//	Both endpoints only support platforms whose driver implements
+//	Refresh also deletes factum/Netbox interfaces that are gone from the
+//	device (except device-type template ports). Both endpoints only
+//	support platforms whose driver implements
 //	GetInterfacesStatus/SetInterfaceDescriptions (internal/drivers.
 //	AristaDriver for "eos", internal/drivers.NokiaDriver for "sros"/
 //	"sros-md", internal/drivers.IOSXRDriver for "ios-xr",
@@ -151,9 +154,27 @@ func (ctrl *Controller) newNetboxClient(settings *models.Settings) (*netboxtool.
 	})
 }
 
-// ApiDeviceInterfacesRefresh fetches the live interface descriptions from
-// the device itself (via the EOS driver) and overwrites both Netbox's and
-// factum's stored interface descriptions with what the device reports.
+// interfaceRefreshNetbox is the Netbox surface GUI interface refresh uses:
+// description patches, deletes of interfaces the device no longer has, and
+// device-type templates so those ports are not pruned.
+type interfaceRefreshNetbox interface {
+	InterfaceUpdate(interfaceID int, changes map[string]any) error
+	InterfaceDelete(interfaceID int) error
+	GetDeviceType(manufacturer, model string) (*netboxtool.NetboxDeviceTypeDetail, error)
+}
+
+func (ctrl *Controller) interfaceRefreshNetboxClient(settings *models.Settings) (interfaceRefreshNetbox, error) {
+	if ctrl.interfaceNetboxFn != nil {
+		return ctrl.interfaceNetboxFn(settings)
+	}
+	return ctrl.newNetboxClient(settings)
+}
+
+// ApiDeviceInterfacesRefresh fetches live interfaces from the device and
+// reconciles factum/Netbox against that list: descriptions of matching
+// names are overwritten with what the device reports, and interfaces that
+// no longer exist on the device are deleted (device-type template ports
+// are kept, matching internal/device-sync's interfacesDelete).
 func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {
@@ -189,31 +210,15 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to fetch interfaces from device: " + err.Error()})
 	}
 
-	nb, err := ctrl.newNetboxClient(settings)
+	nb, err := ctrl.interfaceRefreshNetboxClient(settings)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
-	byName := make(map[string]models.Interface, len(device.Interfaces))
-	for _, iface := range device.Interfaces {
-		byName[iface.Name] = iface
-	}
+	templateTypes, templatesKnown := loadRefreshTemplateTypes(nb, device.Manufacturer, device.ModelName)
 
-	for _, devIface := range deviceInterfaces {
-		iface, ok := byName[devIface.Name]
-		if !ok || iface.Description == devIface.Description {
-			continue
-		}
-
-		if iface.NetboxID != 0 {
-			if err := nb.InterfaceUpdate(int(iface.NetboxID), map[string]any{"description": devIface.Description}); err != nil {
-				return c.JSON(http.StatusBadGateway, map[string]any{"error": "failed to update netbox interface " + iface.Name + ": " + err.Error()})
-			}
-		}
-
-		if err := ctrl.DB.Model(&models.Interface{}).Where("id = ?", iface.ID).Update("description", devIface.Description).Error; err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
+	if err := applyLiveInterfaceRefresh(ctrl.DB, nb, device, deviceInterfaces, templateTypes, templatesKnown); err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
 
 	updated, err := fetchDevices(c.Request().Context(), ctrl.DB, []uint{id})
@@ -221,6 +226,89 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
 	}
 	return c.JSON(http.StatusOK, updated[0])
+}
+
+func loadRefreshTemplateTypes(nb interfaceRefreshNetbox, manufacturer, model string) (map[string]string, bool) {
+	if manufacturer == "" || model == "" {
+		return nil, false
+	}
+	dt, err := nb.GetDeviceType(manufacturer, model)
+	if err != nil || dt == nil {
+		return nil, false
+	}
+	types := make(map[string]string, len(dt.Interfaces))
+	for _, tmpl := range dt.Interfaces {
+		types[tmpl.Name] = tmpl.Type
+	}
+	return types, true
+}
+
+// applyLiveInterfaceRefresh writes live descriptions onto matching stored
+// interfaces and removes stored interfaces the device no longer has.
+// When templatesKnown is false (device type missing/unreadable), only
+// virtual/subinterfaces are deleted so a failed template lookup cannot
+// strip physical ports that Netbox would recreate from the device type.
+func applyLiveInterfaceRefresh(db *gorm.DB, nb interfaceRefreshNetbox, device models.Device, live []*netboxtool.NBInterface, templateTypes map[string]string, templatesKnown bool) error {
+	byName := make(map[string]models.Interface, len(device.Interfaces))
+	for _, iface := range device.Interfaces {
+		byName[iface.Name] = iface
+	}
+
+	liveNames := make(map[string]struct{}, len(live))
+	for _, devIface := range live {
+		liveNames[devIface.Name] = struct{}{}
+		iface, ok := byName[devIface.Name]
+		if !ok || iface.Description == devIface.Description {
+			continue
+		}
+		if iface.NetboxID != 0 {
+			if err := nb.InterfaceUpdate(int(iface.NetboxID), map[string]any{"description": devIface.Description}); err != nil {
+				return fmt.Errorf("failed to update netbox interface %s: %w", iface.Name, err)
+			}
+		}
+		if err := db.Model(&models.Interface{}).Where("id = ?", iface.ID).Update("description", devIface.Description).Error; err != nil {
+			return err
+		}
+	}
+
+	// An empty live list is treated as a fetch/parse failure, not a
+	// device with no interfaces: pruning would wipe every stored row.
+	if len(live) == 0 {
+		return nil
+	}
+
+	for _, iface := range device.Interfaces {
+		if _, ok := liveNames[iface.Name]; ok {
+			continue
+		}
+		if !shouldDeleteMissingInterface(iface, templateTypes, templatesKnown) {
+			continue
+		}
+		if iface.NetboxID != 0 {
+			if err := nb.InterfaceDelete(int(iface.NetboxID)); err != nil {
+				return fmt.Errorf("failed to delete netbox interface %s: %w", iface.Name, err)
+			}
+		}
+		if err := netbox.DeleteFactumInterface(db, iface.ID); err != nil {
+			return fmt.Errorf("failed to delete factum interface %s: %w", iface.Name, err)
+		}
+	}
+	return nil
+}
+
+func shouldDeleteMissingInterface(iface models.Interface, templateTypes map[string]string, templatesKnown bool) bool {
+	if _, ok := templateTypes[iface.Name]; ok {
+		return false
+	}
+	if templatesKnown {
+		return true
+	}
+	// No device-type map: only drop subinterfaces / virtual ports.
+	// Physical names (Ethernet1, Management1) stay until templates are known.
+	if strings.EqualFold(iface.Type, "virtual") {
+		return true
+	}
+	return strings.Contains(iface.Name, ".")
 }
 
 type interfaceDescriptionUpdate struct {

@@ -43,11 +43,12 @@ func vueFS() fs.FS {
 }
 
 type Controller struct {
-	DB            *gorm.DB
-	LogHub        *LogHub
-	RemoteManager *worker.RemoteManager
-	driverFn      func(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error)
-	netboxFn      func(settings *models.Settings) (serviceNetboxAPI, error)
+	DB                *gorm.DB
+	LogHub            *LogHub
+	RemoteManager     *worker.RemoteManager
+	driverFn          func(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error)
+	netboxFn          func(settings *models.Settings) (serviceNetboxAPI, error)
+	interfaceNetboxFn func(settings *models.Settings) (interfaceRefreshNetbox, error)
 }
 
 // ----- GUI -----

@@ -12,9 +12,10 @@ export function getDeviceImpact(id) {
   return http.get(`/device/${id}/impact`).then((res) => res.data)
 }
 
-// Fetch interface descriptions directly from the device and overwrite the
-// stored Netbox/factum descriptions with what it reports. Device login uses
-// Admin → Device sync credentials on the server.
+// Fetch live interfaces from the device, overwrite stored descriptions,
+// and drop factum/Netbox interfaces that no longer exist on the device
+// (device-type template ports are kept). Device login uses Admin → Device
+// sync credentials on the server.
 export function refreshDeviceInterfaces(id) {
   return http.post(`/device/${id}/interfaces/refresh`).then((res) => res.data)
 }
