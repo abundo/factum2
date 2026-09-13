@@ -538,7 +538,7 @@ const cellTooltipContent = {
 }
 const cellTooltipUi = {
   content:
-    'h-auto max-w-md items-start px-3 py-2 rounded-md ring-2 ring-accented shadow-lg bg-default',
+    'h-auto w-max max-w-[90vw] items-start px-3 py-2 rounded-md ring-2 ring-accented shadow-lg bg-default',
   text: 'font-mono text-xs break-all whitespace-pre-wrap overflow-visible',
 }
 const overflowTip = ref('')
