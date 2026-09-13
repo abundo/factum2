@@ -82,6 +82,20 @@ export function updateServiceType(id, payload) {
 export function deleteServiceType(id) {
   return http.delete(`/config/service-types/${id}`)
 }
+export function getServiceType(id) {
+  return http.get(`/config/service-types/${id}`).then((res) => res.data)
+}
+export function putConnectionTypeImage(typeId, ctId, body, contentType) {
+  const headers = {}
+  if (contentType) headers['Content-Type'] = contentType
+  return http.put(
+    `/config/service-types/${typeId}/connection-types/${ctId}/image`,
+    body ?? new Blob(),
+    {
+      headers,
+    },
+  )
+}
 
 export function listMacros() {
   return http.get('/config/macros').then((res) => res.data ?? [])

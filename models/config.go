@@ -280,13 +280,14 @@ type ServiceType struct {
 func (ServiceType) TableName() string { return "service_types" }
 
 type ServiceTypeDTO struct {
-	ID          uint                  `json:"id"`
-	Name        string                `json:"name"`
-	Description string                `json:"description"`
-	Schema      []FieldSchema         `json:"schema"`
-	Interfaces  ServiceInterfacesSpec `json:"interfaces"`
-	SyncSource  string                `json:"sync_source"`
-	NetboxType  string                `json:"netbox_type"`
+	ID              uint                       `json:"id"`
+	Name            string                     `json:"name"`
+	Description     string                     `json:"description"`
+	Schema          []FieldSchema              `json:"schema"`
+	Interfaces      ServiceInterfacesSpec      `json:"interfaces"`
+	SyncSource      string                     `json:"sync_source"`
+	NetboxType      string                     `json:"netbox_type"`
+	ConnectionTypes []ServiceConnectionTypeDTO `json:"connection_types"`
 }
 
 // ServiceConnectionType is a named connection choice on a definition.
@@ -300,6 +301,15 @@ type ServiceConnectionType struct {
 }
 
 func (ServiceConnectionType) TableName() string { return "service_connection_types" }
+
+type ServiceConnectionTypeDTO struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	SortOrder   int    `json:"sort_order"`
+	ContentType string `json:"content_type,omitempty"`
+	HasImage    bool   `json:"has_image"`
+	ImageURL    string `json:"image_url,omitempty"`
+}
 
 // ConfigMacro is a named snippet templates can {{include}}.
 type ConfigMacro struct {

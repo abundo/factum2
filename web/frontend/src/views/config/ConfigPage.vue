@@ -19,6 +19,7 @@ import {
   listMacros,
   listServiceTypes,
   listVariables,
+  putConnectionTypeImage,
   renderConfig,
   resolveInterface,
   updateMacro,
@@ -34,6 +35,7 @@ import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import SearchInput from '@/components/SearchInput.vue'
+import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 
@@ -201,7 +203,7 @@ const constraintsHint = computed(() => {
 })
 
 function errMsg(err, fallback) {
-  return err.response?.data?.error ?? fallback
+  return err.response?.data?.error ?? err.message ?? fallback
 }
 
 function applyFilter(q) {
@@ -1110,60 +1112,176 @@ function loadMatrix() {
     )
 }
 
+function cloneJSON(v, fallback) {
+  try {
+    return JSON.parse(JSON.stringify(v ?? fallback))
+  } catch {
+    return fallback
+  }
+}
+
+function emptyInterfaces() {
+  return { min: 0, max: 0, unique: false, fields: [] }
+}
+
 function openType(row) {
   form.value = row
     ? {
-        ...row,
-        schema_text: JSON.stringify(row.schema ?? [], null, 2),
-        interfaces_text: JSON.stringify(row.interfaces ?? { min: 0, max: 0, unique: false, fields: [] }, null, 2),
+        id: row.id,
+        name: row.name,
+        description: row.description ?? '',
+        schema: cloneJSON(row.schema, []),
+        interfaces: {
+          min: row.interfaces?.min ?? 0,
+          max: row.interfaces?.max ?? 0,
+          unique: !!row.interfaces?.unique,
+          fields: cloneJSON(row.interfaces?.fields, []),
+        },
+        sync_source: row.sync_source ?? '',
+        netbox_type: row.netbox_type ?? '',
+        connection_types: (row.connection_types ?? []).map((ct) => ({
+          id: ct.id,
+          name: ct.name,
+          has_image: !!ct.has_image,
+          image_url: ct.image_url,
+          file: null,
+          preview: ct.has_image ? ct.image_url : '',
+          clearImage: false,
+        })),
       }
     : {
         name: '',
         description: '',
-        schema_text: '[]',
-        interfaces_text: JSON.stringify({ min: 0, max: 0, unique: false, fields: [] }, null, 2),
+        schema: [],
+        interfaces: emptyInterfaces(),
         sync_source: '',
         netbox_type: '',
+        connection_types: [],
       }
   dialog.value = 'type'
 }
 
-function saveType() {
-  saving.value = true
-  let schema
-  let interfaces
-  try {
-    schema = parseJSON(form.value.schema_text, [])
-    interfaces = parseJSON(form.value.interfaces_text, { min: 0, max: 0, unique: false, fields: [] })
-  } catch {
-    saving.value = false
-    toast.add({
-      color: 'error',
-      title: 'Error',
-      description: 'Schema and interfaces must be valid JSON.',
-    })
+function toNum(v) {
+  if (v === null || v === undefined || v === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function serializeField(f, named) {
+  const type = optionValue(f?.type) || 'string'
+  const out = { type }
+  if (named) {
+    out.name = (f.name || '').trim()
+    out.required = !!f.required
+  }
+  if (f.description) out.description = f.description
+  if (type === 'int' || type === 'vlan' || type === 'list') {
+    const min = toNum(f.min)
+    const max = toNum(f.max)
+    if (min != null) out.min = min
+    if (max != null) out.max = max
+  }
+  if (type === 'int' && f.unit) out.unit = f.unit
+  if (type === 'bool') {
+    if (f.bool_true_label) out.bool_true_label = f.bool_true_label
+    if (f.bool_false_label) out.bool_false_label = f.bool_false_label
+  }
+  if (type === 'enum') {
+    out.enum = (f.enum ?? [])
+      .map((e) => ({ label: (e.label || '').trim(), value: (e.value || '').trim() }))
+      .filter((e) => e.value)
+  }
+  if ((type === 'prefix' || type === 'ipv4_prefix' || type === 'ipv6_prefix') && f.resource) {
+    out.resource = String(f.resource).trim()
+  }
+  if (type === 'list') {
+    out.items = serializeField(f.items || { type: 'string' }, false)
+  }
+  return out
+}
+
+function addConnectionType() {
+  form.value.connection_types = [
+    ...(form.value.connection_types ?? []),
+    { name: '', file: null, preview: '', has_image: false, clearImage: false },
+  ]
+}
+
+function removeConnectionType(i) {
+  const next = [...(form.value.connection_types ?? [])]
+  const ct = next[i]
+  if (ct?.preview?.startsWith('blob:')) URL.revokeObjectURL(ct.preview)
+  next.splice(i, 1)
+  form.value.connection_types = next
+}
+
+function onConnectionImage(ct, event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.type !== 'image/png' && file.type !== 'image/webp') {
+    toast.add({ color: 'error', title: 'Error', description: 'Image must be PNG or WebP.' })
     return
   }
+  if (file.size > 512 * 1024) {
+    toast.add({ color: 'error', title: 'Error', description: 'Image exceeds 512KiB.' })
+    return
+  }
+  if (ct.preview?.startsWith('blob:')) URL.revokeObjectURL(ct.preview)
+  ct.file = file
+  ct.clearImage = false
+  ct.preview = URL.createObjectURL(file)
+}
+
+function clearConnectionImage(ct) {
+  if (ct.preview?.startsWith('blob:')) URL.revokeObjectURL(ct.preview)
+  ct.file = null
+  ct.preview = ''
+  ct.has_image = false
+  ct.clearImage = true
+}
+
+async function saveType() {
+  saving.value = true
   const payload = {
     name: form.value.name,
     description: form.value.description ?? '',
-    schema,
-    interfaces,
+    schema: (form.value.schema ?? []).map((f) => serializeField(f, true)),
+    interfaces: {
+      min: toNum(form.value.interfaces?.min) ?? 0,
+      max: toNum(form.value.interfaces?.max) ?? 0,
+      unique: !!form.value.interfaces?.unique,
+      fields: (form.value.interfaces?.fields ?? []).map((f) => serializeField(f, true)),
+    },
     sync_source: optionValue(form.value.sync_source) || '',
     netbox_type: optionValue(form.value.netbox_type) || '',
+    connection_types: (form.value.connection_types ?? []).map((ct, i) => ({
+      ...(ct.id ? { id: ct.id } : {}),
+      name: (ct.name || '').trim(),
+      sort_order: i,
+    })),
   }
-  const req = form.value.id ? updateServiceType(form.value.id, payload) : createServiceType(payload)
-  req
-    .then(() => {
-      dialog.value = null
-      return loadTypes()
-    })
-    .catch((err) =>
-      toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
-    )
-    .finally(() => {
-      saving.value = false
-    })
+  try {
+    const saved = form.value.id
+      ? await updateServiceType(form.value.id, payload)
+      : await createServiceType(payload)
+    const cts = saved.connection_types ?? []
+    for (const ct of form.value.connection_types ?? []) {
+      const match = cts.find((s) => s.name === (ct.name || '').trim())
+      if (!match) continue
+      if (ct.file) {
+        await putConnectionTypeImage(saved.id, match.id, ct.file, ct.file.type)
+      } else if (ct.clearImage) {
+        await putConnectionTypeImage(saved.id, match.id, new Blob([]))
+      }
+    }
+    dialog.value = null
+    await loadTypes()
+  } catch (err) {
+    toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') })
+  } finally {
+    saving.value = false
+  }
 }
 
 function openMacro(row) {
@@ -1360,7 +1478,9 @@ onBeforeUnmount(() => {
             aria-label="Resize config tree"
             @mousedown="startTreeResize"
           />
-          <div class="mt-4 flex min-h-80 min-w-0 flex-1 flex-col overflow-hidden lg:mt-0 lg:min-h-0 lg:pl-3">
+          <div
+            class="mt-4 flex min-h-80 min-w-0 flex-1 flex-col overflow-hidden lg:mt-0 lg:min-h-0 lg:pl-3"
+          >
             <ConfigNodeInspector
               class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto"
               :selected="selected"
@@ -1944,10 +2064,11 @@ onBeforeUnmount(() => {
   <UModal
     :open="dialog === 'type'"
     title="Service type"
+    :ui="{ content: 'sm:max-w-3xl max-h-[90vh]' }"
     @update:open="(v) => !v && (dialog = null)"
   >
     <template #body>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-4">
         <div>
           <label class="block font-bold mb-2">Name</label>
           <UInput v-model="form.name" />
@@ -1976,13 +2097,81 @@ onBeforeUnmount(() => {
             class="w-full"
           />
         </div>
-        <div>
-          <label class="block font-bold mb-2">Schema (JSON)</label>
-          <UTextarea v-model="form.schema_text" :rows="4" class="w-full font-mono text-sm" />
+        <ServiceTypeFieldEditor v-if="form.schema" v-model="form.schema" title="Service fields" />
+        <div v-if="form.interfaces" class="flex flex-col gap-2">
+          <label class="block font-bold m-0">Interfaces</label>
+          <p class="text-muted-color text-sm m-0">Max 0 means unlimited.</p>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block font-bold mb-1 text-sm">Min</label>
+              <UInput v-model="form.interfaces.min" type="number" class="w-full" />
+            </div>
+            <div>
+              <label class="block font-bold mb-1 text-sm">Max</label>
+              <UInput v-model="form.interfaces.max" type="number" class="w-full" />
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-sm">
+            <UCheckbox v-model="form.interfaces.unique" />
+            Unique device + interface
+          </label>
+          <ServiceTypeFieldEditor v-model="form.interfaces.fields" title="Per-interface fields" />
         </div>
-        <div>
-          <label class="block font-bold mb-2">Interfaces (JSON)</label>
-          <UTextarea v-model="form.interfaces_text" :rows="6" class="w-full font-mono text-sm" />
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <label class="block font-bold m-0">Connection types</label>
+            <UButton
+              icon="i-lucide-plus"
+              size="xs"
+              variant="outline"
+              label="Add"
+              @click="addConnectionType"
+            />
+          </div>
+          <p class="text-muted-color text-sm m-0">PNG or WebP, max 512KiB.</p>
+          <div
+            v-for="(ct, i) in form.connection_types ?? []"
+            :key="ct.id || i"
+            class="rounded-md ring ring-default p-3 flex flex-col gap-2"
+          >
+            <div class="flex gap-2 items-start">
+              <div class="flex-1 min-w-0">
+                <label class="block font-bold mb-1 text-sm">Name</label>
+                <UInput v-model="ct.name" class="w-full" />
+              </div>
+              <UButton
+                icon="i-lucide-trash-2"
+                variant="ghost"
+                color="error"
+                size="sm"
+                class="mt-6"
+                @click="removeConnectionType(i)"
+              />
+            </div>
+            <div class="flex items-center gap-3">
+              <img
+                v-if="ct.preview"
+                :src="ct.preview"
+                alt=""
+                class="size-16 object-contain rounded-md ring ring-default bg-default"
+              />
+              <label class="text-sm">
+                <input
+                  type="file"
+                  accept="image/png,image/webp"
+                  class="text-sm"
+                  @change="onConnectionImage(ct, $event)"
+                />
+              </label>
+              <UButton
+                v-if="ct.preview || ct.has_image"
+                size="xs"
+                variant="ghost"
+                label="Clear image"
+                @click="clearConnectionImage(ct)"
+              />
+            </div>
+          </div>
         </div>
       </div>
     </template>

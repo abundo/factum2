@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,9 +17,17 @@ import (
 	"gorm.io/gorm"
 )
 
+const maxConnectionTypeImage = 512 * 1024
+
 func configWriteError(c *echo.Context, err error) error {
 	if se := cfgmgmt.AsStatusError(err); se != nil {
 		return c.JSON(se.Status, map[string]any{"error": se.Message})
+	}
+	if cfgmgmt.IsUniqueViolation(err) {
+		return c.JSON(http.StatusConflict, map[string]any{"error": "already exists"})
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
 	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 }
@@ -492,13 +501,27 @@ func (ctrl *Controller) ApiConfigMatrix(c *echo.Context) error {
 }
 
 func (ctrl *Controller) ApiConfigServiceTypeList(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ServiceType, models.ServiceTypeDTO](ctrl.DB)
-	return h.GetAll(c)
+	rows, err := cfgmgmt.ListServiceTypes(ctrl.DB)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	out := make([]models.ServiceTypeDTO, len(rows))
+	for i := range rows {
+		out[i] = cfgmgmt.ServiceTypeDTO(&rows[i])
+	}
+	return c.JSON(http.StatusOK, out)
 }
 
 func (ctrl *Controller) ApiConfigServiceTypeGet(c *echo.Context) error {
-	h := NewSecureCRUDHandler[models.ServiceType, models.ServiceTypeDTO](ctrl.DB)
-	return h.GetOne(c)
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	row, err := cfgmgmt.LoadServiceType(ctrl.DB, id)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, cfgmgmt.ServiceTypeDTO(row))
 }
 
 func bindServiceTypeDTO(c *echo.Context) (*models.ServiceTypeDTO, error) {
@@ -537,18 +560,32 @@ func (ctrl *Controller) ApiConfigServiceTypeCreate(c *echo.Context) error {
 		return configWriteError(c, err)
 	}
 	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		var n int64
+		if err := tx.Model(&models.ServiceType{}).Where("name = ?", row.Name).Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			return cfgmgmt.ErrServiceTypeNameTaken
+		}
 		if err := tx.Create(&row).Error; err != nil {
+			if cfgmgmt.IsUniqueViolation(err) {
+				return cfgmgmt.ErrServiceTypeNameTaken
+			}
+			return err
+		}
+		if err := cfgmgmt.ReplaceConnectionTypes(tx, row.ID, dto.ConnectionTypes); err != nil {
 			return err
 		}
 		_, err := cfgmgmt.CatalogCLITypeFolder(tx, row.Name)
 		return err
 	}); err != nil {
-		if se := cfgmgmt.AsStatusError(err); se != nil {
-			return c.JSON(se.Status, map[string]any{"error": se.Message})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return configWriteError(c, err)
 	}
-	return c.JSON(http.StatusCreated, row)
+	saved, err := cfgmgmt.LoadServiceType(ctrl.DB, row.ID)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusCreated, cfgmgmt.ServiceTypeDTO(saved))
 }
 
 func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
@@ -595,14 +632,25 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 			}
 			existing.Name = newName
 		}
-		return tx.Save(&existing).Error
-	}); err != nil {
-		if se := cfgmgmt.AsStatusError(err); se != nil {
-			return c.JSON(se.Status, map[string]any{"error": se.Message})
+		if err := tx.Save(&existing).Error; err != nil {
+			if cfgmgmt.IsUniqueViolation(err) {
+				return cfgmgmt.ErrServiceTypeNameTaken
+			}
+			return err
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		if err := cfgmgmt.ReplaceConnectionTypes(tx, existing.ID, dto.ConnectionTypes); err != nil {
+			return err
+		}
+		_, err := cfgmgmt.CatalogCLITypeFolder(tx, existing.Name)
+		return err
+	}); err != nil {
+		return configWriteError(c, err)
 	}
-	return c.JSON(http.StatusOK, existing)
+	saved, err := cfgmgmt.LoadServiceType(ctrl.DB, existing.ID)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, cfgmgmt.ServiceTypeDTO(saved))
 }
 
 func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
@@ -630,9 +678,125 @@ func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
 		}
 		return tx.Delete(&existing).Error
 	}); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return configWriteError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) loadConnectionType(typeID, ctID uint) (*models.ServiceConnectionType, error) {
+	var row models.ServiceConnectionType
+	if err := ctrl.DB.Where("id = ? AND service_type_id = ?", ctID, typeID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (ctrl *Controller) ApiConfigConnectionTypeImageGet(c *echo.Context) error {
+	typeID, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	ctID, err := echo.PathParam[uint](c, "ctid")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	row, err := ctrl.loadConnectionType(typeID, ctID)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	if len(row.Image) == 0 {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "image not found"})
+	}
+	ct := row.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+	return c.Blob(http.StatusOK, ct, row.Image)
+}
+
+func (ctrl *Controller) ApiConfigConnectionTypeImagePut(c *echo.Context) error {
+	typeID, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	ctID, err := echo.PathParam[uint](c, "ctid")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid id"})
+	}
+	row, err := ctrl.loadConnectionType(typeID, ctID)
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	r := http.MaxBytesReader(c.Response(), c.Request().Body, maxConnectionTypeImage)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return c.JSON(http.StatusRequestEntityTooLarge, map[string]any{"error": "image exceeds 512KiB"})
+		}
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "failed to read image"})
+	}
+	if len(data) == 0 {
+		row.Image = nil
+		row.ContentType = ""
+		if err := ctrl.DB.Select("Image", "ContentType").Save(row).Error; err != nil {
+			return configWriteError(c, err)
+		}
+		return c.NoContent(http.StatusNoContent)
+	}
+	contentType, err := detectConnectionTypeImage(data, c.Request().Header.Get(echo.HeaderContentType))
+	if err != nil {
+		return configWriteError(c, err)
+	}
+	row.Image = data
+	row.ContentType = contentType
+	if err := ctrl.DB.Select("Image", "ContentType").Save(row).Error; err != nil {
+		return configWriteError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+var (
+	pngMagic  = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	riffMagic = []byte("RIFF")
+	webpMagic = []byte("WEBP")
+)
+
+func detectConnectionTypeImage(data []byte, declared string) (string, error) {
+	declared = strings.ToLower(strings.TrimSpace(declared))
+	if i := strings.Index(declared, ";"); i >= 0 {
+		declared = strings.TrimSpace(declared[:i])
+	}
+	if strings.Contains(declared, "svg") || looksLikeSVG(data) {
+		return "", &cfgmgmt.StatusError{Status: http.StatusBadRequest, Message: "SVG images are not allowed"}
+	}
+	var detected string
+	switch {
+	case bytes.HasPrefix(data, pngMagic):
+		detected = "image/png"
+	case isWebP(data):
+		detected = "image/webp"
+	default:
+		return "", &cfgmgmt.StatusError{Status: http.StatusBadRequest, Message: "image must be PNG or WebP"}
+	}
+	if declared != "" && declared != "application/octet-stream" && declared != detected {
+		return "", &cfgmgmt.StatusError{Status: http.StatusBadRequest, Message: "content type does not match image data"}
+	}
+	return detected, nil
+}
+
+func isWebP(data []byte) bool {
+	return len(data) >= 12 && bytes.HasPrefix(data, riffMagic) && bytes.Equal(data[8:12], webpMagic)
+}
+
+func looksLikeSVG(data []byte) bool {
+	s := strings.TrimSpace(string(data))
+	if len(s) > 256 {
+		s = s[:256]
+	}
+	ls := strings.ToLower(s)
+	return strings.Contains(ls, "<svg") || strings.HasPrefix(ls, "<?xml")
 }
 
 func (ctrl *Controller) ApiConfigLegacyGone(c *echo.Context) error {

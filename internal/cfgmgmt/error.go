@@ -25,6 +25,22 @@ func statusErr(status int, msg string) *StatusError {
 // already exists.
 var ErrServiceTypeNameTaken = statusErr(409, "service type name already exists")
 
+var ErrConnectionTypeInUse = statusErr(409, "connection type in use")
+var ErrConnectionTypeNameTaken = statusErr(409, "connection type name already exists")
+var ErrConnectionTypeNotFound = statusErr(404, "connection type not found")
+
+func IsUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "unique constraint") ||
+		strings.Contains(s, "duplicate key value")
+}
+
 func statusErrf(status int, format string, args ...any) *StatusError {
 	return &StatusError{Status: status, Message: fmt.Sprintf(format, args...)}
 }

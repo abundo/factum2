@@ -328,6 +328,8 @@ func GUI(p *GuiParams) error {
 	cfg.POST("/service-types", ctrl.ApiConfigServiceTypeCreate, ctrl.RequireWrite)
 	cfg.PUT("/service-types/:id", ctrl.ApiConfigServiceTypeUpdate, ctrl.RequireWrite)
 	cfg.DELETE("/service-types/:id", ctrl.ApiConfigServiceTypeDelete, ctrl.RequireWrite)
+	cfg.GET("/service-types/:id/connection-types/:ctid/image", ctrl.ApiConfigConnectionTypeImageGet, ctrl.RequireRead)
+	cfg.PUT("/service-types/:id/connection-types/:ctid/image", ctrl.ApiConfigConnectionTypeImagePut, ctrl.RequireWrite)
 	cfg.GET("/platform-packs", ctrl.ApiConfigLegacyGone, ctrl.RequireRead)
 	cfg.GET("/platform-packs/:id", ctrl.ApiConfigLegacyGone, ctrl.RequireRead)
 	cfg.POST("/platform-packs", ctrl.ApiConfigLegacyGone, ctrl.RequireWrite)
