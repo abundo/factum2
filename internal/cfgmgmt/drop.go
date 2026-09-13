@@ -194,6 +194,15 @@ func AssertPacksHaveCLITwins(db *gorm.DB) error {
 	}
 	var missing []string
 	for _, r := range rows {
+		var st models.ServiceType
+		if err := db.First(&st, r.ServiceTypeID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Type was wiped (or never existed); leftover pack is not a
+				// skipped copy-to-CLI migrate.
+				continue
+			}
+			return err
+		}
 		cli, err := lookupCLIObjectByTypeID(db, r.ServiceTypeID, r.Platform, false)
 		if err != nil {
 			return err

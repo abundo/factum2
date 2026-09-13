@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/abundo/factum2/models"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -64,11 +65,17 @@ func openMigrateTestDB(t *testing.T) *gorm.DB {
 func TestMigrateDatabaseRefusesUnmigratedPack(t *testing.T) {
 	db := openMigrateTestDB(t)
 
+	if err := MigrateDatabase(db); err != nil {
+		t.Fatalf("base migrate: %v", err)
+	}
 	if err := db.AutoMigrate(&leftoverPackRow{}); err != nil {
 		t.Fatal(err)
 	}
-	// No matching service type, so Seed cannot copy this pack onto a CLI object.
-	if err := db.Create(&leftoverPackRow{ServiceTypeID: 999, Platform: "custom-nos"}).Error; err != nil {
+	st := models.ServiceType{Name: "CUSTOM", Interfaces: models.ServiceInterfacesSpec{Min: 0, Max: 0}}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&leftoverPackRow{ServiceTypeID: st.ID, Platform: "custom-nos"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	err := MigrateDatabase(db)
@@ -95,7 +102,7 @@ func TestMigrateDatabaseMigratesLeftoverELINEPacks(t *testing.T) {
 		}
 	}
 	if err := MigrateDatabase(db); err != nil {
-		t.Fatalf("migrate leftover ELINE packs: %v", err)
+		t.Fatalf("migrate leftover packs with no service type: %v", err)
 	}
 	if db.Migrator().HasTable("platform_packs") {
 		t.Fatal("platform_packs still present after leftover ELINE packs migrated")
