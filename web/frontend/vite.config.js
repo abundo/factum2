@@ -12,8 +12,9 @@ export default defineConfig(() => ({
     vue(),
     vueDevTools(),
     ui({
-      // Bundle every icon referenced in src/ at build time so the app
-      // never hits api.iconify.design at runtime.
+      // Bundle every icon referenced in src/ (and Nuxt UI's own defaults)
+      // at build time. main.js disables Iconify's public API so a missed
+      // icon cannot fetch api.iconify.design at runtime.
       icon: { clientBundle: { scan: true } },
     }),
   ],

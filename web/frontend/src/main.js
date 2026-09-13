@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { _api } from '@iconify/vue'
 
 import ui from '@nuxt/ui/vue-plugin'
 
@@ -8,6 +9,11 @@ import router from './router'
 import { useAuthStore } from './stores/auth'
 
 import '@/assets/tailwind.css'
+
+// Icons are registered from the Vite client bundle (see vite.config.js).
+// Iconify's default loader would otherwise GET api.iconify.design (and
+// simplesvg/unisvg fallbacks) for any name not in that bundle.
+_api.setFetch(async () => new Response('{}', { status: 404 }))
 
 const app = createApp(App)
 
