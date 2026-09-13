@@ -2,10 +2,8 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { listServiceTypes } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { createService } from '@/api/services'
-import SchemaFields from '@/components/SchemaFields.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -17,21 +15,11 @@ const stepperItems = [
   { value: '2', title: 'Details' },
 ]
 
-const capacityTypes = ref([])
-const typesError = ref('')
-const typesLoading = ref(true)
-
-const productOptions = computed(() => [
-  ...capacityTypes.value.map((t) => ({
-    label: t.description ? `${t.name} — ${t.description}` : t.name,
-    value: t.name,
-  })),
+const productOptions = [
+  { label: 'Capacity (CN/CI)', value: 'CAPACITY' },
   { label: 'Wavelength', value: 'WAVELENGTH' },
   { label: 'Fiber', value: 'FIBER' },
-])
-
-// API service types are capacity products: they carry a ServiceType and a
-// CN/CI prefix. Wavelength and Fiber have no service type.
+]
 
 const categoryOptionsByProduct = {
   FIBER: [
@@ -54,21 +42,9 @@ const category = ref(null)
 const categoryOptions = computed(
   () => categoryOptionsByProduct[product.value] ?? DEFAULT_CATEGORY_OPTIONS,
 )
-const isCapacityProduct = computed(() => !['WAVELENGTH', 'FIBER'].includes(product.value))
-const serviceType = computed(() => (isCapacityProduct.value ? product.value : ''))
-const selectedType = computed(() => capacityTypes.value.find((t) => t.name === product.value))
-const schemaFields = computed(() => selectedType.value?.schema ?? [])
-const schemaValues = ref({})
 
-// A category chosen for one product isn't necessarily valid for another
-// (e.g. picking Fiber's "LI" then going back and switching to ELAN), so
-// clear it whenever the available options change.
 watch(categoryOptions, () => {
   category.value = null
-})
-
-watch(product, () => {
-  schemaValues.value = {}
 })
 
 const completing = ref(false)
@@ -95,32 +71,8 @@ onMounted(() => {
     .then((data) => {
       customers.value = data ?? []
     })
-    .catch(() => {
-      // Customer names are only needed for the optional company select, not critical.
-    })
-  typesLoading.value = true
-  listServiceTypes()
-    .then((rows) => {
-      capacityTypes.value = rows ?? []
-      if (!capacityTypes.value.length) {
-        typesError.value = 'No service types defined. Add them under Config → Service types.'
-      }
-    })
-    .catch(() => {
-      typesError.value = 'Failed to load service types.'
-    })
-    .finally(() => {
-      typesLoading.value = false
-    })
+    .catch(() => {})
 })
-
-function schemaMissingRequired() {
-  return schemaFields.value.some((f) => {
-    if (!f.required) return false
-    const v = schemaValues.value[f.name]
-    return v === null || v === undefined || v === ''
-  })
-}
 
 function handleProductNext() {
   submittedStep1.value = true
@@ -130,11 +82,8 @@ function handleProductNext() {
 
 function handleCreate() {
   submittedStep2.value = true
-  if (isCapacityProduct.value && schemaMissingRequired()) return
-
   completing.value = true
   const serviceID = form.value.serviceID
-  const fields = { ...schemaValues.value }
   const payload = {
     category: category.value,
     service_id:
@@ -147,10 +96,6 @@ function handleCreate() {
     product: form.value.product,
     service: form.value.service,
     comment: form.value.comment,
-    service_type: serviceType.value,
-    bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
-    fields,
-    max_mac_addresses: Number(fields.max_mac_addresses) || 0,
   }
 
   createService(payload)
@@ -185,14 +130,15 @@ function cancelWizard() {
 <template>
   <div class="card">
     <h4 class="mt-0">New service</h4>
+    <p class="text-muted-color text-sm">
+      Commercial inventory. Realize a capacity service from a definition on the Config page.
+    </p>
 
     <UStepper v-model="activeStep" :items="stepperItems" linear class="mb-6" />
 
     <div v-if="activeStep === '1'" class="flex flex-col gap-6 py-4">
       <div>
         <label class="block font-bold mb-3">Product</label>
-        <p v-if="typesLoading" class="text-muted-color text-sm mb-2">Loading service types…</p>
-        <p v-else-if="typesError" class="text-red-500 text-sm mb-2">{{ typesError }}</p>
         <URadioGroup
           v-model="product"
           :items="productOptions"
@@ -265,12 +211,6 @@ function cancelWizard() {
         <label class="block font-bold mb-3">Service</label>
         <UInput v-model="form.service" class="w-full" />
       </div>
-      <SchemaFields
-        v-if="isCapacityProduct && schemaFields.length"
-        v-model="schemaValues"
-        :fields="schemaFields"
-        :submitted="submittedStep2"
-      />
       <div>
         <label class="block font-bold mb-3">Comment</label>
         <UTextarea v-model="form.comment" :rows="3" class="w-full" />

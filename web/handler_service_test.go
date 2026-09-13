@@ -271,7 +271,7 @@ func TestApiServiceCreate_RejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
-func TestApiServiceCreate_RejectsMissingServiceTypeForExternalCustomerPrefix(t *testing.T) {
+func TestApiServiceCreate_AllowsCommercialWithoutType(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
 
@@ -280,8 +280,128 @@ func TestApiServiceCreate_RejectsMissingServiceTypeForExternalCustomerPrefix(t *
 	if err := ctrl.ApiServiceCreate(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var created models.Service
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.ServiceType != "" {
+		t.Errorf("ServiceType = %q, want empty commercial row", created.ServiceType)
+	}
+}
+
+func TestAPIServiceList_QAndCategory(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	cust := models.Customer{Name: "Acme Fiber"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := models.Customer{Name: "Other"}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows := []models.Service{
+		{CustomerID: cust.ID, ServiceID: "CN00001", Name: "eline-one"},
+		{CustomerID: other.ID, ServiceID: "VL00001"},
+		{CustomerID: other.ID, ServiceID: "20-73"},
+		{CustomerID: other.ID, ServiceID: "CI00002"},
+	}
+	for i := range rows {
+		if err := db.Create(&rows[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/service", nil, nil, nil)
+	if err := ctrl.APIServiceList(c); err != nil {
+		t.Fatal(err)
+	}
+	var all []ServiceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("omit category: got %d rows, want 4 (including VL)", len(all))
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/service?category=CN,CI,freetext", nil, nil, nil)
+	if err := ctrl.APIServiceList(c); err != nil {
+		t.Fatal(err)
+	}
+	var picked []ServiceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &picked); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, s := range picked {
+		got[s.ServiceID] = true
+	}
+	if !got["CN00001"] || !got["CI00002"] || !got["20-73"] {
+		t.Errorf("picker category missing rows: %+v", got)
+	}
+	if got["VL00001"] {
+		t.Errorf("picker included wavelength VL00001")
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/service?q=acme&category=CN,CI,freetext", nil, nil, nil)
+	if err := ctrl.APIServiceList(c); err != nil {
+		t.Fatal(err)
+	}
+	var qhit []ServiceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &qhit); err != nil {
+		t.Fatal(err)
+	}
+	if len(qhit) != 1 || qhit[0].ServiceID != "CN00001" {
+		t.Errorf("q=acme: %+v, want CN00001 via customer name", qhit)
+	}
+}
+
+func TestApiServiceTypeUpdate_ConnectionTypeRequired(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := models.ServiceType{Name: "ELINE"}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	ct := models.ServiceConnectionType{ServiceTypeID: st.ID, Name: "nni"}
+	if err := db.Create(&ct).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{ServiceID: "CN00009"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/type", map[string]any{
+		"service_type": "ELINE",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d, body=%s - CN carries a service type just like CI", rec.Code, http.StatusBadRequest, rec.Body.String())
+		t.Fatalf("missing connection_type_id: status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/service/x/type", map[string]any{
+		"service_type":       "ELINE",
+		"connection_type_id": ct.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.Service
+	if err := db.First(&updated, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.ConnectionTypeID == nil || *updated.ConnectionTypeID != ct.ID {
+		t.Errorf("ConnectionTypeID = %v, want %d", updated.ConnectionTypeID, ct.ID)
 	}
 }
 

@@ -6,7 +6,7 @@ import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 
 const props = defineProps({
-  mode: { type: String, default: 'eline' }, // eline | wavelength | fiber
+  mode: { type: String, default: 'service' }, // service | wavelength | fiber
   // Currently assigned pair, used to preselect rows when the modal opens.
   deviceId: { type: Number, default: null },
   interfaceId: { type: Number, default: null },
@@ -59,21 +59,10 @@ const pickerTableUi = {
   ].join(' '),
 }
 
-// Only Arista EOS, Nokia SR OS and Cisco IOS-XR devices can terminate an
-// ELINE endpoint today. Device platform names come from Netbox (e.g. "EOS",
-// "SROS-MD") so compare case-insensitively - same normalization
-// internal/drivers.NewDriver does (strings.ToLower(device.Platform)) before
-// matching its own driver registry, which also has more platforms than we
-// want to expose here. An already-assigned device is kept in the list even
-// if its platform would not be offered for a new pick.
-const supportedPlatforms = ['eos', 'sros', 'sros-md', 'ios-xr']
-const supportedDevices = computed(() => {
-  if (props.mode !== 'eline') return devices.value
-  return devices.value.filter(
-    (d) =>
-      supportedPlatforms.includes(d.platform?.toLowerCase()) || d.id === selectedDeviceId.value,
-  )
-})
+// Service mode lists every device and interface. Missing CLI / missing
+// CLISessionApplier fails at preview, not in this picker. Unique is
+// device+iface only (enforced by the parent form when interfaces.unique).
+const listedDevices = computed(() => devices.value)
 
 const deviceRowSelection = computed(() =>
   selectedDeviceId.value ? { [String(selectedDeviceId.value)]: true } : {},
@@ -82,12 +71,11 @@ const interfaceRowSelection = computed(() =>
   selectedInterfaceId.value ? { [String(selectedInterfaceId.value)]: true } : {},
 )
 
-// Only physical interfaces can terminate an ELINE endpoint - same split as
-// the backend's isPhysicalInterfaceType (web/handler_service_eline.go). An
-// already-assigned interface is kept visible even if it would be filtered.
-const physicalInterfaces = computed(() => {
+const listedInterfaces = computed(() => {
   if (!device.value) return []
-  return (device.value.interfaces ?? []).filter(
+  const ifaces = device.value.interfaces ?? []
+  if (props.mode === 'service') return ifaces
+  return ifaces.filter(
     (i) =>
       (i.type && i.type !== 'virtual' && i.type !== 'lag') || i.id === selectedInterfaceId.value,
   )
@@ -181,7 +169,7 @@ watch(open, (isOpen) => {
 })
 
 watch(
-  [loadingDevices, selectedDeviceId, supportedDevices],
+  [loadingDevices, selectedDeviceId, listedDevices],
   () => {
     if (!loadingDevices.value && selectedDeviceId.value) scrollSelectedRow(deviceTable)
   },
@@ -189,7 +177,7 @@ watch(
 )
 
 watch(
-  [loadingInterfaces, selectedInterfaceId, physicalInterfaces],
+  [loadingInterfaces, selectedInterfaceId, listedInterfaces],
   () => {
     if (!loadingInterfaces.value && selectedInterfaceId.value) scrollSelectedRow(interfaceTable)
   },
@@ -199,7 +187,7 @@ watch(
 function confirmSelection() {
   if (!selectedDeviceId.value || !selectedInterfaceId.value) return
   const selectedDevice = devices.value.find((d) => d.id === selectedDeviceId.value)
-  const selectedInterface = physicalInterfaces.value.find((i) => i.id === selectedInterfaceId.value)
+  const selectedInterface = listedInterfaces.value.find((i) => i.id === selectedInterfaceId.value)
   emit('select', {
     deviceId: selectedDeviceId.value,
     deviceName: selectedDevice?.name ?? '',
@@ -223,7 +211,7 @@ function confirmSelection() {
             ref="deviceTable"
             v-model:sorting="deviceSorting"
             v-model:global-filter="deviceFilter"
-            :data="supportedDevices"
+            :data="listedDevices"
             :columns="deviceColumns"
             :loading="loadingDevices"
             :row-selection="deviceRowSelection"
@@ -269,7 +257,7 @@ function confirmSelection() {
             ref="interfaceTable"
             v-model:sorting="interfaceSorting"
             v-model:global-filter="interfaceFilter"
-            :data="physicalInterfaces"
+            :data="listedInterfaces"
             :columns="interfaceColumns"
             :loading="loadingInterfaces"
             :row-selection="interfaceRowSelection"
@@ -278,7 +266,7 @@ function confirmSelection() {
               loadingInterfaces
                 ? 'Loading...'
                 : selectedDeviceId
-                  ? 'No physical interfaces found on this device.'
+                  ? 'No interfaces found on this device.'
                   : 'Select a device.'
             "
             sticky

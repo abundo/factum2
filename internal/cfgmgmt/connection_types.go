@@ -8,6 +8,40 @@ import (
 	"gorm.io/gorm"
 )
 
+// ValidateConnectionTypeID checks that id belongs to st. If the definition
+// has one or more connection types, id is required. Zero types means id
+// must be unset.
+func ValidateConnectionTypeID(db *gorm.DB, st *models.ServiceType, id *uint) error {
+	if st == nil {
+		if id != nil && *id != 0 {
+			return statusErr(400, "connection_type_id requires a service type")
+		}
+		return nil
+	}
+	var n int64
+	if err := db.Model(&models.ServiceConnectionType{}).Where("service_type_id = ?", st.ID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n == 0 {
+		if id != nil && *id != 0 {
+			return statusErr(400, "connection type does not belong to this definition")
+		}
+		return nil
+	}
+	if id == nil || *id == 0 {
+		return statusErr(400, "connection_type_id is required")
+	}
+	var found int64
+	if err := db.Model(&models.ServiceConnectionType{}).
+		Where("id = ? AND service_type_id = ?", *id, st.ID).Count(&found).Error; err != nil {
+		return err
+	}
+	if found == 0 {
+		return statusErr(400, "connection type does not belong to this definition")
+	}
+	return nil
+}
+
 func ServiceTypeDTO(st *models.ServiceType) models.ServiceTypeDTO {
 	if st == nil {
 		return models.ServiceTypeDTO{}

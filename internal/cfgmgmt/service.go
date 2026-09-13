@@ -82,6 +82,7 @@ func CreateServiceRecord(tx *gorm.DB, dto *models.ServiceDTO) (*models.Service, 
 		}
 	}
 	fields := dto.Fields
+	ctID := dto.ConnectionTypeID
 	if dto.ServiceType != "" {
 		st, err := LookupServiceType(tx, dto.ServiceType)
 		if err != nil {
@@ -92,19 +93,25 @@ func CreateServiceRecord(tx *gorm.DB, dto *models.ServiceDTO) (*models.Service, 
 			return nil, err
 		}
 		fields = canon
+		if err := ValidateConnectionTypeID(tx, st, ctID); err != nil {
+			return nil, err
+		}
+	} else {
+		ctID = nil
 	}
 	created := models.Service{
-		CustomerID:      dto.CustomerID,
-		Comment:         dto.Comment,
-		ServiceID:       serviceID,
-		ServiceType:     dto.ServiceType,
-		BandwidthMbps:   intFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
-		MaxMacAddresses: intFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
-		DeliveryPoint1:  dto.DeliveryPoint1,
-		DeliveryPoint2:  dto.DeliveryPoint2,
-		Product:         dto.Product,
-		Service:         dto.Service,
-		Fields:          fields,
+		CustomerID:       dto.CustomerID,
+		Comment:          dto.Comment,
+		ServiceID:        serviceID,
+		ServiceType:      dto.ServiceType,
+		BandwidthMbps:    intFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
+		MaxMacAddresses:  intFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
+		DeliveryPoint1:   dto.DeliveryPoint1,
+		DeliveryPoint2:   dto.DeliveryPoint2,
+		Product:          dto.Product,
+		Service:          dto.Service,
+		Fields:           fields,
+		ConnectionTypeID: ctID,
 	}
 	if err := tx.Create(&created).Error; err != nil {
 		return nil, err

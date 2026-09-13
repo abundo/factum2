@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { listServiceTypes } from '@/api/config'
 import { createService, getService, getServices, putServiceEndpoints } from '@/api/services'
 import SchemaFields from '@/components/SchemaFields.vue'
+import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 
 const props = defineProps({
   deviceId: { type: Number, default: null },
@@ -22,7 +23,7 @@ const submitted = ref(false)
 const mode = ref('existing')
 const modeItems = [
   { label: 'Existing service', value: 'existing' },
-  { label: 'New service', value: 'new' },
+  { label: 'New technical service', value: 'new' },
 ]
 
 const serviceTypes = ref([])
@@ -31,7 +32,8 @@ const selectedServiceId = ref(null)
 const selectedTypeName = ref(null)
 const category = ref('CN')
 const schemaValues = ref({})
-const roleName = ref(null)
+const connectionTypeId = ref(null)
+const endpoints = ref([])
 const roleFields = ref({})
 const existingEndpoints = ref([])
 
@@ -63,24 +65,12 @@ const selectedType = computed(() => {
   return serviceTypes.value.find((t) => t.name === selectedTypeName.value)
 })
 
-const availableRoles = computed(() => {
-  const st = selectedType.value
-  if (!st) return []
-  const counts = {}
-  for (const ep of existingEndpoints.value) {
-    counts[ep.role] = (counts[ep.role] || 0) + 1
-  }
-  const spec = st.interfaces ?? {}
-  const n = counts.interface || existingEndpoints.value.length
-  const max = spec.max ?? 0
-  if (max > 0 && n >= max) return []
-  return [{ name: 'interface', min: spec.min ?? 0, max, fields: spec.fields ?? [] }]
+const ifaceFields = computed(() => selectedType.value?.interfaces?.fields ?? [])
+const atMax = computed(() => {
+  const max = selectedType.value?.interfaces?.max ?? 0
+  if (max <= 0) return false
+  return existingEndpoints.value.length >= max
 })
-const roleOptions = computed(() =>
-  availableRoles.value.map((r) => ({ label: r.name, value: r.name })),
-)
-const selectedRole = computed(() => availableRoles.value.find((r) => r.name === roleName.value))
-const roleFieldDefs = computed(() => selectedRole.value?.fields ?? [])
 
 watch(open, (isOpen) => {
   if (!isOpen) return
@@ -90,7 +80,8 @@ watch(open, (isOpen) => {
   selectedTypeName.value = serviceTypes.value[0]?.name ?? null
   category.value = 'CN'
   schemaValues.value = {}
-  roleName.value = null
+  connectionTypeId.value = null
+  endpoints.value = []
   roleFields.value = {}
   existingEndpoints.value = []
   listServiceTypes()
@@ -110,80 +101,105 @@ watch(open, (isOpen) => {
 
 watch(selectedServiceId, (id) => {
   existingEndpoints.value = []
-  roleName.value = null
   if (!id) return
   getService(id)
     .then((data) => {
       existingEndpoints.value = data.endpoints ?? []
-      pickDefaultRole()
     })
     .catch(() => {})
 })
 
 watch(selectedTypeName, () => {
   schemaValues.value = {}
+  connectionTypeId.value = null
   if (mode.value === 'new') {
     existingEndpoints.value = []
-    pickDefaultRole()
+    seedNewEndpoints()
   }
 })
 
 watch(mode, () => {
   existingEndpoints.value = []
-  roleName.value = null
   roleFields.value = {}
-  if (mode.value === 'new') pickDefaultRole()
+  if (mode.value === 'new') seedNewEndpoints()
 })
 
-watch(roleName, () => {
-  roleFields.value = {}
-})
-
-function pickDefaultRole() {
-  roleName.value = availableRoles.value[0]?.name ?? null
+function seedNewEndpoints() {
+  const st = selectedType.value
+  const n = st?.interfaces?.min || 0
+  const list = []
+  for (let i = 0; i < n; i++) {
+    list.push({
+      role: 'interface',
+      device_id: i === 0 ? props.deviceId : null,
+      interface_id: i === 0 ? props.interfaceId : null,
+      fields: {},
+      label: i === 0 ? `${props.deviceName} / ${props.interfaceName}` : '',
+    })
+  }
+  if (!list.length) {
+    list.push({
+      role: 'interface',
+      device_id: props.deviceId,
+      interface_id: props.interfaceId,
+      fields: {},
+      label: `${props.deviceName} / ${props.interfaceName}`,
+    })
+  } else {
+    list[0] = {
+      ...list[0],
+      device_id: props.deviceId,
+      interface_id: props.interfaceId,
+      label: `${props.deviceName} / ${props.interfaceName}`,
+    }
+  }
+  endpoints.value = list
 }
 
 function roleFieldsMissing() {
-  return roleFieldDefs.value.some((f) => {
+  return ifaceFields.value.some((f) => {
     if (!f.required) return false
     const v = roleFields.value[f.name]
-    return v === null || v === undefined || v === ''
-  })
-}
-
-function schemaMissing() {
-  return (selectedType.value?.schema ?? []).some((f) => {
-    if (!f.required) return false
-    const v = schemaValues.value[f.name]
-    return v === null || v === undefined || v === ''
+    return v === null || v === undefined || v === '' || (f.type === 'service_id' && !v)
   })
 }
 
 function attachPayload(serviceId) {
-  const endpoints = [
-    ...existingEndpoints.value.map((ep) => ({
-      role: ep.role,
-      device_id: ep.device_id,
-      interface_id: ep.interface_id,
-      fields: ep.fields || {},
-    })),
-    {
-      role: roleName.value,
-      device_id: props.deviceId,
-      interface_id: props.interfaceId,
-      fields: { ...roleFields.value },
-    },
-  ]
-  return putServiceEndpoints(serviceId, { endpoints })
+  const extra = {
+    role: 'interface',
+    device_id: props.deviceId,
+    interface_id: props.interfaceId,
+    fields: { ...roleFields.value },
+  }
+  const endpointsBody =
+    mode.value === 'new'
+      ? endpoints.value.map((ep) => ({
+          role: 'interface',
+          device_id: ep.device_id,
+          interface_id: ep.interface_id,
+          fields: ep.fields || {},
+        }))
+      : [
+          ...existingEndpoints.value.map((ep) => ({
+            role: 'interface',
+            device_id: ep.device_id,
+            interface_id: ep.interface_id,
+            fields: ep.fields || {},
+          })),
+          extra,
+        ]
+  return putServiceEndpoints(serviceId, { endpoints: endpointsBody })
 }
 
 function submit() {
   submitted.value = true
-  if (!roleName.value || !props.deviceId || !props.interfaceId) return
-  if (roleFieldsMissing()) return
-  if (mode.value === 'existing' && !selectedServiceId.value) return
+  if (!props.deviceId || !props.interfaceId) return
+  if (mode.value === 'existing') {
+    if (!selectedServiceId.value || atMax.value) return
+    if (roleFieldsMissing()) return
+  }
   if (mode.value === 'new') {
-    if (!selectedTypeName.value || schemaMissing()) return
+    if (!selectedTypeName.value) return
   }
 
   saving.value = true
@@ -225,6 +241,7 @@ function submit() {
     bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
     fields,
     max_mac_addresses: Number(fields.max_mac_addresses) || 0,
+    connection_type_id: connectionTypeId.value || null,
   })
     .then((created) => attachPayload(created.id).then(() => created))
     .then(done)
@@ -261,12 +278,21 @@ function submit() {
             <small v-if="submitted && !selectedServiceId" class="text-red-500">
               Select a service.
             </small>
+            <small v-if="atMax" class="text-red-500">This service already has the maximum interfaces.</small>
           </div>
+          <SchemaFields
+            v-if="ifaceFields.length"
+            v-model="roleFields"
+            :fields="ifaceFields"
+            :submitted="submitted"
+            :interface-id="interfaceId"
+            :device-id="deviceId"
+          />
         </template>
 
         <template v-else>
           <div>
-            <label class="block font-bold mb-2">Service type</label>
+            <label class="block font-bold mb-2">Definition</label>
             <USelectMenu
               v-model="selectedTypeName"
               :items="typeOptions"
@@ -285,32 +311,15 @@ function submit() {
               class="w-full"
             />
           </div>
-          <SchemaFields
-            v-if="selectedType?.schema?.length"
-            v-model="schemaValues"
-            :fields="selectedType.schema"
+          <TechnicalServiceForm
+            v-if="selectedType"
+            v-model:fields="schemaValues"
+            v-model:connection-type-id="connectionTypeId"
+            v-model:endpoints="endpoints"
+            :definition="selectedType"
             :submitted="submitted"
           />
         </template>
-
-        <div>
-          <label class="block font-bold mb-2">Role</label>
-          <USelectMenu
-            v-model="roleName"
-            :items="roleOptions"
-            value-key="value"
-            label-key="label"
-            placeholder="No free roles"
-            class="w-full"
-          />
-          <small v-if="submitted && !roleName" class="text-red-500">Select a role.</small>
-        </div>
-        <SchemaFields
-          v-if="roleFieldDefs.length"
-          v-model="roleFields"
-          :fields="roleFieldDefs"
-          :submitted="submitted"
-        />
       </div>
     </template>
     <template #footer>

@@ -1,8 +1,21 @@
 import http from './http'
 
-export function getServices(customerId) {
-  const params = customerId ? { customer_id: customerId } : undefined
+// ServiceID picker always sends this; omit category on the Services page
+// so VL/VI/LF/LI stay in the commercial list.
+export const SERVICE_ID_PICKER_CATEGORY = 'CN,CI,freetext'
+
+export function getServices(arg) {
+  let params
+  if (typeof arg === 'number') {
+    params = { customer_id: arg }
+  } else if (arg && typeof arg === 'object') {
+    params = { ...arg }
+  }
   return http.get('/service', { params }).then((res) => res.data)
+}
+
+export function searchCommercialServices(q) {
+  return getServices({ q: q ?? '', category: SERVICE_ID_PICKER_CATEGORY })
 }
 
 export function getService(id) {

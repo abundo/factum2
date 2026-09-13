@@ -1,7 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, ref, watch } from 'vue'
-import { listServiceTypes, renderConfig } from '@/api/config'
+import { createScope, listScopes, listServiceTypes, renderConfig } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { getDevice } from '@/api/devices'
 import {
@@ -9,13 +9,14 @@ import {
   getService,
   pushService,
   putServiceEndpoints,
+  unrealizeService,
   updateService,
   updateServiceType,
 } from '@/api/services'
 import { getServicePath, putServicePath } from '@/api/optical'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
-import SchemaFields from '@/components/SchemaFields.vue'
+import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 
@@ -56,9 +57,6 @@ const deleting = ref(false)
 const deleteRemoveNetbox = ref(false)
 const deleteRemoveDevice = ref(false)
 
-const pickerOpen = ref(false)
-const pickerTarget = ref(null)
-
 const serviceTypeRows = ref([])
 const serviceTypeOptions = computed(() => [
   { label: 'Not set', value: '' },
@@ -70,18 +68,24 @@ const serviceTypeOptions = computed(() => [
 const selectedServiceType = computed(() =>
   serviceTypeRows.value.find((t) => t.name === service.value.service_type),
 )
-const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
 const schemaValues = ref({})
-const genericRoles = computed(() => {
-  if (!service.value.service_type || !selectedServiceType.value) return []
-  const spec = selectedServiceType.value.interfaces ?? {}
-  return [{ name: 'interface', min: spec.min ?? 0, max: spec.max ?? 0, fields: spec.fields ?? [] }]
-})
 const genericEndpoints = ref([])
 const genericSaving = ref(false)
 const genericPushing = ref(false)
 const genericPushResults = ref([])
-const genericPickerIndex = ref(null)
+const realizing = ref(false)
+const unrealizeOpen = ref(false)
+const unrealizing = ref(false)
+const unrealizeRemoveNetbox = ref(false)
+const unrealizeRemoveDevice = ref(false)
+const instanceSubmitted = ref(false)
+const connectionTypeId = computed({
+  get: () => service.value.connection_type_id ?? null,
+  set: (v) => {
+    service.value.connection_type_id = v
+  },
+})
+const isRealized = computed(() => Boolean(service.value.service_type))
 
 const showConfigPreview = ref(false)
 const configPreview = ref([])
@@ -260,7 +264,7 @@ function seedEndpointsForType(typeName) {
   const st = serviceTypeRows.value.find((x) => x.name === typeName)
   const n = st?.interfaces?.min || 0
   for (let i = 0; i < n; i++) {
-    addGenericEndpoint('interface')
+    addGenericEndpoint()
   }
 }
 
@@ -269,21 +273,9 @@ function hideDialog() {
   submitted.value = false
 }
 
-function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
-  const label = `${deviceName} / ${interfaceName}`
-  if (pickerTarget.value === 'generic' && genericPickerIndex.value != null) {
-    const ep = genericEndpoints.value[genericPickerIndex.value]
-    if (ep) {
-      ep.device_id = deviceId
-      ep.interface_id = interfaceId
-      ep.label = label
-    }
-  }
-}
-
-function addGenericEndpoint(roleName) {
+function addGenericEndpoint() {
   genericEndpoints.value.push({
-    role: roleName,
+    role: 'interface',
     device_id: null,
     interface_id: null,
     fields: {},
@@ -291,18 +283,8 @@ function addGenericEndpoint(roleName) {
   })
 }
 
-function removeGenericEndpoint(i) {
-  genericEndpoints.value.splice(i, 1)
-}
-
-function openGenericPicker(i) {
-  genericPickerIndex.value = i
-  pickerTarget.value = 'generic'
-  pickerOpen.value = true
-}
-
 function loadConfigPreview() {
-  if (!service.value?.id || !genericRoles.value.length) {
+  if (!service.value?.id || !selectedServiceType.value) {
     configPreview.value = []
     configPreviewError.value = ''
     return
@@ -314,7 +296,7 @@ function loadConfigPreview() {
     service_id: service.value.id,
     fields: { ...schemaValues.value },
     endpoints: genericEndpoints.value.map((ep) => ({
-      role: ep.role,
+      role: 'interface',
       device_id: ep.device_id || 0,
       interface_id: ep.interface_id || 0,
       fields: ep.fields || {},
@@ -348,13 +330,6 @@ watch(
   { deep: true },
 )
 
-const pickerDeviceId = computed(
-  () => genericEndpoints.value[genericPickerIndex.value]?.device_id ?? null,
-)
-const pickerInterfaceId = computed(
-  () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
-)
-
 function endpointBindingsChanged() {
   const oldKeys = (service.value.endpoints ?? [])
     .map((ep) => `${ep.device_id}:${ep.interface_id}`)
@@ -370,7 +345,7 @@ function endpointBindingsChanged() {
 function genericEndpointsPayload(username, password) {
   const payload = {
     endpoints: genericEndpoints.value.map((ep) => ({
-      role: ep.role,
+      role: 'interface',
       device_id: ep.device_id,
       interface_id: ep.interface_id,
       fields: ep.fields || {},
@@ -423,7 +398,9 @@ function saveGenericEndpoints() {
       })
   }
   if (needCreds) {
-    withCredentials(genericDeviceIds(), run)
+    withCredentials(genericDeviceIds(), run, () => {
+      genericSaving.value = false
+    })
     return
   }
   run('', '')
@@ -454,6 +431,8 @@ function saveAndPushGeneric() {
       .finally(() => {
         genericSaving.value = false
       })
+  }, () => {
+    genericSaving.value = false
   })
 }
 
@@ -505,6 +484,7 @@ function saveServiceType() {
     bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
     fields: { ...schemaValues.value },
     max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
+    connection_type_id: service.value.connection_type_id || null,
   }
 
   updateServiceType(service.value.id, payload)
@@ -642,10 +622,123 @@ function deleteServiceConfirmed() {
   if (!deleteTarget.value) return
   if (deleteRemoveDevice.value) {
     deleteDialog.value = false
-    withCredentials(genericDeviceIds(), doDeleteService)
+    withCredentials(genericDeviceIds(), doDeleteService, () => {
+      deleting.value = false
+    })
   } else {
     doDeleteService('', '')
   }
+}
+
+async function findServicesFolderId() {
+  const rows = await listScopes()
+  const root = (rows ?? []).find((s) => s.kind === 'folder' && s.name === 'global' && !s.parent_id)
+  const folder = (rows ?? []).find(
+    (s) => s.kind === 'folder' && s.name === '_services' && s.parent_id === root?.id,
+  )
+  return folder?.id
+}
+
+function typePayload() {
+  return {
+    service_type: service.value.service_type ?? '',
+    bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
+    fields: { ...schemaValues.value },
+    max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
+    connection_type_id: service.value.connection_type_id || null,
+  }
+}
+
+function realizeCommercial() {
+  if (!service.value?.id || !service.value.service_type) return
+  instanceSubmitted.value = true
+  realizing.value = true
+  updateServiceType(service.value.id, typePayload())
+    .then((data) => {
+      service.value = { ...service.value, ...data }
+      return findServicesFolderId()
+    })
+    .then((parentId) =>
+      createScope({
+        parent_id: parentId,
+        kind: 'service',
+        service_id: service.value.id,
+      }).catch((err) => {
+        if (err?.response?.status === 409) return null
+        throw err
+      }),
+    )
+    .then(() => putServiceEndpoints(service.value.id, genericEndpointsPayload()))
+    .then(() => getService(service.value.id))
+    .then((data) => {
+      if (data) service.value = { ...service.value, ...data }
+      toast.add({
+        color: 'success',
+        title: 'Realized',
+        description: 'Technical service attached in the config tree.',
+      })
+      emit('saved')
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Realize failed',
+        description: err?.response?.data?.error ?? 'Failed to realize service.',
+      })
+    })
+    .finally(() => {
+      realizing.value = false
+    })
+}
+
+function openUnrealize() {
+  unrealizeRemoveNetbox.value = Boolean(service.value?.l2vpn_netbox_id)
+  unrealizeRemoveDevice.value = Boolean(service.value?.applied_to_device)
+  unrealizeOpen.value = true
+}
+
+function doUnrealize(username, password) {
+  const deviceIds = genericDeviceIds()
+  unrealizing.value = true
+  unrealizeService(service.value.id, {
+    remove_from_netbox: unrealizeRemoveNetbox.value,
+    remove_from_device: unrealizeRemoveDevice.value,
+    username,
+    password,
+  })
+    .then((data) => {
+      if (username && password) rememberSuccess(deviceIds, username, password)
+      unrealizeOpen.value = false
+      if (data?.service) {
+        service.value = { ...service.value, ...data.service }
+        schemaValues.value = { ...(data.service.fields || {}) }
+        genericEndpoints.value = []
+      }
+      toast.add({ color: 'success', title: 'Unrealized', description: 'Technical realization removed.' })
+      emit('saved')
+    })
+    .catch((err) => {
+      if (username && password) rememberFailure(deviceIds, username, password)
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err?.response?.data?.error ?? 'Failed to unrealize.',
+      })
+    })
+    .finally(() => {
+      unrealizing.value = false
+    })
+}
+
+function confirmUnrealize() {
+  if (unrealizeRemoveDevice.value) {
+    unrealizeOpen.value = false
+    withCredentials(genericDeviceIds(), doUnrealize, () => {
+      unrealizing.value = false
+    })
+    return
+  }
+  doUnrealize('', '')
 }
 </script>
 
@@ -653,7 +746,7 @@ function deleteServiceConfirmed() {
   <UModal
     v-model:open="open"
     :title="readOnly ? 'Service Details (synced from Lime)' : 'Service Details'"
-    :ui="{ content: 'sm:max-w-lg' }"
+    :ui="{ content: 'sm:max-w-2xl' }"
   >
     <template #body>
       <div v-if="loading" class="flex justify-center p-4">
@@ -741,7 +834,7 @@ function deleteServiceConfirmed() {
 
         <hr class="my-6" />
         <div class="flex flex-col gap-4">
-          <h5 class="m-0">Service type</h5>
+          <h5 class="m-0">Realization</h5>
 
           <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
             <label for="service_type" class="font-bold">Type</label>
@@ -756,86 +849,43 @@ function deleteServiceConfirmed() {
               class="w-full"
             />
           </div>
-          <SchemaFields
-            v-if="schemaFields.length"
-            v-model="schemaValues"
-            class="mt-4 flex flex-col gap-3"
-            :fields="schemaFields"
+          <TechnicalServiceForm
+            v-if="selectedServiceType"
+            v-model:fields="schemaValues"
+            v-model:connection-type-id="connectionTypeId"
+            v-model:endpoints="genericEndpoints"
+            :definition="selectedServiceType"
             :disabled="!canWrite"
+            :submitted="instanceSubmitted"
           />
+          <div v-if="canWrite" class="flex flex-wrap gap-2">
+            <UButton
+              label="Realize"
+              icon="i-lucide-link"
+              variant="outline"
+              :loading="realizing"
+              :disabled="!service.service_type"
+              @click="realizeCommercial"
+            />
+            <UButton
+              v-if="isRealized"
+              label="Unrealize"
+              variant="outline"
+              color="error"
+              @click="openUnrealize"
+            />
+          </div>
         </div>
 
-        <template v-if="genericRoles.length">
+        <template v-if="selectedServiceType">
           <hr class="my-6" />
           <div class="flex flex-col gap-4">
-            <h5 class="m-0">Endpoints</h5>
             <div
               v-if="service.pseudowire_id"
               class="grid grid-cols-[9rem_1fr] items-center gap-x-3"
             >
               <label class="font-bold">Pseudowire ID</label>
               <UInput :model-value="service.pseudowire_id" disabled class="w-full" />
-            </div>
-            <div
-              v-for="(ep, i) in genericEndpoints"
-              :key="i"
-              class="flex flex-col gap-2 border border-default rounded p-3"
-            >
-              <div class="grid grid-cols-[9rem_1fr] items-center gap-y-3 gap-x-3">
-                <label class="font-bold">Role</label>
-                <USelectMenu
-                  v-model="ep.role"
-                  :disabled="!canWrite"
-                  :items="genericRoles.map((r) => ({ label: r.name, value: r.name }))"
-                  value-key="value"
-                  label-key="label"
-                />
-                <label class="font-bold">Device / interface</label>
-                <div class="flex items-center gap-2">
-                  <UInput
-                    :model-value="ep.label"
-                    disabled
-                    placeholder="Not selected"
-                    class="w-full"
-                  />
-                  <UButton
-                    icon="i-lucide-list-tree"
-                    variant="outline"
-                    color="neutral"
-                    :disabled="!canWrite"
-                    @click="openGenericPicker(i)"
-                  />
-                </div>
-                <template
-                  v-for="field in genericRoles.find((r) => r.name === ep.role)?.fields ?? []"
-                  :key="field.name"
-                >
-                  <label class="font-bold">{{ field.name }}</label>
-                  <UInput v-model="ep.fields[field.name]" :disabled="!canWrite" />
-                </template>
-              </div>
-              <div class="flex justify-end">
-                <UButton
-                  v-if="canWrite"
-                  label="Remove"
-                  variant="ghost"
-                  color="error"
-                  size="sm"
-                  @click="removeGenericEndpoint(i)"
-                />
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <UButton
-                v-for="role in genericRoles"
-                :key="role.name"
-                :label="`Add ${role.name}`"
-                variant="outline"
-                color="neutral"
-                size="sm"
-                :disabled="!canWrite"
-                @click="addGenericEndpoint(role.name)"
-              />
             </div>
             <div class="flex flex-col gap-3">
               <UButton
@@ -976,6 +1026,13 @@ function deleteServiceConfirmed() {
           color="error"
           @click="confirmDelete(service)"
         />
+        <UButton
+          v-else-if="isRealized && canWrite"
+          label="Unrealize"
+          variant="outline"
+          color="error"
+          @click="openUnrealize"
+        />
         <div class="flex gap-2 ms-auto">
           <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
           <UButton
@@ -992,12 +1049,6 @@ function deleteServiceConfirmed() {
   </UModal>
 
   <DeviceInterfacePicker
-    v-model:open="pickerOpen"
-    :device-id="pickerDeviceId"
-    :interface-id="pickerInterfaceId"
-    @select="onPickerSelect"
-  />
-  <DeviceInterfacePicker
     :open="!!pathPicker"
     :mode="pathMode"
     @update:open="
@@ -1007,6 +1058,26 @@ function deleteServiceConfirmed() {
     "
     @select="onPathPick"
   />
+
+  <UModal v-model:open="unrealizeOpen" title="Unrealize service" :ui="{ content: 'sm:max-w-md' }">
+    <template #body>
+      <p class="text-sm m-0">
+        Drops the technical realization and keeps this commercial row.
+      </p>
+      <label class="flex items-center gap-2 mt-3">
+        <UCheckbox v-model="unrealizeRemoveNetbox" />
+        Remove from NetBox
+      </label>
+      <label class="flex items-center gap-2">
+        <UCheckbox v-model="unrealizeRemoveDevice" />
+        Remove from device
+      </label>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
+      <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
+    </template>
+  </UModal>
 
   <UModal
     v-model:open="credentialsDialog"

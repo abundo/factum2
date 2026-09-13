@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/optical"
@@ -73,17 +74,40 @@ func (ctrl *Controller) APIServiceList(c *echo.Context) error {
 	// data := ctrl.GetUser(c)
 	ctx := c.Request().Context()
 
-	// if customer_id is set, return services for one customer
+	// Omit category → all rows (Services page, including VL/VI/LF/LI).
+	// The ServiceID picker always sends category=CN,CI,freetext.
 	var customerID uint
-	_ = echo.QueryParamsBinder(c).Uint("customer_id", &customerID).BindError()
+	var qstr, category string
+	_ = echo.QueryParamsBinder(c).
+		Uint("customer_id", &customerID).
+		String("q", &qstr).
+		String("category", &category).
+		BindError()
 
-	q := gorm.G[models.Service](ctrl.DB).Order("service_id")
+	tx := ctrl.DB.WithContext(ctx).Order("service_id")
 	if customerID > 0 {
-		q = q.Where("customer_id = ?", customerID)
+		tx = tx.Where("customer_id = ?", customerID)
 	}
-	services, err := q.Find(ctx)
-	if err != nil {
+	qstr = strings.TrimSpace(qstr)
+	if qstr != "" {
+		like := "%" + strings.ToLower(qstr) + "%"
+		tx = tx.Where(
+			"LOWER(service_id) LIKE ? OR LOWER(COALESCE(name, '')) LIKE ? OR customer_id IN (SELECT id FROM customers WHERE LOWER(name) LIKE ?)",
+			like, like, like,
+		)
+	}
+	var services []models.Service
+	if err := tx.Find(&services).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
+	if cats := parseServiceListCategories(category); len(cats) > 0 {
+		filtered := services[:0]
+		for _, s := range services {
+			if serviceMatchesListCategories(s.ServiceID, cats) {
+				filtered = append(filtered, s)
+			}
+		}
+		services = filtered
 	}
 
 	customerIDs := make([]uint, len(services))
@@ -147,10 +171,11 @@ func (ctrl *Controller) ApiServiceUpdate(services *SecureCRUDHandler[models.Serv
 // SaveDelivery (internal/lime/lime.go) now preserves these specific fields
 // across a Lime resync instead of overwriting them.
 type ServiceTypeDTO struct {
-	ServiceType     string          `json:"service_type"`
-	BandwidthMbps   int             `json:"bandwidth_mbps"`
-	MaxMacAddresses int             `json:"max_mac_addresses"`
-	Fields          json.RawMessage `json:"fields"`
+	ServiceType      string          `json:"service_type"`
+	BandwidthMbps    int             `json:"bandwidth_mbps"`
+	MaxMacAddresses  int             `json:"max_mac_addresses"`
+	Fields           json.RawMessage `json:"fields"`
+	ConnectionTypeID *uint           `json:"connection_type_id"`
 }
 
 // ApiServiceTypeUpdate lets the network GUI attach a service type,
@@ -177,6 +202,7 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	fields := dto.Fields
+	ctID := dto.ConnectionTypeID
 	if dto.ServiceType != "" {
 		st, err := cfgmgmt.LookupServiceType(ctrl.DB, dto.ServiceType)
 		if err != nil {
@@ -193,12 +219,21 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
 		fields = canon
+		if err := cfgmgmt.ValidateConnectionTypeID(ctrl.DB, st, ctID); err != nil {
+			if se := cfgmgmt.AsStatusError(err); se != nil {
+				return c.JSON(se.Status, map[string]any{"error": se.Message})
+			}
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+	} else {
+		ctID = nil
 	}
 
 	updates := map[string]any{
-		"service_type":      dto.ServiceType,
-		"bandwidth_mbps":    columnFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
-		"max_mac_addresses": columnFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
+		"service_type":       dto.ServiceType,
+		"bandwidth_mbps":     columnFromFields(dto.BandwidthMbps, fields, models.SchemaFieldBandwidthMbps),
+		"max_mac_addresses":  columnFromFields(dto.MaxMacAddresses, fields, models.SchemaFieldMaxMacAddresses),
+		"connection_type_id": ctID,
 	}
 	if len(fields) > 0 && string(fields) != "null" {
 		updates["fields"] = fields
@@ -265,17 +300,43 @@ var validCategories = map[string]bool{
 	"LF": true, "LI": true,
 }
 
-// capacityCategories are the prefixes that carry a ServiceType
-// (ELINE/ELAN/L3VPN/POLARIX) - wavelength (VL/VI) and fiber (LF/LI) rows
-// have no service type, since the prefix alone fully describes them.
-var capacityCategories = map[string]bool{"CN": true, "CI": true}
-
 // categoryFromServiceID derives a service's category from its ServiceID's
 // <category><5-digit> prefix rather than storing it as a separate column -
 // older/Lime-sourced rows with free-text service IDs that don't match the
 // shape simply have no derivable category ("").
 func categoryFromServiceID(serviceID string) string {
 	return models.CategoryFromServiceID(serviceID)
+}
+
+func parseServiceListCategories(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func serviceMatchesListCategories(serviceID string, cats []string) bool {
+	derived := models.CategoryFromServiceID(serviceID)
+	for _, c := range cats {
+		if c == "freetext" {
+			if derived == "" {
+				return true
+			}
+			continue
+		}
+		if derived == c {
+			return true
+		}
+	}
+	return false
 }
 
 // ApiServiceCreate creates a service in a single step - the create wizard
@@ -292,7 +353,7 @@ func (ctrl *Controller) ApiServiceCreate(c *echo.Context) error {
 	if !validCategories[dto.Category] {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid category"})
 	}
-	if capacityCategories[dto.Category] {
+	if dto.ServiceType != "" {
 		ok, err := cfgmgmt.ServiceTypeExists(ctrl.DB, dto.ServiceType)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})

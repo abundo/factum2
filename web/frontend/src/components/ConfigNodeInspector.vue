@@ -9,11 +9,10 @@ import {
   updateScope,
 } from '@/api/config'
 import { getDevice } from '@/api/devices'
-import { getService, putServiceEndpoints, updateServiceType } from '@/api/services'
-import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
+import { getService, putServiceEndpoints, unrealizeService, updateServiceType } from '@/api/services'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
-import SchemaFields from '@/components/SchemaFields.vue'
+import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import {
   cfgmgmtBaselineSchema,
@@ -97,8 +96,11 @@ const serviceLoading = ref(false)
 const schemaValues = ref({})
 const genericEndpoints = ref([])
 const genericSaving = ref(false)
-const pickerOpen = ref(false)
-const genericPickerIndex = ref(null)
+const instanceSubmitted = ref(false)
+const unrealizeOpen = ref(false)
+const unrealizing = ref(false)
+const unrealizeRemoveNetbox = ref(false)
+const unrealizeRemoveDevice = ref(false)
 
 const serviceTypeOptions = computed(() => [
   { label: 'Not set', value: '' },
@@ -110,13 +112,14 @@ const serviceTypeOptions = computed(() => [
 const selectedServiceType = computed(() =>
   props.serviceTypes.find((t) => t.name === serviceRow.value?.service_type),
 )
-const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
-const genericRoles = computed(() => {
-  const spec = selectedServiceType.value?.interfaces
-  if (!spec) return []
-  return [{ name: 'interface', min: spec.min ?? 0, max: spec.max ?? 0, fields: spec.fields ?? [] }]
+const connectionTypeId = computed({
+  get: () => serviceRow.value?.connection_type_id ?? null,
+  set: (v) => {
+    if (serviceRow.value) serviceRow.value.connection_type_id = v
+  },
 })
 const limeOwned = computed(() => serviceRow.value?.source === 'lime')
+const isRealized = computed(() => Boolean(serviceRow.value?.service_type))
 const serviceRowId = computed(
   () => props.selected?.service_id || props.selected?.service_row_id || null,
 )
@@ -214,9 +217,9 @@ function loadEndpointLabel(deviceId, interfaceId) {
     .catch(() => '')
 }
 
-function addGenericEndpoint(roleName, extra = {}) {
+function addGenericEndpoint(extra = {}) {
   genericEndpoints.value.push({
-    role: roleName,
+    role: 'interface',
     device_id: extra.device_id ?? null,
     interface_id: extra.interface_id ?? null,
     fields: { ...extra.fields },
@@ -228,7 +231,7 @@ function seedEndpointsForType(typeName) {
   const st = props.serviceTypes.find((x) => x.name === typeName)
   const n = st?.interfaces?.min || 0
   for (let i = 0; i < n; i++) {
-    addGenericEndpoint('interface')
+    addGenericEndpoint()
   }
 }
 
@@ -259,7 +262,7 @@ function loadService(id) {
       if (genericEndpoints.value.length === 0) {
         const draft = props.draftEndpoint
         if (draft && (!draft.service_id || draft.service_id === id)) {
-          addGenericEndpoint(draft.role, draft)
+          addGenericEndpoint(draft)
         } else {
           seedEndpointsForType(data.service_type)
         }
@@ -286,11 +289,13 @@ function loadService(id) {
 function saveServiceTypeFields() {
   if (!serviceRow.value?.id) return
   saving.value = true
+  instanceSubmitted.value = true
   updateServiceType(serviceRow.value.id, {
     service_type: serviceRow.value.service_type ?? '',
     bandwidth_mbps: Number(schemaValues.value.bandwidth_mbps) || 0,
     max_mac_addresses: Number(schemaValues.value.max_mac_addresses) || 0,
     fields: { ...schemaValues.value },
+    connection_type_id: serviceRow.value.connection_type_id || null,
   })
     .then((data) => {
       serviceRow.value = { ...serviceRow.value, ...data }
@@ -313,7 +318,7 @@ function saveServiceEndpoints() {
   if (!serviceRow.value?.id) return
   const body = {
     endpoints: genericEndpoints.value.map((ep) => ({
-      role: ep.role,
+      role: 'interface',
       device_id: ep.device_id,
       interface_id: ep.interface_id,
       fields: ep.fields || {},
@@ -350,31 +355,68 @@ function saveServiceEndpoints() {
       })
   }
   if (serviceRow.value.applied_to_device) {
-    withCredentials(deviceIds, run)
+    withCredentials(deviceIds, run, () => {
+      genericSaving.value = false
+    })
     return
   }
   run('', '')
 }
 
-function openGenericPicker(i) {
-  genericPickerIndex.value = i
-  pickerOpen.value = true
+function openUnrealize() {
+  unrealizeRemoveNetbox.value = Boolean(serviceRow.value?.l2vpn_netbox_id)
+  unrealizeRemoveDevice.value = Boolean(serviceRow.value?.applied_to_device)
+  unrealizeOpen.value = true
 }
 
-function onPickerSelect({ deviceId, deviceName, interfaceId, interfaceName }) {
-  const ep = genericEndpoints.value[genericPickerIndex.value]
-  if (!ep) return
-  ep.device_id = deviceId
-  ep.interface_id = interfaceId
-  ep.label = `${deviceName} / ${interfaceName}`
+function doUnrealize(username, password) {
+  if (!serviceRow.value?.id) return
+  const deviceIds = [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
+  unrealizing.value = true
+  unrealizeService(serviceRow.value.id, {
+    remove_from_netbox: unrealizeRemoveNetbox.value,
+    remove_from_device: unrealizeRemoveDevice.value,
+    username,
+    password,
+  })
+    .then((data) => {
+      if (username && password) rememberSuccess(deviceIds, username, password)
+      unrealizeOpen.value = false
+      toast.add({ color: 'success', title: 'Unrealized', description: 'Technical realization removed.' })
+      if (data?.service) {
+        serviceRow.value = { ...serviceRow.value, ...data.service }
+        schemaValues.value = { ...(data.service.fields || {}) }
+        genericEndpoints.value = []
+      }
+      emit('saved')
+    })
+    .catch((err) => {
+      if (username && password) rememberFailure(deviceIds, username, password)
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Failed to unrealize.'),
+      })
+    })
+    .finally(() => {
+      unrealizing.value = false
+    })
 }
 
-const pickerDeviceId = computed(
-  () => genericEndpoints.value[genericPickerIndex.value]?.device_id ?? null,
-)
-const pickerInterfaceId = computed(
-  () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
-)
+function confirmUnrealize() {
+  if (unrealizeRemoveDevice.value) {
+    unrealizeOpen.value = false
+    withCredentials(
+      [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))],
+      doUnrealize,
+      () => {
+        unrealizing.value = false
+      },
+    )
+    return
+  }
+  doUnrealize('', '')
+}
 
 function resetResourceForm(node) {
   const cidrs = node?.payload?.cidrs
@@ -579,83 +621,27 @@ function toggleFeature(id) {
               class="w-full"
             />
           </div>
-          <SchemaFields
-            v-if="schemaFields.length"
-            v-model="schemaValues"
-            :fields="schemaFields"
+          <TechnicalServiceForm
+            v-if="selectedServiceType"
+            v-model:fields="schemaValues"
+            v-model:connection-type-id="connectionTypeId"
+            v-model:endpoints="genericEndpoints"
+            :definition="selectedServiceType"
             :disabled="!canWrite"
+            :submitted="instanceSubmitted"
           />
-          <div v-if="canWrite" class="flex justify-end">
-            <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
-          </div>
-          <h6 class="m-0">Endpoints</h6>
           <p class="text-muted-color text-sm m-0">
             Unsaved rows are not written until you save a complete set.
           </p>
-          <div
-            v-for="(ep, i) in genericEndpoints"
-            :key="i"
-            class="border border-default rounded p-3 flex flex-col gap-2"
-          >
-            <div>
-              <label class="mb-1 block font-bold">Role</label>
-              <USelectMenu
-                v-model="ep.role"
-                :items="genericRoles.map((r) => ({ label: r.name, value: r.name }))"
-                value-key="value"
-                label-key="label"
-                :disabled="!canWrite"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block font-bold">Device / interface</label>
-              <div class="flex items-center gap-2">
-                <UInput
-                  :model-value="ep.label"
-                  disabled
-                  placeholder="Not selected"
-                  class="w-full"
-                />
-                <UButton
-                  v-if="canWrite"
-                  icon="i-lucide-list-tree"
-                  variant="outline"
-                  color="neutral"
-                  @click="openGenericPicker(i)"
-                />
-              </div>
-            </div>
-            <template
-              v-for="field in genericRoles.find((r) => r.name === ep.role)?.fields ?? []"
-              :key="field.name"
-            >
-              <label class="mb-1 block font-bold">{{ field.name }}</label>
-              <UInput v-model="ep.fields[field.name]" :disabled="!canWrite" />
-            </template>
-            <div v-if="canWrite" class="flex justify-end">
-              <UButton
-                label="Remove"
-                variant="ghost"
-                color="error"
-                size="sm"
-                @click="genericEndpoints.splice(i, 1)"
-              />
-            </div>
-          </div>
-          <div class="flex flex-wrap gap-2">
+          <div v-if="canWrite" class="flex flex-wrap justify-end gap-2">
             <UButton
-              v-for="role in genericRoles"
-              :key="role.name"
-              :label="`Add ${role.name}`"
+              v-if="isRealized"
+              label="Unrealize"
               variant="outline"
-              color="neutral"
-              size="sm"
-              :disabled="!canWrite"
-              @click="addGenericEndpoint(role.name)"
+              color="error"
+              @click="openUnrealize"
             />
-          </div>
-          <div v-if="canWrite" class="flex justify-end">
+            <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
             <UButton
               label="Save endpoints"
               :loading="genericSaving"
@@ -663,12 +649,6 @@ function toggleFeature(id) {
             />
           </div>
         </template>
-        <DeviceInterfacePicker
-          v-model:open="pickerOpen"
-          :device-id="pickerDeviceId"
-          :interface-id="pickerInterfaceId"
-          @select="onPickerSelect"
-        />
       </template>
 
       <template v-if="isCLI">
@@ -945,6 +925,35 @@ function toggleFeature(id) {
       </template>
     </template>
   </div>
+
+  <UModal
+    v-model:open="unrealizeOpen"
+    title="Unrealize service"
+    :ui="{ content: 'sm:max-w-md' }"
+  >
+    <template #body>
+      <p class="text-sm m-0">
+        Drops the technical realization (type, endpoints, tree node) and keeps the commercial row.
+      </p>
+      <label class="flex items-center gap-2 mt-3">
+        <UCheckbox v-model="unrealizeRemoveNetbox" />
+        Remove from NetBox
+      </label>
+      <label class="flex items-center gap-2">
+        <UCheckbox v-model="unrealizeRemoveDevice" />
+        Remove from device
+      </label>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
+      <UButton
+        label="Unrealize"
+        color="error"
+        :loading="unrealizing"
+        @click="confirmUnrealize"
+      />
+    </template>
+  </UModal>
 
   <UModal
     v-model:open="credentialsDialog"

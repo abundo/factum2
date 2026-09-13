@@ -30,13 +30,20 @@ import {
 } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { getDevices } from '@/api/devices'
-import { getService, getServiceEndpoints, getServices, putServiceEndpoints } from '@/api/services'
+import {
+  getService,
+  getServiceEndpoints,
+  getServices,
+  putServiceEndpoints,
+  updateServiceType,
+} from '@/api/services'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
+import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
@@ -76,6 +83,12 @@ const customers = ref([])
 const attachableServices = ref([])
 const draftEndpoint = ref(null)
 const scopesById = ref({})
+const createStep = ref('pick')
+const createDefinition = ref(null)
+const createFields = ref({})
+const createConnectionTypeId = ref(null)
+const createEndpoints = ref([])
+const createSubmitted = ref(false)
 
 const assignments = ref([])
 const variables = ref([])
@@ -156,9 +169,6 @@ const attachServiceOptions = computed(() =>
     label: `${s.service_id} (${s.service_type || 'typed'})`,
     value: s.id,
   })),
-)
-const capacityTypeOptions = computed(() =>
-  serviceTypes.value.map((t) => ({ label: t.name, value: t.name })),
 )
 const varOptions = computed(() => variables.value.map((v) => ({ label: v.name, value: v.name })))
 const categoryOptions = [
@@ -359,8 +369,99 @@ function serviceParentId(node) {
   return servicesFolderId()
 }
 
-function firstRoleForType(_typeName) {
-  return 'interface'
+function emptyEndpoint(extra = {}) {
+  return {
+    role: 'interface',
+    device_id: extra.device_id ?? null,
+    interface_id: extra.interface_id ?? null,
+    fields: { ...extra.fields },
+    label: extra.label ?? '',
+  }
+}
+
+function seedCreateEndpoints(def, fromIface) {
+  const n = def?.interfaces?.min || 0
+  const list = []
+  for (let i = 0; i < n; i++) list.push(emptyEndpoint())
+  if (fromIface?.device_id && fromIface?.interface_id) {
+    const slot = {
+      role: 'interface',
+      device_id: fromIface.device_id,
+      interface_id: fromIface.interface_id,
+      fields: {},
+      label: fromIface.title || '',
+    }
+    if (list.length) list[0] = { ...list[0], ...slot }
+    else list.push(slot)
+  }
+  createEndpoints.value = list
+}
+
+function pickCreateDefinition(t) {
+  createDefinition.value = t
+  createFields.value = {}
+  createConnectionTypeId.value = t.connection_types?.[0]?.id ?? null
+  seedCreateEndpoints(t, form.value.from_interface)
+  createStep.value = 'form'
+}
+
+function openCreateService(node) {
+  form.value = {
+    parent_id: serviceParentId(node),
+    category: 'CN',
+    company: null,
+    from_interface: node?.kind === 'interface' ? node : null,
+  }
+  createStep.value = 'pick'
+  createDefinition.value = null
+  createFields.value = {}
+  createConnectionTypeId.value = null
+  createEndpoints.value = []
+  createSubmitted.value = false
+  if (!customers.value.length) {
+    getCustomers()
+      .then((rows) => {
+        customers.value = rows ?? []
+      })
+      .catch(() => {
+        customers.value = []
+      })
+  }
+  dialog.value = 'create-service'
+}
+
+function fieldServiceId(fields) {
+  const v = fields?.service_id
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function createEndpointsBody() {
+  return createEndpoints.value.map((ep) => ({
+    role: 'interface',
+    device_id: ep.device_id,
+    interface_id: ep.interface_id,
+    fields: ep.fields || {},
+  }))
+}
+
+function selectCreatedNode(node) {
+  if (form.value.from_interface?.device_id && form.value.from_interface?.interface_id) {
+    draftEndpoint.value = {
+      role: 'interface',
+      device_id: form.value.from_interface.device_id,
+      interface_id: form.value.from_interface.interface_id,
+      fields: {},
+      service_id: node.service_id,
+    }
+  }
+  selected.value = {
+    key: String(node.id),
+    id: node.id,
+    title: node.name,
+    kind: 'service',
+    service_id: node.service_id,
+  }
 }
 
 function nearestMatrixNode(node) {
@@ -463,23 +564,7 @@ async function runMenu(id) {
     return
   }
   if (id === 'create-service') {
-    form.value = {
-      parent_id: serviceParentId(node),
-      category: 'CN',
-      service_type: serviceTypes.value[0]?.name || 'ELINE',
-      company: null,
-      from_interface: node?.kind === 'interface' ? node : null,
-    }
-    if (!customers.value.length) {
-      getCustomers()
-        .then((rows) => {
-          customers.value = rows ?? []
-        })
-        .catch(() => {
-          customers.value = []
-        })
-    }
-    dialog.value = 'create-service'
+    openCreateService(node)
     return
   }
   if (id === 'attach-service') {
@@ -795,41 +880,64 @@ function saveDialog() {
       payload_kind: 'cli',
     })
   } else if (dialog.value === 'create-service') {
-    const category = optionValue(form.value.category) || 'CN'
-    const serviceType = optionValue(form.value.service_type)
-    const company = optionValue(form.value.company)
-    if (!serviceType || !company) {
+    if (createStep.value !== 'form') {
       saving.value = false
       return
     }
-    const fromIface = form.value.from_interface
-    req = createScope({
-      parent_id: form.value.parent_id,
-      kind: 'service',
-      attach: {
-        category,
-        service_type: serviceType,
-        company,
-      },
-    }).then((node) => {
-      if (fromIface?.device_id && fromIface?.interface_id) {
-        draftEndpoint.value = {
-          role: firstRoleForType(serviceType),
-          device_id: fromIface.device_id,
-          interface_id: fromIface.interface_id,
-          fields: {},
-          service_id: node.service_id,
-        }
-      }
-      selected.value = {
-        key: String(node.id),
-        id: node.id,
-        title: node.name,
+    createSubmitted.value = true
+    const def = createDefinition.value
+    if (!def?.name) {
+      saving.value = false
+      return
+    }
+    if ((def.connection_types ?? []).length && !createConnectionTypeId.value) {
+      saving.value = false
+      return
+    }
+    const category = optionValue(form.value.category) || 'CN'
+    const company = optionValue(form.value.company)
+    const fields = { ...createFields.value }
+    const realizeId = fieldServiceId(fields)
+    const endpointsBody = { endpoints: createEndpointsBody() }
+    if (realizeId) {
+      req = updateServiceType(realizeId, {
+        service_type: def.name,
+        fields,
+        connection_type_id: createConnectionTypeId.value || null,
+        bandwidth_mbps: Number(fields.bandwidth_mbps) || 0,
+        max_mac_addresses: Number(fields.max_mac_addresses) || 0,
+      })
+        .then(() =>
+          createScope({
+            parent_id: form.value.parent_id,
+            kind: 'service',
+            service_id: realizeId,
+          }),
+        )
+        .then((node) =>
+          putServiceEndpoints(realizeId, endpointsBody).then(() => {
+            selectCreatedNode(node)
+            return node
+          }),
+        )
+    } else {
+      req = createScope({
+        parent_id: form.value.parent_id,
         kind: 'service',
-        service_id: node.service_id,
-      }
-      return node
-    })
+        attach: {
+          category,
+          service_type: def.name,
+          company,
+          fields,
+          connection_type_id: createConnectionTypeId.value || null,
+        },
+      }).then((node) =>
+        putServiceEndpoints(node.service_id, endpointsBody).then(() => {
+          selectCreatedNode(node)
+          return node
+        }),
+      )
+    }
   } else if (dialog.value === 'attach-service') {
     if (!attachServiceId.value) {
       saving.value = false
@@ -1457,13 +1565,23 @@ onBeforeUnmount(() => {
   <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-3 shrink-0">
       <h4 class="m-0">Config</h4>
-      <UButton
-        icon="i-lucide-library"
-        variant="outline"
-        color="neutral"
-        label="Catalog"
-        @click="catalogOpen = true"
-      />
+      <div class="flex gap-2">
+        <UButton
+          v-if="authStore.canWrite"
+          icon="i-lucide-plus"
+          variant="outline"
+          color="neutral"
+          label="New service"
+          @click="openCreateService(null)"
+        />
+        <UButton
+          icon="i-lucide-library"
+          variant="outline"
+          color="neutral"
+          label="Catalog"
+          @click="catalogOpen = true"
+        />
+      </div>
     </div>
     <UTabs
       v-model="tab"
@@ -1924,51 +2042,94 @@ onBeforeUnmount(() => {
 
   <UModal
     :open="dialog === 'create-service'"
-    title="Create service"
+    title="Create technical service"
+    :ui="{ content: 'sm:max-w-2xl' }"
     @update:open="(v) => !v && (dialog = null)"
   >
     <template #body>
-      <div class="flex flex-col gap-3">
-        <div>
-          <label class="block font-bold mb-2">Category</label>
-          <USelectMenu
-            v-model="form.category"
-            :items="categoryOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-          />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Service type</label>
-          <USelectMenu
-            v-model="form.service_type"
-            :items="capacityTypeOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-          />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Company</label>
-          <USelectMenu
-            v-model="form.company"
-            :items="customerOptions"
-            value-key="value"
-            label-key="label"
-            placeholder="Select a customer"
-            class="w-full"
-          />
-        </div>
-        <p v-if="form.from_interface" class="text-muted-color text-sm m-0">
-          The first endpoint will be pre-filled from this interface and is not saved until you
-          complete the set.
+      <div v-if="createStep === 'pick'" class="flex flex-col gap-3">
+        <p class="text-muted-color text-sm m-0">Pick a definition. Commercial inventory stays on Services.</p>
+        <p v-if="!serviceTypes.length" class="text-muted-color text-sm m-0">
+          No definitions yet. Add them under Catalog → Service types.
         </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            v-for="t in serviceTypes"
+            :key="t.id"
+            type="button"
+            class="rounded-md ring ring-default p-3 text-left hover:bg-elevated"
+            @click="pickCreateDefinition(t)"
+          >
+            <div class="font-bold">{{ t.name }}</div>
+            <div class="text-sm text-muted-color">{{ t.description }}</div>
+            <div class="flex flex-wrap gap-1 mt-2">
+              <img
+                v-for="ct in (t.connection_types ?? []).filter((c) => c.has_image && c.image_url)"
+                :key="ct.id"
+                :src="ct.image_url"
+                alt=""
+                class="h-8 w-10 object-contain"
+              />
+            </div>
+          </button>
+        </div>
+      </div>
+      <div v-else class="flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="font-bold">{{ createDefinition?.name }}</div>
+            <div class="text-sm text-muted-color">{{ createDefinition?.description }}</div>
+          </div>
+          <UButton label="Change definition" variant="ghost" size="sm" @click="createStep = 'pick'" />
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold mb-2">Category</label>
+            <USelectMenu
+              v-model="form.category"
+              :items="categoryOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+          </div>
+          <div>
+            <label class="block font-bold mb-2">Company</label>
+            <USelectMenu
+              v-model="form.company"
+              :items="customerOptions"
+              value-key="value"
+              label-key="label"
+              placeholder="Optional"
+              class="w-full"
+            />
+          </div>
+        </div>
+        <p class="text-muted-color text-sm m-0">
+          Pick a commercial ServiceID on the form to realize that row; otherwise a new technical
+          row is created.
+        </p>
+        <p v-if="form.from_interface" class="text-muted-color text-sm m-0">
+          The first interface is pre-filled from the selected tree node.
+        </p>
+        <TechnicalServiceForm
+          v-if="createDefinition"
+          v-model:fields="createFields"
+          v-model:connection-type-id="createConnectionTypeId"
+          v-model:endpoints="createEndpoints"
+          :definition="createDefinition"
+          :submitted="createSubmitted"
+        />
       </div>
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Create" :loading="saving" @click="saveDialog" />
+      <UButton
+        v-if="createStep === 'form'"
+        label="Create"
+        :loading="saving"
+        @click="saveDialog"
+      />
     </template>
   </UModal>
 
