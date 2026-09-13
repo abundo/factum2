@@ -217,6 +217,8 @@ func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 	}
 	if iface != nil {
 		data.LocalIface = iface.Name
+	} else if ep.AppliedIface != "" {
+		data.LocalIface = ep.AppliedIface
 	}
 	if svc.PseudowireID != 0 {
 		data.ServiceNumericID = svc.PseudowireID
@@ -407,6 +409,8 @@ func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Servic
 	re.Interface = DCIMFromInterface(iface)
 	if iface != nil {
 		re.LocalIface = iface.Name
+	} else if ep.AppliedIface != "" {
+		re.LocalIface = ep.AppliedIface
 	}
 	if currentDeviceID != 0 && device != nil && device.ID != currentDeviceID {
 		re.NeighborIP = loopbackAddr(db, device)

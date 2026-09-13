@@ -778,6 +778,19 @@ func bindingUnchanged(old, neu models.ServiceEndpoint) bool {
 	return old.DeviceID == neu.DeviceID && old.InterfaceID == neu.InterfaceID
 }
 
+func endpointNeedsAddPush(ep models.ServiceEndpoint, ifaceName string) bool {
+	if ep.AppliedDeviceID == 0 {
+		return true
+	}
+	if ep.AppliedDeviceID != ep.DeviceID {
+		return true
+	}
+	if ep.AppliedIface != "" && ifaceName != "" && ep.AppliedIface != ifaceName {
+		return true
+	}
+	return false
+}
+
 func endpointsNeedingTeardown(existing, next []models.ServiceEndpoint) []models.ServiceEndpoint {
 	var out []models.ServiceEndpoint
 	for _, old := range existing {
@@ -934,6 +947,12 @@ func (ctrl *Controller) removeServiceCLIFromDevice(svc *models.Service, device *
 		if ifc != nil {
 			label = device.Name + " " + ifc.Name
 			snap.InterfaceID = ifc.ID
+		} else {
+			// AppliedIface is the snapshot; do not load a stale InterfaceID.
+			snap.InterfaceID = 0
+			if ep.AppliedIface != "" {
+				label = device.Name + " " + ep.AppliedIface
+			}
 		}
 		data, err := cfgmgmt.GenericDataWithSiblings(ctrl.DB, svc, &snap, device, ifc, siblings)
 		if err != nil {
@@ -963,7 +982,7 @@ func (ctrl *Controller) removeServiceFromDevices(c *echo.Context, service *model
 	if err != nil {
 		return nil, err
 	}
-	return ctrl.removeEndpointSnapshotsFromDevices(c, service, eps, nil, username, password)
+	return ctrl.removeEndpointSnapshotsFromDevices(c, service, eps, eps, username, password)
 }
 
 func (ctrl *Controller) removeEndpointSnapshotsFromDevices(c *echo.Context, service *models.Service, snapshots, siblings []models.ServiceEndpoint, username, password string) ([]ApiServiceElinePushResult, error) {

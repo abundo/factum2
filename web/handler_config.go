@@ -989,25 +989,43 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 		creds := deviceCredentialsRequest{Username: body.Username, Password: body.Password}
+		fetchIDs := []uint{}
+		seenFetch := map[uint]bool{}
+		for _, ep := range rows {
+			if ep.DeviceID == 0 || seenFetch[ep.DeviceID] {
+				continue
+			}
+			seenFetch[ep.DeviceID] = true
+			fetchIDs = append(fetchIDs, ep.DeviceID)
+		}
+		fetched, err := fetchDevices(c.Request().Context(), ctrl.DB, fetchIDs)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		devicesByID := map[uint]models.Device{}
+		for _, d := range fetched {
+			devicesByID[d.ID] = d
+		}
 		addIDs := []uint{}
 		addByDev := map[uint][]models.ServiceEndpoint{}
 		for _, ep := range rows {
-			if ep.AppliedDeviceID == 0 || ep.AppliedDeviceID != ep.DeviceID {
-				if _, ok := addByDev[ep.DeviceID]; !ok {
-					addIDs = append(addIDs, ep.DeviceID)
-				}
-				addByDev[ep.DeviceID] = append(addByDev[ep.DeviceID], ep)
+			device, ok := devicesByID[ep.DeviceID]
+			if !ok {
+				continue
 			}
+			ifcName := ""
+			if ifc := ifaceOnDevice(&device, ep.InterfaceID); ifc != nil {
+				ifcName = ifc.Name
+			}
+			if !endpointNeedsAddPush(ep, ifcName) {
+				continue
+			}
+			if _, ok := addByDev[ep.DeviceID]; !ok {
+				addIDs = append(addIDs, ep.DeviceID)
+			}
+			addByDev[ep.DeviceID] = append(addByDev[ep.DeviceID], ep)
 		}
 		if len(addIDs) > 0 {
-			fetched, err := fetchDevices(c.Request().Context(), ctrl.DB, addIDs)
-			if err != nil {
-				return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			}
-			devicesByID := map[uint]models.Device{}
-			for _, d := range fetched {
-				devicesByID[d.ID] = d
-			}
 			for _, deviceID := range addIDs {
 				device, ok := devicesByID[deviceID]
 				if !ok {

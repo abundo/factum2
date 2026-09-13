@@ -237,6 +237,46 @@ func TestGenericDataOthersSamePortDifferentVLAN(t *testing.T) {
 	}
 }
 
+func TestGenericDataAppliedIfaceWithoutLiveInterface(t *testing.T) {
+	db := newTestDB(t)
+	st := models.ServiceType{
+		Name: "GONEIF",
+		Interfaces: models.ServiceInterfacesSpec{
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.FieldTypeVLAN, Required: true}},
+		},
+	}
+	mustCreate(t, db, &st)
+	dev := models.Device{Name: "pe-gone", Platform: "eos", NetboxID: 930}
+	mustCreate(t, db, &dev)
+	peer := models.Device{Name: "pe-peer", Platform: "eos", NetboxID: 931}
+	mustCreate(t, db, &peer)
+	peerIf := models.Interface{DeviceID: peer.ID, Name: "Ethernet9", Type: "1000base-t", NetboxID: 932}
+	mustCreate(t, db, &peerIf)
+	svc := models.Service{ServiceID: "CN00301", ServiceType: "GONEIF"}
+	mustCreate(t, db, &svc)
+	current := models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: models.EndpointRoleInterface,
+		DeviceID: dev.ID, InterfaceID: 0, Fields: EncodeEndpointFields(10, 0, 0),
+		AppliedDeviceID: dev.ID, AppliedIface: "Ethernet1",
+	}
+	current.ID = 1
+	sib := models.ServiceEndpoint{
+		ServiceID: svc.ID, Role: models.EndpointRoleInterface,
+		DeviceID: peer.ID, InterfaceID: peerIf.ID, Fields: EncodeEndpointFields(20, 0, 0),
+	}
+	sib.ID = 2
+	data, err := GenericDataWithSiblings(db, &svc, &current, &dev, nil, []models.ServiceEndpoint{current, sib})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.LocalIface != "Ethernet1" || data.Current.LocalIface != "Ethernet1" {
+		t.Fatalf("LocalIface = %q current=%q, want AppliedIface", data.LocalIface, data.Current.LocalIface)
+	}
+	if len(data.Others) != 1 || data.Others[0].LocalIface != "Ethernet9" {
+		t.Fatalf("Others = %+v, want peer Ethernet9", data.Others)
+	}
+}
+
 func TestResolveCommercialSameRowVsUnset(t *testing.T) {
 	db := newTestDB(t)
 	cust := models.Customer{Name: "Acme"}

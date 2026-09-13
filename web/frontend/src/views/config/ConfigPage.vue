@@ -30,12 +30,14 @@ import {
 } from '@/api/config'
 import { getCustomers } from '@/api/customers'
 import { getDevices } from '@/api/devices'
-import { getServiceEndpoints, getServices, putServiceEndpoints } from '@/api/services'
+import { getService, getServiceEndpoints, getServices, putServiceEndpoints } from '@/api/services'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
+import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 
@@ -43,6 +45,16 @@ defineOptions({ name: 'ConfigPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const {
+  credentialsDialog,
+  promptUsername,
+  promptPassword,
+  withCredentials,
+  submitCredentials,
+  cancelCredentials,
+  rememberSuccess,
+  rememberFailure,
+} = useDeviceCredentials()
 const treeRef = ref(null)
 const filter = ref('')
 const saving = ref(false)
@@ -643,6 +655,44 @@ function endpointMatchesRef(ep, node) {
   )
 }
 
+function endpointPutBody(rows, username, password) {
+  const body = {
+    endpoints: rows.map((ep) => ({
+      role: ep.role,
+      device_id: ep.device_id,
+      interface_id: ep.interface_id,
+      fields: ep.fields || {},
+    })),
+  }
+  if (username) {
+    body.username = username
+    body.password = password
+  }
+  return body
+}
+
+function putEndpointsMaybeCreds(serviceId, rows) {
+  const deviceIds = [...new Set(rows.map((ep) => ep.device_id).filter(Boolean))]
+  return getService(serviceId).then((svc) => {
+    if (!svc?.applied_to_device) {
+      return putServiceEndpoints(serviceId, endpointPutBody(rows))
+    }
+    return new Promise((resolve, reject) => {
+      withCredentials(deviceIds, (username, password) => {
+        putServiceEndpoints(serviceId, endpointPutBody(rows, username, password))
+          .then((data) => {
+            rememberSuccess(deviceIds, username, password)
+            resolve(data)
+          })
+          .catch((err) => {
+            rememberFailure(deviceIds, username, password)
+            reject(err)
+          })
+      })
+    })
+  })
+}
+
 function onRebind({ ref, target }) {
   if (!ref?.service_row_id || !target?.interface_id || !target?.device_id) return
   getServiceEndpoints(ref.service_row_id)
@@ -656,14 +706,7 @@ function onRebind({ ref, target }) {
           fields: ep.fields || {},
         }
       })
-      return putServiceEndpoints(ref.service_row_id, {
-        endpoints: next.map((ep) => ({
-          role: ep.role,
-          device_id: ep.device_id,
-          interface_id: ep.interface_id,
-          fields: ep.fields || {},
-        })),
-      })
+      return putEndpointsMaybeCreds(ref.service_row_id, next)
     })
     .then(() => {
       reloadKey.value += 1
@@ -847,14 +890,7 @@ function performDelete() {
     const node = c.node
     req = getServiceEndpoints(node.service_row_id).then((rows) => {
       const next = (rows ?? []).filter((ep) => !endpointMatchesRef(ep, node))
-      return putServiceEndpoints(node.service_row_id, {
-        endpoints: next.map((ep) => ({
-          role: ep.role,
-          device_id: ep.device_id,
-          interface_id: ep.interface_id,
-          fields: ep.fields || {},
-        })),
-      })
+      return putEndpointsMaybeCreds(node.service_row_id, next)
     })
   }
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
@@ -2256,6 +2292,47 @@ onBeforeUnmount(() => {
         color="error"
         :loading="saving"
         @click="performDelete"
+      />
+    </template>
+  </UModal>
+
+  <UModal
+    v-model:open="credentialsDialog"
+    title="Device credentials"
+    :ui="{ content: 'sm:max-w-sm' }"
+    @update:open="(isOpen) => !isOpen && cancelCredentials()"
+  >
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <label for="config-prompt-username" class="text-sm text-muted-color">Username</label>
+          <UInput
+            id="config-prompt-username"
+            v-model="promptUsername"
+            autocomplete="off"
+            autofocus
+            class="w-full"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="config-prompt-password" class="text-sm text-muted-color">Password</label>
+          <PasswordInput
+            id="config-prompt-password"
+            v-model="promptPassword"
+            autocomplete="new-password"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
+      <UButton
+        label="Continue"
+        icon="i-lucide-check"
+        :disabled="!promptUsername || !promptPassword"
+        @click="submitCredentials"
       />
     </template>
   </UModal>

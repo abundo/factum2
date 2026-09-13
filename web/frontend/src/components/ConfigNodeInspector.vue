@@ -12,7 +12,9 @@ import { getDevice } from '@/api/devices'
 import { getService, putServiceEndpoints, updateServiceType } from '@/api/services'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import PasswordInput from '@/components/PasswordInput.vue'
 import SchemaFields from '@/components/SchemaFields.vue'
+import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import {
   cfgmgmtBaselineSchema,
   cfgmgmtPackSchema,
@@ -35,6 +37,16 @@ const props = defineProps({
 const emit = defineEmits(['assign', 'delete-assignment', 'saved'])
 
 const toast = useToast()
+const {
+  credentialsDialog,
+  promptUsername,
+  promptPassword,
+  withCredentials,
+  submitCredentials,
+  cancelCredentials,
+  rememberSuccess,
+  rememberFailure,
+} = useDeviceCredentials()
 const saving = ref(false)
 const features = ref([])
 const openFeatureId = ref(null)
@@ -299,30 +311,49 @@ function saveServiceTypeFields() {
 
 function saveServiceEndpoints() {
   if (!serviceRow.value?.id) return
-  genericSaving.value = true
-  putServiceEndpoints(serviceRow.value.id, {
+  const body = {
     endpoints: genericEndpoints.value.map((ep) => ({
       role: ep.role,
       device_id: ep.device_id,
       interface_id: ep.interface_id,
       fields: ep.fields || {},
     })),
-  })
-    .then(() => {
-      toast.add({ color: 'success', title: 'Successful', description: 'Endpoints saved' })
-      emit('saved')
-      return loadService(serviceRow.value.id)
-    })
-    .catch((err) =>
-      toast.add({
-        color: 'error',
-        title: 'Error',
-        description: errMsg(err, 'Failed to save endpoints.'),
-      }),
-    )
-    .finally(() => {
-      genericSaving.value = false
-    })
+  }
+  const deviceIds = [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
+  const run = (username, password) => {
+    genericSaving.value = true
+    if (username) {
+      body.username = username
+      body.password = password
+    }
+    putServiceEndpoints(serviceRow.value.id, body)
+      .then(() => {
+        if (username && password) {
+          rememberSuccess(deviceIds, username, password)
+        }
+        toast.add({ color: 'success', title: 'Successful', description: 'Endpoints saved' })
+        emit('saved')
+        return loadService(serviceRow.value.id)
+      })
+      .catch((err) => {
+        if (username && password) {
+          rememberFailure(deviceIds, username, password)
+        }
+        toast.add({
+          color: 'error',
+          title: 'Error',
+          description: errMsg(err, 'Failed to save endpoints.'),
+        })
+      })
+      .finally(() => {
+        genericSaving.value = false
+      })
+  }
+  if (serviceRow.value.applied_to_device) {
+    withCredentials(deviceIds, run)
+    return
+  }
+  run('', '')
 }
 
 function openGenericPicker(i) {
@@ -914,4 +945,45 @@ function toggleFeature(id) {
       </template>
     </template>
   </div>
+
+  <UModal
+    v-model:open="credentialsDialog"
+    title="Device credentials"
+    :ui="{ content: 'sm:max-w-sm' }"
+    @update:open="(isOpen) => !isOpen && cancelCredentials()"
+  >
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <label for="inspector-prompt-username" class="text-sm text-muted-color">Username</label>
+          <UInput
+            id="inspector-prompt-username"
+            v-model="promptUsername"
+            autocomplete="off"
+            autofocus
+            class="w-full"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="inspector-prompt-password" class="text-sm text-muted-color">Password</label>
+          <PasswordInput
+            id="inspector-prompt-password"
+            v-model="promptPassword"
+            autocomplete="new-password"
+            @keyup.enter="submitCredentials"
+          />
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
+      <UButton
+        label="Continue"
+        icon="i-lucide-check"
+        :disabled="!promptUsername || !promptPassword"
+        @click="submitCredentials"
+      />
+    </template>
+  </UModal>
 </template>

@@ -355,8 +355,19 @@ const pickerInterfaceId = computed(
   () => genericEndpoints.value[genericPickerIndex.value]?.interface_id ?? null,
 )
 
-function saveGenericEndpoints() {
-  genericSaving.value = true
+function endpointBindingsChanged() {
+  const oldKeys = (service.value.endpoints ?? [])
+    .map((ep) => `${ep.device_id}:${ep.interface_id}`)
+    .sort()
+    .join(',')
+  const newKeys = genericEndpoints.value
+    .map((ep) => `${ep.device_id}:${ep.interface_id}`)
+    .sort()
+    .join(',')
+  return oldKeys !== newKeys
+}
+
+function genericEndpointsPayload(username, password) {
   const payload = {
     endpoints: genericEndpoints.value.map((ep) => ({
       role: ep.role,
@@ -365,34 +376,57 @@ function saveGenericEndpoints() {
       fields: ep.fields || {},
     })),
   }
-  putServiceEndpoints(service.value.id, payload)
-    .then((rows) => {
-      service.value.endpoints = rows
-      return getService(service.value.id)
-    })
-    .then((data) => {
-      if (data) {
-        service.value = { ...service.value, ...data }
-      }
-      toast.add({
-        color: 'success',
-        title: 'Successful',
-        description: 'Endpoints saved',
-        duration: 3000,
+  if (username) {
+    payload.username = username
+    payload.password = password
+  }
+  return payload
+}
+
+function saveGenericEndpoints() {
+  const needCreds = Boolean(service.value.applied_to_device) && endpointBindingsChanged()
+  const run = (username, password) => {
+    genericSaving.value = true
+    putServiceEndpoints(service.value.id, genericEndpointsPayload(username, password))
+      .then((rows) => {
+        if (username && password) {
+          rememberSuccess(genericDeviceIds(), username, password)
+        }
+        service.value.endpoints = rows
+        return getService(service.value.id)
       })
-      emit('saved')
-    })
-    .catch((err) => {
-      toast.add({
-        color: 'error',
-        title: 'Error',
-        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
-        duration: 4000,
+      .then((data) => {
+        if (data) {
+          service.value = { ...service.value, ...data }
+        }
+        toast.add({
+          color: 'success',
+          title: 'Successful',
+          description: 'Endpoints saved',
+          duration: 3000,
+        })
+        emit('saved')
       })
-    })
-    .finally(() => {
-      genericSaving.value = false
-    })
+      .catch((err) => {
+        if (username && password) {
+          rememberFailure(genericDeviceIds(), username, password)
+        }
+        toast.add({
+          color: 'error',
+          title: 'Error',
+          description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+          duration: 4000,
+        })
+      })
+      .finally(() => {
+        genericSaving.value = false
+      })
+  }
+  if (needCreds) {
+    withCredentials(genericDeviceIds(), run)
+    return
+  }
+  run('', '')
 }
 
 function genericDeviceIds() {
@@ -400,32 +434,27 @@ function genericDeviceIds() {
 }
 
 function saveAndPushGeneric() {
-  genericSaving.value = true
-  const payload = {
-    endpoints: genericEndpoints.value.map((ep) => ({
-      role: ep.role,
-      device_id: ep.device_id,
-      interface_id: ep.interface_id,
-      fields: ep.fields || {},
-    })),
-  }
-  putServiceEndpoints(service.value.id, payload)
-    .then((rows) => {
-      service.value.endpoints = rows
-      emit('saved')
-      withCredentials(genericDeviceIds(), doPushGeneric)
-    })
-    .catch((err) => {
-      toast.add({
-        color: 'error',
-        title: 'Error',
-        description: err?.response?.data?.error ?? 'Failed to save endpoints.',
-        duration: 4000,
+  withCredentials(genericDeviceIds(), (username, password) => {
+    genericSaving.value = true
+    putServiceEndpoints(service.value.id, genericEndpointsPayload(username, password))
+      .then((rows) => {
+        service.value.endpoints = rows
+        emit('saved')
+        doPushGeneric(username, password)
       })
-    })
-    .finally(() => {
-      genericSaving.value = false
-    })
+      .catch((err) => {
+        rememberFailure(genericDeviceIds(), username, password)
+        toast.add({
+          color: 'error',
+          title: 'Error',
+          description: err?.response?.data?.error ?? 'Failed to save endpoints.',
+          duration: 4000,
+        })
+      })
+      .finally(() => {
+        genericSaving.value = false
+      })
+  })
 }
 
 function doPushGeneric(username, password) {
@@ -1030,21 +1059,18 @@ function deleteServiceConfirmed() {
       </p>
 
       <div
-        v-if="
-          deleteTarget?.service_type === 'ELINE' &&
-          (deleteTarget?.l2vpn_netbox_id || deleteTarget?.applied_to_device)
-        "
+        v-if="deleteTarget?.l2vpn_netbox_id || deleteTarget?.applied_to_device"
         class="flex flex-col gap-2 mt-4"
       >
         <UCheckbox
           v-if="deleteTarget?.l2vpn_netbox_id"
           v-model="deleteRemoveNetbox"
-          label="Also remove the L2VPN, subinterfaces and terminations from NetBox"
+          label="Also remove the L2VPN/VRF, subinterfaces and terminations from NetBox"
         />
         <UCheckbox
           v-if="deleteTarget?.applied_to_device"
           v-model="deleteRemoveDevice"
-          label="Also remove the pseudowire/patch config from the endpoint device(s)"
+          label="Also remove the service config from the endpoint device(s)"
         />
       </div>
     </template>

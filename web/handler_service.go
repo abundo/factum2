@@ -459,6 +459,8 @@ func (ctrl *Controller) ApiServiceUnrealize(c *echo.Context) error {
 			"connection_type_id": nil,
 			"pseudowire_id":      0,
 			"l2_vpn_netbox_id":   0,
+			"bandwidth_mbps":     0,
+			"max_mac_addresses":  0,
 		}
 		return tx.Model(&models.Service{}).Where("id = ?", existing.ID).Updates(updates).Error
 	}); err != nil {
