@@ -507,7 +507,8 @@ PUT /api/service/:id/endpoints
 
 The whole set is replaced. Drag a virtual **service_ref** onto another
 interface to rebind (same PUT; server tears down Applied* on the old
-device, then replace, then add on the new device).
+device, then replace, then add on the new device). Device login for that
+teardown/add is `DeviceSyncAuth` (exact name, else `default`).
 
 **Push** (`POST /api/service/:id/push`) per endpoint device:
 

@@ -9,15 +9,15 @@ import {
   updateScope,
 } from '@/api/config'
 import { getDevice } from '@/api/devices'
-import { getService, putServiceEndpoints, unrealizeService, updateServiceType } from '@/api/services'
-import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
-import PasswordInput from '@/components/PasswordInput.vue'
-import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
-import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import {
-  endpointBindingsChanged,
-  reshapeEndpoints,
-} from '@/utils/serviceEndpoints'
+  getService,
+  putServiceEndpoints,
+  unrealizeService,
+  updateServiceType,
+} from '@/api/services'
+import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import { reshapeEndpoints } from '@/utils/serviceEndpoints'
 import {
   cfgmgmtBaselineSchema,
   cfgmgmtPackSchema,
@@ -40,16 +40,6 @@ const props = defineProps({
 const emit = defineEmits(['assign', 'delete-assignment', 'saved'])
 
 const toast = useToast()
-const {
-  credentialsDialog,
-  promptUsername,
-  promptPassword,
-  withCredentials,
-  submitCredentials,
-  cancelCredentials,
-  rememberSuccess,
-  rememberFailure,
-} = useDeviceCredentials()
 const saving = ref(false)
 const features = ref([])
 const openFeatureId = ref(null)
@@ -301,54 +291,30 @@ function saveServiceTypeFields() {
 
 function saveServiceEndpoints() {
   if (!serviceRow.value?.id) return
-  const body = {
+  genericSaving.value = true
+  putServiceEndpoints(serviceRow.value.id, {
     endpoints: genericEndpoints.value.map((ep) => ({
       role: 'interface',
       device_id: ep.device_id,
       interface_id: ep.interface_id,
       fields: ep.fields || {},
     })),
-  }
-  const deviceIds = [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
-  const run = (username, password) => {
-    genericSaving.value = true
-    if (username) {
-      body.username = username
-      body.password = password
-    }
-    putServiceEndpoints(serviceRow.value.id, body)
-      .then(() => {
-        if (username && password) {
-          rememberSuccess(deviceIds, username, password)
-        }
-        toast.add({ color: 'success', title: 'Successful', description: 'Endpoints saved' })
-        emit('saved')
-        return loadService(serviceRow.value.id)
+  })
+    .then(() => {
+      toast.add({ color: 'success', title: 'Successful', description: 'Endpoints saved' })
+      emit('saved')
+      return loadService(serviceRow.value.id)
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: errMsg(err, 'Failed to save endpoints.'),
       })
-      .catch((err) => {
-        if (username && password) {
-          rememberFailure(deviceIds, username, password)
-        }
-        toast.add({
-          color: 'error',
-          title: 'Error',
-          description: errMsg(err, 'Failed to save endpoints.'),
-        })
-      })
-      .finally(() => {
-        genericSaving.value = false
-      })
-  }
-  const needCreds =
-    Boolean(serviceRow.value.applied_to_device) &&
-    endpointBindingsChanged(serviceRow.value.endpoints, genericEndpoints.value)
-  if (needCreds) {
-    withCredentials(deviceIds, run, () => {
+    })
+    .finally(() => {
       genericSaving.value = false
     })
-    return
-  }
-  run('', '')
 }
 
 function openUnrealize() {
@@ -357,20 +323,20 @@ function openUnrealize() {
   unrealizeOpen.value = true
 }
 
-function doUnrealize(username, password) {
+function doUnrealize() {
   if (!serviceRow.value?.id) return
-  const deviceIds = [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))]
   unrealizing.value = true
   unrealizeService(serviceRow.value.id, {
     remove_from_netbox: unrealizeRemoveNetbox.value,
     remove_from_device: unrealizeRemoveDevice.value,
-    username,
-    password,
   })
     .then((data) => {
-      if (username && password) rememberSuccess(deviceIds, username, password)
       unrealizeOpen.value = false
-      toast.add({ color: 'success', title: 'Unrealized', description: 'Technical realization removed.' })
+      toast.add({
+        color: 'success',
+        title: 'Unrealized',
+        description: 'Technical realization removed.',
+      })
       if (data?.service) {
         serviceRow.value = { ...serviceRow.value, ...data.service }
         schemaValues.value = { ...(data.service.fields || {}) }
@@ -379,7 +345,6 @@ function doUnrealize(username, password) {
       emit('saved')
     })
     .catch((err) => {
-      if (username && password) rememberFailure(deviceIds, username, password)
       toast.add({
         color: 'error',
         title: 'Error',
@@ -392,18 +357,7 @@ function doUnrealize(username, password) {
 }
 
 function confirmUnrealize() {
-  if (unrealizeRemoveDevice.value) {
-    unrealizeOpen.value = false
-    withCredentials(
-      [...new Set(genericEndpoints.value.map((ep) => ep.device_id).filter(Boolean))],
-      doUnrealize,
-      () => {
-        unrealizing.value = false
-      },
-    )
-    return
-  }
-  doUnrealize('', '')
+  doUnrealize()
 }
 
 function resetResourceForm(node) {
@@ -826,11 +780,7 @@ function toggleFeature(id) {
               @click="addResourceCIDR"
             />
           </div>
-          <div
-            v-for="(_, i) in resourceForm.cidrs"
-            :key="i"
-            class="mb-2 flex items-center gap-2"
-          >
+          <div v-for="(_, i) in resourceForm.cidrs" :key="i" class="mb-2 flex items-center gap-2">
             <UInput
               v-model="resourceForm.cidrs[i]"
               :disabled="!canWrite"
@@ -928,11 +878,7 @@ function toggleFeature(id) {
     </template>
   </div>
 
-  <UModal
-    v-model:open="unrealizeOpen"
-    title="Unrealize service"
-    :ui="{ content: 'sm:max-w-md' }"
-  >
+  <UModal v-model:open="unrealizeOpen" title="Unrealize service" :ui="{ content: 'sm:max-w-md' }">
     <template #body>
       <p class="text-sm m-0">
         Drops the technical realization (type, endpoints, tree node) and keeps the commercial row.
@@ -948,53 +894,7 @@ function toggleFeature(id) {
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
-      <UButton
-        label="Unrealize"
-        color="error"
-        :loading="unrealizing"
-        @click="confirmUnrealize"
-      />
-    </template>
-  </UModal>
-
-  <UModal
-    v-model:open="credentialsDialog"
-    title="Device credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-    @update:open="(isOpen) => !isOpen && cancelCredentials()"
-  >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label for="inspector-prompt-username" class="text-sm text-muted-color">Username</label>
-          <UInput
-            id="inspector-prompt-username"
-            v-model="promptUsername"
-            autocomplete="off"
-            autofocus
-            class="w-full"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="inspector-prompt-password" class="text-sm text-muted-color">Password</label>
-          <PasswordInput
-            id="inspector-prompt-password"
-            v-model="promptPassword"
-            autocomplete="new-password"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
-      <UButton
-        label="Continue"
-        icon="i-lucide-check"
-        :disabled="!promptUsername || !promptPassword"
-        @click="submitCredentials"
-      />
+      <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
     </template>
   </UModal>
 </template>

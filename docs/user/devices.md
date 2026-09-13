@@ -15,14 +15,15 @@ brought in.
 model, and primary IPv4. Open a row to:
 
 - Inspect interfaces and addresses
-- Refresh interface state from the device (needs write permission and
-  device credentials)
+- Refresh interface state from the device (needs write permission)
 - Edit VLANs on an interface
 - Attach or open a [service](services.md)
 - Open the Oxidized backup for that node, when Oxidized is enabled
 
-Credentials used to talk to a device are prompted in the GUI and can be
-remembered for the browser session. They are not stored in Factum.
+Device login uses the credentials under **Admin → Device sync** (a
+per-device override, or the `default` row) — the same store as service
+push and device-sync. `factum2-driver-cli` still takes `--username` /
+`--password`.
 
 ## Network map
 

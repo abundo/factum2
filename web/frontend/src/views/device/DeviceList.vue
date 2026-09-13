@@ -16,27 +16,15 @@ import {
   putOpticalPort,
 } from '@/api/optical'
 import OxidizedNodeDialog from '@/components/OxidizedNodeDialog.vue'
-import PasswordInput from '@/components/PasswordInput.vue'
 import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
-import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 
 const toast = useToast()
 const authStore = useAuthStore()
-const {
-  credentialsDialog,
-  promptUsername,
-  promptPassword,
-  withCredentials,
-  submitCredentials,
-  cancelCredentials,
-  rememberSuccess,
-  rememberFailure,
-} = useDeviceCredentials()
 
 const devices = ref([])
 const loading = ref(true)
@@ -438,13 +426,11 @@ function openVlan() {
   vlanDialogOpen.value = true
 }
 
-function doRefreshInterfaces(username, password) {
+function refreshInterfaces() {
   if (!device.value) return
-  const deviceId = device.value.id
   refreshingInterfaces.value = true
-  refreshDeviceInterfaces(deviceId, username, password)
+  refreshDeviceInterfaces(device.value.id)
     .then((data) => {
-      rememberSuccess(deviceId, username, password)
       device.value = data
       snapshotDescriptions()
       toast.add({
@@ -455,7 +441,6 @@ function doRefreshInterfaces(username, password) {
       })
     })
     .catch((err) => {
-      rememberFailure(deviceId, username, password)
       toast.add({
         color: 'error',
         title: 'Refresh failed',
@@ -468,21 +453,23 @@ function doRefreshInterfaces(username, password) {
     })
 }
 
-function refreshInterfaces() {
+function updateInterfaces() {
   if (!device.value) return
-  withCredentials(device.value.id, doRefreshInterfaces)
-}
-
-function doUpdateInterfaces(username, password) {
-  if (!device.value) return
-  const deviceId = device.value.id
   const interfaces = (device.value.interfaces ?? [])
     .filter((iface) => iface.description !== originalDescriptions.value.get(iface.id))
     .map((iface) => ({ id: iface.id, description: iface.description }))
+  if (!interfaces.length) {
+    toast.add({
+      color: 'info',
+      title: 'Nothing to update',
+      description: 'No interface descriptions were changed.',
+      duration: 3000,
+    })
+    return
+  }
   updatingInterfaces.value = true
-  updateDeviceInterfaces(deviceId, username, password, interfaces)
+  updateDeviceInterfaces(device.value.id, interfaces)
     .then((data) => {
-      rememberSuccess(deviceId, username, password)
       device.value = data
       snapshotDescriptions()
       toast.add({
@@ -493,7 +480,6 @@ function doUpdateInterfaces(username, password) {
       })
     })
     .catch((err) => {
-      rememberFailure(deviceId, username, password)
       toast.add({
         color: 'error',
         title: 'Update failed',
@@ -504,23 +490,6 @@ function doUpdateInterfaces(username, password) {
     .finally(() => {
       updatingInterfaces.value = false
     })
-}
-
-function updateInterfaces() {
-  if (!device.value) return
-  const changed = (device.value.interfaces ?? []).some(
-    (iface) => iface.description !== originalDescriptions.value.get(iface.id),
-  )
-  if (!changed) {
-    toast.add({
-      color: 'info',
-      title: 'Nothing to update',
-      description: 'No interface descriptions were changed.',
-      duration: 3000,
-    })
-    return
-  }
-  withCredentials(device.value.id, doUpdateInterfaces)
 }
 
 onMounted(loadDevices)
@@ -941,49 +910,6 @@ onMounted(loadDevices)
 
     <template #footer>
       <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="interfacesDialog = false" />
-    </template>
-  </FormModal>
-
-  <FormModal
-    v-model:open="credentialsDialog"
-    :source="{ username: promptUsername, password: promptPassword }"
-    title="Device credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-    @update:open="(open) => !open && cancelCredentials()"
-  >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label for="prompt-username" class="text-sm text-muted-color">Username</label>
-          <UInput
-            id="prompt-username"
-            v-model="promptUsername"
-            autocomplete="off"
-            autofocus
-            class="w-full"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="prompt-password" class="text-sm text-muted-color">Password</label>
-          <PasswordInput
-            id="prompt-password"
-            v-model="promptPassword"
-            autocomplete="new-password"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-      </div>
-    </template>
-
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
-      <UButton
-        label="Continue"
-        icon="i-lucide-check"
-        :disabled="!promptUsername || !promptPassword"
-        @click="submitCredentials"
-      />
     </template>
   </FormModal>
 

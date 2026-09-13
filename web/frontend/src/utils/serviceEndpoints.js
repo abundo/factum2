@@ -3,26 +3,13 @@ export function emptyServiceEndpoint(extra = {}) {
     role: 'interface',
     device_id: extra.device_id ?? null,
     interface_id: extra.interface_id ?? null,
-    fields: { ...(extra.fields || {}) },
+    fields: { ...extra.fields },
     label: extra.label ?? '',
   }
 }
 
 export function isDraftEndpoint(ep) {
   return !ep?.device_id || !ep?.interface_id
-}
-
-export function endpointBindingKey(ep) {
-  return `${ep?.device_id ?? ''}:${ep?.interface_id ?? ''}`
-}
-
-export function endpointBindingsChanged(saved, current) {
-  const oldKeys = (saved ?? [])
-    .map((ep) => endpointBindingKey(ep))
-    .sort()
-    .join(',')
-  const newKeys = (current ?? []).map((ep) => endpointBindingKey(ep)).sort().join(',')
-  return oldKeys !== newKeys
 }
 
 export function reshapeEndpoints(spec, current = [], draft = null) {

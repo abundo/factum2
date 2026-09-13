@@ -479,7 +479,7 @@ web/frontend/src/
   components/ shared components (DeviceInterfacePicker, ServiceEditDialog, ...)
   layout/     app chrome (AppLayout, AppTopbar, AppSidebar, AppMenu, ...)
   router/     vue-router routes
-  stores/     pinia stores (auth.js, deviceCredentials.js)
+  stores/     pinia stores (auth.js)
   views/      route-level pages, grouped by domain (admin/, auth/, customer/,
               device/, service/, sync/)
 ```

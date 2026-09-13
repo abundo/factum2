@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { login as apiLogin, logout as apiLogout } from '@/api/auth'
 import { getMe } from '@/api/me'
-import { useDeviceCredentialsStore } from '@/stores/deviceCredentials'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -48,8 +47,6 @@ export const useAuthStore = defineStore('auth', {
         await apiLogout()
       } finally {
         this.user = null
-        // Device SSH passwords must not outlive the factum session.
-        useDeviceCredentialsStore().clearAll()
       }
     },
   },

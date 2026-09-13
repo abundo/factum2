@@ -61,7 +61,7 @@ this tree. **Detach** removes the device from the tree and its config
 children (parameters, CLI, interfaces). The inventory row stays.
 
 A **service** node is the same CN/CI row as on the Services page. Create
-from the tree: pick a **definition** (Config → **Catalog** → Service types — Factum
+from the tree: pick a **definition** (Config → **Catalog** → Service definitions — Factum
 ships none), then the form for that definition. The row is written with
 **no endpoints** unless you fill the interface slots; save must meet the
 definition’s min/max. Virtual refs show under each involved port (two
@@ -93,7 +93,10 @@ catalog definition plus CLI objects, not a new Go package.
    for that type + NOS (under `_catalog/cli`).
 3. Feature blobs are rendered with the service, endpoints, macros, and
    resolved parameter values.
-4. The driver applies the CLI to the device.
+4. The driver applies the CLI to the device, logging in with **Admin →
+   Device sync** credentials (a per-device override, or the `default`
+   row). The same stored auth is used when the tree rebinds a pushed
+   endpoint or unrealizes with “remove from device”.
 
 Use **Preview** on this page against a device before pushing a new CLI
 object from the service dialog. Push is still service-only; baseline CLI

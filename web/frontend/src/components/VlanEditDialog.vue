@@ -2,8 +2,6 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { updateInterfaceVlans } from '@/api/devices'
-import PasswordInput from '@/components/PasswordInput.vue'
-import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 
 const props = defineProps({
   // Full interface list for the open device - matrix rows.
@@ -24,16 +22,6 @@ const open = defineModel('open', { type: Boolean, default: false })
 const emit = defineEmits(['saved'])
 
 const toast = useToast()
-const {
-  credentialsDialog,
-  promptUsername,
-  promptPassword,
-  withCredentials,
-  submitCredentials,
-  cancelCredentials,
-  rememberSuccess,
-  rememberFailure,
-} = useDeviceCredentials()
 
 // Cell states cycle: Untagged → Tagged → QinQ → Excluded → …
 const STATES = ['untagged', 'tagged', 'qinq', 'excluded']
@@ -354,7 +342,7 @@ function addVlanColumn() {
   addVlanInput.value = null
 }
 
-function doSave(username, password) {
+function save() {
   if (!props.deviceId) return
 
   const payload = []
@@ -389,11 +377,9 @@ function doSave(username, password) {
     return
   }
 
-  const deviceId = props.deviceId
   saving.value = true
-  updateInterfaceVlans(deviceId, username, password, payload)
+  updateInterfaceVlans(props.deviceId, payload)
     .then((data) => {
-      rememberSuccess(deviceId, username, password)
       toast.add({
         color: 'success',
         title: 'VLANs updated',
@@ -406,7 +392,6 @@ function doSave(username, password) {
       emit('saved', data)
     })
     .catch((err) => {
-      rememberFailure(deviceId, username, password)
       toast.add({
         color: 'error',
         title: 'Update failed',
@@ -417,19 +402,6 @@ function doSave(username, password) {
     .finally(() => {
       saving.value = false
     })
-}
-
-function save() {
-  if (!hasChanges.value) {
-    toast.add({
-      color: 'info',
-      title: 'Nothing to save',
-      description: 'No VLAN assignments were changed.',
-      duration: 3000,
-    })
-    return
-  }
-  withCredentials(props.deviceId, doSave)
 }
 
 function metaFor(state) {
@@ -574,49 +546,6 @@ function metaFor(state) {
         :loading="saving"
         :disabled="!hasChanges"
         @click="save"
-      />
-    </template>
-  </FormModal>
-
-  <FormModal
-    v-model:open="credentialsDialog"
-    :source="{ username: promptUsername, password: promptPassword }"
-    title="Device credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-    @update:open="(isOpen) => !isOpen && cancelCredentials()"
-  >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label for="vlan-prompt-username" class="text-sm text-muted-color">Username</label>
-          <UInput
-            id="vlan-prompt-username"
-            v-model="promptUsername"
-            autocomplete="off"
-            autofocus
-            class="w-full"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="vlan-prompt-password" class="text-sm text-muted-color">Password</label>
-          <PasswordInput
-            id="vlan-prompt-password"
-            v-model="promptPassword"
-            autocomplete="new-password"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-      </div>
-    </template>
-
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
-      <UButton
-        label="Continue"
-        icon="i-lucide-check"
-        :disabled="!promptUsername || !promptPassword"
-        @click="submitCredentials"
       />
     </template>
   </FormModal>

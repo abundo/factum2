@@ -594,6 +594,125 @@ func TestApiServiceEndpointsPutTeardownOnRebind(t *testing.T) {
 	}
 }
 
+func TestApiServiceEndpointsPutRebindUsesDeviceSyncAuth(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Create(&models.DeviceSyncAuth{
+		Name: "default", Username: "sync-user", Password: "sync-pass",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctrl := &Controller{DB: db}
+	st := createTestELANType(t, db)
+	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := st.ID
+	cli, err := cfgmgmt.CreateScope(db, &models.ConfigScope{
+		ParentID: &parent.ID, Name: "eos", Kind: models.ConfigScopeKindCLI,
+		ServiceTypeID: &id, Platform: "eos", PayloadKind: models.PayloadKindCLI, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feat := models.ConfigCLIFeature{ScopeID: cli.ID, Name: "apply", AddCommands: "add {{.Name}}", RemoveCommands: "remove {{.Name}}"}
+	if err := db.Create(&feat).Error; err != nil {
+		t.Fatal(err)
+	}
+	var gotCreds []deviceCredentialsRequest
+	ctrl.driverFn = func(_ *models.Device, creds deviceCredentialsRequest, _ *models.Settings) (drivers.DriverClient, error) {
+		gotCreds = append(gotCreds, creds)
+		return &sessionStub{}, nil
+	}
+	devA, devB, ifa, ifb := seedTwoPEs(t, db, "pe-auth1", "pe-auth2")
+	svc := models.Service{ServiceID: "CN00019", ServiceType: "ELAN"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgmgmt.ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{
+		{
+			Role: models.EndpointRoleInterface, DeviceID: devA.ID, InterfaceID: ifa.ID,
+			Fields:          cfgmgmt.EncodeEndpointFields(10, 0, 0),
+			AppliedDeviceID: devA.ID, AppliedIface: "Ethernet1", AppliedPlatform: "eos",
+			AppliedFields: cfgmgmt.EncodeEndpointFields(10, 0, 0),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{
+		"endpoints": []map[string]any{
+			{"device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 10}},
+		},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if len(gotCreds) == 0 {
+		t.Fatal("driver was not opened")
+	}
+	for _, creds := range gotCreds {
+		if creds.Username != "sync-user" || creds.Password != "sync-pass" {
+			t.Fatalf("creds = %+v, want DeviceSyncAuth default", creds)
+		}
+	}
+}
+
+func TestApiServiceEndpointsPutRebindRequiresDeviceSyncAuth(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := createTestELANType(t, db)
+	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := st.ID
+	cli, err := cfgmgmt.CreateScope(db, &models.ConfigScope{
+		ParentID: &parent.ID, Name: "eos", Kind: models.ConfigScopeKindCLI,
+		ServiceTypeID: &id, Platform: "eos", PayloadKind: models.PayloadKindCLI, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feat := models.ConfigCLIFeature{ScopeID: cli.ID, Name: "apply", AddCommands: "add {{.Name}}", RemoveCommands: "remove {{.Name}}"}
+	if err := db.Create(&feat).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA, devB, ifa, ifb := seedTwoPEs(t, db, "pe-noauth1", "pe-noauth2")
+	svc := models.Service{ServiceID: "CN00020", ServiceType: "ELAN"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgmgmt.ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{
+		{
+			Role: models.EndpointRoleInterface, DeviceID: devA.ID, InterfaceID: ifa.ID,
+			Fields:          cfgmgmt.EncodeEndpointFields(10, 0, 0),
+			AppliedDeviceID: devA.ID, AppliedIface: "Ethernet1", AppliedPlatform: "eos",
+			AppliedFields: cfgmgmt.EncodeEndpointFields(10, 0, 0),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{
+		"endpoints": []map[string]any{
+			{"device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 10}},
+		},
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServiceEndpointsPut(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no device-sync credentials") {
+		t.Fatalf("body = %s, want stored-auth error", rec.Body.String())
+	}
+}
+
 func TestApiServiceEndpointsPutTeardownSameDeviceIface(t *testing.T) {
 	db := newTestDB(t)
 	seedDeviceSyncAuth(t, db)

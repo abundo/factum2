@@ -12,27 +12,24 @@ export function getDeviceImpact(id) {
   return http.get(`/device/${id}/impact`).then((res) => res.data)
 }
 
-// Fetch interface descriptions directly from the device (EOS only) and
-// overwrite the stored Netbox/factum descriptions with what it reports.
-export function refreshDeviceInterfaces(id, username, password) {
-  return http
-    .post(`/device/${id}/interfaces/refresh`, { username, password })
-    .then((res) => res.data)
+// Fetch interface descriptions directly from the device and overwrite the
+// stored Netbox/factum descriptions with what it reports. Device login uses
+// Admin → Device sync credentials on the server.
+export function refreshDeviceInterfaces(id) {
+  return http.post(`/device/${id}/interfaces/refresh`).then((res) => res.data)
 }
 
-// Push edited interface descriptions out to the device (EOS only), Netbox,
-// and factum's own interface table.
-export function updateDeviceInterfaces(id, username, password, interfaces) {
-  return http
-    .post(`/device/${id}/interfaces/update`, { username, password, interfaces })
-    .then((res) => res.data)
+// Push edited interface descriptions out to the device, Netbox, and
+// factum's own interface table. Device login uses Admin → Device sync
+// credentials on the server.
+export function updateDeviceInterfaces(id, interfaces) {
+  return http.post(`/device/${id}/interfaces/update`, { interfaces }).then((res) => res.data)
 }
 
-// Push edited switchport/VLAN config out to the device (EOS/VRP only),
-// Netbox, and factum's own interface table. Each entry in `interfaces` is
-// { id, switchport_mode, untagged_vlan, tagged_vlans }.
-export function updateInterfaceVlans(id, username, password, interfaces) {
-  return http
-    .post(`/device/${id}/interfaces/vlans`, { username, password, interfaces })
-    .then((res) => res.data)
+// Push edited switchport/VLAN config out to the device, Netbox, and
+// factum's own interface table. Each entry in `interfaces` is
+// { id, switchport_mode, untagged_vlan, tagged_vlans }. Device login uses
+// Admin → Device sync credentials on the server.
+export function updateInterfaceVlans(id, interfaces) {
+  return http.post(`/device/${id}/interfaces/vlans`, { interfaces }).then((res) => res.data)
 }

@@ -24,9 +24,9 @@ import (
 //	AristaDriver for "eos", internal/drivers.NokiaDriver for "sros"/
 //	"sros-md", internal/drivers.IOSXRDriver for "ios-xr",
 //	internal/drivers.VrpDriver for "vrp", internal/drivers.CiscoSMBDriver
-//	for "ciscosmb"). Credentials are supplied
-//	per-request by the caller (never persisted), the same way the
-//	factum2-driver-cli commands take --username/--password.
+//	for "ciscosmb"). Device login uses DeviceSyncAuth (exact name, else
+//	default), same as service push and factum2-device-sync. factum2-driver-cli
+//	still takes --username/--password.
 //
 // --------------------------------------------------------------------------
 
@@ -85,9 +85,9 @@ func (ctrl *Controller) newDriverForDevice(device *models.Device, creds deviceCr
 
 // deviceSyncCredentials is the username/password internal/device-sync would
 // use for deviceName: an exact DeviceSyncAuth row if one exists, otherwise
-// the literal "default" row. Service push/delete use this instead of
-// credentials typed in the browser (interface refresh/update still take
-// per-request creds).
+// the literal "default" row. GUI device I/O (service push/delete/unrealize,
+// cfgmgmt rebind, interface refresh/update, VLAN push) uses this instead of
+// credentials typed in the browser.
 func (ctrl *Controller) deviceSyncCredentials(deviceName string) (deviceCredentialsRequest, error) {
 	var rows []models.DeviceSyncAuth
 	if err := ctrl.DB.Where("name IN ?", []string{deviceName, "default"}).Find(&rows).Error; err != nil {
@@ -160,11 +160,6 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 
-	var creds deviceCredentialsRequest
-	if err := c.Bind(&creds); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-
 	devices, err := fetchDevices(c.Request().Context(), ctrl.DB, []uint{id})
 	if err != nil || len(devices) == 0 {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
@@ -178,6 +173,10 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	creds, err := ctrl.deviceSyncCredentials(device.Name)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
 
 	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
@@ -230,7 +229,6 @@ type interfaceDescriptionUpdate struct {
 }
 
 type deviceInterfacesUpdateRequest struct {
-	deviceCredentialsRequest
 	Interfaces []interfaceDescriptionUpdate `json:"interfaces"`
 }
 
@@ -284,8 +282,12 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdate(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	creds, err := ctrl.deviceSyncCredentials(device.Name)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
+	}
 
-	drv, err := ctrl.newDriverForDevice(&device, req.deviceCredentialsRequest, settings)
+	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
@@ -325,7 +327,6 @@ type interfaceVlanUpdate struct {
 }
 
 type deviceInterfacesUpdateVlansRequest struct {
-	deviceCredentialsRequest
 	Interfaces []interfaceVlanUpdate `json:"interfaces"`
 }
 
@@ -394,8 +395,12 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdateVlans(c *echo.Context) error {
 	if settings.DeviceSyncVlanGroupName == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "vlan sync is disabled: no Netbox VLAN group configured (see the Device sync admin page)"})
 	}
+	creds, err := ctrl.deviceSyncCredentials(device.Name)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
+	}
 
-	drv, err := ctrl.newDriverForDevice(&device, req.deviceCredentialsRequest, settings)
+	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}

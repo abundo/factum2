@@ -607,7 +607,7 @@ sequenceDiagram
 
 Push (`apiServiceGenericPush`):
 
-- Unchanged entry point and credentials. **Does not include baseline CLI.**
+- Unchanged entry point. Device login is `DeviceSyncAuth` (exact name, else `default`), same as device-sync. **Does not include baseline CLI.**
 - Command list built by the service-translation renderer instead of `RenderPackApplyBody`.
 - `RequireCLIPack` becomes `RequireCLIObject` (must be `payload_kind=cli`, the **column**).
 - `isSupportedDriverPlatform` includes `vrp` and `ciscosmb`; VRP implements `CLISessionApplier` (`system-view` … `return`), Cisco SMB `configure` … `end`. The `"CLI object exists but this platform cannot apply CLI sessions yet"` error remains for platforms whose driver does not.

@@ -199,9 +199,9 @@ onMounted(loadDeviceSyncAuths)
           <label for="device_sync_enabled" class="font-bold">Enabled</label>
         </div>
         <p class="text-muted-color text-sm -mt-3">
-          Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings
-          are shared with the Netbox tab under Sources settings; per-device login credentials
-          are managed below.
+          Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are
+          shared with the Netbox tab under Sources settings; per-device login credentials are
+          managed below.
         </p>
         <div>
           <label for="device_sync_vrf_in_global" class="block font-bold mb-3"
@@ -264,9 +264,10 @@ onMounted(loadDeviceSyncAuths)
         <SearchInput v-model="globalFilter" />
       </div>
       <p class="text-muted-color text-sm mb-4">
-        Login credentials internal/device-sync uses to connect directly to devices. Name is either
-        a device name (an override for that one device) or the literal <code>default</code>, used
-        for any device without its own entry.
+        Login credentials used to connect directly to devices: device-sync, service
+        push/delete/unrealize, Config-tree rebind, and GUI interface refresh/VLAN push. Name is
+        either a device name (an override for that one device) or the literal <code>default</code>,
+        used for any device without its own entry.
       </p>
 
       <UTable
@@ -309,7 +310,12 @@ onMounted(loadDeviceSyncAuths)
     </div>
   </template>
 
-  <FormModal v-model:open="authDialog" :source="auth" title="Device Sync Credentials" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal
+    v-model:open="authDialog"
+    :source="auth"
+    title="Device Sync Credentials"
+    :ui="{ content: 'sm:max-w-sm' }"
+  >
     <template #body>
       <div class="flex flex-col gap-6">
         <div>
@@ -319,11 +325,13 @@ onMounted(loadDeviceSyncAuths)
             v-model.trim="auth.name"
             :color="submitted && !auth.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !auth.name?.trim()"
-            placeholder="device name, or &quot;default&quot;"
+            placeholder='device name, or "default"'
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !auth.name?.trim()" class="text-red-500">Name is required.</small>
+          <small v-if="submitted && !auth.name?.trim()" class="text-red-500"
+            >Name is required.</small
+          >
         </div>
         <div>
           <label for="username" class="block font-bold mb-3">Username</label>
@@ -332,7 +340,9 @@ onMounted(loadDeviceSyncAuths)
         <div>
           <label for="password" class="block font-bold mb-3">Password</label>
           <PasswordInput id="password" v-model="auth.password" class="w-full" />
-          <small v-if="auth.id" class="text-muted-color">Leave blank to keep the current password.</small>
+          <small v-if="auth.id" class="text-muted-color"
+            >Leave blank to keep the current password.</small
+          >
         </div>
       </div>
     </template>

@@ -31,7 +31,6 @@ import {
 import { getCustomers } from '@/api/customers'
 import { getDevices } from '@/api/devices'
 import {
-  getService,
   getServiceEndpoints,
   getServices,
   putServiceEndpoints,
@@ -40,11 +39,9 @@ import {
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
-import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
-import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 import {
@@ -58,22 +55,12 @@ defineOptions({ name: 'ConfigPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
-const {
-  credentialsDialog,
-  promptUsername,
-  promptPassword,
-  withCredentials,
-  submitCredentials,
-  cancelCredentials,
-  rememberSuccess,
-  rememberFailure,
-} = useDeviceCredentials()
 const treeRef = ref(null)
 const filter = ref('')
 const saving = ref(false)
 const tab = ref('tree')
 const catalogOpen = ref(false)
-const catalogTab = ref('variables')
+const catalogTab = ref('types')
 const selected = ref(null)
 const reloadKey = ref(0)
 
@@ -130,7 +117,7 @@ const tabItems = [
 ]
 const catalogTabItems = [
   { label: 'Variables', value: 'variables', slot: 'variables' },
-  { label: 'Service types', value: 'types', slot: 'types' },
+  { label: 'Service definitions', value: 'types', slot: 'types' },
   { label: 'Macros', value: 'macros', slot: 'macros' },
 ]
 
@@ -253,7 +240,12 @@ function canRename(node) {
   if (!node?.id) return false
   if (isReservedFolder(node)) return false
   if (node.kind === 'parameter' && node.title === 'parameters') return false
-  return isOrgKind(node.kind) || node.kind === 'parameter' || node.kind === 'cli' || node.kind === 'resource'
+  return (
+    isOrgKind(node.kind) ||
+    node.kind === 'parameter' ||
+    node.kind === 'cli' ||
+    node.kind === 'resource'
+  )
 }
 
 const renameKindLabels = {
@@ -748,8 +740,8 @@ function endpointMatchesRef(ep, node) {
   )
 }
 
-function endpointPutBody(rows, username, password) {
-  const body = {
+function endpointPutBody(rows) {
+  return {
     endpoints: rows.map((ep) => ({
       role: ep.role,
       device_id: ep.device_id,
@@ -757,37 +749,10 @@ function endpointPutBody(rows, username, password) {
       fields: ep.fields || {},
     })),
   }
-  if (username) {
-    body.username = username
-    body.password = password
-  }
-  return body
 }
 
-function putEndpointsMaybeCreds(serviceId, rows) {
-  const deviceIds = [...new Set(rows.map((ep) => ep.device_id).filter(Boolean))]
-  return getService(serviceId).then((svc) => {
-    if (!svc?.applied_to_device) {
-      return putServiceEndpoints(serviceId, endpointPutBody(rows))
-    }
-    return new Promise((resolve, reject) => {
-      withCredentials(
-        deviceIds,
-        (username, password) => {
-          putServiceEndpoints(serviceId, endpointPutBody(rows, username, password))
-            .then((data) => {
-              rememberSuccess(deviceIds, username, password)
-              resolve(data)
-            })
-            .catch((err) => {
-              rememberFailure(deviceIds, username, password)
-              reject(err)
-            })
-        },
-        () => reject(Object.assign(new Error('cancelled'), { cancelled: true })),
-      )
-    })
-  })
+function putEndpoints(serviceId, rows) {
+  return putServiceEndpoints(serviceId, endpointPutBody(rows))
 }
 
 function onRebind({ ref, target }) {
@@ -803,14 +768,13 @@ function onRebind({ ref, target }) {
           fields: ep.fields || {},
         }
       })
-      return putEndpointsMaybeCreds(ref.service_row_id, next)
+      return putEndpoints(ref.service_row_id, next)
     })
     .then(() => {
       reloadKey.value += 1
       loadScopesIndex()
     })
     .catch((err) => {
-      if (err?.cancelled) return
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Rebind failed.') })
     })
 }
@@ -935,9 +899,7 @@ function saveDialog() {
             parent_id: form.value.parent_id,
             kind: 'service',
             service_id: realizeId,
-          }).catch((err) =>
-            swallowAttachConflict(err, findServiceScope(listScopes, realizeId)),
-          ),
+          }).catch((err) => swallowAttachConflict(err, findServiceScope(listScopes, realizeId))),
         )
         .then((node) =>
           afterNode(node || { id: 0, name: '', kind: 'service', service_id: realizeId }, realizeId),
@@ -988,7 +950,10 @@ function saveDialog() {
       if (wasRename && node?.id && selected.value?.id === node.id) {
         selected.value = { ...selected.value, title: node.name }
       }
-      if (node?.id && (node.kind === 'parameter' || node.kind === 'cli' || node.kind === 'resource')) {
+      if (
+        node?.id &&
+        (node.kind === 'parameter' || node.kind === 'cli' || node.kind === 'resource')
+      ) {
         selected.value = {
           key: String(node.id),
           id: node.id,
@@ -1022,7 +987,7 @@ function performDelete() {
     const node = c.node
     req = getServiceEndpoints(node.service_row_id).then((rows) => {
       const next = (rows ?? []).filter((ep) => !endpointMatchesRef(ep, node))
-      return putEndpointsMaybeCreds(node.service_row_id, next)
+      return putEndpoints(node.service_row_id, next)
     })
   }
   if (c.kind === 'variable') req = deleteVariable(c.id).then(loadVariables)
@@ -1048,7 +1013,6 @@ function performDelete() {
       }
     })
     .catch((err) => {
-      if (err?.cancelled) return
       toast.add({
         color: 'error',
         title: 'Error',
@@ -1814,7 +1778,8 @@ onBeforeUnmount(() => {
         <template #types>
           <div class="flex flex-col gap-3 py-3">
             <p class="text-muted-color text-sm m-0">
-              Vendor-agnostic classes (ELINE, ELAN, …). CLI for a type lives under
+              What a service consists of (bandwidth, interfaces, VLAN, prefixes, …). This does not
+              create a customer service. CLI for a definition lives under
               <code>_catalog/cli</code> in the tree.
             </p>
             <div class="flex justify-end">
@@ -1834,7 +1799,7 @@ onBeforeUnmount(() => {
                 { accessorKey: 'netbox_type', header: 'NetBox type' },
                 { id: 'actions', header: '' },
               ]"
-              empty="No service types."
+              empty="No service definitions."
             >
               <template #actions-cell="{ row }">
                 <div class="flex gap-1">
@@ -2007,8 +1972,7 @@ onBeforeUnmount(() => {
       <label class="block font-bold mb-2">Name</label>
       <UInput v-model="form.name" autofocus placeholder="peering-v4" />
       <p class="text-muted-color text-sm mt-2 m-0">
-        Named CIDR pool. Prefix fields look up this name on the interface → device → ancestor
-        chain.
+        Named CIDR pool. Prefix fields look up this name on the interface → device → ancestor chain.
       </p>
     </template>
     <template #footer>
@@ -2078,9 +2042,11 @@ onBeforeUnmount(() => {
   >
     <template #body>
       <div v-if="createStep === 'pick'" class="flex flex-col gap-3">
-        <p class="text-muted-color text-sm m-0">Pick a definition. Commercial inventory stays on Services.</p>
+        <p class="text-muted-color text-sm m-0">
+          Pick a definition. Commercial inventory stays on Services.
+        </p>
         <p v-if="!serviceTypes.length" class="text-muted-color text-sm m-0">
-          No definitions yet. Add them under Catalog → Service types.
+          No definitions yet. Add them under Catalog → Service definitions.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
@@ -2110,7 +2076,12 @@ onBeforeUnmount(() => {
             <div class="font-bold">{{ createDefinition?.name }}</div>
             <div class="text-sm text-muted-color">{{ createDefinition?.description }}</div>
           </div>
-          <UButton label="Change definition" variant="ghost" size="sm" @click="createStep = 'pick'" />
+          <UButton
+            label="Change definition"
+            variant="ghost"
+            size="sm"
+            @click="createStep = 'pick'"
+          />
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -2136,8 +2107,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p class="text-muted-color text-sm m-0">
-          Pick a commercial ServiceID on the form to realize that row; otherwise a new technical
-          row is created.
+          Pick a commercial ServiceID on the form to realize that row; otherwise a new technical row
+          is created.
         </p>
         <p v-if="form.from_interface" class="text-muted-color text-sm m-0">
           The first interface is pre-filled from the selected tree node.
@@ -2154,12 +2125,7 @@ onBeforeUnmount(() => {
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton
-        v-if="createStep === 'form'"
-        label="Create"
-        :loading="saving"
-        @click="saveDialog"
-      />
+      <UButton v-if="createStep === 'form'" label="Create" :loading="saving" @click="saveDialog" />
     </template>
   </FormModal>
 
@@ -2310,7 +2276,7 @@ onBeforeUnmount(() => {
   <FormModal
     :open="dialog === 'type'"
     :source="form"
-    title="Service type"
+    title="Service definition"
     :ui="{ content: 'sm:max-w-3xl max-h-[90vh]' }"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2494,47 +2460,6 @@ onBeforeUnmount(() => {
         color="error"
         :loading="saving"
         @click="performDelete"
-      />
-    </template>
-  </UModal>
-
-  <UModal
-    v-model:open="credentialsDialog"
-    title="Device credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-    @update:open="(isOpen) => !isOpen && cancelCredentials()"
-  >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label for="config-prompt-username" class="text-sm text-muted-color">Username</label>
-          <UInput
-            id="config-prompt-username"
-            v-model="promptUsername"
-            autocomplete="off"
-            autofocus
-            class="w-full"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="config-prompt-password" class="text-sm text-muted-color">Password</label>
-          <PasswordInput
-            id="config-prompt-password"
-            v-model="promptPassword"
-            autocomplete="new-password"
-            @keyup.enter="submitCredentials"
-          />
-        </div>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelCredentials" />
-      <UButton
-        label="Continue"
-        icon="i-lucide-check"
-        :disabled="!promptUsername || !promptPassword"
-        @click="submitCredentials"
       />
     </template>
   </UModal>

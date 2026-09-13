@@ -897,10 +897,11 @@ func (ctrl *Controller) ApiServiceEndpointsGet(c *echo.Context) error {
 type serviceEndpointsBody struct {
 	Fields    json.RawMessage             `json:"fields"`
 	Endpoints []models.ServiceEndpointDTO `json:"endpoints"`
-	Username  string                      `json:"username"`
-	Password  string                      `json:"password"`
 }
 
+// ApiServiceEndpointsPut replaces the service's endpoints. When a previous
+// push snapshot exists, rebind/remove talks to devices using DeviceSyncAuth
+// (same credentials as factum2-device-sync), not per-request username/password.
 func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {

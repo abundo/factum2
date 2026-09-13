@@ -63,7 +63,8 @@ fields the definition asks for (VLAN, ServiceID, …). There are no named
 A/B roles. Save endpoints on the service (dialog or Config inspector),
 then **Push** to render the CLI object for each device's NOS and apply
 it. Drag a tree ref to another port to rebind; Factum removes the old
-CLI when a previous push snapshot exists.
+CLI when a previous push snapshot exists. Rebind, unrealize-from-device,
+and push all log in with **Admin → Device sync** credentials.
 
 **Show configuration** on the edit dialog renders that CLI for the
 devices and interfaces currently selected (including unsaved picks). It
