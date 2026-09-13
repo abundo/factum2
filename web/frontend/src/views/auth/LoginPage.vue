@@ -10,11 +10,23 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
-const username = ref('')
+const REMEMBER_USERNAME_KEY = 'factum.rememberUsername'
+const savedUsername = localStorage.getItem(REMEMBER_USERNAME_KEY)
+
+const username = ref(savedUsername ?? '')
 const password = ref('')
 const showPassword = ref(false)
+const rememberMe = ref(savedUsername !== null)
 const error = ref(null)
 const loading = ref(false)
+
+function persistRememberedUsername() {
+  if (rememberMe.value) {
+    localStorage.setItem(REMEMBER_USERNAME_KEY, username.value)
+  } else {
+    localStorage.removeItem(REMEMBER_USERNAME_KEY)
+  }
+}
 
 function submit() {
   if (!username.value || !password.value) {
@@ -25,8 +37,9 @@ function submit() {
   loading.value = true
   error.value = null
   authStore
-    .login(username.value, password.value)
+    .login(username.value, password.value, rememberMe.value)
     .then(() => {
+      persistRememberedUsername()
       router.push(route.query.redirect ?? '/')
     })
     .catch((err) => {
@@ -89,6 +102,8 @@ function submit() {
               />
             </template>
           </UInput>
+
+          <UCheckbox id="remember-me" v-model="rememberMe" label="Remember me" class="mb-4" />
 
           <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-4" />
 

@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v5"
 )
 
@@ -39,7 +41,7 @@ func TestSetAuthCookieSecureFlag(t *testing.T) {
 			withSecureCookies(t, tc.secure)
 			rec := httptest.NewRecorder()
 			c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/api/login", nil), rec)
-			if err := setAuthCookie(c, 1); err != nil {
+			if err := setAuthCookie(c, 1, false); err != nil {
 				t.Fatalf("setAuthCookie: %v", err)
 			}
 			cookie := cookieByName(t, rec, "token")
@@ -54,6 +56,9 @@ func TestSetAuthCookieSecureFlag(t *testing.T) {
 			}
 			if cookie.Value == "" {
 				t.Error("cookie value is empty")
+			}
+			if cookie.MaxAge != int(sessionTTL.Seconds()) {
+				t.Errorf("MaxAge = %d, want %d", cookie.MaxAge, int(sessionTTL.Seconds()))
 			}
 		})
 	}
@@ -75,5 +80,50 @@ func TestClearAuthCookieSecureFlag(t *testing.T) {
 	}
 	if cookie.Value != "" {
 		t.Errorf("cleared cookie value = %q, want empty", cookie.Value)
+	}
+}
+
+func TestSetAuthCookieRememberMeTTL(t *testing.T) {
+	withSecureCookies(t, false)
+	cases := []struct {
+		name       string
+		rememberMe bool
+		wantTTL    time.Duration
+	}{
+		{"default is one day", false, sessionTTL},
+		{"remember me is 30 days", true, rememberTTL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/api/login", nil), rec)
+			if err := setAuthCookie(c, 1, tc.rememberMe); err != nil {
+				t.Fatalf("setAuthCookie: %v", err)
+			}
+			cookie := cookieByName(t, rec, "token")
+			if cookie.MaxAge != int(tc.wantTTL.Seconds()) {
+				t.Errorf("MaxAge = %d, want %d", cookie.MaxAge, int(tc.wantTTL.Seconds()))
+			}
+			skew := time.Until(cookie.Expires) - tc.wantTTL
+			if skew < -2*time.Second || skew > 2*time.Second {
+				t.Errorf("Expires skew = %v, want within 2s of %v", skew, tc.wantTTL)
+			}
+			parsed, _, err := jwt.NewParser().ParseUnverified(cookie.Value, jwt.MapClaims{})
+			if err != nil {
+				t.Fatalf("parse jwt: %v", err)
+			}
+			claims, ok := parsed.Claims.(jwt.MapClaims)
+			if !ok {
+				t.Fatal("jwt claims are not MapClaims")
+			}
+			exp, err := claims.GetExpirationTime()
+			if err != nil {
+				t.Fatalf("jwt exp: %v", err)
+			}
+			jwtSkew := time.Until(exp.Time) - tc.wantTTL
+			if jwtSkew < -2*time.Second || jwtSkew > 2*time.Second {
+				t.Errorf("jwt exp skew = %v, want within 2s of %v", jwtSkew, tc.wantTTL)
+			}
+		})
 	}
 }

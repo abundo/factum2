@@ -48,11 +48,28 @@ func jwtSigningKey(secret string) ([]byte, error) {
 	return []byte(secret), nil
 }
 
+const (
+	// sessionTTL is the default SPA login lifetime when "Remember me" is off.
+	sessionTTL = 24 * time.Hour
+	// rememberTTL is used when the login form sends remember_me=true.
+	rememberTTL = 30 * 24 * time.Hour
+)
+
+func authTTL(rememberMe bool) time.Duration {
+	if rememberMe {
+		return rememberTTL
+	}
+	return sessionTTL
+}
+
 func GenerateJWT(userID uint) (string, error) {
-	// Create the Claims
+	return generateJWT(userID, sessionTTL)
+}
+
+func generateJWT(userID uint, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"exp":     time.Now().Add(ttl).Unix(),
 		"iat":     time.Now().Unix(),
 	}
 

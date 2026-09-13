@@ -10,15 +10,19 @@ import (
 
 // setAuthCookie issues a fresh JWT for userID and stores it in the "token"
 // cookie that RequireAPIAuth/JWTCookieMiddleware read back on later requests.
-func setAuthCookie(c *echo.Context, userID uint) error {
-	tokenString, err := GenerateJWT(userID)
+// rememberMe selects the longer rememberTTL so the session survives more than
+// a day; otherwise the cookie and JWT last sessionTTL.
+func setAuthCookie(c *echo.Context, userID uint, rememberMe bool) error {
+	ttl := authTTL(rememberMe)
+	tokenString, err := generateJWT(userID, ttl)
 	if err != nil {
 		return err
 	}
 	c.SetCookie(&http.Cookie{
 		Name:     "token",
 		Value:    tokenString,
-		Expires:  time.Now().Add(24 * time.Hour),
+		Expires:  time.Now().Add(ttl),
+		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true, // Not needed by JS: the browser attaches it automatically.
 		Secure:   secureCookies,
 		SameSite: http.SameSiteLaxMode,
@@ -46,8 +50,9 @@ func clearAuthCookie(c *echo.Context) {
 // --------------------------------------------------------------------------
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 // ApiLogin authenticates the SPA: on success it issues the "token" cookie
@@ -71,7 +76,7 @@ func (ctrl *Controller) ApiLogin(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]any{"error": "invalid username or password"})
 	}
 
-	if err := setAuthCookie(c, user.ID); err != nil {
+	if err := setAuthCookie(c, user.ID, req.RememberMe); err != nil {
 		slog.Warn("Could not create a JWT token for", "user", req.Username)
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed to create session"})
 	}

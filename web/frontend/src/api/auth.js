@@ -1,7 +1,7 @@
 import http from './http'
 
-export function login(username, password) {
-  return http.post('/login', { username, password }).then((res) => res.data)
+export function login(username, password, rememberMe = false) {
+  return http.post('/login', { username, password, remember_me: rememberMe }).then((res) => res.data)
 }
 
 export function logout() {
