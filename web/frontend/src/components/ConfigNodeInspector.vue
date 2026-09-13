@@ -37,7 +37,7 @@ const props = defineProps({
   draftEndpoint: { type: Object, default: null },
 })
 
-const emit = defineEmits(['assign', 'delete-assignment', 'saved'])
+const emit = defineEmits(['assign', 'delete-assignment', 'saved', 'delete-service'])
 
 const toast = useToast()
 const saving = ref(false)
@@ -360,6 +360,15 @@ function confirmUnrealize() {
   doUnrealize()
 }
 
+function requestDeleteService() {
+  if (!serviceRow.value?.id) return
+  emit('delete-service', {
+    id: props.selected?.id,
+    service_id: serviceRow.value.id,
+    title: serviceRow.value.service_id || props.selected?.title,
+  })
+}
+
 function resetResourceForm(node) {
   const cidrs = node?.payload?.cidrs
   resourceForm.value = {
@@ -596,6 +605,12 @@ function toggleFeature(id) {
               variant="outline"
               color="error"
               @click="openUnrealize"
+            />
+            <UButton
+              v-if="!limeOwned"
+              label="Delete service"
+              color="error"
+              @click="requestDeleteService"
             />
             <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
             <UButton

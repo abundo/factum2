@@ -31,6 +31,7 @@ import {
 import { getCustomers } from '@/api/customers'
 import { getDevices } from '@/api/devices'
 import {
+  deleteService,
   getServiceEndpoints,
   getServices,
   putServiceEndpoints,
@@ -313,6 +314,7 @@ function itemsFor(node) {
     items.push({ id: 'remove-endpoint', label: 'Remove endpoint', danger: true })
   } else if (node.kind === 'service') {
     items.push({ id: 'sep2' }, { id: 'del', label: 'Detach from tree', danger: true })
+    items.push({ id: 'delete-service', label: 'Delete service', danger: true })
   } else if (
     node.kind !== 'interface' &&
     node.kind !== 'service_endpoint' &&
@@ -598,6 +600,9 @@ async function runMenu(id) {
   }
   if (id === 'detach' && node?.id) {
     confirm.value = { kind: 'detach', id: node.id, label: node.title }
+  }
+  if (id === 'delete-service' && node) {
+    openDeleteService(node)
   }
 }
 
@@ -976,6 +981,30 @@ function saveDialog() {
     })
 }
 
+function serviceRowIdOf(node) {
+  return node?.service_id || node?.service_row_id || null
+}
+
+function openDeleteService(node) {
+  const serviceId = serviceRowIdOf(node)
+  if (!serviceId) return
+  confirm.value = {
+    kind: 'delete-service',
+    id: node.id,
+    serviceId,
+    label: node.title,
+  }
+}
+
+// Full teardown: drop NetBox objects, unrealize CLI on every involved
+// device, then delete the inventory row (Lime-sourced rows 403).
+function deleteServiceFromTree(serviceId) {
+  return deleteService(serviceId, {
+    remove_from_netbox: true,
+    remove_from_device: true,
+  })
+}
+
 function performDelete() {
   const c = confirm.value
   if (!c) return
@@ -983,6 +1012,18 @@ function performDelete() {
   let req
   if (c.kind === 'scope' || c.kind === 'detach-service') req = deleteScope(c.id)
   if (c.kind === 'detach') req = detachScope(c.id)
+  if (c.kind === 'delete-service' && c.serviceId) {
+    req = deleteServiceFromTree(c.serviceId).then(() => {
+      if (
+        selected.value?.id === c.id ||
+        selected.value?.service_id === c.serviceId ||
+        selected.value?.service_row_id === c.serviceId
+      ) {
+        selected.value = null
+        assignments.value = []
+      }
+    })
+  }
   if (c.kind === 'remove-endpoint' && c.node) {
     const node = c.node
     req = getServiceEndpoints(node.service_row_id).then((rows) => {
@@ -1002,10 +1043,19 @@ function performDelete() {
   req
     .then(() => {
       confirm.value = null
+      if (c.kind === 'delete-service') {
+        toast.add({
+          color: 'success',
+          title: 'Successful',
+          description: 'Service deleted',
+          duration: 3000,
+        })
+      }
       if (
         c.kind === 'scope' ||
         c.kind === 'detach' ||
         c.kind === 'detach-service' ||
+        c.kind === 'delete-service' ||
         c.kind === 'remove-endpoint'
       ) {
         reloadKey.value += 1
@@ -1647,6 +1697,7 @@ onBeforeUnmount(() => {
               @assign="openAssign"
               @delete-assignment="onDeleteAssignment"
               @saved="onInspectorSaved"
+              @delete-service="openDeleteService"
             />
             <div class="shrink-0 border-t border-default pt-3 mt-3 flex flex-col gap-2">
               <h5 class="m-0">Preview</h5>
@@ -2445,6 +2496,10 @@ onBeforeUnmount(() => {
       </span>
       <span v-else-if="confirm?.kind === 'detach-service'">
         Detach {{ confirm?.label }} from the tree? The service remains in inventory.
+      </span>
+      <span v-else-if="confirm?.kind === 'delete-service'">
+        Delete {{ confirm?.label }}? This removes it from NetBox, unrealizes it from all involved
+        devices, and deletes the inventory row. This cannot be undone.
       </span>
       <span v-else-if="confirm?.kind === 'remove-endpoint'">
         Remove endpoint {{ confirm?.label }} from the service?
