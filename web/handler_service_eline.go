@@ -260,9 +260,8 @@ func elinePersistError(c *echo.Context, err error) error {
 	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 }
 
-// persistELINEEndpoints writes generic service_endpoints for an ELINE,
-// optionally reconciling NetBox L2VPN + subinterfaces. Does not write
-// Service.EndpointA/B* columns.
+// persistELINEEndpoints writes generic service_endpoints for an ELINE
+// and optionally reconciles NetBox L2VPN + subinterfaces.
 func (ctrl *Controller) persistELINEEndpoints(ctx context.Context, svc *models.Service, eps []models.ServiceEndpoint) error {
 	var customer models.Customer
 	if err := ctrl.DB.First(&customer, svc.CustomerID).Error; err != nil {

@@ -224,7 +224,7 @@ type ServiceType struct {
 	Description string                `json:"description" gorm:"type:varchar(255)"`
 	Schema      []FieldSchema         `json:"schema" gorm:"serializer:json"`
 	Interfaces  ServiceInterfacesSpec `json:"interfaces" gorm:"serializer:json"`
-	Builtin     bool                  `json:"builtin"` // unused; always false after goose 00004
+	Builtin     bool                  `json:"builtin"`
 	// SyncSource names the on-device collection device-sync reads
 	// (eline / elan / l3vpn). Empty means the type is GUI-only.
 	SyncSource string `json:"sync_source" gorm:"type:varchar(32)"`

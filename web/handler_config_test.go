@@ -399,6 +399,118 @@ func TestApiConfigServiceTypeRenameCascades(t *testing.T) {
 	}
 }
 
+func TestApiConfigServiceTypeRenameConflict(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	other := models.ServiceType{Name: "P2P"}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/service-types/x", map[string]any{
+		"name": "P2P", "interfaces": map[string]any{"min": 2, "max": 2},
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(st.ID), 10)})
+	if err := ctrl.ApiConfigServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+	var still models.ServiceType
+	if err := db.First(&still, st.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if still.Name != "ELINE" {
+		t.Errorf("name = %q, want ELINE after conflict", still.Name)
+	}
+}
+
+func TestApiConfigServiceTypeDeleteRemovesCLI(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	createTestTranslationCLI(t, db, st, "eos", "apply {{.Name}}")
+	obj, err := cfgmgmt.LookupCLIObject(db, "ELINE", "eos")
+	if err != nil || obj == nil {
+		t.Fatalf("CLI before delete: %v %#v", err, obj)
+	}
+	c, rec := jsonRequest(t, http.MethodDelete, "/api/config/service-types/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(st.ID), 10)})
+	if err := ctrl.ApiConfigServiceTypeDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body=%s", rec.Code, rec.Body.String())
+	}
+	var n int64
+	if err := db.Model(&models.ConfigScope{}).Where("kind = ? AND service_type_id = ?", models.ConfigScopeKindCLI, st.ID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("translation CLI leftover count = %d", n)
+	}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog models.ConfigScope
+	if err := db.Where("parent_id = ? AND name = ?", root.ID, models.ConfigCatalogName).First(&catalog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var cliFolder models.ConfigScope
+	if err := db.Where("parent_id = ? AND name = ?", catalog.ID, models.ConfigCatalogCLIName).First(&cliFolder).Error; err != nil {
+		t.Fatal(err)
+	}
+	var typeFolder models.ConfigScope
+	err = db.Where("parent_id = ? AND name = ?", cliFolder.ID, "ELINE").First(&typeFolder).Error
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("catalog type folder still present: %v", err)
+	}
+}
+
+func TestApiServicePushELINEWithoutPseudowireID(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	createTestTranslationCLI(t, db, st, "eos", "apply {{.Name}}")
+	cust := models.Customer{Name: "Acme"}
+	if err := db.Create(&cust).Error; err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-a", Platform: "eos", NetboxID: 401}
+	devB := models.Device{Name: "pe-b", Platform: "eos", NetboxID: 402}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&devB).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00004", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgmgmt.ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{
+		{Role: models.EndpointRoleInterface, DeviceID: devA.ID, InterfaceID: ifa.ID, Fields: cfgmgmt.EncodeEndpointFields(10, 0, 0)},
+		{Role: models.EndpointRoleInterface, DeviceID: devB.ID, InterfaceID: ifb.ID, Fields: cfgmgmt.EncodeEndpointFields(20, 0, 0)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/service/x/push", map[string]any{}, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	if err := ctrl.ApiServicePush(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "has not been provisioned yet") {
+		t.Fatalf("push still gated on pseudowire_id: %s", rec.Body.String())
+	}
+}
+
 func TestConfigAssignmentListRedactsSecret(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

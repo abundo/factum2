@@ -2615,6 +2615,62 @@ func walkTree(nodes []ScopeTreeNode, fn func(ScopeTreeNode)) {
 	}
 }
 
+func TestReplaceEndpointsCopiesAppliedOnRebind(t *testing.T) {
+	db := newTestDB(t)
+	mustELANType(t, db)
+	folder, err := servicesFolder(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devA := models.Device{Name: "pe-old", Platform: "eos", NetboxID: 9401}
+	devB := models.Device{Name: "pe-new", Platform: "eos", NetboxID: 9402}
+	mustCreate(t, db, &devA)
+	mustCreate(t, db, &devB)
+	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
+	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet2", Type: "1000base-t"}
+	mustCreate(t, db, &ifa)
+	mustCreate(t, db, &ifb)
+	svc := models.Service{ServiceID: "CN00940", ServiceType: "ELAN"}
+	mustCreate(t, db, &svc)
+	if _, err := AttachService(db, folder.ID, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	old := models.ServiceEndpoint{
+		Role: models.EndpointRoleInterface, DeviceID: devA.ID, InterfaceID: ifa.ID,
+		Fields:          EncodeEndpointFields(100, 0, 0),
+		AppliedDeviceID: devA.ID, AppliedIface: "Ethernet1", AppliedPlatform: "eos",
+		AppliedFields: EncodeEndpointFields(100, 0, 0),
+	}
+	if err := ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{old}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ListEndpoints(db, svc.ID)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("after first replace: %v %+v", err, got)
+	}
+	if got[0].AppliedDeviceID != devA.ID {
+		t.Fatalf("applied not stored: %+v", got[0])
+	}
+	moved := models.ServiceEndpoint{
+		Role: models.EndpointRoleInterface, DeviceID: devB.ID, InterfaceID: ifb.ID,
+		Fields: EncodeEndpointFields(100, 0, 0),
+	}
+	if err := ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{moved}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ListEndpoints(db, svc.ID)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("after rebind: %v %+v", err, got)
+	}
+	if got[0].DeviceID != devB.ID {
+		t.Errorf("device = %d, want new %d", got[0].DeviceID, devB.ID)
+	}
+	if got[0].AppliedDeviceID != devA.ID || got[0].AppliedIface != "Ethernet1" {
+		t.Errorf("applied snapshot = device %d iface %q, want old PE %d Ethernet1",
+			got[0].AppliedDeviceID, got[0].AppliedIface, devA.ID)
+	}
+}
+
 func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
 	db := newTestDB(t)
 	st := mustELINEType(t, db)

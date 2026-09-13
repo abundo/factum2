@@ -554,6 +554,13 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 	}
 	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
 		if newName != oldName {
+			var n int64
+			if err := tx.Model(&models.ServiceType{}).Where("name = ? AND id <> ?", newName, existing.ID).Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				return cfgmgmt.ErrServiceTypeNameTaken
+			}
 			if err := tx.Model(&models.Service{}).Where("service_type = ?", oldName).
 				Update("service_type", newName).Error; err != nil {
 				return err
@@ -595,6 +602,9 @@ func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
 		return c.JSON(http.StatusConflict, map[string]any{"error": "service type is in use"})
 	}
 	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := cfgmgmt.DeleteTranslationCLIForType(tx, existing.ID, existing.Name); err != nil {
+			return err
+		}
 		if err := tx.Where("service_type_id = ?", existing.ID).Delete(&models.ServiceConnectionType{}).Error; err != nil {
 			return err
 		}
@@ -772,9 +782,6 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 	}
 	if len(eps) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has no endpoints"})
-	}
-	if svc.ServiceType == "ELINE" && svc.PseudowireID == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service has not been provisioned yet"})
 	}
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {

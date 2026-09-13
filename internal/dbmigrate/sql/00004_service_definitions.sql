@@ -55,12 +55,22 @@ BEGIN
 
     DELETE FROM public.service_endpoints;
 
-    DELETE FROM public.config_cli_features WHERE scope_id IN (
+    SELECT COUNT(*) INTO deleted_translation_cli
+    FROM public.config_scopes
+    WHERE kind = 'cli' AND service_type_id IS NOT NULL;
+
+    WITH RECURSIVE cli_tree AS (
         SELECT id FROM public.config_scopes WHERE kind = 'cli' AND service_type_id IS NOT NULL
-    );
-    DELETE FROM public.config_assignments WHERE scope_id IN (
-        SELECT id FROM public.config_scopes WHERE kind = 'cli' AND service_type_id IS NOT NULL
-    );
+        UNION ALL
+        SELECT s.id FROM public.config_scopes s JOIN cli_tree t ON s.parent_id = t.id
+    )
+    , del_cli_feat AS (
+        DELETE FROM public.config_cli_features WHERE scope_id IN (SELECT id FROM cli_tree)
+    )
+    , del_cli_asg AS (
+        DELETE FROM public.config_assignments WHERE scope_id IN (SELECT id FROM cli_tree)
+    )
+    DELETE FROM public.config_scopes WHERE id IN (SELECT id FROM cli_tree);
 
     WITH RECURSIVE svc_tree AS (
         SELECT id FROM public.config_scopes WHERE kind IN ('service', 'service_endpoint')
@@ -74,13 +84,6 @@ BEGIN
         DELETE FROM public.config_assignments WHERE scope_id IN (SELECT id FROM svc_tree)
     )
     DELETE FROM public.config_scopes WHERE id IN (SELECT id FROM svc_tree);
-
-    SELECT COUNT(*) INTO deleted_translation_cli
-    FROM public.config_scopes
-    WHERE kind = 'cli' AND service_type_id IS NOT NULL;
-
-    DELETE FROM public.config_scopes
-    WHERE kind = 'cli' AND service_type_id IS NOT NULL;
 
     -- Empty _catalog/cli/<Name> folders left after translation CLI wipe.
     DELETE FROM public.config_scopes child

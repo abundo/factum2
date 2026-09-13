@@ -107,12 +107,6 @@ func ReplaceEndpoints(db *gorm.DB, serviceID uint, eps []models.ServiceEndpoint)
 		if err := tx.Where("service_id = ?", serviceID).Find(&prev).Error; err != nil {
 			return err
 		}
-		prevByIdent := make(map[string]models.ServiceEndpoint, len(prev))
-		for i := range prev {
-			p := prev[i]
-			p.ServiceID = serviceID
-			prevByIdent[EndpointIdentity(p)] = p
-		}
 		if err := tx.Where("service_id = ?", serviceID).Delete(&models.ServiceEndpoint{}).Error; err != nil {
 			return err
 		}
@@ -122,24 +116,94 @@ func ReplaceEndpoints(db *gorm.DB, serviceID uint, eps []models.ServiceEndpoint)
 			if eps[i].Role == "" {
 				eps[i].Role = models.EndpointRoleInterface
 			}
-			if old, ok := prevByIdent[EndpointIdentity(eps[i])]; ok &&
-				old.DeviceID == eps[i].DeviceID && old.InterfaceID == eps[i].InterfaceID {
-				eps[i].AppliedDeviceID = old.AppliedDeviceID
-				eps[i].AppliedIface = old.AppliedIface
-				eps[i].AppliedPlatform = old.AppliedPlatform
-				eps[i].AppliedFields = old.AppliedFields
-			} else {
-				eps[i].AppliedDeviceID = 0
-				eps[i].AppliedIface = ""
-				eps[i].AppliedPlatform = ""
-				eps[i].AppliedFields = nil
-			}
+		}
+		carryAppliedSnapshots(serviceID, prev, eps)
+		for i := range eps {
 			if err := tx.Create(&eps[i]).Error; err != nil {
 				return fmt.Errorf("create endpoint: %w", err)
 			}
 		}
 		return projectEndpointScopes(tx, serviceID)
 	})
+}
+
+func copyApplied(dst *models.ServiceEndpoint, src models.ServiceEndpoint) {
+	dst.AppliedDeviceID = src.AppliedDeviceID
+	dst.AppliedIface = src.AppliedIface
+	dst.AppliedPlatform = src.AppliedPlatform
+	dst.AppliedFields = src.AppliedFields
+}
+
+// carryAppliedSnapshots copies Applied* from previous rows onto the new set.
+// Unchanged bindings match EndpointIdentity. Rebinds (device/iface changed)
+// match leftover rows by disc (VLAN), then a single leftover pair, so
+// AppliedDeviceID can still be the old PE until PUT-time teardown exists.
+func carryAppliedSnapshots(serviceID uint, prev, eps []models.ServiceEndpoint) {
+	usedPrev := make([]bool, len(prev))
+	matchedNew := make([]bool, len(eps))
+	for i := range prev {
+		prev[i].ServiceID = serviceID
+	}
+	for i := range eps {
+		eps[i].ServiceID = serviceID
+		if eps[i].Role == "" {
+			eps[i].Role = models.EndpointRoleInterface
+		}
+	}
+	match := func(i, j int) {
+		copyApplied(&eps[i], prev[j])
+		usedPrev[j] = true
+		matchedNew[i] = true
+	}
+	for i := range eps {
+		key := EndpointIdentity(eps[i])
+		for j := range prev {
+			if usedPrev[j] {
+				continue
+			}
+			if EndpointIdentity(prev[j]) == key {
+				match(i, j)
+				break
+			}
+		}
+	}
+	for i := range eps {
+		if matchedNew[i] {
+			continue
+		}
+		disc := endpointDisc(eps[i].Fields)
+		found := -1
+		for j := range prev {
+			if usedPrev[j] {
+				continue
+			}
+			if endpointDisc(prev[j].Fields) != disc {
+				continue
+			}
+			if found != -1 {
+				found = -2
+				break
+			}
+			found = j
+		}
+		if found >= 0 {
+			match(i, found)
+		}
+	}
+	var leftoverNew, leftoverPrev []int
+	for i := range eps {
+		if !matchedNew[i] {
+			leftoverNew = append(leftoverNew, i)
+		}
+	}
+	for j := range prev {
+		if !usedPrev[j] {
+			leftoverPrev = append(leftoverPrev, j)
+		}
+	}
+	if len(leftoverNew) == 1 && len(leftoverPrev) == 1 {
+		match(leftoverNew[0], leftoverPrev[0])
+	}
 }
 
 // EndpointIdentity is the stable key for projection and virtual service_ref

@@ -104,6 +104,7 @@ func TestMigrationsIncludeServiceDefinitions(t *testing.T) {
 		"connection_type_id",
 		"DELETE FROM public.services",
 		"maintenance_notifications",
+		"cli_tree",
 		"-- +goose Up",
 	} {
 		if !strings.Contains(s, want) {

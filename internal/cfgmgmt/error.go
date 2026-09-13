@@ -18,6 +18,10 @@ func statusErr(status int, msg string) *StatusError {
 	return &StatusError{Status: status, Message: msg}
 }
 
+// ErrServiceTypeNameTaken is returned when renaming a type to a name that
+// already exists.
+var ErrServiceTypeNameTaken = statusErr(409, "service type name already exists")
+
 func statusErrf(status int, format string, args ...any) *StatusError {
 	return &StatusError{Status: status, Message: fmt.Sprintf(format, args...)}
 }

@@ -272,6 +272,70 @@ func CatalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, er
 	return catalogCLITypeFolder(db, typeName)
 }
 
+func findChildFolder(db *gorm.DB, parentID uint, name string) (*models.ConfigScope, error) {
+	var s models.ConfigScope
+	err := db.Where("parent_id = ? AND name = ? AND kind = ?", parentID, name, models.ConfigScopeKindFolder).First(&s).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// DeleteTranslationCLIForType removes kind=cli objects for typeID (and
+// descendants), then the empty _catalog/cli/<typeName> folder if present.
+func DeleteTranslationCLIForType(db *gorm.DB, typeID uint, typeName string) error {
+	if typeID == 0 {
+		return nil
+	}
+	var clis []models.ConfigScope
+	if err := db.Where("kind = ? AND service_type_id = ?", models.ConfigScopeKindCLI, typeID).Find(&clis).Error; err != nil {
+		return err
+	}
+	for i := range clis {
+		desc, err := DescendantScopes(db, clis[i].ID)
+		if err != nil {
+			return err
+		}
+		if err := deleteScopeSubtree(db, desc); err != nil {
+			return err
+		}
+	}
+	return deleteEmptyCatalogCLITypeFolder(db, typeName)
+}
+
+func deleteEmptyCatalogCLITypeFolder(db *gorm.DB, typeName string) error {
+	if typeName == "" {
+		return nil
+	}
+	root, err := RootScope(db)
+	if err != nil {
+		return err
+	}
+	catalog, err := findChildFolder(db, root.ID, models.ConfigCatalogName)
+	if err != nil || catalog == nil {
+		return err
+	}
+	cliFolder, err := findChildFolder(db, catalog.ID, models.ConfigCatalogCLIName)
+	if err != nil || cliFolder == nil {
+		return err
+	}
+	folder, err := findChildFolder(db, cliFolder.ID, typeName)
+	if err != nil || folder == nil {
+		return err
+	}
+	var n int64
+	if err := db.Model(&models.ConfigScope{}).Where("parent_id = ?", folder.ID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	return deleteScopeSubtree(db, []models.ConfigScope{*folder})
+}
+
 // RenameCatalogCLITypeFolder renames _catalog/cli/<oldName> to <newName>.
 // Child CLI objects keep their service_type_id. Missing old folder is a
 // no-op besides ensuring the new folder exists.
