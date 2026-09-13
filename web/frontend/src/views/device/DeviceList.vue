@@ -594,7 +594,7 @@ onMounted(loadDevices)
   <UModal
     v-model:open="detailDialog"
     :title="device?.name ?? 'Device'"
-    :ui="{ content: 'sm:max-w-2xl' }"
+    :ui="{ content: 'sm:max-w-lg', body: 'overflow-y-auto' }"
   >
     <template #body>
       <div v-if="deviceLoading" class="flex justify-center p-4">
@@ -604,86 +604,119 @@ onMounted(loadDevices)
       <UAlert v-else-if="deviceError" color="error" variant="subtle" :title="deviceError" />
 
       <template v-else-if="device">
-        <div class="flex items-center gap-3 mb-6">
-          <UBadge
-            v-if="device.status"
-            :label="device.status"
-            :color="statusColor(device.status)"
-            variant="subtle"
-          />
-          <UBadge v-if="!device.enabled" label="Disabled" color="neutral" variant="subtle" />
-          <UBadge
-            v-if="device.optical_kind"
-            :label="device.optical_kind"
-            color="info"
-            variant="subtle"
-          />
-        </div>
-        <div v-if="deviceImpact" class="mb-4">
-          <span class="font-bold">Affected if down:</span>
-          {{ deviceImpact.service_count }} services / {{ deviceImpact.customer_count }} customers
-        </div>
+        <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
+          <span class="font-bold whitespace-nowrap">Status</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <UBadge
+              v-if="device.status"
+              :label="device.status"
+              :color="statusColor(device.status)"
+              variant="subtle"
+            />
+            <UBadge v-if="!device.enabled" label="Disabled" color="neutral" variant="subtle" />
+            <UBadge
+              v-if="device.optical_kind"
+              :label="device.optical_kind"
+              color="info"
+              variant="subtle"
+            />
+            <span
+              v-if="!device.status && device.enabled && !device.optical_kind"
+              class="text-muted-color"
+              >—</span
+            >
+          </div>
 
-        <div class="grid grid-cols-12 gap-4 mb-6">
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Site</div>
-            <div>{{ device.site || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Role</div>
-            <div>{{ device.role || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Manufacturer</div>
-            <div>{{ device.manufacturer || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Model</div>
-            <div>{{ device.model_name || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Platform</div>
-            <div>{{ device.platform || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Primary IPv4</div>
-            <div>{{ device.primary_ipv4 || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Primary IPv6</div>
-            <div>{{ device.primary_ipv6 || '-' }}</div>
-          </div>
-          <div class="col-span-12 md:col-span-6 lg:col-span-4">
-            <div class="text-sm text-muted-color mb-1">Location</div>
-            <div>{{ device.cf_location || '-' }}</div>
-          </div>
-          <div class="col-span-12">
-            <div class="text-sm text-muted-color mb-1">Comments</div>
-            <div>{{ device.comments || '-' }}</div>
-          </div>
-        </div>
+          <template v-if="deviceImpact">
+            <span class="font-bold whitespace-nowrap">Affected</span>
+            <span class="min-w-0">{{
+              `${deviceImpact.service_count} services / ${deviceImpact.customer_count} customers`
+            }}</span>
+          </template>
 
-        <div class="flex flex-wrap gap-2">
-          <UBadge v-if="device.cf_monitor_icinga" label="Icinga" color="info" variant="subtle" />
-          <UBadge
-            v-if="device.cf_monitor_librenms"
-            label="LibreNMS"
-            color="info"
-            variant="subtle"
+          <label for="device-site" class="font-bold whitespace-nowrap">Site</label>
+          <UInput id="device-site" :model-value="device.site || ''" disabled class="w-full" />
+
+          <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
+          <UInput id="device-role" :model-value="device.role || ''" disabled class="w-full" />
+
+          <label for="device-manufacturer" class="font-bold whitespace-nowrap">Manufacturer</label>
+          <UInput
+            id="device-manufacturer"
+            :model-value="device.manufacturer || ''"
+            disabled
+            class="w-full"
           />
-          <UBadge v-if="device.cf_monitor_grafana" label="Grafana" color="info" variant="subtle" />
-          <UBadge
-            v-if="device.cf_backup_oxidized"
-            label="Oxidized backup"
-            color="info"
-            variant="subtle"
+
+          <label for="device-model" class="font-bold whitespace-nowrap">Model</label>
+          <UInput id="device-model" :model-value="device.model_name || ''" disabled class="w-full" />
+
+          <label for="device-platform" class="font-bold whitespace-nowrap">Platform</label>
+          <UInput
+            id="device-platform"
+            :model-value="device.platform || ''"
+            disabled
+            class="w-full"
           />
-          <UBadge
-            v-if="device.cf_alarm_interfaces"
-            label="Interface alarms"
-            color="info"
-            variant="subtle"
+
+          <label for="device-ipv4" class="font-bold whitespace-nowrap">Primary IPv4</label>
+          <UInput
+            id="device-ipv4"
+            :model-value="device.primary_ipv4 || ''"
+            disabled
+            class="w-full"
           />
+
+          <label for="device-ipv6" class="font-bold whitespace-nowrap">Primary IPv6</label>
+          <UInput
+            id="device-ipv6"
+            :model-value="device.primary_ipv6 || ''"
+            disabled
+            class="w-full"
+          />
+
+          <label for="device-location" class="font-bold whitespace-nowrap">Location</label>
+          <UInput
+            id="device-location"
+            :model-value="device.cf_location || ''"
+            disabled
+            class="w-full"
+          />
+
+          <label for="device-comments" class="font-bold whitespace-nowrap self-start mt-2"
+            >Comments</label
+          >
+          <UTextarea
+            id="device-comments"
+            :model-value="device.comments || ''"
+            disabled
+            :rows="2"
+            class="w-full"
+          />
+
+          <span class="font-bold whitespace-nowrap self-start mt-1">Monitoring</span>
+          <div class="flex flex-col gap-2">
+            <label class="flex items-center gap-2">
+              <USwitch :model-value="!!device.cf_monitor_icinga" disabled />
+              <span>Icinga</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <USwitch :model-value="!!device.cf_monitor_librenms" disabled />
+              <span>LibreNMS</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <USwitch :model-value="!!device.cf_monitor_grafana" disabled />
+              <span>Grafana</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <USwitch :model-value="!!device.cf_backup_oxidized" disabled />
+              <span>Oxidized backup</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <USwitch :model-value="!!device.cf_alarm_interfaces" disabled />
+              <span>Interface alarms</span>
+            </label>
+          </div>
         </div>
       </template>
     </template>
