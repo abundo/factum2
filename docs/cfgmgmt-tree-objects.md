@@ -843,7 +843,7 @@ Runs from `cfgmgmt.Seed` / a dedicated `cfgmgmt.MigrateTree` called by `MigrateD
 
 Rollback: column adds are additive (old binary ignores them). **COPY + dual-write of assignments:** rolling back the new binary still sees latest values on original rows. MOVE of assignments, and DROP of pack/template tables, require a DB restore. Do not claim “redeploy the old binary” across MOVE/DROP. Edits made only on a parameter node that is **not** the dual-write `parameters` child of a folder (operator-created extra objects) would not be visible to pre-PR2 resolve — that is acceptable; the compatibility path is the migrated `parameters` child + original.
 
-Seeded ELINE packs: embed files remain the default for **new** databases and for checksum-matching CLI objects. Operators who edited a pack in the old UI get a CLI object cloned from that body, not from embed.
+**Superseded:** Seed does **not** insert service types or translation CLI. Embed `internal/drivers/templates/*.tmpl` files may remain as examples; they are not written to the DB. Goose 00004 wiped translation CLI once.
 
 ## Alternatives Considered
 
@@ -938,7 +938,7 @@ Order matches the PR plan (engine cutovers before tree inventory UI):
 3. Move + `assertParentKind` + `DetachDevice`.
 4. CLI CRUD; `RenderDevice` prefers baseline CLI objects, else templates.
 5. Migrate templates → CLI children of `global` / attached scopes.
-6. Service **translation** render/push from CLI objects (pack fallback) + seed ELINE CLI objects. Does **not** need service tree nodes.
+6. Service **translation** render/push from CLI objects (historical pack fallback; **do not seed ELINE**). Does **not** need service tree nodes.
 7. **MOVE** assignments (delete originals). Unsafe to roll back without DB restore.
 8. Service nodes + virtual refs; `ReplaceEndpoints` projects children.
 9. Tree-first GUI; drop Packs/Templates tabs; rewrite how-to.
@@ -946,7 +946,7 @@ Order matches the PR plan (engine cutovers before tree inventory UI):
 
 No feature flags. Rollback by binary is safe across steps 1–6 **if PUT dual-write ran** (originals hold latest folder assignments). Step 7 (MOVE assignments) and step 10 (DROP tables) need a Postgres restore. Do not claim “old binary ignores extra columns” for those two.
 
-`factum2-web migrate` is required once per PR that adds tables. Untouched ELINE CLI checksums keep embed refresh throughout (CLI is the writer).
+`factum2-web migrate` is required once per PR that adds tables. **Superseded:** Seed no longer checksum-refreshes ELINE CLI from embed.
 
 ## Open Questions
 
@@ -1025,7 +1025,7 @@ PR1 schema
 - **Depends on:** PR 4
 - **Changes:** `scope_id=null` → **child of `global`**, empty context. Test: still in `RenderDevice`. Templates tab remains until PR 9. No drop.
 
-### PR 6 — Service translation via CLI objects; seed ELINE; pack fallback
+### PR 6 — Service translation via CLI objects; pack fallback (historical; **do not seed ELINE**)
 
 - **Title:** cfgmgmt: render and push services from CLI objects
 - **Files:** `internal/cfgmgmt/pack.go` (`LookupCLIObject` then pack fallback), `internal/cfgmgmt/device.go` (`renderGenericForDevice`), `internal/cfgmgmt/seed.go` (ELINE CLI objects; checksum = hash of CLI features; one writer), `web/handler_config.go` (`apiServiceGenericPush` — **service cmds only**), `web/handler_service_eline.go`, `internal/drivers/templates/*.tmpl` (unchanged), `internal/cfgmgmt/cfgmgmt_test.go`, `web/handler_service_eline_test.go`
@@ -1062,7 +1062,6 @@ PR1 schema
 
 ### Suggested follow-ups (not blocking)
 
-- Form editor for `ServiceType` schema/roles (replace JSON textareas).
 - Recursive folder delete.
 - Duplicate node.
 - Lazy-load interfaces (copy `IpamPrefixTree.vue`).

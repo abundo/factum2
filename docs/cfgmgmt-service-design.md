@@ -255,7 +255,7 @@ into the **render** map. Does not `Save` endpoints.
 Empty: missing, JSON null, `""`; for `service_id` also numeric `0`. **Not**
 `false`, `0` (other types), or `[]`.
 
-**ServiceID picker:** `GET /api/services?q=<substr>&category=CN,CI,freetext`.
+**ServiceID picker:** `GET /api/service?q=<substr>&category=CN,CI,freetext`.
 Omit `category` → **all** rows (Services page, including VL/VI/LF/LI). The
 picker always sends that category list. Stored value is the commercial
 **pk**, not the CN string.
@@ -580,7 +580,7 @@ When the CLI cannot express the service, that is a **driver** gap
 | GET/PUT | `/api/config/assignments` | Values on a parameter node |
 | GET/POST | `/api/config/macros` | Named `{{include}}` snippets |
 | POST | `/api/config/render` | Preview device or service |
-| GET | `/api/services` | Commercial list. `q`, optional `category` (omit = all rows) |
+| GET | `/api/service` | Commercial list. `q`, optional `category` (omit = all rows) |
 | PUT | `/api/service/:id/type` | Set definition + fields + `connection_type_id` (incl. Lime) |
 | GET/PUT | `/api/service/:id/endpoints` | Homogeneous endpoints; rebind teardown on PUT |
 | POST | `/api/service/:id/push` | Apply CLI (service translation only) |

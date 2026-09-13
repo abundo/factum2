@@ -122,7 +122,7 @@ Commercial `models.Service` (`models/organisation.go`) is one row for both Lime 
 
 17. **Service-level required is enforced on fields write.** `CreateServiceRecord`, `PUT /api/service/:id/type`, and tree create that sets `fields` run `ValidateServiceFields` against `st.Schema` (same `empty` rules as fill, including `service_id` 0).
 
-18. **Same-row realize order.** Distinct JSON: `ConfigScopeDTO.ServiceID` remains the attach pk (existing). Definition field `service_id` is inside `fields`. New realize does **not** overload `attach.service_id` for “empty-type CN”. Order: `PUT /api/service/:id/type` on the commercial row (sets definition; allowed on Lime), then `POST /api/config/scopes` with `service_id=<pk>` (`AttachService` / `assertTypedCapacityService` — type is now set), then `PUT .../endpoints`. **`GET /api/services`:** omit `category` → **all rows** (today’s Services page, including VL/VI/LF/LI). Optional `q` (ILIKE `service_id`, `name`, customer) does not change that. The ServiceID picker **always sends** `category=CN,CI,freetext` (two-letter prefixes plus ids `CategoryFromServiceID` does not parse).
+18. **Same-row realize order.** Distinct JSON: `ConfigScopeDTO.ServiceID` remains the attach pk (existing). Definition field `service_id` is inside `fields`. New realize does **not** overload `attach.service_id` for “empty-type CN”. Order: `PUT /api/service/:id/type` on the commercial row (sets definition; allowed on Lime), then `POST /api/config/scopes` with `service_id=<pk>` (`AttachService` / `assertTypedCapacityService` — type is now set), then `PUT .../endpoints`. **`GET /api/service`:** omit `category` → **all rows** (today’s Services page, including VL/VI/LF/LI). Optional `q` (ILIKE `service_id`, `name`, customer) does not change that. The ServiceID picker **always sends** `category=CN,CI,freetext` (two-letter prefixes plus ids `CategoryFromServiceID` does not parse).
 
 19. **DeviceInterfacePicker: unique = device+iface only.** No physical-port filter, no eos/sros/sros-md/ios-xr allowlist. Missing CLI / missing `CLISessionApplier` fails preview. A future `physical: true` on the interfaces spec is out of v1.
 
@@ -400,7 +400,7 @@ Same CLI object for every connection type; operators write `{{if eq .ConnectionT
 
 **Unrealize:** `POST /api/service/:id/unrealize` with the same cleanup flags as delete. Allowed on Lime. After success the row is commercial-only again (`service_type=""`, no endpoints, no tree node). Lime prune still deletes the row.
 
-**ServiceID picker:** `GET /api/services?q=<substr>&category=CN,CI,freetext` (extend `APIServiceList`, which today only filters `customer_id`). `q` matches `service_id`, `name`, customer name (ILIKE). `category` is a comma list of two-letter prefixes **or** the token `freetext` for ids that `CategoryFromServiceID` does not parse. **Omit `category` → all rows** (Services page today, including VL/VI/LF/LI). The picker **always sends** `category=CN,CI,freetext`; it does not rely on a server default. Response is the existing service list shape. Picker may include already-realized rows.
+**ServiceID picker:** `GET /api/service?q=<substr>&category=CN,CI,freetext` (extend `APIServiceList`, which today only filters `customer_id`). `q` matches `service_id`, `name`, customer name (ILIKE). `category` is a comma list of two-letter prefixes **or** the token `freetext` for ids that `CategoryFromServiceID` does not parse. **Omit `category` → all rows** (Services page today, including VL/VI/LF/LI). The picker **always sends** `category=CN,CI,freetext`; it does not rely on a server default. Response is the existing service list shape. Picker may include already-realized rows.
 
 **JSON keys (do not overload):**
 
@@ -724,7 +724,7 @@ New:
 
 ### Services
 
-- `GET /api/services?q=&category=&customer_id=` — extend `APIServiceList` (`RequireRead`). **Omit `category` = all rows** (wavelength/fiber stay on the Services page). Picker always sends `category=CN,CI,freetext`.
+- `GET /api/service?q=&category=&customer_id=` — extend `APIServiceList` (`RequireRead`). **Omit `category` = all rows** (wavelength/fiber stay on the Services page). Picker always sends `category=CN,CI,freetext`.
 - `PUT /api/service/:id/type` — `fields`, `connection_type_id`, `service_type`. Validate `connection_type_id` belongs to that definition; `ValidateServiceFields`. Allowed on Lime.
 - `PUT /api/service/:id/endpoints` — `role` optional (default `"interface"`). Always generic path: validate, teardown/rebind, `ReplaceEndpoints`. Fields as typed JSON.
 - `PUT /api/service/:id/eline` and `POST /api/service/:id/eline/push` — **410 Gone** (`{"error":"use PUT /api/service/:id/endpoints and POST /api/service/:id/push"}`). Same `RequireAPIAuth` + `RequireWrite`. Handlers become thin 410 stubs (or `ApiConfigLegacyGone`-style).
