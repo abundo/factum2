@@ -22,10 +22,11 @@ func LookupServiceType(db *gorm.DB, name string) (*models.ServiceType, error) {
 
 func ListServiceTypes(db *gorm.DB) ([]models.ServiceType, error) {
 	var rows []models.ServiceType
-	err := db.Preload("ConnectionTypes", func(tx *gorm.DB) *gorm.DB {
-		return tx.Order("sort_order, id")
-	}).Order("name").Find(&rows).Error
+	err := db.Preload("ConnectionTypes", preloadConnectionTypesMeta).Order("name").Find(&rows).Error
 	if err != nil {
+		return nil, err
+	}
+	if err := attachConnectionTypeHasImage(db, rows); err != nil {
 		return nil, err
 	}
 	return rows, nil

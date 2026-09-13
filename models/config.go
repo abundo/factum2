@@ -298,6 +298,8 @@ type ServiceConnectionType struct {
 	SortOrder     int    `json:"sort_order"`
 	Image         []byte `json:"-" gorm:"type:bytea"`
 	ContentType   string `json:"content_type" gorm:"type:varchar(64)"`
+	// HasImage is filled by list/get loaders from a length check; not a column.
+	HasImage bool `json:"-" gorm:"-"`
 }
 
 func (ServiceConnectionType) TableName() string { return "service_connection_types" }

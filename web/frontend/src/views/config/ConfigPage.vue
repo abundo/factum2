@@ -1265,14 +1265,24 @@ async function saveType() {
     const saved = form.value.id
       ? await updateServiceType(form.value.id, payload)
       : await createServiceType(payload)
+    form.value.id = saved.id
     const cts = saved.connection_types ?? []
-    for (const ct of form.value.connection_types ?? []) {
-      const match = cts.find((s) => s.name === (ct.name || '').trim())
-      if (!match) continue
+    form.value.connection_types = (form.value.connection_types ?? []).map((ct) => {
+      const name = (ct.name || '').trim()
+      const match = cts.find((s) => (ct.id && s.id === ct.id) || s.name === name)
+      return match ? { ...ct, id: match.id, name: match.name || ct.name } : ct
+    })
+    for (const ct of form.value.connection_types) {
+      if (!ct.id) continue
       if (ct.file) {
-        await putConnectionTypeImage(saved.id, match.id, ct.file, ct.file.type)
+        await putConnectionTypeImage(saved.id, ct.id, ct.file, ct.file.type)
+        ct.file = null
+        ct.clearImage = false
+        ct.has_image = true
       } else if (ct.clearImage) {
-        await putConnectionTypeImage(saved.id, match.id, new Blob([]))
+        await putConnectionTypeImage(saved.id, ct.id, new Blob([]))
+        ct.clearImage = false
+        ct.has_image = false
       }
     }
     dialog.value = null

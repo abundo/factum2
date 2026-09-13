@@ -41,7 +41,7 @@ func ConnectionTypeDTO(ct *models.ServiceConnectionType) models.ServiceConnectio
 		Name:        ct.Name,
 		SortOrder:   ct.SortOrder,
 		ContentType: ct.ContentType,
-		HasImage:    len(ct.Image) > 0,
+		HasImage:    ct.HasImage || len(ct.Image) > 0,
 	}
 	if d.HasImage {
 		d.ImageURL = fmt.Sprintf("/api/config/service-types/%d/connection-types/%d/image", ct.ServiceTypeID, ct.ID)
@@ -51,13 +51,50 @@ func ConnectionTypeDTO(ct *models.ServiceConnectionType) models.ServiceConnectio
 
 func LoadServiceType(db *gorm.DB, id uint) (*models.ServiceType, error) {
 	var row models.ServiceType
-	err := db.Preload("ConnectionTypes", func(tx *gorm.DB) *gorm.DB {
-		return tx.Order("sort_order, id")
-	}).First(&row, id).Error
+	err := db.Preload("ConnectionTypes", preloadConnectionTypesMeta).First(&row, id).Error
 	if err != nil {
 		return nil, err
 	}
-	return &row, nil
+	rows := []models.ServiceType{row}
+	if err := attachConnectionTypeHasImage(db, rows); err != nil {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// preloadConnectionTypesMeta skips image bytea; HasImage is filled separately.
+func preloadConnectionTypesMeta(tx *gorm.DB) *gorm.DB {
+	return tx.Select("id", "created_at", "updated_at", "service_type_id", "name", "sort_order", "content_type").
+		Order("sort_order, id")
+}
+
+func attachConnectionTypeHasImage(db *gorm.DB, rows []models.ServiceType) error {
+	var ids []uint
+	for i := range rows {
+		for j := range rows[i].ConnectionTypes {
+			ids = append(ids, rows[i].ConnectionTypes[j].ID)
+			rows[i].ConnectionTypes[j].Image = nil
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var withImage []uint
+	if err := db.Model(&models.ServiceConnectionType{}).
+		Where("id IN ? AND image IS NOT NULL AND length(image) > 0", ids).
+		Pluck("id", &withImage).Error; err != nil {
+		return err
+	}
+	has := make(map[uint]bool, len(withImage))
+	for _, id := range withImage {
+		has[id] = true
+	}
+	for i := range rows {
+		for j := range rows[i].ConnectionTypes {
+			rows[i].ConnectionTypes[j].HasImage = has[rows[i].ConnectionTypes[j].ID]
+		}
+	}
+	return nil
 }
 
 // ReplaceConnectionTypes applies DELETE omitted → UPDATE remaining → INSERT
@@ -72,7 +109,8 @@ func ReplaceConnectionTypes(tx *gorm.DB, typeID uint, dtos []models.ServiceConne
 		return err
 	}
 	var existing []models.ServiceConnectionType
-	if err := tx.Where("service_type_id = ?", typeID).Find(&existing).Error; err != nil {
+	if err := tx.Select("id", "service_type_id", "name", "sort_order", "content_type").
+		Where("service_type_id = ?", typeID).Find(&existing).Error; err != nil {
 		return err
 	}
 	byID := make(map[uint]models.ServiceConnectionType, len(existing))

@@ -407,4 +407,25 @@ func TestApiConfigServiceTypeListOmitsImage(t *testing.T) {
 	if !ct.HasImage || ct.ImageURL == "" || ct.ContentType != "image/png" {
 		t.Fatalf("list connection type = %+v", ct)
 	}
+	loaded, err := cfgmgmt.ListServiceTypes(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || len(loaded[0].ConnectionTypes) != 1 {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+	row := loaded[0].ConnectionTypes[0]
+	if len(row.Image) != 0 {
+		t.Fatalf("list preloaded %d image bytes", len(row.Image))
+	}
+	if !row.HasImage {
+		t.Fatal("list HasImage = false after omitting image column")
+	}
+	one, err := cfgmgmt.LoadServiceType(db, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.ConnectionTypes) != 1 || len(one.ConnectionTypes[0].Image) != 0 || !one.ConnectionTypes[0].HasImage {
+		t.Fatalf("get type loaded image=%d has=%v", len(one.ConnectionTypes[0].Image), one.ConnectionTypes[0].HasImage)
+	}
 }
