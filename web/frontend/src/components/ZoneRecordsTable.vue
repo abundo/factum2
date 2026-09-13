@@ -415,12 +415,18 @@ const tableWrap = ref(null)
 
 const DRAG_CLASS = 'zone-record-dragging'
 const DRAG_THRESHOLD_PX = 4
+const AUTO_SCROLL_EDGE_PX = 96
+const AUTO_SCROLL_MAX_PX = 32
 const GHOST_CLASS =
   'zone-record-ghost fixed z-50 pointer-events-none flex items-center gap-2 rounded-md border border-primary/50 bg-elevated px-3 py-1.5 text-sm shadow-lg max-w-lg'
 
 let dragFrom = null
 let dragMoved = false
 let dragStartY = 0
+let dragClientX = 0
+let dragClientY = 0
+let autoScrollRaf = 0
+let lastRowRevealAt = 0
 let ghostEl = null
 let lineEl = null
 
@@ -1068,7 +1074,7 @@ watch(
 watch(records, rebuildChangedKeys, { immediate: true })
 
 function tableRows() {
-  const wrap = tableWrap.value
+  const wrap = wrapEl()
   if (!wrap) return []
   const tbody = wrap.querySelector("[data-slot='tbody']") || wrap.querySelector('tbody')
   if (!tbody) return []
@@ -1179,6 +1185,132 @@ function paintSource(from) {
   })
 }
 
+function paintDragAt(clientX, clientY) {
+  placeGhost(clientX, clientY)
+  placeLine(clampGapToSubzone(dragFrom, gapFromY(clientY)))
+}
+
+function wrapEl() {
+  const el = tableWrap.value
+  if (!el) return null
+  if (el instanceof HTMLElement) return el
+  return el.$el instanceof HTMLElement ? el.$el : null
+}
+
+function autoScrollDelta(clientY, top, bottom) {
+  const edge = AUTO_SCROLL_EDGE_PX
+  const max = AUTO_SCROLL_MAX_PX
+  if (bottom - top < 8) return 0
+  if (clientY < top + edge) {
+    const t = Math.min(1, (top + edge - clientY) / edge)
+    return -Math.max(1, Math.round(t * max))
+  }
+  if (clientY > bottom - edge) {
+    const t = Math.min(1, (clientY - (bottom - edge)) / edge)
+    return Math.max(1, Math.round(t * max))
+  }
+  return 0
+}
+
+function tryScrollEl(el, dy) {
+  if (!el || !dy) return false
+  const max = el.scrollHeight - el.clientHeight
+  if (!(max > 0)) return false
+  const prev = el.scrollTop
+  const next = Math.max(0, Math.min(max, prev + dy))
+  if (next === prev) return false
+  el.scrollTop = next
+  return el.scrollTop !== prev
+}
+
+function scrollByDy(start, dy) {
+  for (let el = start; el; el = el.parentElement) {
+    if (tryScrollEl(el, dy)) return true
+  }
+  if (tryScrollEl(document.scrollingElement, dy)) return true
+  if (tryScrollEl(document.documentElement, dy)) return true
+  if (tryScrollEl(document.body, dy)) return true
+  const y0 = window.scrollY
+  window.scrollBy(0, dy)
+  return window.scrollY !== y0
+}
+
+function edgeDelta(wrap, clientY) {
+  const r = wrap.getBoundingClientRect()
+  const fromWrap = autoScrollDelta(
+    clientY,
+    Math.max(0, r.top),
+    Math.min(window.innerHeight, r.bottom),
+  )
+  if (fromWrap) return fromWrap
+  return autoScrollDelta(clientY, 0, window.innerHeight)
+}
+
+function revealOffscreenRow(wrap, dy) {
+  const rows = tableRows()
+  if (!rows.length || !dy) return false
+  const r = wrap.getBoundingClientRect()
+  const top = Math.max(0, r.top)
+  const bottom = Math.min(window.innerHeight, r.bottom)
+  if (dy < 0) {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].getBoundingClientRect().bottom > top + 1) {
+        if (i === 0) return false
+        ;(rows[i - 1].querySelector('td') || rows[i - 1]).scrollIntoView({
+          block: 'nearest',
+          inline: 'nearest',
+        })
+        return true
+      }
+    }
+  } else {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].getBoundingClientRect().top < bottom - 1) {
+        if (i >= rows.length - 1) return false
+        ;(rows[i + 1].querySelector('td') || rows[i + 1]).scrollIntoView({
+          block: 'nearest',
+          inline: 'nearest',
+        })
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function stopAutoScroll() {
+  if (!autoScrollRaf) return
+  cancelAnimationFrame(autoScrollRaf)
+  autoScrollRaf = 0
+}
+
+function tickAutoScroll(now) {
+  autoScrollRaf = 0
+  if (dragFrom == null || !dragMoved) return
+  const wrap = wrapEl()
+  if (wrap) {
+    const dy = edgeDelta(wrap, dragClientY)
+    if (dy) {
+      let moved = scrollByDy(wrap, dy)
+      if (!moved && now - lastRowRevealAt > 40) {
+        lastRowRevealAt = now
+        moved = revealOffscreenRow(wrap, dy)
+      }
+      if (moved) paintDragAt(dragClientX, dragClientY)
+    }
+  }
+  autoScrollRaf = requestAnimationFrame(tickAutoScroll)
+}
+
+function onDragWheel(event) {
+  if (dragFrom == null || !dragMoved) return
+  const wrap = wrapEl()
+  if (!wrap || !event.deltaY) return
+  event.preventDefault()
+  scrollByDy(wrap, event.deltaY)
+  paintDragAt(dragClientX, dragClientY)
+}
+
 function teardownDragUi() {
   ghostEl?.remove()
   lineEl?.remove()
@@ -1188,9 +1320,11 @@ function teardownDragUi() {
 }
 
 function stopListening() {
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerUp)
+  window.removeEventListener('pointermove', onPointerMove, true)
+  window.removeEventListener('pointerup', onPointerUp, true)
+  window.removeEventListener('pointercancel', onPointerUp, true)
+  window.removeEventListener('wheel', onDragWheel, { capture: true })
+  stopAutoScroll()
 }
 
 function endDrag() {
@@ -1201,6 +1335,8 @@ function endDrag() {
   dragFrom = null
   dragMoved = false
   dragStartY = 0
+  dragClientX = 0
+  dragClientY = 0
 }
 
 let resizeKey = null
@@ -1260,12 +1396,13 @@ function onPointerDown(index, event) {
   if (props.disabled || event.button !== 0) return
   if (isDraftRow(index) || isDomainRecord(records.value[index])) return
   event.preventDefault()
+  event.currentTarget.setPointerCapture?.(event.pointerId)
   dragFrom = index
   dragMoved = false
   dragStartY = event.clientY
-  window.addEventListener('pointermove', onPointerMove, { passive: false })
-  window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerUp)
+  window.addEventListener('pointermove', onPointerMove, { passive: false, capture: true })
+  window.addEventListener('pointerup', onPointerUp, true)
+  window.addEventListener('pointercancel', onPointerUp, true)
 }
 
 function onPointerMove(event) {
@@ -1279,11 +1416,15 @@ function onPointerMove(event) {
     document.body.style.userSelect = 'none'
     ensureDragUi()
     fillGhost(records.value[dragFrom])
+    lastRowRevealAt = 0
+    window.addEventListener('wheel', onDragWheel, { passive: false, capture: true })
   }
   event.preventDefault()
+  dragClientX = event.clientX
+  dragClientY = event.clientY
   paintSource(dragFrom)
-  placeGhost(event.clientX, event.clientY)
-  placeLine(clampGapToSubzone(dragFrom, gapFromY(event.clientY)))
+  paintDragAt(dragClientX, dragClientY)
+  if (!autoScrollRaf) autoScrollRaf = requestAnimationFrame(tickAutoScroll)
 }
 
 function onPointerUp(event) {
