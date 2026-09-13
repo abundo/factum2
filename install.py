@@ -27,7 +27,7 @@ from this release, the installer shows a diff and asks before overwriting
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
   ./install.py --source --compose
-                               Local compose lab: make, migrate, restart
+                               Local compose lab: make build + make frontend, migrate, restart
                                factum-web/factum-worker and dest workers (build/ is bind-mounted;
                                no /opt/factum2, no systemd).
 """
@@ -2969,7 +2969,8 @@ Modes:
   (default)   GitHub release — production. TUI, --list, or --install TAG.
   --source    This source tree — development. make release, then install
               build/ (replaces install_prod.sh).
-  --compose   Local compose lab. make, then restart bind-mounted services.
+  --compose   Local compose lab. make build + make frontend, then restart
+              bind-mounted services.
 
 Environment:
   GITHUB_TOKEN / GH_TOKEN   token for private repos (else `gh auth token`)
@@ -3151,7 +3152,7 @@ def install_compose_lab(
     skip_build: bool,
     dry_run: bool,
 ) -> int:
-    """Build into build/ and restart compose services that bind-mount it."""
+    """Build Go binaries + Vue SPA into the repo, then restart bind-mounted services."""
     build_dir = repo_dir / "build"
     version = git_describe(repo_dir)
     log(f"==> factum2  compose-lab install  version={version}")
@@ -3165,10 +3166,11 @@ def install_compose_lab(
     else:
         log("==> Building binaries (make)")
         run(["make", "build"], dry_run=dry_run, cwd=repo_dir)
-        vue = repo_dir / "web" / "static" / "vue" / "index.html"
-        if not dry_run and not vue.is_file():
-            log("==> Building frontend")
-            run(["make", "frontend"], dry_run=dry_run, cwd=repo_dir)
+        # Non-release factum2-web serves web/static/vue from disk. `make build`
+        # does not refresh that tree, so a stale SPA would keep running after
+        # compose restart if we only built when index.html was missing.
+        log("==> Building frontend")
+        run(["make", "frontend"], dry_run=dry_run, cwd=repo_dir)
 
     if not dry_run:
         missing = [name for name in KNOWN_BINARIES if not (build_dir / name).is_file()]

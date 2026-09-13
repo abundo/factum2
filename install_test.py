@@ -870,6 +870,34 @@ class ComposeLabTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
 
+    def test_compose_lab_rebuilds_frontend_even_if_vue_exists(self) -> None:
+        """Stale web/static/vue must not skip the SPA rebuild on compose install."""
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw) / "repo"
+            compose_dir = Path(raw) / "dev"
+            repo.mkdir()
+            compose_dir.mkdir()
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            vue = repo / "web" / "static" / "vue"
+            vue.mkdir(parents=True)
+            (vue / "index.html").write_text("<!doctype html>")
+
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with patch.object(install, "run", fake_run), patch.object(
+                install, "git_describe", return_value="v1.0.5-22-g40dc744"
+            ):
+                rc = install.install_compose_lab(
+                    repo, compose_dir, skip_build=False, dry_run=True
+                )
+            self.assertEqual(rc, 0)
+            self.assertIn(["make", "build"], calls)
+            self.assertIn(["make", "frontend"], calls)
+
     def test_compose_lab_restarts_running_dest_workers(self) -> None:
         """up -d does not re-exec bind-mounted binaries; dests must restart."""
         with tempfile.TemporaryDirectory() as raw:

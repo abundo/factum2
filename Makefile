@@ -97,7 +97,7 @@ dev-up:
 	@echo "==> binaries"
 	@test -x $(BUILD_DIR)/factum2-web && test -x $(BUILD_DIR)/factum2-netbox && test -x $(BUILD_DIR)/factum2-dns && test -x $(BUILD_DIR)/factum2-worker || $(MAKE) -j$(NPROC) build
 	@echo "==> frontend"
-	@test -f web/static/vue/index.html || $(MAKE) frontend
+	$(MAKE) frontend
 	FACTUM_DEV_UP_START=$$(date +%s) $(DEV_DIR)/up.sh $(SEED_ARGS)
 
 dev-down:
@@ -150,7 +150,8 @@ factum2-worker:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-worker cmd/worker/factum2-worker-cli.go
 
-# Builds the Vue SPA into web/static/vue, which factum2-web serves directly.
+# Builds the Vue SPA into web/static/vue, which non-release factum2-web serves
+# from disk. `make build` is Go-only; compose install / `make dev-up` run this.
 frontend:
 	cd web/frontend && npm ci && npm run build
 
