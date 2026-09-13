@@ -57,40 +57,19 @@ func TypeForNetboxKind(types []models.ServiceType, netboxType string) *models.Se
 	return nil
 }
 
-// EndpointRolesForCount expands st's roles into n role names for reverse-
-// import: bounded roles are filled in order, then any unlimited role
-// (Max==0) absorbs the rest. ELINE a/b → ["a","b"]; ELAN endpoint → n copies.
+// EndpointRolesForCount returns n copies of role "interface" for reverse-
+// import. Bounded Max truncates; Max==0 absorbs the rest.
 func EndpointRolesForCount(st *models.ServiceType, n int) []string {
 	if st == nil || n <= 0 {
 		return nil
 	}
-	out := make([]string, 0, n)
-	remaining := n
-	unlimited := ""
-	for _, role := range st.EndpointRoles {
-		if role.Max == 0 {
-			if unlimited == "" {
-				unlimited = role.Name
-			}
-			continue
-		}
-		take := role.Max
-		if take > remaining {
-			take = remaining
-		}
-		for i := 0; i < take; i++ {
-			out = append(out, role.Name)
-		}
-		remaining -= take
-		if remaining == 0 {
-			return out
-		}
+	take := n
+	if st.Interfaces.Max > 0 && take > st.Interfaces.Max {
+		take = st.Interfaces.Max
 	}
-	if unlimited != "" {
-		for remaining > 0 {
-			out = append(out, unlimited)
-			remaining--
-		}
+	out := make([]string, take)
+	for i := range out {
+		out[i] = models.EndpointRoleInterface
 	}
 	return out
 }

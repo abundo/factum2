@@ -97,7 +97,11 @@ const selectedServiceType = computed(() =>
   props.serviceTypes.find((t) => t.name === serviceRow.value?.service_type),
 )
 const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
-const genericRoles = computed(() => selectedServiceType.value?.endpoint_roles ?? [])
+const genericRoles = computed(() => {
+  const spec = selectedServiceType.value?.interfaces
+  if (!spec) return []
+  return [{ name: 'interface', min: spec.min ?? 0, max: spec.max ?? 0, fields: spec.fields ?? [] }]
+})
 const limeOwned = computed(() => serviceRow.value?.source === 'lime')
 const serviceRowId = computed(
   () => props.selected?.service_id || props.selected?.service_row_id || null,
@@ -208,11 +212,9 @@ function addGenericEndpoint(roleName, extra = {}) {
 
 function seedEndpointsForType(typeName) {
   const st = props.serviceTypes.find((x) => x.name === typeName)
-  for (const role of st?.endpoint_roles ?? []) {
-    const n = role.min || 0
-    for (let i = 0; i < n; i++) {
-      addGenericEndpoint(role.name)
-    }
+  const n = st?.interfaces?.min || 0
+  for (let i = 0; i < n; i++) {
+    addGenericEndpoint('interface')
   }
 }
 

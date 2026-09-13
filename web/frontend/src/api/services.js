@@ -25,16 +25,6 @@ export function updateServiceType(id, payload) {
   return http.put(`/service/${id}/type`, payload).then((res) => res.data)
 }
 
-// Historical A/B DTO for ELINE endpoints. The GUI uses putServiceEndpoints;
-// this adapter remains for API clients.
-export function updateServiceEline(id, payload) {
-  return http.put(`/service/${id}/eline`, payload).then((res) => res.data)
-}
-
-export function pushServiceEline(id, payload) {
-  return http.post(`/service/${id}/eline/push`, payload).then((res) => res.data)
-}
-
 export function pushService(id, payload) {
   return http.post(`/service/${id}/push`, payload).then((res) => res.data)
 }

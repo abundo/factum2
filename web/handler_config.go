@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
+	"gorm.io/gorm"
 )
 
 func configWriteError(c *echo.Context, err error) error {
@@ -479,20 +481,51 @@ func (ctrl *Controller) ApiConfigServiceTypeGet(c *echo.Context) error {
 	return h.GetOne(c)
 }
 
-func (ctrl *Controller) ApiConfigServiceTypeCreate(c *echo.Context) error {
+func bindServiceTypeDTO(c *echo.Context) (*models.ServiceTypeDTO, error) {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return nil, err
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, err
+	}
+	if _, ok := probe["endpoint_roles"]; ok {
+		return nil, errors.New("endpoint_roles is not supported; use interfaces")
+	}
 	var dto models.ServiceTypeDTO
-	if err := c.Bind(&dto); err != nil {
+	if err := json.Unmarshal(body, &dto); err != nil {
+		return nil, err
+	}
+	return &dto, nil
+}
+
+func (ctrl *Controller) ApiConfigServiceTypeCreate(c *echo.Context) error {
+	dto, err := bindServiceTypeDTO(c)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	if dto.Name == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name is required"})
 	}
+	if err := cfgmgmt.ValidateInterfacesSpec(dto.Interfaces); err != nil {
+		return configWriteError(c, err)
+	}
 	row := models.ServiceType{
 		Name: dto.Name, Description: dto.Description,
-		Schema: dto.Schema, EndpointRoles: dto.EndpointRoles,
+		Schema: dto.Schema, Interfaces: dto.Interfaces,
 		SyncSource: dto.SyncSource, NetboxType: dto.NetboxType,
 	}
-	if err := ctrl.DB.Create(&row).Error; err != nil {
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		_, err := cfgmgmt.CatalogCLITypeFolder(tx, row.Name)
+		return err
+	}); err != nil {
+		if se := cfgmgmt.AsStatusError(err); se != nil {
+			return c.JSON(se.Status, map[string]any{"error": se.Message})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusCreated, row)
@@ -507,22 +540,39 @@ func (ctrl *Controller) ApiConfigServiceTypeUpdate(c *echo.Context) error {
 	if err := ctrl.DB.First(&existing, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
-	var dto models.ServiceTypeDTO
-	if err := c.Bind(&dto); err != nil {
+	dto, err := bindServiceTypeDTO(c)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if existing.Builtin && dto.Name != "" && dto.Name != existing.Name {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "cannot rename a built-in service type"})
+	if err := cfgmgmt.ValidateInterfacesSpec(dto.Interfaces); err != nil {
+		return configWriteError(c, err)
 	}
-	if dto.Name != "" && !existing.Builtin {
-		existing.Name = dto.Name
+	oldName := existing.Name
+	newName := oldName
+	if dto.Name != "" {
+		newName = dto.Name
 	}
-	existing.Description = dto.Description
-	existing.Schema = dto.Schema
-	existing.EndpointRoles = dto.EndpointRoles
-	existing.SyncSource = dto.SyncSource
-	existing.NetboxType = dto.NetboxType
-	if err := ctrl.DB.Save(&existing).Error; err != nil {
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if newName != oldName {
+			if err := tx.Model(&models.Service{}).Where("service_type = ?", oldName).
+				Update("service_type", newName).Error; err != nil {
+				return err
+			}
+			if err := cfgmgmt.RenameCatalogCLITypeFolder(tx, oldName, newName); err != nil {
+				return err
+			}
+			existing.Name = newName
+		}
+		existing.Description = dto.Description
+		existing.Schema = dto.Schema
+		existing.Interfaces = dto.Interfaces
+		existing.SyncSource = dto.SyncSource
+		existing.NetboxType = dto.NetboxType
+		return tx.Save(&existing).Error
+	}); err != nil {
+		if se := cfgmgmt.AsStatusError(err); se != nil {
+			return c.JSON(se.Status, map[string]any{"error": se.Message})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, existing)
@@ -537,10 +587,19 @@ func (ctrl *Controller) ApiConfigServiceTypeDelete(c *echo.Context) error {
 	if err := ctrl.DB.First(&existing, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
-	if existing.Builtin {
-		return c.JSON(http.StatusForbidden, map[string]any{"error": "cannot delete a built-in service type"})
+	var n int64
+	if err := ctrl.DB.Model(&models.Service{}).Where("service_type = ?", existing.Name).Count(&n).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	if err := ctrl.DB.Delete(&existing).Error; err != nil {
+	if n > 0 {
+		return c.JSON(http.StatusConflict, map[string]any{"error": "service type is in use"})
+	}
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("service_type_id = ?", existing.ID).Delete(&models.ServiceConnectionType{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&existing).Error
+	}); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -663,24 +722,19 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 	}
 	eps := make([]models.ServiceEndpoint, 0, len(body.Endpoints))
 	for _, d := range body.Endpoints {
+		role := d.Role
+		if role == "" {
+			role = models.EndpointRoleInterface
+		}
 		eps = append(eps, models.ServiceEndpoint{
-			Role: d.Role, DeviceID: d.DeviceID, InterfaceID: d.InterfaceID, Fields: d.Fields,
+			Role: role, DeviceID: d.DeviceID, InterfaceID: d.InterfaceID, Fields: d.Fields,
 		})
 	}
 	if err := cfgmgmt.ValidateEndpoints(ctrl.DB, st, eps); err != nil {
 		return configWriteError(c, err)
 	}
-	if svc.ServiceType == "ELINE" {
-		if err := cfgmgmt.ValidateELINEShape(ctrl.DB, eps); err != nil {
-			return configWriteError(c, err)
-		}
-		if err := ctrl.persistELINEEndpoints(c.Request().Context(), &svc, eps); err != nil {
-			return elinePersistError(c, err)
-		}
-	} else {
-		if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
-			return configWriteError(c, err)
-		}
+	if err := cfgmgmt.ReplaceEndpoints(ctrl.DB, id, eps); err != nil {
+		return configWriteError(c, err)
 	}
 	if len(body.Fields) > 0 && string(body.Fields) != "null" {
 		if err := ctrl.DB.Model(&models.Service{}).Where("id = ?", id).Update("fields", body.Fields).Error; err != nil {
@@ -740,7 +794,8 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 
 	if svc.ServiceType == "ELINE" {
 		seenAbandoned := map[uint]bool{}
-		for _, id := range []uint{svc.AppliedEndpointADeviceID, svc.AppliedEndpointBDeviceID} {
+		for _, ep := range eps {
+			id := ep.AppliedDeviceID
 			if id != 0 && !currentDeviceIDs[id] && !seenAbandoned[id] {
 				seenAbandoned[id] = true
 				order = append(order, id)
@@ -779,7 +834,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 		if !currentDeviceIDs[deviceID] {
 			res := ctrl.removeELINEFromDevice(&device, creds, settings, &drivers.ELINERemoval{
 				Name:               svc.ServiceID,
-				StaleSubinterfaces: abandonedSubsForDevice(svc, deviceID),
+				StaleSubinterfaces: abandonedSubsForDevice(eps, deviceID),
 			})
 			abandonedErr[deviceID] = res.Error
 			results = append(results, res)
@@ -884,50 +939,43 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 	return c.JSON(http.StatusOK, map[string]any{"results": results})
 }
 
-func (ctrl *Controller) stampELINEApplied(svc *models.Service, eps []models.ServiceEndpoint, deviceOK map[uint]bool, abandonedErr map[uint]string) {
-	updates := map[string]any{}
+func (ctrl *Controller) stampELINEApplied(_ *models.Service, eps []models.ServiceEndpoint, deviceOK map[uint]bool, abandonedErr map[uint]string) {
 	for _, ep := range eps {
 		if !deviceOK[ep.DeviceID] {
 			continue
 		}
-		prev := uint(0)
-		if ep.Role == "a" {
-			prev = svc.AppliedEndpointADeviceID
-		} else if ep.Role == "b" {
-			prev = svc.AppliedEndpointBDeviceID
-		}
-		if prev != 0 && prev != ep.DeviceID && abandonedErr[prev] != "" {
+		if ep.AppliedDeviceID != 0 && ep.AppliedDeviceID != ep.DeviceID && abandonedErr[ep.AppliedDeviceID] != "" {
 			continue
 		}
 		var iface models.Interface
 		if err := ctrl.DB.First(&iface, ep.InterfaceID).Error; err != nil {
 			continue
 		}
-		vlan := cfgmgmt.VLANFromFields(ep.Fields)
-		switch ep.Role {
-		case "a":
-			updates["applied_endpoint_a_device_id"] = ep.DeviceID
-			updates["applied_endpoint_a_iface"] = iface.Name
-			updates["applied_endpoint_a_vlan"] = vlan
-		case "b":
-			updates["applied_endpoint_b_device_id"] = ep.DeviceID
-			updates["applied_endpoint_b_iface"] = iface.Name
-			updates["applied_endpoint_b_vlan"] = vlan
+		platform := ""
+		var device models.Device
+		if err := ctrl.DB.First(&device, ep.DeviceID).Error; err == nil {
+			platform = cfgmgmt.NormalizePlatform(device.Platform)
 		}
+		_ = ctrl.DB.Model(&models.ServiceEndpoint{}).Where("id = ?", ep.ID).Updates(map[string]any{
+			"applied_device_id": ep.DeviceID,
+			"applied_iface":     iface.Name,
+			"applied_platform":  platform,
+			"applied_fields":    ep.Fields,
+		}).Error
 	}
-	if len(updates) == 0 {
-		return
-	}
-	_ = ctrl.DB.Model(&models.Service{}).Where("id = ?", svc.ID).Updates(updates).Error
 }
 
-func abandonedSubsForDevice(svc *models.Service, deviceID uint) []drivers.ELINEStaleSubinterface {
+func abandonedSubsForDevice(eps []models.ServiceEndpoint, deviceID uint) []drivers.ELINEStaleSubinterface {
 	var out []drivers.ELINEStaleSubinterface
-	if svc.AppliedEndpointADeviceID == deviceID && svc.AppliedEndpointAIface != "" {
-		out = append(out, drivers.ELINEStaleSubinterface{Iface: svc.AppliedEndpointAIface, VLAN: svc.AppliedEndpointAVlan})
-	}
-	if svc.AppliedEndpointBDeviceID == deviceID && svc.AppliedEndpointBIface != "" {
-		out = append(out, drivers.ELINEStaleSubinterface{Iface: svc.AppliedEndpointBIface, VLAN: svc.AppliedEndpointBVlan})
+	for _, ep := range eps {
+		if ep.AppliedDeviceID != deviceID || ep.AppliedIface == "" {
+			continue
+		}
+		vlan := cfgmgmt.VLANFromFields(ep.AppliedFields)
+		if vlan == 0 {
+			vlan = cfgmgmt.VLANFromFields(ep.Fields)
+		}
+		out = append(out, drivers.ELINEStaleSubinterface{Iface: ep.AppliedIface, VLAN: vlan})
 	}
 	return out
 }

@@ -129,10 +129,9 @@ func TestSaveDeliveryPreservesFactumOwnedFields(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	if err := db.Model(&row).Updates(map[string]any{
-		"service_type":                 "ELINE",
-		"bandwidth_mbps":               100,
-		"applied_endpoint_a_device_id": 7,
-		"applied_endpoint_a_iface":     "Ethernet1",
+		"service_type":   "ELINE",
+		"bandwidth_mbps": 100,
+		"pseudowire_id":  42,
 	}).Error; err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -149,8 +148,8 @@ func TestSaveDeliveryPreservesFactumOwnedFields(t *testing.T) {
 	if stored.ServiceType != "ELINE" || stored.BandwidthMbps != 100 {
 		t.Errorf("factum type fields wiped: type=%q bw=%d", stored.ServiceType, stored.BandwidthMbps)
 	}
-	if stored.AppliedEndpointADeviceID != 7 || stored.AppliedEndpointAIface != "Ethernet1" {
-		t.Errorf("applied endpoints wiped: %+v", stored)
+	if stored.PseudowireID != 42 {
+		t.Errorf("pseudowire wiped: %d", stored.PseudowireID)
 	}
 	if stored.Comment != "moved" || stored.LastSync != 2 {
 		t.Errorf("lime fields not updated: comment=%q last_sync=%d", stored.Comment, stored.LastSync)

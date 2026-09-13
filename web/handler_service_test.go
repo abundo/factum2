@@ -139,6 +139,7 @@ func TestApiServiceCreate_RejectsInvalidServiceType(t *testing.T) {
 func TestApiServiceCreate_AllowsExternalCustomerPrefixes(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	body := map[string]any{"category": "CN", "service_type": "ELINE"}
 	c, rec := jsonRequest(t, http.MethodPost, "/api/service", body, nil, nil)
@@ -160,6 +161,7 @@ func TestApiServiceCreate_AllowsExternalCustomerPrefixes(t *testing.T) {
 func TestApiServiceCreate_CopiesBandwidthFromFields(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	body := map[string]any{
 		"category":     "CN",
@@ -185,6 +187,7 @@ func TestApiServiceCreate_CopiesBandwidthFromFields(t *testing.T) {
 func TestApiServiceCreate_PrefersTopLevelBandwidthOverFields(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	body := map[string]any{
 		"category":       "CN",

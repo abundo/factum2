@@ -52,6 +52,22 @@ func newImportTestDB(t *testing.T) *gorm.DB {
 	if err := util.MigrateDatabase(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := db.Create(&models.ServiceType{
+		Name:       "ELINE",
+		Interfaces: models.ServiceInterfacesSpec{Min: 2, Max: 2, Unique: true},
+		SyncSource: models.SyncSourceELINE,
+		NetboxType: models.NetboxTypeEVPL,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ServiceType{
+		Name:       "ELAN",
+		Interfaces: models.ServiceInterfacesSpec{Min: 0, Max: 0},
+		SyncSource: models.SyncSourceELAN,
+		NetboxType: models.NetboxTypeVPLS,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	return db
 }
 
@@ -152,7 +168,8 @@ func TestSyncServiceEndpointsFromL2VPNs_LinksByServiceID(t *testing.T) {
 	}
 
 	eps := mustListEndpoints(t, db, got.ID)
-	a, b := eps["a"], eps["b"]
+	a := epByIface(eps, ifA["Ethernet3"])
+	b := epByIface(eps, ifB["Ethernet1"])
 	if a.DeviceID != devA || a.InterfaceID != ifA["Ethernet3"] {
 		t.Errorf("endpoint A = device %d iface %d, want device %d iface %d",
 			a.DeviceID, a.InterfaceID, devA, ifA["Ethernet3"])
@@ -177,17 +194,22 @@ func TestSyncServiceEndpointsFromL2VPNs_LinksByServiceID(t *testing.T) {
 	}
 }
 
-func mustListEndpoints(t *testing.T, db *gorm.DB, svcID uint) map[string]models.ServiceEndpoint {
+func mustListEndpoints(t *testing.T, db *gorm.DB, svcID uint) []models.ServiceEndpoint {
 	t.Helper()
 	rows, err := cfgmgmt.ListEndpoints(db, svcID)
 	if err != nil {
 		t.Fatalf("list endpoints: %v", err)
 	}
-	out := map[string]models.ServiceEndpoint{}
-	for _, ep := range rows {
-		out[ep.Role] = ep
+	return rows
+}
+
+func epByIface(eps []models.ServiceEndpoint, ifaceID uint) models.ServiceEndpoint {
+	for _, ep := range eps {
+		if ep.InterfaceID == ifaceID {
+			return ep
+		}
 	}
-	return out
+	return models.ServiceEndpoint{}
 }
 
 func TestSyncServiceEndpointsFromL2VPNs_Idempotent(t *testing.T) {
@@ -229,7 +251,7 @@ func TestSyncServiceEndpointsFromL2VPNs_Idempotent(t *testing.T) {
 	}
 	first := mustListEndpoints(t, db, afterFirst.ID)
 	second := mustListEndpoints(t, db, afterSecond.ID)
-	if first["a"].InterfaceID != second["a"].InterfaceID {
+	if len(first) != len(second) || (len(first) > 0 && first[0].InterfaceID != second[0].InterfaceID) {
 		t.Errorf("second sync changed endpoints: %+v vs %+v", first, second)
 	}
 }
@@ -297,8 +319,8 @@ func TestSyncServiceEndpointsFromL2VPNs_MatchesByL2VPNNetboxID(t *testing.T) {
 		t.Fatal(err)
 	}
 	eps := mustListEndpoints(t, db, got.ID)
-	if eps["a"].InterfaceID != ifs["Eth1"] {
-		t.Errorf("endpoint a iface = %d, want %d", eps["a"].InterfaceID, ifs["Eth1"])
+	if len(eps) != 1 || eps[0].InterfaceID != ifs["Eth1"] {
+		t.Errorf("endpoint iface = %+v, want %d", eps, ifs["Eth1"])
 	}
 	if got.ServiceType != "ELINE" {
 		t.Errorf("ServiceType = %q, want ELINE", got.ServiceType)
@@ -330,9 +352,8 @@ func TestSyncServiceEndpointsFromL2VPNs_NameFallbackWithoutParentID(t *testing.T
 		t.Fatal(err)
 	}
 	eps := mustListEndpoints(t, db, got.ID)
-	if eps["a"].InterfaceID != ifs["Ethernet3"] || cfgmgmt.VLANFromFields(eps["a"].Fields) != 5711 {
-		t.Errorf("endpoint A iface/vlan = %d/%d, want %d/5711",
-			eps["a"].InterfaceID, cfgmgmt.VLANFromFields(eps["a"].Fields), ifs["Ethernet3"])
+	if len(eps) != 1 || eps[0].InterfaceID != ifs["Ethernet3"] || cfgmgmt.VLANFromFields(eps[0].Fields) != 5711 {
+		t.Errorf("endpoint iface/vlan = %+v, want %d/5711", eps, ifs["Ethernet3"])
 	}
 }
 
@@ -406,8 +427,8 @@ func TestSyncServiceEndpointsFromL2VPNs_ELANVPLS(t *testing.T) {
 		t.Fatalf("endpoints = %d, want 3", len(rows))
 	}
 	for _, ep := range rows {
-		if ep.Role != "endpoint" {
-			t.Errorf("role = %q, want endpoint", ep.Role)
+		if ep.Role != models.EndpointRoleInterface {
+			t.Errorf("role = %q, want interface", ep.Role)
 		}
 	}
 	byIface := map[uint]models.ServiceEndpoint{}

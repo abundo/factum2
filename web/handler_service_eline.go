@@ -231,65 +231,15 @@ func reconcileELineSubinterface(db *gorm.DB, nb *netboxtool.NetboxClient, ep *eL
 	return &eLineReconcileResult{subinterfaceNetboxID: created.ID}, nil
 }
 
-// ApiServiceElineUpdate is a thin adapter around persistELINEEndpoints:
-// maps the historical A/B DTO onto generic service_endpoints (roles a/b).
-func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
-	id, err := echo.PathParam[uint](c, "id")
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
-	}
-
-	var service models.Service
-	if err := ctrl.DB.First(&service, id).Error; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
-	}
-	if service.ServiceType != "ELINE" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service is not an ELINE service"})
-	}
-
-	var dto ServiceElineDTO
-	if err := c.Bind(&dto); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	eps := []models.ServiceEndpoint{
-		{
-			Role: "a", DeviceID: dto.EndpointADeviceID, InterfaceID: dto.EndpointAInterfaceID,
-			Fields: cfgmgmt.EncodeEndpointFields(dto.EndpointAVlan, 0, 0),
-		},
-		{
-			Role: "b", DeviceID: dto.EndpointBDeviceID, InterfaceID: dto.EndpointBInterfaceID,
-			Fields: cfgmgmt.EncodeEndpointFields(dto.EndpointBVlan, 0, 0),
-		},
-	}
-	st, err := cfgmgmt.LookupServiceType(ctrl.DB, "ELINE")
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	if err := cfgmgmt.ValidateEndpoints(ctrl.DB, st, eps); err != nil {
-		if se := cfgmgmt.AsStatusError(err); se != nil {
-			return c.JSON(se.Status, map[string]any{"error": se.Message})
-		}
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	if err := cfgmgmt.ValidateELINEShape(ctrl.DB, eps); err != nil {
-		if se := cfgmgmt.AsStatusError(err); se != nil {
-			return c.JSON(se.Status, map[string]any{"error": se.Message})
-		}
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-	}
-	if err := ctrl.persistELINEEndpoints(c.Request().Context(), &service, eps); err != nil {
-		return elinePersistError(c, err)
-	}
-	var updated models.Service
-	if err := ctrl.DB.First(&updated, id).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-	rows, _ := cfgmgmt.ListEndpoints(ctrl.DB, id)
-	return c.JSON(http.StatusOK, ServiceDetailResponse{
-		Service:         updated,
-		AppliedToDevice: updated.AppliedEndpointADeviceID != 0 || updated.AppliedEndpointBDeviceID != 0,
-		Endpoints:       rows,
+func apiServiceElineGone(c *echo.Context) error {
+	return c.JSON(http.StatusGone, map[string]any{
+		"error": "use PUT /api/service/:id/endpoints and POST /api/service/:id/push",
 	})
+}
+
+// ApiServiceElineUpdate is gone; use PUT /api/service/:id/endpoints.
+func (ctrl *Controller) ApiServiceElineUpdate(c *echo.Context) error {
+	return apiServiceElineGone(c)
 }
 
 type elineHTTPError struct {
@@ -577,24 +527,14 @@ func (ctrl *Controller) removeELINECmds(drv drivers.DriverClient, device *models
 }
 
 // removeELINEServiceFromDevices tears down service's ELINE config on every
-// device it was actually pushed to (AppliedEndpointX*, not EndpointX* -
-// the latter just reflects what's provisioned in Netbox, which may never
-// have been pushed at all) - used by ApiServiceDelete's optional "remove
-// from device" cleanup. Returns (nil, nil) if the service was never
-// pushed to any device, so the caller doesn't need to special-case that
-// itself.
+// device it was actually pushed to (service_endpoints.applied_*), used by
+// ApiServiceDelete's optional "remove from device" cleanup. Returns
+// (nil, nil) if the service was never pushed to any device.
 func (ctrl *Controller) removeELINEServiceFromDevices(c *echo.Context, service *models.Service, username, password string) ([]ApiServiceElinePushResult, error) {
-	if service.AppliedEndpointADeviceID == 0 && service.AppliedEndpointBDeviceID == 0 {
-		return nil, nil
+	eps, err := cfgmgmt.ListEndpoints(ctrl.DB, service.ID)
+	if err != nil {
+		return nil, err
 	}
-	if username == "" || password == "" {
-		return nil, fmt.Errorf("device credentials are required to remove ELINE config from device(s)")
-	}
-	creds := deviceCredentialsRequest{Username: username, Password: password}
-
-	// Group by device ID first, so a same-device ELINE (both sides applied
-	// to the same device) gets one RemoveELINE call carrying both stale
-	// subinterfaces, not two separate driver sessions.
 	subsByDevice := map[uint][]drivers.ELINEStaleSubinterface{}
 	var deviceIDs []uint
 	addSide := func(deviceID uint, iface string, vlan int) {
@@ -606,8 +546,20 @@ func (ctrl *Controller) removeELINEServiceFromDevices(c *echo.Context, service *
 		}
 		subsByDevice[deviceID] = append(subsByDevice[deviceID], drivers.ELINEStaleSubinterface{Iface: iface, VLAN: vlan})
 	}
-	addSide(service.AppliedEndpointADeviceID, service.AppliedEndpointAIface, service.AppliedEndpointAVlan)
-	addSide(service.AppliedEndpointBDeviceID, service.AppliedEndpointBIface, service.AppliedEndpointBVlan)
+	for _, ep := range eps {
+		vlan := cfgmgmt.VLANFromFields(ep.AppliedFields)
+		if vlan == 0 {
+			vlan = cfgmgmt.VLANFromFields(ep.Fields)
+		}
+		addSide(ep.AppliedDeviceID, ep.AppliedIface, vlan)
+	}
+	if len(deviceIDs) == 0 {
+		return nil, nil
+	}
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("device credentials are required to remove ELINE config from device(s)")
+	}
+	creds := deviceCredentialsRequest{Username: username, Password: password}
 
 	devices, err := fetchDevices(c.Request().Context(), ctrl.DB, deviceIDs)
 	if err != nil {
@@ -689,8 +641,8 @@ func (ctrl *Controller) removeELINEServiceFromNetbox(service *models.Service) er
 }
 
 // elineAppliedState is one endpoint's last-successfully-pushed live state
-// (models.Service's AppliedEndpointX* fields) - a zero DeviceID means this
-// side has never been pushed yet.
+// (service_endpoints.applied_*). A zero DeviceID means this side has never
+// been pushed yet.
 type elineAppliedState struct {
 	DeviceID uint
 	Iface    string
@@ -732,20 +684,7 @@ func elineComputeStale(applied elineAppliedState, desiredDeviceID uint, desiredI
 	}
 }
 
-// ApiServiceElinePush is kept as a dedicated route; it delegates to the
-// generic pack-based push used by POST /service/:id/push.
+// ApiServiceElinePush is gone; use POST /api/service/:id/push.
 func (ctrl *Controller) ApiServiceElinePush(c *echo.Context) error {
-	id, err := echo.PathParam[uint](c, "id")
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
-	}
-
-	var service models.Service
-	if err := ctrl.DB.First(&service, id).Error; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
-	}
-	if service.ServiceType != "ELINE" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "service is not an ELINE service"})
-	}
-	return ctrl.apiServiceGenericPush(c, &service)
+	return apiServiceElineGone(c)
 }

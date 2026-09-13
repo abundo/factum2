@@ -300,16 +300,14 @@ export function withCfgmgmtContext(
     })
   }
   const seenEndpointField = new Set()
-  for (const role of serviceType?.endpoint_roles ?? []) {
-    for (const field of role.fields ?? []) {
-      if (!field?.name || seenEndpointField.has(field.name)) continue
-      seenEndpointField.add(field.name)
-      vars.push({
-        name: `.Endpoint.Fields.${field.name}`,
-        type: field.type || '',
-        description: `${role.name}: ${field.description || field.name}`,
-      })
-    }
+  for (const field of serviceType?.interfaces?.fields ?? []) {
+    if (!field?.name || seenEndpointField.has(field.name)) continue
+    seenEndpointField.add(field.name)
+    vars.push({
+      name: `.Endpoint.Fields.${field.name}`,
+      type: field.type || '',
+      description: field.description || field.name,
+    })
   }
   return { ...schema, functions, variables: vars }
 }

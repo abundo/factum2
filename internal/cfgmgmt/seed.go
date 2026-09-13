@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abundo/factum2/internal/drivers/templates"
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
@@ -18,15 +17,13 @@ func packChecksum(body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Seed creates the global root scope, reserved _catalog/_services folders,
-// built-in service types, and ELINE translation CLI objects when they are
-// missing. Leftover platform_packs / config_templates rows (from before
-// those tables were dropped) are copied onto CLI objects first so operator
-// edits survive; checksum-matching ELINE rows are then refreshed from the
-// embed files under internal/drivers/templates. Assignments on
-// non-parameter scopes are copied onto a reserved parameters child and the
-// originals are deleted. Typed CN/CI services without a tree node are
-// placed under _services.
+// Seed creates the global root scope and reserved _catalog/_services
+// folders when they are missing. It does not insert service types or
+// translation CLI. Leftover platform_packs / config_templates rows (from
+// before those tables were dropped) are copied onto CLI objects first so
+// operator edits survive. Assignments on non-parameter scopes are copied
+// onto a reserved parameters child and the originals are deleted. Typed
+// CN/CI services without a tree node are placed under _services.
 func Seed(db *gorm.DB) error {
 	if err := seedRootScope(db); err != nil {
 		return err
@@ -34,17 +31,10 @@ func Seed(db *gorm.DB) error {
 	if err := seedReservedFolders(db); err != nil {
 		return err
 	}
-	eline, err := seedServiceTypes(db)
-	if err != nil {
-		return err
-	}
 	if err := migrateLeftoverPacksToCLI(db); err != nil {
 		return err
 	}
 	if err := migrateLeftoverTemplatesToCLI(db); err != nil {
-		return err
-	}
-	if err := seedELINECLI(db, eline.ID); err != nil {
 		return err
 	}
 	if err := copyAssignmentsOntoParameterChildren(db); err != nil {
@@ -261,125 +251,6 @@ func ensureChildFolder(db *gorm.DB, parentID uint, name string) (*models.ConfigS
 	return &s, nil
 }
 
-func schemaHas(fields []models.FieldSchema, name string) bool {
-	for _, f := range fields {
-		if f.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// mergeMissingSchema appends seeded fields that the stored type does not
-// already have. Operator-added extras are left in place.
-func mergeMissingSchema(existing *[]models.FieldSchema, seed []models.FieldSchema) bool {
-	if existing == nil {
-		return false
-	}
-	changed := false
-	for _, f := range seed {
-		if schemaHas(*existing, f.Name) {
-			continue
-		}
-		*existing = append(*existing, f)
-		changed = true
-	}
-	return changed
-}
-
-func seedServiceTypes(db *gorm.DB) (*models.ServiceType, error) {
-	vlanField := models.FieldSchema{Name: "vlan", Type: models.VarTypeVLAN, Required: true, Description: "Customer VLAN / SAP tag"}
-	elineRoles := []models.EndpointRole{
-		{Name: "a", Min: 1, Max: 1, Fields: []models.FieldSchema{vlanField}},
-		{Name: "b", Min: 1, Max: 1, Fields: []models.FieldSchema{vlanField}},
-	}
-	elanRole := []models.EndpointRole{
-		{Name: "endpoint", Min: 1, Max: 0, Fields: []models.FieldSchema{vlanField}},
-	}
-	l3Role := []models.EndpointRole{
-		{Name: "endpoint", Min: 1, Max: 0},
-	}
-	bandwidthField := models.FieldSchema{Name: models.SchemaFieldBandwidthMbps, Type: models.VarTypeInt, Required: true, Description: "Bandwidth (Mbps)"}
-	capacitySchema := []models.FieldSchema{bandwidthField}
-	elanSchema := []models.FieldSchema{
-		bandwidthField,
-		{Name: models.SchemaFieldMaxMacAddresses, Type: models.VarTypeInt, Required: true, Description: "Max number of MAC addresses"},
-	}
-	seeds := []models.ServiceType{
-		{Name: "ELINE", Description: "L2VPN point to point", Schema: capacitySchema, EndpointRoles: elineRoles, Builtin: true, SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL},
-		{Name: "ELAN", Description: "L2VPN multipoint", Schema: elanSchema, EndpointRoles: elanRole, Builtin: true, SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS},
-		{Name: "L3VPN", Description: "L3 multipoint", Schema: capacitySchema, EndpointRoles: l3Role, Builtin: true, SyncSource: models.SyncSourceL3VPN, NetboxType: models.NetboxTypeVRF},
-		{Name: "POLARIX", Description: "Internet", Schema: capacitySchema, EndpointRoles: l3Role, Builtin: true},
-	}
-	var eline models.ServiceType
-	for _, s := range seeds {
-		var existing models.ServiceType
-		err := db.Where("name = ?", s.Name).First(&existing).Error
-		if err == nil {
-			if s.Name == "ELINE" {
-				eline = existing
-			}
-			changed := false
-			if existing.SyncSource == "" && s.SyncSource != "" {
-				existing.SyncSource = s.SyncSource
-				existing.NetboxType = s.NetboxType
-				changed = true
-			}
-			if len(existing.EndpointRoles) == 0 && len(s.EndpointRoles) > 0 {
-				existing.EndpointRoles = s.EndpointRoles
-				changed = true
-			} else if s.Name == "ELAN" && len(existing.EndpointRoles) == 1 && existing.EndpointRoles[0].Name == "endpoint" && len(existing.EndpointRoles[0].Fields) == 0 {
-				existing.EndpointRoles = s.EndpointRoles
-				changed = true
-			}
-			if mergeMissingSchema(&existing.Schema, s.Schema) {
-				changed = true
-			}
-			if changed {
-				if err := db.Save(&existing).Error; err != nil {
-					return nil, err
-				}
-				if s.Name == "ELINE" {
-					eline = existing
-				}
-			}
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-		if err := db.Create(&s).Error; err != nil {
-			return nil, err
-		}
-		if s.Name == "ELINE" {
-			eline = s
-		}
-	}
-	if eline.ID == 0 {
-		if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
-			return nil, err
-		}
-	}
-	return &eline, nil
-}
-
-func seedELINECLI(db *gorm.DB, elineTypeID uint) error {
-	for _, p := range []struct {
-		platform string
-		body     string
-	}{
-		{"eos", templates.EOSEline},
-		{"ios-xr", templates.IOSXREline},
-		{"sros", templates.SROSEline},
-		{"sros-md", templates.SROSEline},
-	} {
-		if err := syncELINECLI(db, elineTypeID, p.platform, p.body); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func catalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, error) {
 	root, err := RootScope(db)
 	if err != nil {
@@ -394,6 +265,50 @@ func catalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, er
 		return nil, err
 	}
 	return ensureChildFolder(db, cliFolder.ID, typeName)
+}
+
+// CatalogCLITypeFolder ensures global/_catalog/cli/<typeName> exists.
+func CatalogCLITypeFolder(db *gorm.DB, typeName string) (*models.ConfigScope, error) {
+	return catalogCLITypeFolder(db, typeName)
+}
+
+// RenameCatalogCLITypeFolder renames _catalog/cli/<oldName> to <newName>.
+// Child CLI objects keep their service_type_id. Missing old folder is a
+// no-op besides ensuring the new folder exists.
+func RenameCatalogCLITypeFolder(db *gorm.DB, oldName, newName string) error {
+	if oldName == "" || newName == "" || oldName == newName {
+		return nil
+	}
+	root, err := RootScope(db)
+	if err != nil {
+		return err
+	}
+	catalog, err := ensureChildFolder(db, root.ID, models.ConfigCatalogName)
+	if err != nil {
+		return err
+	}
+	cliFolder, err := ensureChildFolder(db, catalog.ID, models.ConfigCatalogCLIName)
+	if err != nil {
+		return err
+	}
+	var folder models.ConfigScope
+	err = db.Where("parent_id = ? AND name = ?", cliFolder.ID, oldName).First(&folder).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		_, err = catalogCLITypeFolder(db, newName)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	var n int64
+	if err := db.Model(&models.ConfigScope{}).Where("parent_id = ? AND name = ?", cliFolder.ID, newName).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return statusErrf(409, "catalog CLI folder %q already exists", newName)
+	}
+	folder.Name = newName
+	return db.Save(&folder).Error
 }
 
 // CLIObjectChecksum is the canonical seed hash for a translation CLI object:
@@ -457,24 +372,6 @@ func currentCLIChecksum(obj *models.ConfigScope, feats []models.ConfigCLIFeature
 		kind = models.PayloadKindCLI
 	}
 	return CLIObjectChecksum(obj.Platform, kind, obj.Payload.Context, feats)
-}
-
-func syncELINECLI(db *gorm.DB, typeID uint, platform, embed string) error {
-	cli, err := lookupCLIObjectByTypeID(db, typeID, platform, false)
-	if err != nil {
-		return err
-	}
-	if cli != nil {
-		feats, err := ListCLIFeatures(db, cli.ID)
-		if err != nil {
-			return err
-		}
-		if cli.SeedChecksum != currentCLIChecksum(cli, feats) {
-			return nil
-		}
-	}
-	add, remove := packToCLIBlobs(embed, "")
-	return writeTranslationCLI(db, typeID, "ELINE", platform, models.PayloadKindCLI, add, remove)
 }
 
 func writeTranslationCLI(db *gorm.DB, typeID uint, typeName, platform, kind, add, remove string) error {

@@ -12,26 +12,37 @@ import (
 	"gorm.io/gorm"
 )
 
-func roleByName(st *models.ServiceType, name string) *models.EndpointRole {
-	for i := range st.EndpointRoles {
-		if st.EndpointRoles[i].Name == name {
-			return &st.EndpointRoles[i]
-		}
+// ValidateInterfacesSpec checks min/max on a homogeneous interfaces spec.
+func ValidateInterfacesSpec(spec models.ServiceInterfacesSpec) error {
+	if spec.Min < 0 {
+		return statusErr(400, "interfaces.min must be >= 0")
+	}
+	if spec.Max < 0 {
+		return statusErr(400, "interfaces.max must be >= 0")
+	}
+	if spec.Max > 0 && spec.Max < spec.Min {
+		return statusErr(400, "interfaces.max must be >= min")
 	}
 	return nil
 }
 
-// ValidateEndpoints checks endpoints against the service type's EndpointRoles
-// and that each device/interface pair exists in inventory.
+// ValidateEndpoints checks endpoints against the service type's Interfaces
+// spec and that each device/interface pair exists in inventory.
 func ValidateEndpoints(db *gorm.DB, st *models.ServiceType, eps []models.ServiceEndpoint) error {
 	if st == nil {
 		return statusErr(400, "service type required")
 	}
-	counts := map[string]int{}
+	if err := ValidateInterfacesSpec(st.Interfaces); err != nil {
+		return err
+	}
+	seen := map[[2]uint]bool{}
 	for i := range eps {
 		ep := &eps[i]
 		if ep.Role == "" {
-			return statusErr(400, "endpoint role is required")
+			ep.Role = models.EndpointRoleInterface
+		}
+		if ep.Role != models.EndpointRoleInterface {
+			return statusErrf(400, "endpoint role must be %q", models.EndpointRoleInterface)
 		}
 		if ep.DeviceID == 0 || ep.InterfaceID == 0 {
 			return statusErr(400, "endpoint device_id and interface_id are required")
@@ -53,20 +64,22 @@ func ValidateEndpoints(db *gorm.DB, st *models.ServiceType, eps []models.Service
 		if iface.DeviceID != ep.DeviceID {
 			return statusErr(400, "endpoint interface does not belong to the given device")
 		}
-		role := roleByName(st, ep.Role)
-		if role == nil {
-			return statusErrf(400, "unknown endpoint role %q", ep.Role)
+		if st.Interfaces.Unique {
+			k := [2]uint{ep.DeviceID, ep.InterfaceID}
+			if seen[k] {
+				return statusErr(400, "interfaces must be unique (device_id + interface_id)")
+			}
+			seen[k] = true
 		}
-		counts[ep.Role]++
 		fields := fieldsMap(ep.Fields)
-		for _, f := range role.Fields {
+		for _, f := range st.Interfaces.Fields {
 			v, ok := fields[f.Name]
 			if !f.Required {
 				if !ok || v == nil {
 					continue
 				}
 			} else if !ok || v == nil {
-				return statusErrf(400, "endpoint role %q missing required field %q", ep.Role, f.Name)
+				return statusErrf(400, "endpoint missing required field %q", f.Name)
 			}
 			def := &models.ConfigVariableDef{Name: f.Name, Type: f.Type}
 			checked, err := TypeCheck(def, v)
@@ -74,30 +87,53 @@ func ValidateEndpoints(db *gorm.DB, st *models.ServiceType, eps []models.Service
 				return statusErr(400, err.Error())
 			}
 			if f.Required && checked == nil {
-				return statusErrf(400, "endpoint role %q missing required field %q", ep.Role, f.Name)
+				return statusErrf(400, "endpoint missing required field %q", f.Name)
 			}
 		}
 	}
-	for _, role := range st.EndpointRoles {
-		n := counts[role.Name]
-		if role.Min > 0 && n < role.Min {
-			return statusErrf(400, "role %q requires at least %d endpoint(s)", role.Name, role.Min)
-		}
-		if role.Max > 0 && n > role.Max {
-			return statusErrf(400, "role %q allows at most %d endpoint(s)", role.Name, role.Max)
-		}
+	n := len(eps)
+	if st.Interfaces.Min > 0 && n < st.Interfaces.Min {
+		return statusErrf(400, "service requires at least %d interface(s)", st.Interfaces.Min)
+	}
+	if st.Interfaces.Max > 0 && n > st.Interfaces.Max {
+		return statusErrf(400, "service allows at most %d interface(s)", st.Interfaces.Max)
 	}
 	return nil
 }
 
 func ReplaceEndpoints(db *gorm.DB, serviceID uint, eps []models.ServiceEndpoint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
+		var prev []models.ServiceEndpoint
+		if err := tx.Where("service_id = ?", serviceID).Find(&prev).Error; err != nil {
+			return err
+		}
+		prevByIdent := make(map[string]models.ServiceEndpoint, len(prev))
+		for i := range prev {
+			p := prev[i]
+			p.ServiceID = serviceID
+			prevByIdent[EndpointIdentity(p)] = p
+		}
 		if err := tx.Where("service_id = ?", serviceID).Delete(&models.ServiceEndpoint{}).Error; err != nil {
 			return err
 		}
 		for i := range eps {
 			eps[i].ID = 0
 			eps[i].ServiceID = serviceID
+			if eps[i].Role == "" {
+				eps[i].Role = models.EndpointRoleInterface
+			}
+			if old, ok := prevByIdent[EndpointIdentity(eps[i])]; ok &&
+				old.DeviceID == eps[i].DeviceID && old.InterfaceID == eps[i].InterfaceID {
+				eps[i].AppliedDeviceID = old.AppliedDeviceID
+				eps[i].AppliedIface = old.AppliedIface
+				eps[i].AppliedPlatform = old.AppliedPlatform
+				eps[i].AppliedFields = old.AppliedFields
+			} else {
+				eps[i].AppliedDeviceID = 0
+				eps[i].AppliedIface = ""
+				eps[i].AppliedPlatform = ""
+				eps[i].AppliedFields = nil
+			}
 			if err := tx.Create(&eps[i]).Error; err != nil {
 				return fmt.Errorf("create endpoint: %w", err)
 			}

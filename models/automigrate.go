@@ -62,6 +62,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&ConfigVariableDef{},
 		&ConfigAssignment{},
 		&ServiceType{},
+		&ServiceConnectionType{},
 		&ConfigMacro{},
 		&ServiceEndpoint{},
 	); err != nil {

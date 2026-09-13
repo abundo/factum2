@@ -197,7 +197,10 @@ const (
 	SchemaFieldMaxMacAddresses = "max_mac_addresses"
 )
 
-// FieldSchema is one typed field on a service type or endpoint role.
+// EndpointRoleInterface is the sentinel stored in ServiceEndpoint.Role.
+const EndpointRoleInterface = "interface"
+
+// FieldSchema is one typed field on a service type or interfaces spec.
 type FieldSchema struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
@@ -205,41 +208,55 @@ type FieldSchema struct {
 	Description string `json:"description"`
 }
 
-// EndpointRole describes how many endpoints of a role a service may have.
-type EndpointRole struct {
-	Name   string        `json:"name"`
+// ServiceInterfacesSpec is the homogeneous UNI spec for a service type.
+// Max == 0 means unlimited.
+type ServiceInterfacesSpec struct {
 	Min    int           `json:"min"`
 	Max    int           `json:"max"`
+	Unique bool          `json:"unique"`
 	Fields []FieldSchema `json:"fields"`
 }
 
 // ServiceType is a vendor-agnostic service class (ELINE, ELAN, …).
 type ServiceType struct {
 	FactumModel
-	Name          string         `json:"name" gorm:"uniqueIndex;not null;type:varchar(64)"`
-	Description   string         `json:"description" gorm:"type:varchar(255)"`
-	Schema        []FieldSchema  `json:"schema" gorm:"serializer:json"`
-	EndpointRoles []EndpointRole `json:"endpoint_roles" gorm:"serializer:json"`
-	Builtin       bool           `json:"builtin"`
+	Name        string                `json:"name" gorm:"uniqueIndex;not null;type:varchar(64)"`
+	Description string                `json:"description" gorm:"type:varchar(255)"`
+	Schema      []FieldSchema         `json:"schema" gorm:"serializer:json"`
+	Interfaces  ServiceInterfacesSpec `json:"interfaces" gorm:"serializer:json"`
+	Builtin     bool                  `json:"builtin"` // unused; always false after goose 00004
 	// SyncSource names the on-device collection device-sync reads
 	// (eline / elan / l3vpn). Empty means the type is GUI-only.
 	SyncSource string `json:"sync_source" gorm:"type:varchar(32)"`
 	// NetboxType is the NetBox object to upsert for SyncSource
 	// (evpl / vpls / vrf).
-	NetboxType string `json:"netbox_type" gorm:"type:varchar(32)"`
+	NetboxType      string                  `json:"netbox_type" gorm:"type:varchar(32)"`
+	ConnectionTypes []ServiceConnectionType `json:"connection_types" gorm:"foreignKey:ServiceTypeID"`
 }
 
 func (ServiceType) TableName() string { return "service_types" }
 
 type ServiceTypeDTO struct {
-	ID            uint           `json:"id"`
-	Name          string         `json:"name"`
-	Description   string         `json:"description"`
-	Schema        []FieldSchema  `json:"schema"`
-	EndpointRoles []EndpointRole `json:"endpoint_roles"`
-	SyncSource    string         `json:"sync_source"`
-	NetboxType    string         `json:"netbox_type"`
+	ID          uint                  `json:"id"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Schema      []FieldSchema         `json:"schema"`
+	Interfaces  ServiceInterfacesSpec `json:"interfaces"`
+	SyncSource  string                `json:"sync_source"`
+	NetboxType  string                `json:"netbox_type"`
 }
+
+// ServiceConnectionType is a named connection choice on a definition.
+type ServiceConnectionType struct {
+	FactumModel
+	ServiceTypeID uint   `json:"service_type_id" gorm:"uniqueIndex:idx_svc_ct_type_name;not null"`
+	Name          string `json:"name" gorm:"uniqueIndex:idx_svc_ct_type_name;not null;type:varchar(64)"`
+	SortOrder     int    `json:"sort_order"`
+	Image         []byte `json:"-" gorm:"type:bytea"`
+	ContentType   string `json:"content_type" gorm:"type:varchar(64)"`
+}
+
+func (ServiceConnectionType) TableName() string { return "service_connection_types" }
 
 // ConfigMacro is a named snippet templates can {{include}}.
 type ConfigMacro struct {
@@ -256,7 +273,7 @@ type ConfigMacroDTO struct {
 	Body string `json:"body"`
 }
 
-// ServiceEndpoint is a service termination (including ELINE a/b).
+// ServiceEndpoint is a service termination. Role is always "interface".
 type ServiceEndpoint struct {
 	FactumModel
 	ServiceID   uint            `json:"service_id" gorm:"index;not null"`
@@ -264,6 +281,11 @@ type ServiceEndpoint struct {
 	DeviceID    uint            `json:"device_id" gorm:"index;not null"`
 	InterfaceID uint            `json:"interface_id" gorm:"index;not null"`
 	Fields      json.RawMessage `json:"fields" gorm:"serializer:json"`
+	// Applied* is the last successful push snapshot for this binding.
+	AppliedDeviceID uint            `json:"-"`
+	AppliedIface    string          `json:"-"`
+	AppliedPlatform string          `json:"-"`
+	AppliedFields   json.RawMessage `json:"-" gorm:"serializer:json"`
 }
 
 func (ServiceEndpoint) TableName() string { return "service_endpoints" }

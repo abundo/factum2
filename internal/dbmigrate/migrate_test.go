@@ -72,3 +72,42 @@ func TestMigrationsIncludeDnsDbFile(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationsIncludeServiceDefinitions(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	var found string
+	for _, e := range entries {
+		names = append(names, e.Name())
+		if strings.HasPrefix(e.Name(), "00004_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatalf("missing 00004_*.sql, have %v", names)
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"interfaces",
+		"DROP COLUMN IF EXISTS endpoint_roles",
+		"service_connection_types",
+		"idx_svc_ct_type_name",
+		"DEFERRABLE",
+		"applied_device_id",
+		"connection_type_id",
+		"DELETE FROM public.services",
+		"maintenance_notifications",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}

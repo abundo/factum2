@@ -67,10 +67,10 @@ func (lime *Lime) SaveCustomer(row *models.Customer) error {
 // so it can't be used to find a previously-synced row.
 //
 // Lime never feeds ServiceType/BandwidthMbps/MaxMacAddresses, Fields,
-// PseudowireID, L2VPNNetboxID or the AppliedEndpoint* columns - those are
-// only ever set from the factum side. Overlaying Lime-owned fields onto
-// the stored row (instead of Save() of a fresh struct) keeps a resync
-// from wiping that enrichment and from zeroing CreatedAt.
+// PseudowireID, L2VPNNetboxID or connection_type_id - those are only ever
+// set from the factum side. Overlaying Lime-owned fields onto the stored
+// row (instead of Save() of a fresh struct) keeps a resync from wiping
+// that enrichment and from zeroing CreatedAt.
 // service_endpoints is a separate table and is not touched.
 func (lime *Lime) SaveDelivery(row *models.Service) error {
 	var existing models.Service

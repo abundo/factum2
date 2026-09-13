@@ -11,6 +11,17 @@ import (
 func TestApiDeviceSyncConfigInventoryMaps(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
+	if err := db.Create(&models.ServiceType{
+		Name: "ELAN", SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ServiceType{
+		Name: "L3VPN", SyncSource: models.SyncSourceL3VPN, NetboxType: models.NetboxTypeVRF,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	c, rec := jsonRequest(t, http.MethodGet, "/api/device-sync-config", nil, nil, nil)
 	if err := ctrl.ApiDeviceSyncConfig(c); err != nil {

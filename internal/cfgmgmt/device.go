@@ -288,7 +288,7 @@ func otherEndpoint(ep *models.ServiceEndpoint, siblings []models.ServiceEndpoint
 	return nil
 }
 
-func staleOnDevice(db *gorm.DB, svc *models.Service, deviceID uint, eps []models.ServiceEndpoint) []ELINEStale {
+func staleOnDevice(db *gorm.DB, _ *models.Service, deviceID uint, eps []models.ServiceEndpoint) []ELINEStale {
 	current := map[string]bool{}
 	for _, ep := range eps {
 		if ep.DeviceID != deviceID {
@@ -301,13 +301,21 @@ func staleOnDevice(db *gorm.DB, svc *models.Service, deviceID uint, eps []models
 		key := fmt.Sprintf("%s\x00%d", iface.Name, vlanFromFields(fieldsMap(ep.Fields)))
 		current[key] = true
 	}
-	applied := []struct {
+	var applied []struct {
 		deviceID uint
 		iface    string
 		vlan     int
-	}{
-		{svc.AppliedEndpointADeviceID, svc.AppliedEndpointAIface, svc.AppliedEndpointAVlan},
-		{svc.AppliedEndpointBDeviceID, svc.AppliedEndpointBIface, svc.AppliedEndpointBVlan},
+	}
+	for _, ep := range eps {
+		if ep.AppliedDeviceID == 0 || ep.AppliedIface == "" {
+			continue
+		}
+		vlan := VLANFromFields(ep.AppliedFields)
+		applied = append(applied, struct {
+			deviceID uint
+			iface    string
+			vlan     int
+		}{ep.AppliedDeviceID, ep.AppliedIface, vlan})
 	}
 	var out []ELINEStale
 	seen := map[string]bool{}

@@ -39,6 +39,7 @@ func newSchemaDB(t *testing.T) *gorm.DB {
 		&models.ConfigVariableDef{},
 		&models.ConfigAssignment{},
 		&models.ServiceType{},
+		&models.ServiceConnectionType{},
 		&models.ConfigMacro{},
 		&models.ServiceEndpoint{},
 	); err != nil {
@@ -54,6 +55,59 @@ func newTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("seed: %v", err)
 	}
 	return db
+}
+
+func vlanField() models.FieldSchema {
+	return models.FieldSchema{Name: "vlan", Type: models.VarTypeVLAN, Required: true, Description: "Customer VLAN / SAP tag"}
+}
+
+func mustELINEType(t *testing.T, db *gorm.DB) *models.ServiceType {
+	t.Helper()
+	st := models.ServiceType{
+		Name:        "ELINE",
+		Description: "L2VPN point to point",
+		Schema:      []models.FieldSchema{{Name: models.SchemaFieldBandwidthMbps, Type: models.VarTypeInt, Required: true}},
+		Interfaces:  models.ServiceInterfacesSpec{Min: 2, Max: 2, Unique: true, Fields: []models.FieldSchema{vlanField()}},
+		SyncSource:  models.SyncSourceELINE,
+		NetboxType:  models.NetboxTypeEVPL,
+	}
+	mustCreate(t, db, &st)
+	return &st
+}
+
+func mustELANType(t *testing.T, db *gorm.DB) *models.ServiceType {
+	t.Helper()
+	st := models.ServiceType{
+		Name:        "ELAN",
+		Description: "L2VPN multipoint",
+		Schema: []models.FieldSchema{
+			{Name: models.SchemaFieldBandwidthMbps, Type: models.VarTypeInt, Required: true},
+			{Name: models.SchemaFieldMaxMacAddresses, Type: models.VarTypeInt, Required: true},
+		},
+		Interfaces: models.ServiceInterfacesSpec{Min: 0, Max: 0, Fields: []models.FieldSchema{vlanField()}},
+		SyncSource: models.SyncSourceELAN,
+		NetboxType: models.NetboxTypeVPLS,
+	}
+	mustCreate(t, db, &st)
+	return &st
+}
+
+func mustELINECLI(t *testing.T, db *gorm.DB, st *models.ServiceType) {
+	t.Helper()
+	for _, p := range []struct {
+		platform string
+		body     string
+	}{
+		{"eos", templates.EOSEline},
+		{"ios-xr", templates.IOSXREline},
+		{"sros", templates.SROSEline},
+		{"sros-md", templates.SROSEline},
+	} {
+		add, remove := packToCLIBlobs(p.body, "")
+		if err := writeTranslationCLI(db, st.ID, st.Name, p.platform, models.PayloadKindCLI, add, remove); err != nil {
+			t.Fatalf("write CLI %s: %v", p.platform, err)
+		}
+	}
 }
 
 func jsonRaw(t *testing.T, v any) json.RawMessage {
@@ -101,13 +155,9 @@ func seedTree(t *testing.T, db *gorm.DB) (global, folder, deviceScope, ifaceScop
 
 func TestInventoryMapsAndRolesForCount(t *testing.T) {
 	types := []models.ServiceType{
-		{Name: "ELINE", SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL, EndpointRoles: []models.EndpointRole{
-			{Name: "a", Min: 1, Max: 1}, {Name: "b", Min: 1, Max: 1},
-		}},
-		{Name: "ELAN", SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS, EndpointRoles: []models.EndpointRole{
-			{Name: "endpoint", Min: 1, Max: 0},
-		}},
-		{Name: "POLARIX", EndpointRoles: []models.EndpointRole{{Name: "endpoint", Min: 1, Max: 0}}},
+		{Name: "ELINE", SyncSource: models.SyncSourceELINE, NetboxType: models.NetboxTypeEVPL, Interfaces: models.ServiceInterfacesSpec{Min: 2, Max: 2, Unique: true}},
+		{Name: "ELAN", SyncSource: models.SyncSourceELAN, NetboxType: models.NetboxTypeVPLS, Interfaces: models.ServiceInterfacesSpec{Min: 0, Max: 0}},
+		{Name: "POLARIX", Interfaces: models.ServiceInterfacesSpec{Min: 0, Max: 0}},
 	}
 	got := InventoryMaps(types)
 	if got[models.SyncSourceELINE] != models.NetboxTypeEVPL || got[models.SyncSourceELAN] != models.NetboxTypeVPLS {
@@ -121,12 +171,16 @@ func TestInventoryMapsAndRolesForCount(t *testing.T) {
 		t.Fatalf("TypeForNetboxKind evpl = %#v", eline)
 	}
 	roles := EndpointRolesForCount(&types[0], 2)
-	if len(roles) != 2 || roles[0] != "a" || roles[1] != "b" {
-		t.Errorf("ELINE roles = %v, want [a b]", roles)
+	if len(roles) != 2 || roles[0] != models.EndpointRoleInterface || roles[1] != models.EndpointRoleInterface {
+		t.Errorf("ELINE roles = %v, want [interface interface]", roles)
+	}
+	bounded := EndpointRolesForCount(&types[0], 5)
+	if len(bounded) != 2 {
+		t.Errorf("bounded Max truncated to %d, want 2", len(bounded))
 	}
 	elanRoles := EndpointRolesForCount(&types[1], 3)
-	if len(elanRoles) != 3 || elanRoles[0] != "endpoint" || elanRoles[2] != "endpoint" {
-		t.Errorf("ELAN roles = %v, want 3x endpoint", elanRoles)
+	if len(elanRoles) != 3 || elanRoles[0] != models.EndpointRoleInterface || elanRoles[2] != models.EndpointRoleInterface {
+		t.Errorf("ELAN roles = %v, want 3x interface", elanRoles)
 	}
 }
 
@@ -229,7 +283,7 @@ func TestConfigCLIFeatureInsert(t *testing.T) {
 	}
 }
 
-func TestSeedCreatesRootAndELINECLI(t *testing.T) {
+func TestSeedCreatesRootWithoutBuiltinTypes(t *testing.T) {
 	db := newTestDB(t)
 	root, err := RootScope(db)
 	if err != nil {
@@ -238,119 +292,21 @@ func TestSeedCreatesRootAndELINECLI(t *testing.T) {
 	if root.Name != models.ConfigRootName || root.Kind != models.ConfigScopeKindFolder {
 		t.Errorf("root = %+v", root)
 	}
-	if ok, err := ServiceTypeExists(db, "ELINE"); err != nil || !ok {
-		t.Fatalf("ELINE type missing: %v", err)
-	}
-	var eline, elan, l3 models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
-		t.Fatal(err)
-	}
-	if eline.SyncSource != models.SyncSourceELINE || eline.NetboxType != models.NetboxTypeEVPL {
-		t.Errorf("ELINE mapping = %s/%s, want eline/evpl", eline.SyncSource, eline.NetboxType)
-	}
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	if elan.SyncSource != models.SyncSourceELAN || elan.NetboxType != models.NetboxTypeVPLS {
-		t.Errorf("ELAN mapping = %s/%s, want elan/vpls", elan.SyncSource, elan.NetboxType)
-	}
-	if !schemaHas(elan.Schema, "max_mac_addresses") {
-		t.Errorf("ELAN schema missing max_mac_addresses: %+v", elan.Schema)
-	}
-	if !schemaHas(eline.Schema, models.SchemaFieldBandwidthMbps) {
-		t.Errorf("ELINE schema missing bandwidth_mbps: %+v", eline.Schema)
-	}
-	if !schemaHas(elan.Schema, models.SchemaFieldBandwidthMbps) {
-		t.Errorf("ELAN schema missing bandwidth_mbps: %+v", elan.Schema)
-	}
-	if err := db.Where("name = ?", "L3VPN").First(&l3).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !schemaHas(l3.Schema, models.SchemaFieldBandwidthMbps) {
-		t.Errorf("L3VPN schema missing bandwidth_mbps: %+v", l3.Schema)
-	}
-	var polarix models.ServiceType
-	if err := db.Where("name = ?", "POLARIX").First(&polarix).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !schemaHas(polarix.Schema, models.SchemaFieldBandwidthMbps) {
-		t.Errorf("POLARIX schema missing bandwidth_mbps: %+v", polarix.Schema)
-	}
-	if l3.SyncSource != models.SyncSourceL3VPN || l3.NetboxType != models.NetboxTypeVRF {
-		t.Errorf("L3VPN mapping = %s/%s, want l3vpn/vrf", l3.SyncSource, l3.NetboxType)
-	}
-	for _, plat := range []string{"eos", "ios-xr", "sros", "sros-md"} {
-		obj, err := LookupCLIObject(db, "ELINE", plat)
-		if err != nil || obj == nil {
-			t.Fatalf("CLI %s: %v %#v", plat, err, obj)
-		}
-		if obj.Name != plat || obj.Platform != plat || obj.PayloadKind != models.PayloadKindCLI {
-			t.Errorf("CLI %s = %+v", plat, obj)
-		}
-		if obj.Payload.Context != nil {
-			t.Errorf("CLI %s context = %+v, want empty", plat, obj.Payload.Context)
-		}
-		if obj.SeedChecksum == "" {
-			t.Errorf("CLI %s missing seed checksum", plat)
-		}
-		feats, err := ListCLIFeatures(db, obj.ID)
+	for _, name := range []string{"ELINE", "ELAN", "L3VPN", "POLARIX"} {
+		ok, err := ServiceTypeExists(db, name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(feats) != 1 || feats[0].Name != "apply" {
-			t.Fatalf("CLI %s features = %+v", plat, feats)
-		}
-		if strings.TrimSpace(feats[0].AddCommands) == "" || strings.TrimSpace(feats[0].RemoveCommands) == "" {
-			t.Errorf("CLI %s apply feature missing add/remove", plat)
-		}
-		if strings.Contains(feats[0].AddCommands, `template "cleanup"`) {
-			t.Errorf("CLI %s add still invokes cleanup", plat)
+		if ok {
+			t.Errorf("seed inserted builtin type %s", name)
 		}
 	}
-	root, err = RootScope(db)
-	if err != nil {
+	var n int64
+	if err := db.Model(&models.ServiceType{}).Count(&n).Error; err != nil {
 		t.Fatal(err)
 	}
-	catalog := scopeChild(t, db, root.ID, models.ConfigCatalogName)
-	cliFolder := scopeChild(t, db, catalog.ID, models.ConfigCatalogCLIName)
-	elineFolder := scopeChild(t, db, cliFolder.ID, "ELINE")
-	_ = cliChild(t, db, elineFolder.ID, "eos")
-}
-
-func TestSeedAddsMissingSchemaFields(t *testing.T) {
-	db := newTestDB(t)
-	var eline, elan models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
-		t.Fatal(err)
-	}
-	eline.Schema = nil
-	if err := db.Save(&eline).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	elan.Schema = []models.FieldSchema{{Name: "custom", Type: models.VarTypeString}}
-	if err := db.Save(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := Seed(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !schemaHas(eline.Schema, models.SchemaFieldBandwidthMbps) {
-		t.Errorf("ELINE schema missing bandwidth_mbps after reseed: %+v", eline.Schema)
-	}
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !schemaHas(elan.Schema, models.SchemaFieldBandwidthMbps) || !schemaHas(elan.Schema, models.SchemaFieldMaxMacAddresses) {
-		t.Errorf("ELAN schema missing seeded fields after reseed: %+v", elan.Schema)
-	}
-	if !schemaHas(elan.Schema, "custom") {
-		t.Errorf("ELAN operator schema field was dropped: %+v", elan.Schema)
+	if n != 0 {
+		t.Errorf("service_types count = %d, want 0", n)
 	}
 }
 
@@ -728,6 +684,7 @@ func TestUpsertTypedListAndMap(t *testing.T) {
 
 func TestRenderELINECLIMatchesEmbed(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	intent := GenericRenderData{
 		Name:        "CN00570",
 		Description: "ID=CN00570 Acme AB",
@@ -781,6 +738,7 @@ func TestRenderELINECLIMatchesEmbed(t *testing.T) {
 
 func TestRenderELINEFromServiceEndpoints(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	cust := models.Customer{Name: "Acme AB"}
 	mustCreate(t, db, &cust)
 	pe1 := models.Device{Name: "pe1", Platform: "eos", NetboxID: 501}
@@ -967,29 +925,23 @@ func TestRequiredNullIsMissing(t *testing.T) {
 
 func TestValidateEndpointsInventory(t *testing.T) {
 	db := newTestDB(t)
+	st := mustELANType(t, db)
 	dev := models.Device{Name: "pe-ep", Platform: "eos", NetboxID: 21}
 	other := models.Device{Name: "pe-other", Platform: "eos", NetboxID: 22}
 	mustCreate(t, db, &dev)
 	mustCreate(t, db, &other)
 	ifc := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t", NetboxID: 1}
 	mustCreate(t, db, &ifc)
-	st, err := LookupServiceType(db, "ELAN")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(st.EndpointRoles) == 0 {
-		t.Fatal("ELAN should have seeded endpoint roles")
-	}
-	bad := []models.ServiceEndpoint{{Role: "endpoint", DeviceID: other.ID, InterfaceID: ifc.ID}}
+	bad := []models.ServiceEndpoint{{Role: models.EndpointRoleInterface, DeviceID: other.ID, InterfaceID: ifc.ID}}
 	if err := ValidateEndpoints(db, st, bad); err == nil {
 		t.Fatal("expected cross-device reject")
 	}
-	missing := []models.ServiceEndpoint{{Role: "endpoint", DeviceID: 99999, InterfaceID: ifc.ID}}
+	missing := []models.ServiceEndpoint{{Role: models.EndpointRoleInterface, DeviceID: 99999, InterfaceID: ifc.ID}}
 	if err := ValidateEndpoints(db, st, missing); err == nil {
 		t.Fatal("expected missing device reject")
 	}
 	ok := []models.ServiceEndpoint{
-		{Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0)},
+		{Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0)},
 	}
 	if err := ValidateEndpoints(db, st, ok); err != nil {
 		t.Fatalf("valid endpoint: %v", err)
@@ -1040,8 +992,9 @@ func TestPlatformsFilter(t *testing.T) {
 	}
 }
 
-func TestSeedUpdatesUntouchedCLI(t *testing.T) {
+func TestSeedDoesNotRefreshOperatorCLI(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
 		t.Fatalf("CLI: %v %#v", err, obj)
@@ -1050,13 +1003,8 @@ func TestSeedUpdatesUntouchedCLI(t *testing.T) {
 	if err != nil || len(feats) != 1 {
 		t.Fatalf("features: %v %+v", err, feats)
 	}
-	feats[0].AddCommands = "old-seed-body"
-	feats[0].RemoveCommands = ""
+	feats[0].AddCommands = "operator-body"
 	if err := db.Save(&feats[0]).Error; err != nil {
-		t.Fatal(err)
-	}
-	obj.SeedChecksum = currentCLIChecksum(obj, []models.ConfigCLIFeature{feats[0]})
-	if err := db.Save(obj).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := Seed(db); err != nil {
@@ -1066,14 +1014,14 @@ func TestSeedUpdatesUntouchedCLI(t *testing.T) {
 	if err != nil || len(again) != 1 {
 		t.Fatalf("after seed: %v %+v", err, again)
 	}
-	wantAdd, wantRemove := packToCLIBlobs(templates.EOSEline, "")
-	if again[0].AddCommands != wantAdd || again[0].RemoveCommands != wantRemove {
-		t.Fatal("untouched CLI was not refreshed from embed")
+	if again[0].AddCommands != "operator-body" {
+		t.Errorf("seed overwrote CLI: %q", again[0].AddCommands)
 	}
 }
 
 func TestRenderServiceEndpointsDraftUsesSelectedPorts(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	cust := models.Customer{Name: "Acme AB"}
 	mustCreate(t, db, &cust)
 	pe1 := models.Device{Name: "pe1", Platform: "eos", NetboxID: 601}
@@ -2014,22 +1962,20 @@ func TestWrapEnterRemoveAtRootTrue(t *testing.T) {
 
 func TestLookupCLIObjectSROSMDFallback(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	root, err := RootScope(db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	elineMD, err := LookupCLIObject(db, "ELINE", "sros-md")
 	if err != nil || elineMD == nil {
-		t.Fatalf("seeded sros-md: %v %#v", err, elineMD)
+		t.Fatalf("sros-md: %v %#v", err, elineMD)
 	}
 	if elineMD.Platform != "sros-md" {
 		t.Fatalf("platform = %s, want sros-md", elineMD.Platform)
 	}
 
-	var elan models.ServiceType
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
+	elan := mustELANType(t, db)
 	obj, err := LookupCLIObject(db, "ELAN", "sros-md")
 	if err != nil {
 		t.Fatal(err)
@@ -2132,6 +2078,7 @@ func elineRenderIntent() GenericRenderData {
 
 func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	intent := elineRenderIntent()
 	embeds := map[string]string{
 		"eos":    templates.EOSEline,
@@ -2159,6 +2106,7 @@ func TestRenderSeededELINECLIMatchesEmbed(t *testing.T) {
 
 func TestSeedLeavesEditedCLIFeature(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
 		t.Fatalf("CLI: %v %#v", err, obj)
@@ -2185,6 +2133,7 @@ func TestSeedLeavesEditedCLIFeature(t *testing.T) {
 
 func TestSeedLeavesEditedCLIContext(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
 		t.Fatalf("CLI: %v %#v", err, obj)
@@ -2220,6 +2169,7 @@ func TestSeedLeavesEditedCLIContext(t *testing.T) {
 
 func TestRenderGenericUsesCLIObjectWhenPresent(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
 		t.Fatalf("CLI: %v %#v", err, obj)
@@ -2282,6 +2232,7 @@ func TestRenderGenericUsesCLIObjectWhenPresent(t *testing.T) {
 
 func TestRenderGenericErrorsWhenELINECLIDeleted(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
 		t.Fatalf("CLI: %v %#v", err, obj)
@@ -2377,6 +2328,7 @@ func TestRenderGenericSurfacesLookupError(t *testing.T) {
 
 func TestRenderGenericMissingTranslator(t *testing.T) {
 	db := newTestDB(t)
+	mustELANType(t, db)
 	dev := models.Device{Name: "pe-elan", Platform: "eos", NetboxID: 702}
 	mustCreate(t, db, &dev)
 	svc := models.Service{ServiceID: "CN00998", ServiceType: "ELAN"}
@@ -2460,10 +2412,7 @@ func createLeftoverPackTable(t *testing.T, db *gorm.DB) {
 func TestDropPacksRefusesWithoutCLITwin(t *testing.T) {
 	db := newTestDB(t)
 	createLeftoverPackTable(t, db)
-	var eline models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
-		t.Fatal(err)
-	}
+	eline := mustELINEType(t, db)
 	mustCreate(t, db, &leftoverPackRow{ServiceTypeID: eline.ID, Platform: "custom-nos"})
 	err := AssertPacksHaveCLITwins(db)
 	if err == nil {
@@ -2479,6 +2428,7 @@ func TestDropPacksRefusesWithoutCLITwin(t *testing.T) {
 
 func TestDropPacksWhenTwinsExist(t *testing.T) {
 	db := newTestDB(t)
+	mustELINECLI(t, db, mustELINEType(t, db))
 	createLeftoverPackTable(t, db)
 	obj, err := LookupCLIObject(db, "ELINE", "eos")
 	if err != nil || obj == nil {
@@ -2639,10 +2589,7 @@ func TestDropTemplatesTranslationCLIIsNotTwin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var elan models.ServiceType
-	if err := db.Where("name = ?", "ELAN").First(&elan).Error; err != nil {
-		t.Fatal(err)
-	}
+	elan := mustELANType(t, db)
 	_, err = CreateScope(db, &models.ConfigScope{
 		ParentID: &root.ID, Name: "banner", Kind: models.ConfigScopeKindCLI,
 		Platform: "eos", ServiceTypeID: &elan.ID,
@@ -2670,6 +2617,7 @@ func walkTree(nodes []ScopeTreeNode, fn func(ScopeTreeNode)) {
 
 func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
 	db := newTestDB(t)
+	st := mustELINEType(t, db)
 	folder, err := servicesFolder(db)
 	if err != nil {
 		t.Fatal(err)
@@ -2684,14 +2632,10 @@ func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	partial := []models.ServiceEndpoint{{
-		Role: "a", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0),
+		Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(100, 0, 0),
 	}}
-	st, err := LookupServiceType(db, "ELINE")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := ValidateEndpoints(db, st, partial); err == nil {
-		t.Fatal("expected ValidateEndpoints to reject a-only ELINE")
+		t.Fatal("expected ValidateEndpoints to reject 1-of-2 ELINE")
 	}
 	if err := ReplaceEndpoints(db, svc.ID, partial); err != nil {
 		t.Fatalf("ReplaceEndpoints rejected partial ELINE: %v", err)
@@ -2700,13 +2644,14 @@ func TestReplaceEndpointsDoesNotValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Role != "a" {
-		t.Fatalf("stored = %+v, want one role a", got)
+	if len(got) != 1 || got[0].Role != models.EndpointRoleInterface {
+		t.Fatalf("stored = %+v, want one role interface", got)
 	}
 }
 
 func TestELANSamePortDifferentVLANTwoRefs(t *testing.T) {
 	db := newTestDB(t)
+	mustELANType(t, db)
 	_, folder, _, ifaceScope, iface := seedTree(t, db)
 	svc := models.Service{ServiceID: "CN00902", ServiceType: "ELAN"}
 	mustCreate(t, db, &svc)
@@ -2714,8 +2659,8 @@ func TestELANSamePortDifferentVLANTwoRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	eps := []models.ServiceEndpoint{
-		{Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(100, 0, 0)},
-		{Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(200, 0, 0)},
+		{Role: models.EndpointRoleInterface, DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(100, 0, 0)},
+		{Role: models.EndpointRoleInterface, DeviceID: iface.DeviceID, InterfaceID: iface.ID, Fields: EncodeEndpointFields(200, 0, 0)},
 	}
 	if EndpointIdentity(eps[0]) == EndpointIdentity(eps[1]) {
 		t.Fatal("expected distinct endpointIdentity for VLAN 100 vs 200")
@@ -2762,6 +2707,7 @@ func TestELANSamePortDifferentVLANTwoRefs(t *testing.T) {
 
 func TestProjectEndpointScopesDedupsIdentity(t *testing.T) {
 	db := newTestDB(t)
+	mustELANType(t, db)
 	folder, err := servicesFolder(db)
 	if err != nil {
 		t.Fatal(err)
@@ -2776,7 +2722,7 @@ func TestProjectEndpointScopesDedupsIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	same := models.ServiceEndpoint{
-		Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(10, 0, 0),
+		Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID, Fields: EncodeEndpointFields(10, 0, 0),
 	}
 	if err := ReplaceEndpoints(db, svc.ID, []models.ServiceEndpoint{same, same}); err != nil {
 		t.Fatal(err)
@@ -2808,11 +2754,12 @@ func TestProjectEndpointScopesDedupsIdentity(t *testing.T) {
 
 func TestVirtualRefsSkipUnattached(t *testing.T) {
 	db := newTestDB(t)
+	mustELANType(t, db)
 	_, _, _, _, iface := seedTree(t, db)
 	svc := models.Service{ServiceID: "CN00931", ServiceType: "ELAN"}
 	mustCreate(t, db, &svc)
 	mustCreate(t, db, &models.ServiceEndpoint{
-		ServiceID: svc.ID, Role: "endpoint", DeviceID: iface.DeviceID, InterfaceID: iface.ID,
+		ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: iface.DeviceID, InterfaceID: iface.ID,
 		Fields: EncodeEndpointFields(10, 0, 0),
 	})
 	tree, err := ScopeTree(db)
@@ -2844,6 +2791,7 @@ func TestEndpointIdentityNonVLANFields(t *testing.T) {
 
 func TestCreateServiceFromTreeZeroEndpoints(t *testing.T) {
 	db := newTestDB(t)
+	mustELINEType(t, db)
 	root, err := RootScope(db)
 	if err != nil {
 		t.Fatal(err)
@@ -2908,6 +2856,7 @@ func TestCreateServiceFromTreeInterfaceParent(t *testing.T) {
 
 func TestAttachServiceProjectsEndpointChildren(t *testing.T) {
 	db := newTestDB(t)
+	mustELANType(t, db)
 	folder, err := servicesFolder(db)
 	if err != nil {
 		t.Fatal(err)
@@ -2919,7 +2868,7 @@ func TestAttachServiceProjectsEndpointChildren(t *testing.T) {
 	svc := models.Service{ServiceID: "CN00903", ServiceType: "ELAN", Source: "lime"}
 	mustCreate(t, db, &svc)
 	mustCreate(t, db, &models.ServiceEndpoint{
-		ServiceID: svc.ID, Role: "endpoint", DeviceID: dev.ID, InterfaceID: ifc.ID,
+		ServiceID: svc.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID,
 		Fields: EncodeEndpointFields(50, 0, 0),
 	})
 	node, err := AttachService(db, folder.ID, svc.ID)
@@ -2937,7 +2886,7 @@ func TestAttachServiceProjectsEndpointChildren(t *testing.T) {
 	if len(kids) != 1 {
 		t.Fatalf("children = %d, want 1", len(kids))
 	}
-	if kids[0].Payload.Role != "endpoint" {
+	if kids[0].Payload.Role != models.EndpointRoleInterface {
 		t.Errorf("role = %s", kids[0].Payload.Role)
 	}
 }
@@ -2956,6 +2905,8 @@ func TestAttachServiceRejectsOptical(t *testing.T) {
 
 func TestSeedPlacesTypedServicesUnderServicesFolder(t *testing.T) {
 	db := newTestDB(t)
+	mustELINEType(t, db)
+	mustELANType(t, db)
 	folder, err := servicesFolder(db)
 	if err != nil {
 		t.Fatal(err)
@@ -2967,7 +2918,7 @@ func TestSeedPlacesTypedServicesUnderServicesFolder(t *testing.T) {
 	eline := models.Service{ServiceID: "CN00910", ServiceType: "ELINE"}
 	mustCreate(t, db, &eline)
 	mustCreate(t, db, &models.ServiceEndpoint{
-		ServiceID: eline.ID, Role: "a", DeviceID: dev.ID, InterfaceID: ifc.ID,
+		ServiceID: eline.ID, Role: models.EndpointRoleInterface, DeviceID: dev.ID, InterfaceID: ifc.ID,
 		Fields: EncodeEndpointFields(10, 0, 0),
 	})
 	lime := models.Service{ServiceID: "CN00911", ServiceType: "ELAN", Source: "lime"}
@@ -3024,6 +2975,7 @@ func TestSeedPlacesTypedServicesUnderServicesFolder(t *testing.T) {
 
 func TestDeleteServiceScopeDetachesInventory(t *testing.T) {
 	db := newTestDB(t)
+	mustELINEType(t, db)
 	folder, err := servicesFolder(db)
 	if err != nil {
 		t.Fatal(err)

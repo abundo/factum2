@@ -207,15 +207,22 @@ func (ctrl *Controller) ApiServiceTypeUpdate(c *echo.Context) error {
 
 // ServiceDetailResponse adds AppliedToDevice to the raw Service model - a
 // derived signal for whether the service has live config on a device
-// (models.Service's AppliedEndpointX* fields, which record that, are
-// json:"-" since they're internal bookkeeping, not something a client
-// should ever set directly). Used by the delete dialog
+// (service_endpoints.applied_device_id). Used by the delete dialog
 // (ServiceList.vue) to decide whether to offer a "remove from device"
 // cleanup option.
 type ServiceDetailResponse struct {
 	models.Service
 	AppliedToDevice bool                     `json:"applied_to_device"`
 	Endpoints       []models.ServiceEndpoint `json:"endpoints,omitempty"`
+}
+
+func endpointsAppliedToDevice(eps []models.ServiceEndpoint) bool {
+	for _, ep := range eps {
+		if ep.AppliedDeviceID != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctrl *Controller) ApiServiceByID(c *echo.Context) error {
@@ -235,7 +242,7 @@ func (ctrl *Controller) ApiServiceByID(c *echo.Context) error {
 	eps, _ := cfgmgmt.ListEndpoints(ctrl.DB, item.ID)
 	return c.JSON(http.StatusOK, ServiceDetailResponse{
 		Service:         item,
-		AppliedToDevice: item.AppliedEndpointADeviceID != 0 || item.AppliedEndpointBDeviceID != 0,
+		AppliedToDevice: endpointsAppliedToDevice(eps),
 		Endpoints:       eps,
 	})
 }

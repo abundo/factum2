@@ -382,11 +382,6 @@ func deleteServiceEndpointScope(db *gorm.DB, child *models.ConfigScope) error {
 	if err := ValidateEndpoints(db, st, remaining); err != nil {
 		return err
 	}
-	if svc.ServiceType == "ELINE" {
-		if err := ValidateELINEShape(db, remaining); err != nil {
-			return err
-		}
-	}
 	return ReplaceEndpoints(db, serviceRowID, remaining)
 }
 

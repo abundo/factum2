@@ -337,9 +337,8 @@ function serviceParentId(node) {
   return servicesFolderId()
 }
 
-function firstRoleForType(typeName) {
-  const st = serviceTypes.value.find((t) => t.name === typeName)
-  return st?.endpoint_roles?.[0]?.name || 'endpoint'
+function firstRoleForType(_typeName) {
+  return 'interface'
 }
 
 function nearestMatrixNode(node) {
@@ -1092,13 +1091,13 @@ function openType(row) {
     ? {
         ...row,
         schema_text: JSON.stringify(row.schema ?? [], null, 2),
-        roles_text: JSON.stringify(row.endpoint_roles ?? [], null, 2),
+        interfaces_text: JSON.stringify(row.interfaces ?? { min: 0, max: 0, unique: false, fields: [] }, null, 2),
       }
     : {
         name: '',
         description: '',
         schema_text: '[]',
-        roles_text: '[]',
+        interfaces_text: JSON.stringify({ min: 0, max: 0, unique: false, fields: [] }, null, 2),
         sync_source: '',
         netbox_type: '',
       }
@@ -1108,16 +1107,16 @@ function openType(row) {
 function saveType() {
   saving.value = true
   let schema
-  let roles
+  let interfaces
   try {
     schema = parseJSON(form.value.schema_text, [])
-    roles = parseJSON(form.value.roles_text, [])
+    interfaces = parseJSON(form.value.interfaces_text, { min: 0, max: 0, unique: false, fields: [] })
   } catch {
     saving.value = false
     toast.add({
       color: 'error',
       title: 'Error',
-      description: 'Schema and roles must be valid JSON.',
+      description: 'Schema and interfaces must be valid JSON.',
     })
     return
   }
@@ -1125,7 +1124,7 @@ function saveType() {
     name: form.value.name,
     description: form.value.description ?? '',
     schema,
-    endpoint_roles: roles,
+    interfaces,
     sync_source: optionValue(form.value.sync_source) || '',
     netbox_type: optionValue(form.value.netbox_type) || '',
   }
@@ -1500,12 +1499,10 @@ onBeforeUnmount(() => {
                 { accessorKey: 'description', header: 'Description' },
                 { accessorKey: 'sync_source', header: 'Sync source' },
                 { accessorKey: 'netbox_type', header: 'NetBox type' },
-                { accessorKey: 'builtin', header: 'Builtin' },
                 { id: 'actions', header: '' },
               ]"
               empty="No service types."
             >
-              <template #builtin-cell="{ row }">{{ row.original.builtin ? 'yes' : '' }}</template>
               <template #actions-cell="{ row }">
                 <div class="flex gap-1">
                   <UButton
@@ -1516,7 +1513,7 @@ onBeforeUnmount(() => {
                     @click="openType(row.original)"
                   />
                   <UButton
-                    v-if="authStore.canWrite && !row.original.builtin"
+                    v-if="authStore.canWrite"
                     icon="i-lucide-trash-2"
                     variant="outline"
                     color="error"
@@ -1910,7 +1907,7 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-3">
         <div>
           <label class="block font-bold mb-2">Name</label>
-          <UInput v-model="form.name" :disabled="!!form.builtin" />
+          <UInput v-model="form.name" />
         </div>
         <div>
           <label class="block font-bold mb-2">Description</label>
@@ -1941,8 +1938,8 @@ onBeforeUnmount(() => {
           <UTextarea v-model="form.schema_text" :rows="4" class="w-full font-mono text-sm" />
         </div>
         <div>
-          <label class="block font-bold mb-2">Endpoint roles (JSON)</label>
-          <UTextarea v-model="form.roles_text" :rows="6" class="w-full font-mono text-sm" />
+          <label class="block font-bold mb-2">Interfaces (JSON)</label>
+          <UTextarea v-model="form.interfaces_text" :rows="6" class="w-full font-mono text-sm" />
         </div>
       </div>
     </template>

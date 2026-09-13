@@ -367,6 +367,8 @@ func TestDeleteFactumInterfaceByNetboxID(t *testing.T) {
 func TestApplyELINECmdsPackPathRunsPrepare(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	createTestTranslationCLI(t, db, st, "sros", "apply {{.Name}}")
 	stub := &elinePackStub{prepareErr: errors.New("sdp 127 already exists with far-end 1.2.3.4")}
 	intent := &drivers.ELINEIntent{
 		Name: "CN00001",

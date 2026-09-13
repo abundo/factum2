@@ -151,40 +151,8 @@ type Service struct {
 	Service         string `json:"service"`
 	AgreementStatus string `json:"agreement_status"` // Lime agreement_status.text (e.g. "Active"); empty for factum-created rows
 
-	// Leftover ELINE columns. New code stores terminations in
-	// service_endpoints (roles a/b, vlan + netbox ids in Fields). These
-	// columns are no longer written; they stay in the schema until a SQL
-	// migration drops them.
-	EndpointADeviceID             uint `json:"endpoint_a_device_id"`
-	EndpointAInterfaceID          uint `json:"endpoint_a_interface_id"`
-	EndpointAVlan                 int  `json:"endpoint_a_vlan"`
-	EndpointASubinterfaceNetboxID uint `json:"endpoint_a_subinterface_netbox_id"`
-	EndpointATerminationNetboxID  uint `json:"endpoint_a_termination_netbox_id"`
-
-	EndpointBDeviceID             uint `json:"endpoint_b_device_id"`
-	EndpointBInterfaceID          uint `json:"endpoint_b_interface_id"`
-	EndpointBVlan                 int  `json:"endpoint_b_vlan"`
-	EndpointBSubinterfaceNetboxID uint `json:"endpoint_b_subinterface_netbox_id"`
-	EndpointBTerminationNetboxID  uint `json:"endpoint_b_termination_netbox_id"`
-
-	// AppliedEndpointX* record what's actually live on the devices as of
-	// the last successful PUT .../eline/push (web/handler_service_eline.go,
-	// ApiServiceElinePush) - distinct from EndpointX* above, which is the
-	// desired state Netbox/the DB already reflects the moment PUT
-	// .../eline runs. A zero AppliedEndpointXDeviceID means this side has
-	// never been pushed yet. Comparing Applied* against Endpoint* on each
-	// push is what lets a re-provision (interface/VLAN/device edit) find
-	// and remove the stale subinterface/pseudowire/patch a previous push
-	// left behind, on whichever device still has it - see
-	// elineComputeStale. Only advanced once the corresponding push (and
-	// any stale cleanup it required) actually succeeds, so a partial
-	// failure is retried on the next push rather than silently forgotten.
-	AppliedEndpointADeviceID uint   `json:"-"`
-	AppliedEndpointAIface    string `json:"-"`
-	AppliedEndpointAVlan     int    `json:"-"`
-	AppliedEndpointBDeviceID uint   `json:"-"`
-	AppliedEndpointBIface    string `json:"-"`
-	AppliedEndpointBVlan     int    `json:"-"`
+	// ConnectionTypeID is the chosen service_connection_types row, if any.
+	ConnectionTypeID *uint `json:"connection_type_id"`
 
 	// PseudowireID is derived from ServiceID (pseudowireIDFromServiceID,
 	// web/handler_service_eline.go) and stored as the Netbox L2VPN's
@@ -227,20 +195,21 @@ func (s *Service) BeforeCreate(tx *gorm.DB) error {
 // value has the backend auto-assign the next <category><5-digit> number for
 // Category, rather than the wizard reserving one up front.
 type ServiceDTO struct {
-	ID              uint            `json:"id"`
-	Name            string          `json:"name"`
-	CustomerID      uint            `json:"company"`
-	Comment         string          `json:"comment"`
-	ServiceID       string          `json:"service_id"`
-	Category        string          `json:"category"`
-	ServiceType     string          `json:"service_type"`
-	BandwidthMbps   int             `json:"bandwidth_mbps"`
-	MaxMacAddresses int             `json:"max_mac_addresses"`
-	DeliveryPoint1  string          `json:"deliverypoint1"`
-	DeliveryPoint2  string          `json:"deliverypoint2"`
-	Product         string          `json:"product"`
-	Service         string          `json:"service"`
-	Fields          json.RawMessage `json:"fields"`
+	ID               uint            `json:"id"`
+	Name             string          `json:"name"`
+	CustomerID       uint            `json:"company"`
+	Comment          string          `json:"comment"`
+	ServiceID        string          `json:"service_id"`
+	Category         string          `json:"category"`
+	ServiceType      string          `json:"service_type"`
+	BandwidthMbps    int             `json:"bandwidth_mbps"`
+	MaxMacAddresses  int             `json:"max_mac_addresses"`
+	DeliveryPoint1   string          `json:"deliverypoint1"`
+	DeliveryPoint2   string          `json:"deliverypoint2"`
+	Product          string          `json:"product"`
+	Service          string          `json:"service"`
+	Fields           json.RawMessage `json:"fields"`
+	ConnectionTypeID *uint           `json:"connection_type_id"`
 }
 
 // -------

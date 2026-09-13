@@ -139,9 +139,47 @@ func TestConfigAssignmentUpsertAndResolveRedactsSecret(t *testing.T) {
 	}
 }
 
+func createTestELINEType(t *testing.T, db *gorm.DB) models.ServiceType {
+	t.Helper()
+	st := models.ServiceType{
+		Name: "ELINE",
+		Interfaces: models.ServiceInterfacesSpec{
+			Min: 2, Max: 2, Unique: true,
+			Fields: []models.FieldSchema{{Name: "vlan", Type: models.VarTypeVLAN, Required: true}},
+		},
+		SyncSource: models.SyncSourceELINE,
+		NetboxType: models.NetboxTypeEVPL,
+	}
+	if err := db.Create(&st).Error; err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func createTestTranslationCLI(t *testing.T, db *gorm.DB, st models.ServiceType, platform, add string) {
+	t.Helper()
+	parent, err := cfgmgmt.CatalogCLITypeFolder(db, st.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := st.ID
+	created, err := cfgmgmt.CreateScope(db, &models.ConfigScope{
+		ParentID: &parent.ID, Name: platform, Kind: models.ConfigScopeKindCLI,
+		ServiceTypeID: &id, Platform: platform, PayloadKind: models.PayloadKindCLI, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feat := models.ConfigCLIFeature{ScopeID: created.ID, Name: "apply", AddCommands: add}
+	if err := db.Create(&feat).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApiServiceCreateAcceptsELINEAndUserType(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	c, rec := jsonRequest(t, http.MethodPost, "/api/service", map[string]any{
 		"category": "CN", "service_type": "ELINE",
@@ -184,82 +222,30 @@ func TestApiServiceCreateAcceptsELINEAndUserType(t *testing.T) {
 	}
 }
 
-func TestApiServiceElineUpdateStandaloneWithoutNetbox(t *testing.T) {
+func TestApiServiceElineUpdateGone(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
 
-	cust := models.Customer{Name: "Acme"}
-	if err := db.Create(&cust).Error; err != nil {
-		t.Fatal(err)
-	}
-	svc := models.Service{CustomerID: cust.ID, ServiceID: "CN00001", ServiceType: "ELINE"}
-	if err := db.Create(&svc).Error; err != nil {
-		t.Fatal(err)
-	}
-	devA := models.Device{Name: "pe-a", Platform: "eos", NetboxID: 101}
-	devB := models.Device{Name: "pe-b", Platform: "eos", NetboxID: 102}
-	if err := db.Create(&devA).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&devB).Error; err != nil {
-		t.Fatal(err)
-	}
-	ifa := models.Interface{DeviceID: devA.ID, Name: "Ethernet1", Type: "1000base-t"}
-	ifb := models.Interface{DeviceID: devB.ID, Name: "Ethernet1", Type: "1000base-t"}
-	if err := db.Create(&ifa).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&ifb).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	body := map[string]any{
-		"endpoint_a_device_id":    devA.ID,
-		"endpoint_a_interface_id": ifa.ID,
-		"endpoint_a_vlan":         100,
-		"endpoint_b_device_id":    devB.ID,
-		"endpoint_b_interface_id": ifb.ID,
-		"endpoint_b_vlan":         200,
-	}
-	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/eline", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
+	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/eline", map[string]any{}, []string{"id"}, []string{"1"})
 	if err := ctrl.ApiServiceElineUpdate(c); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410, body=%s", rec.Code, rec.Body.String())
 	}
-	var updated models.Service
-	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+	c, rec = jsonRequest(t, http.MethodPost, "/api/service/x/eline/push", map[string]any{}, []string{"id"}, []string{"1"})
+	if err := ctrl.ApiServiceElinePush(c); err != nil {
 		t.Fatal(err)
 	}
-	if updated.PseudowireID == 0 {
-		t.Fatal("expected locally derived pseudowire_id")
-	}
-	if updated.L2VPNNetboxID != 0 {
-		t.Errorf("standalone save wrote netbox id %d", updated.L2VPNNetboxID)
-	}
-	eps, err := cfgmgmt.ListEndpoints(db, svc.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(eps) != 2 {
-		t.Fatalf("endpoints = %d, want 2", len(eps))
-	}
-	byRole := map[string]models.ServiceEndpoint{}
-	for _, ep := range eps {
-		byRole[ep.Role] = ep
-	}
-	if byRole["a"].InterfaceID != ifa.ID || cfgmgmt.VLANFromFields(byRole["a"].Fields) != 100 {
-		t.Errorf("endpoint a = %+v", byRole["a"])
-	}
-	if byRole["b"].InterfaceID != ifb.ID || cfgmgmt.VLANFromFields(byRole["b"].Fields) != 200 {
-		t.Errorf("endpoint b = %+v", byRole["b"])
+	if rec.Code != http.StatusGone {
+		t.Fatalf("push status = %d, want 410, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestApiServiceEndpointsPutELINE(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	cust := models.Customer{Name: "Acme"}
 	if err := db.Create(&cust).Error; err != nil {
@@ -288,8 +274,8 @@ func TestApiServiceEndpointsPutELINE(t *testing.T) {
 
 	body := map[string]any{
 		"endpoints": []map[string]any{
-			{"role": "a", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
-			{"role": "b", "device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 20}},
+			{"device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+			{"role": "interface", "device_id": devB.ID, "interface_id": ifb.ID, "fields": map[string]any{"vlan": 20}},
 		},
 	}
 	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
@@ -306,18 +292,17 @@ func TestApiServiceEndpointsPutELINE(t *testing.T) {
 	if len(eps) != 2 {
 		t.Fatalf("endpoints = %d, want 2", len(eps))
 	}
-	var stored models.Service
-	if err := db.First(&stored, svc.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if stored.PseudowireID == 0 {
-		t.Fatal("expected pseudowire_id")
+	for _, ep := range eps {
+		if ep.Role != models.EndpointRoleInterface {
+			t.Errorf("role = %q, want interface", ep.Role)
+		}
 	}
 }
 
 func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	createTestELINEType(t, db)
 
 	cust := models.Customer{Name: "Acme"}
 	if err := db.Create(&cust).Error; err != nil {
@@ -338,7 +323,7 @@ func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
 
 	body := map[string]any{
 		"endpoints": []map[string]any{
-			{"role": "a", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
+			{"role": "interface", "device_id": devA.ID, "interface_id": ifa.ID, "fields": map[string]any{"vlan": 10}},
 		},
 	}
 	c, rec := jsonRequest(t, http.MethodPut, "/api/service/x/endpoints", body, []string{"id"}, []string{strconv.FormatUint(uint64(svc.ID), 10)})
@@ -357,20 +342,60 @@ func TestApiServiceEndpointsPutStillValidatesFullSet(t *testing.T) {
 	}
 }
 
-func TestCannotDeleteBuiltinServiceType(t *testing.T) {
+func TestCannotDeleteServiceTypeInUse(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
-
-	var eline models.ServiceType
-	if err := db.Where("name = ?", "ELINE").First(&eline).Error; err != nil {
+	eline := createTestELINEType(t, db)
+	svc := models.Service{ServiceID: "CN00099", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
 		t.Fatal(err)
 	}
 	c, rec := jsonRequest(t, http.MethodDelete, "/api/config/service-types/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(eline.ID), 10)})
 	if err := ctrl.ApiConfigServiceTypeDelete(c); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestApiConfigServiceTypeRejectsEndpointRoles(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/config/service-types", map[string]any{
+		"name": "X", "endpoint_roles": []map[string]any{{"name": "a", "min": 1, "max": 1}},
+	}, nil, nil)
+	if err := ctrl.ApiConfigServiceTypeCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestApiConfigServiceTypeRenameCascades(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	svc := models.Service{ServiceID: "CN00100", ServiceType: "ELINE"}
+	if err := db.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec := jsonRequest(t, http.MethodPut, "/api/config/service-types/x", map[string]any{
+		"name": "P2P", "interfaces": map[string]any{"min": 2, "max": 2, "unique": true},
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(st.ID), 10)})
+	if err := ctrl.ApiConfigServiceTypeUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var stored models.Service
+	if err := db.First(&stored, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ServiceType != "P2P" {
+		t.Errorf("service_type = %q, want P2P", stored.ServiceType)
 	}
 }
 
@@ -732,6 +757,8 @@ func TestConfigAssignmentListWinningRowsAfterMove(t *testing.T) {
 func TestApiConfigRender_ServiceDraftEndpoints(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
+	st := createTestELINEType(t, db)
+	createTestTranslationCLI(t, db, st, "eos", "interface {{.LocalIface}}.{{.LocalVLAN}}")
 
 	cust := models.Customer{Name: "Acme"}
 	if err := db.Create(&cust).Error; err != nil {

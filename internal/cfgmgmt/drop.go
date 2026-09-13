@@ -45,8 +45,7 @@ func leftoverSelect(db *gorm.DB, model any, cols []string) []string {
 
 // migrateLeftoverPacksToCLI copies each leftover platform_packs row onto a
 // kind=cli translator if one does not already exist. Operator-edited pack
-// bodies keep a checksum that will not match the CLI object hash so
-// seedELINECLI will not refresh them from embed.
+// bodies keep a checksum that will not match the CLI object hash.
 func migrateLeftoverPacksToCLI(db *gorm.DB) error {
 	if !db.Migrator().HasTable("platform_packs") {
 		return nil

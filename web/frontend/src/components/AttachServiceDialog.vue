@@ -70,10 +70,11 @@ const availableRoles = computed(() => {
   for (const ep of existingEndpoints.value) {
     counts[ep.role] = (counts[ep.role] || 0) + 1
   }
-  return (st.endpoint_roles ?? []).filter((r) => {
-    const n = counts[r.name] || 0
-    return r.max === 0 || n < r.max
-  })
+  const spec = st.interfaces ?? {}
+  const n = counts.interface || existingEndpoints.value.length
+  const max = spec.max ?? 0
+  if (max > 0 && n >= max) return []
+  return [{ name: 'interface', min: spec.min ?? 0, max, fields: spec.fields ?? [] }]
 })
 const roleOptions = computed(() =>
   availableRoles.value.map((r) => ({ label: r.name, value: r.name })),

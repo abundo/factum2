@@ -72,9 +72,11 @@ const selectedServiceType = computed(() =>
 )
 const schemaFields = computed(() => selectedServiceType.value?.schema ?? [])
 const schemaValues = ref({})
-const genericRoles = computed(() =>
-  service.value.service_type ? (selectedServiceType.value?.endpoint_roles ?? []) : [],
-)
+const genericRoles = computed(() => {
+  if (!service.value.service_type || !selectedServiceType.value) return []
+  const spec = selectedServiceType.value.interfaces ?? {}
+  return [{ name: 'interface', min: spec.min ?? 0, max: spec.max ?? 0, fields: spec.fields ?? [] }]
+})
 const genericEndpoints = ref([])
 const genericSaving = ref(false)
 const genericPushing = ref(false)
@@ -256,11 +258,9 @@ watch(
 
 function seedEndpointsForType(typeName) {
   const st = serviceTypeRows.value.find((x) => x.name === typeName)
-  for (const role of st?.endpoint_roles ?? []) {
-    const n = role.min || 0
-    for (let i = 0; i < n; i++) {
-      addGenericEndpoint(role.name)
-    }
+  const n = st?.interfaces?.min || 0
+  for (let i = 0; i < n; i++) {
+    addGenericEndpoint('interface')
   }
 }
 
