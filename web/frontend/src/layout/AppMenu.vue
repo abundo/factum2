@@ -97,9 +97,12 @@ const groups = computed(() => {
             ]),
           ]
         : []),
-      section('Devices', [
+      section('DCIM', [
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
+        { label: 'Manufacturers', icon: 'i-lucide-factory', to: '/dcim/manufacturers' },
+        { label: 'Device types', icon: 'i-lucide-cpu', to: '/dcim/device-types' },
+        { label: 'Platforms', icon: 'i-lucide-layers', to: '/dcim/platforms' },
         ...(authStore.oxidizedEnabled
           ? [{ label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' }]
           : []),

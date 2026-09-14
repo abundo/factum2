@@ -738,6 +738,16 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	device.ModelID = nb_device.ModelID
 	device.Platform = nb_device.Platform
 	device.PlatformID = nb_device.PlatformID
+	if mfr, err := upsertManufacturer(db, nb_device.Manufacturer, nb_device.ManufacturerID); err != nil {
+		return false, err
+	} else if mfr.ID != 0 {
+		if _, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID); err != nil {
+			return false, err
+		}
+	}
+	if _, err := upsertPlatform(db, nb_device.Platform, nb_device.PlatformID); err != nil {
+		return false, err
+	}
 	device.PrimaryIPv4 = nb_device.PrimaryIPv4
 	device.PrimaryIPv4ID = nb_device.PrimaryIPv4ID
 	device.PrimaryIPv6 = nb_device.PrimaryIPv6
@@ -788,7 +798,10 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	// atomic statement keyed on idx_devices_netbox_id_vm rather than a
 	// separate check.
 	err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "netbox_id"}, {Name: "vm"}},
+		Columns: []clause.Column{{Name: "netbox_id"}, {Name: "vm"}},
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Expr{SQL: "netbox_id != 0"},
+		}},
 		UpdateAll: true,
 	}).Create(&device).Error
 	if err != nil {

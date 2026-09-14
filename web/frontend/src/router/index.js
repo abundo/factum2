@@ -78,6 +78,24 @@ const router = createRouter({
           component: () => import('@/views/device/DeviceList.vue'),
         },
         {
+          path: '/dcim/manufacturers',
+          name: 'dcim-manufacturers',
+          meta: { title: 'Manufacturers', requiresRead: true },
+          component: () => import('@/views/dcim/ManufacturerList.vue'),
+        },
+        {
+          path: '/dcim/device-types',
+          name: 'dcim-device-types',
+          meta: { title: 'Device types', requiresRead: true },
+          component: () => import('@/views/dcim/DeviceTypeList.vue'),
+        },
+        {
+          path: '/dcim/platforms',
+          name: 'dcim-platforms',
+          meta: { title: 'Platforms', requiresRead: true },
+          component: () => import('@/views/dcim/PlatformList.vue'),
+        },
+        {
           path: '/oxidized',
           name: 'oxidized',
           meta: { title: 'Oxidized', requiresRead: true, requiresOxidized: true },

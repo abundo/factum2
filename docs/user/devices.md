@@ -5,9 +5,19 @@ order: 20
 
 # Devices
 
-Devices are synced from NetBox (and, when enabled, BECS via NetBox). You
-do not create chassis in Factum; you work with what the last source sync
-brought in.
+Devices can be synced from NetBox (and, when enabled, BECS via NetBox) or
+created locally in Factum. Local devices are independent of NetBox: they
+are not pushed there, and a NetBox sync will not overwrite or delete them.
+
+Create a local device from **DCIM → Devices → New**. Manufacturers, device
+types, and platforms are a shared catalog: NetBox sync fills the same
+tables (source `netbox`) that you can also create locally (source
+`factum`). Pick an existing type from either source. Platform is optional;
+its slug should match a driver such as `eos` or `sros` if you want
+interface refresh.
+
+Local devices can be edited and deleted from the device detail dialog.
+NetBox-synced catalog rows and devices are read-only here.
 
 ## Device list
 

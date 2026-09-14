@@ -4,6 +4,18 @@ export function getDevices() {
   return http.get('/device').then((res) => res.data)
 }
 
+export function createDevice(payload) {
+  return http.post('/device', payload).then((res) => res.data)
+}
+
+export function updateDevice(id, payload) {
+  return http.put(`/device/${id}`, payload).then((res) => res.data)
+}
+
+export function deleteDevice(id) {
+  return http.delete(`/device/${id}`).then((res) => res.data)
+}
+
 export function getDevice(id) {
   return http.get(`/device/${id}`).then((res) => res.data)
 }

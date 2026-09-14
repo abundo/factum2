@@ -1,5 +1,12 @@
 package models
 
+import (
+	"regexp"
+	"strings"
+
+	"gorm.io/gorm"
+)
+
 // import "github.com/abundo/netboxtool"
 
 // --------------------------------------------------------------------------
@@ -11,8 +18,10 @@ type Device struct {
 	// Netbox's dcim.Device and virtualization.VirtualMachine tables have
 	// independent ID sequences, so NetboxID is only unique per VM value,
 	// never globally - see internal/netbox.syncDevice.
-	VM             bool   `json:"vm" gorm:"uniqueIndex:idx_devices_netbox_id_vm"`
-	NetboxID       uint   `json:"netbox_id" gorm:"uniqueIndex:idx_devices_netbox_id_vm"`
+	// Local (Factum-created) devices keep NetboxID=0; uniqueness is a
+	// partial index WHERE netbox_id <> 0 so many local rows can coexist.
+	VM             bool   `json:"vm"`
+	NetboxID       uint   `json:"netbox_id"`
 	Name           string `json:"name" gorm:"type:varchar(255)"`
 	Comments       string `json:"comments" gorm:"type:varchar(255)"`
 	Enabled        bool   `json:"enabled"`
@@ -203,6 +212,131 @@ type Site struct {
 	Name      string  `json:"name" gorm:"type:varchar(255)"`
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+// Manufacturer is the shared DCIM catalog (NetBox dcim.Manufacturer).
+// Source is "netbox" when upserted from sync, "factum" when created in the UI.
+type Manufacturer struct {
+	FactumModel
+	Name     string `json:"name" gorm:"type:varchar(255);uniqueIndex;not null"`
+	Slug     string `json:"slug" gorm:"type:varchar(255);uniqueIndex;not null"`
+	Source   string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID uint   `json:"netbox_id"`
+}
+
+type ManufacturerDTO struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func (m *Manufacturer) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(m.Slug) == "" {
+		m.Slug = Slugify(m.Name)
+	}
+	if m.Source == "" {
+		m.Source = "factum"
+	}
+	return nil
+}
+
+func (m *Manufacturer) BeforeUpdate(tx *gorm.DB) error {
+	if strings.TrimSpace(m.Slug) == "" {
+		m.Slug = Slugify(m.Name)
+	}
+	return nil
+}
+
+// DeviceType is the shared DCIM catalog (NetBox dcim.DeviceType).
+type DeviceType struct {
+	FactumModel
+	ManufacturerID uint   `json:"manufacturer_id" gorm:"index;not null"`
+	Model          string `json:"model" gorm:"type:varchar(255);not null"`
+	Slug           string `json:"slug" gorm:"type:varchar(255);not null"`
+	Source         string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID       uint   `json:"netbox_id"`
+}
+
+type DeviceTypeDTO struct {
+	ID             uint   `json:"id"`
+	ManufacturerID uint   `json:"manufacturer_id"`
+	Model          string `json:"model"`
+	Slug           string `json:"slug"`
+}
+
+func (d *DeviceType) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(d.Slug) == "" {
+		d.Slug = Slugify(d.Model)
+	}
+	if d.Source == "" {
+		d.Source = "factum"
+	}
+	return nil
+}
+
+func (d *DeviceType) BeforeUpdate(tx *gorm.DB) error {
+	if strings.TrimSpace(d.Slug) == "" {
+		d.Slug = Slugify(d.Model)
+	}
+	return nil
+}
+
+// Platform is the shared DCIM catalog (NetBox dcim.Platform).
+// Slug is what drivers match on (eos, sros, vrp, …).
+type Platform struct {
+	FactumModel
+	Name           string `json:"name" gorm:"type:varchar(255);uniqueIndex;not null"`
+	Slug           string `json:"slug" gorm:"type:varchar(255);uniqueIndex;not null"`
+	ManufacturerID uint   `json:"manufacturer_id"`
+	Source         string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID       uint   `json:"netbox_id"`
+}
+
+type PlatformDTO struct {
+	ID             uint   `json:"id"`
+	Name           string `json:"name"`
+	Slug           string `json:"slug"`
+	ManufacturerID uint   `json:"manufacturer_id"`
+}
+
+func (p *Platform) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(p.Slug) == "" {
+		p.Slug = Slugify(p.Name)
+	}
+	if p.Source == "" {
+		p.Source = "factum"
+	}
+	return nil
+}
+
+func (p *Platform) BeforeUpdate(tx *gorm.DB) error {
+	if strings.TrimSpace(p.Slug) == "" {
+		p.Slug = Slugify(p.Name)
+	}
+	return nil
+}
+
+var slugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
+
+// Slugify turns a catalog name into a URL/NetBox-style slug.
+func Slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = slugNonAlnum.ReplaceAllString(s, "-")
+	return strings.Trim(s, "-")
+}
+
+// DeviceCreateDTO is the POST /api/device body for a Factum-local device
+// (NetboxID stays 0, CfSource is "factum"). Manufacturer/model/platform
+// strings on Device are copied from the catalog rows at create time.
+type DeviceCreateDTO struct {
+	Name         string `json:"name"`
+	DeviceTypeID uint   `json:"device_type_id"`
+	PlatformID   uint   `json:"platform_id"`
+	Site         string `json:"site"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+	PrimaryIPv4  string `json:"primary_ipv4"`
+	Comments     string `json:"comments"`
 }
 
 // Tag is shared by device-tags and interface-tags: exactly one of

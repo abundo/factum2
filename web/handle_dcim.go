@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -339,4 +340,184 @@ func (ctrl *Controller) ApiDeviceImpact(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+func isLocalDevice(d models.Device) bool {
+	return d.NetboxID == 0 && d.CfSource != "netbox"
+}
+
+func catalogSourceNetbox(source string) bool {
+	return source == "netbox"
+}
+
+func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreateDTO) error {
+	name := strings.TrimSpace(dto.Name)
+	if name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+	}
+	if dto.DeviceTypeID == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "device_type_id is required")
+	}
+	var dt models.DeviceType
+	if err := db.First(&dt, dto.DeviceTypeID).Error; err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "device type not found")
+	}
+	var mfr models.Manufacturer
+	if err := db.First(&mfr, dt.ManufacturerID).Error; err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "manufacturer not found")
+	}
+	status := strings.TrimSpace(dto.Status)
+	if status == "" {
+		status = "active"
+	}
+	device.Name = name
+	device.Comments = strings.TrimSpace(dto.Comments)
+	device.Enabled = true
+	device.Manufacturer = mfr.Name
+	device.ModelName = dt.Model
+	device.Site = strings.TrimSpace(dto.Site)
+	device.Role = strings.TrimSpace(dto.Role)
+	device.Status = status
+	device.PrimaryIPv4 = strings.TrimSpace(dto.PrimaryIPv4)
+	device.Platform = ""
+	if dto.PlatformID != 0 {
+		var plat models.Platform
+		if err := db.First(&plat, dto.PlatformID).Error; err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "platform not found")
+		}
+		device.Platform = plat.Slug
+	}
+	return nil
+}
+
+func httpErrorJSON(c *echo.Context, err error) error {
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		msg := he.Message
+		if msg == "" {
+			msg = he.Error()
+		}
+		return c.JSON(he.Code, map[string]any{"error": msg})
+	}
+	return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+}
+
+// ApiDeviceCreate inserts a Factum-local device (NetboxID=0, CfSource=factum).
+// Manufacturer/model/platform names are copied from catalog rows so the
+// existing denormalized Device columns stay populated for list/detail views.
+func (ctrl *Controller) ApiDeviceCreate(c *echo.Context) error {
+	var dto models.DeviceCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	device := models.Device{CfSource: "factum"}
+	if err := applyDeviceWrite(ctrl.DB, &device, dto); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Create(&device).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, device)
+}
+
+// ApiDeviceUpdate edits a Factum-local device. NetBox-synced rows are
+// rejected — the next sync would overwrite them.
+func (ctrl *Controller) ApiDeviceUpdate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var existing models.Device
+	if err := ctrl.DB.First(&existing, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if !isLocalDevice(existing) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "devices synced from NetBox cannot be edited here"})
+	}
+	var dto models.DeviceCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := applyDeviceWrite(ctrl.DB, &existing, dto); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Save(&existing).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, existing)
+}
+
+// ApiDeviceDelete removes a Factum-local device. NetBox-synced rows are
+// rejected — they would come back on the next sync.
+func (ctrl *Controller) ApiDeviceDelete(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var existing models.Device
+	if err := ctrl.DB.First(&existing, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if !isLocalDevice(existing) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "devices synced from NetBox cannot be deleted here"})
+	}
+	var ifaces []models.Interface
+	if err := ctrl.DB.Where("device_id = ?", existing.ID).Find(&ifaces).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if len(ifaces) > 0 {
+		ifaceIDs := make([]uint, len(ifaces))
+		for i, iface := range ifaces {
+			ifaceIDs[i] = iface.ID
+		}
+		if err := ctrl.DB.Where("interface_id IN ?", ifaceIDs).Delete(&models.Address{}).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+	}
+	if err := ctrl.DB.Where("device_id = ?", existing.ID).Delete(&models.Interface{}).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := ctrl.DB.Delete(&existing).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) guardFactumCatalog(kind string, next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		id, err := echo.PathParam[uint](c, "id")
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+		}
+		var source string
+		var loadErr error
+		switch kind {
+		case "manufacturer":
+			var row models.Manufacturer
+			loadErr = ctrl.DB.Select("source").First(&row, id).Error
+			source = row.Source
+		case "device type":
+			var row models.DeviceType
+			loadErr = ctrl.DB.Select("source").First(&row, id).Error
+			source = row.Source
+		case "platform":
+			var row models.Platform
+			loadErr = ctrl.DB.Select("source").First(&row, id).Error
+			source = row.Source
+		default:
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "unknown catalog kind"})
+		}
+		if loadErr != nil {
+			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+				return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+			}
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": loadErr.Error()})
+		}
+		if catalogSourceNetbox(source) {
+			return c.JSON(http.StatusForbidden, map[string]any{
+				"error": kind + "s synced from NetBox cannot be edited here",
+			})
+		}
+		return next(c)
+	}
 }

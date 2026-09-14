@@ -2,12 +2,16 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref, watch } from 'vue'
 import {
+  createDevice,
+  deleteDevice,
   getDevice,
   getDeviceImpact,
   getDevices,
   refreshDeviceInterfaces,
+  updateDevice,
   updateDeviceInterfaces,
 } from '@/api/devices'
+import { getDeviceTypes, getManufacturers, getPlatforms } from '@/api/dcim'
 import {
   createXConnect,
   deleteOpticalPort,
@@ -45,6 +49,51 @@ const columns = [
   { accessorKey: 'primary_ipv4', header: 'IPv4' },
 ]
 
+const createDialog = ref(false)
+const createSaving = ref(false)
+const createForm = ref({
+  name: '',
+  device_type_id: undefined,
+  platform_id: undefined,
+  site: '',
+  role: '',
+  status: 'active',
+  primary_ipv4: '',
+})
+const manufacturers = ref([])
+const deviceTypes = ref([])
+const platforms = ref([])
+const deletingDevice = ref(false)
+
+const isLocalDevice = computed(
+  () => device.value && !device.value.netbox_id && device.value.cf_source !== 'netbox',
+)
+
+const manufacturerById = computed(() => {
+  const map = new Map()
+  for (const m of manufacturers.value) map.set(m.id, m.name)
+  return map
+})
+const deviceTypeItems = computed(() =>
+  deviceTypes.value.map((dt) => ({
+    label: `${manufacturerById.value.get(dt.manufacturer_id) || '?'} ${dt.model}`,
+    value: dt.id,
+  })),
+)
+const platformItems = computed(() => [
+  { label: 'None', value: 0 },
+  ...platforms.value.map((p) => ({ label: `${p.name} (${p.slug})`, value: p.id })),
+])
+const statusItems = [
+  { label: 'active', value: 'active' },
+  { label: 'offline', value: 'offline' },
+  { label: 'planned', value: 'planned' },
+  { label: 'staged', value: 'staged' },
+  { label: 'failed', value: 'failed' },
+  { label: 'inventory', value: 'inventory' },
+  { label: 'decommissioning', value: 'decommissioning' },
+]
+
 const detailDialog = ref(false)
 const interfacesDialog = ref(false)
 const oxidizedDialogOpen = ref(false)
@@ -56,6 +105,135 @@ const deviceError = ref(null)
 function showOxidized(deviceRow) {
   oxidizedNodeName.value = deviceRow.name
   oxidizedDialogOpen.value = true
+}
+
+function loadCatalog() {
+  Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms()])
+    .then(([mfrs, types, plats]) => {
+      manufacturers.value = mfrs ?? []
+      deviceTypes.value = types ?? []
+      platforms.value = plats ?? []
+    })
+    .catch(() => {})
+}
+
+function openNew() {
+  createForm.value = {
+    name: '',
+    device_type_id: undefined,
+    platform_id: 0,
+    site: '',
+    role: '',
+    status: 'active',
+    primary_ipv4: '',
+  }
+  loadCatalog()
+  createDialog.value = true
+}
+
+function deviceWritePayload(form) {
+  return {
+    name: form.name.trim(),
+    device_type_id: form.device_type_id,
+    platform_id: form.platform_id || 0,
+    site: form.site.trim(),
+    role: form.role.trim(),
+    status: form.status,
+    primary_ipv4: form.primary_ipv4.trim(),
+  }
+}
+
+function saveNew() {
+  if (!createForm.value.name.trim()) {
+    toast.add({ color: 'error', title: 'Name is required' })
+    return
+  }
+  if (!createForm.value.device_type_id) {
+    toast.add({ color: 'error', title: 'Device type is required' })
+    return
+  }
+  createSaving.value = true
+  createDevice(deviceWritePayload(createForm.value))
+    .then(() => {
+      createDialog.value = false
+      loadDevices()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Create failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      createSaving.value = false
+    })
+}
+
+function fillFormFromDevice(d) {
+  const mfr = manufacturers.value.find((m) => m.name === d.manufacturer)
+  const dt = deviceTypes.value.find(
+    (t) => t.model === d.model_name && (!mfr || t.manufacturer_id === mfr.id),
+  )
+  const plat = platforms.value.find((p) => p.slug === d.platform || p.name === d.platform)
+  createForm.value = {
+    name: d.name ?? '',
+    device_type_id: dt?.id,
+    platform_id: plat?.id || 0,
+    site: d.site ?? '',
+    role: d.role ?? '',
+    status: d.status || 'active',
+    primary_ipv4: d.primary_ipv4 ?? '',
+  }
+}
+
+function saveLocalDevice() {
+  if (!device.value) return
+  if (!createForm.value.name.trim()) {
+    toast.add({ color: 'error', title: 'Name is required' })
+    return
+  }
+  if (!createForm.value.device_type_id) {
+    toast.add({ color: 'error', title: 'Device type is required' })
+    return
+  }
+  createSaving.value = true
+  updateDevice(device.value.id, deviceWritePayload(createForm.value))
+    .then((data) => {
+      device.value = data
+      loadDevices()
+      toast.add({ color: 'success', title: 'Device saved', duration: 3000 })
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Save failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      createSaving.value = false
+    })
+}
+
+function removeLocalDevice() {
+  if (!device.value) return
+  deletingDevice.value = true
+  deleteDevice(device.value.id)
+    .then(() => {
+      detailDialog.value = false
+      loadDevices()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Delete failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      deletingDevice.value = false
+    })
 }
 
 function loadDevices() {
@@ -320,6 +498,18 @@ function loadDevice(row) {
       device.value = data
       snapshotDescriptions()
       resetXcForm(data.optical_kind)
+      const local = !data.netbox_id && data.cf_source !== 'netbox'
+      if (local) {
+        loadCatalog()
+        Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms()]).then(
+          ([mfrs, types, plats]) => {
+            manufacturers.value = mfrs ?? []
+            deviceTypes.value = types ?? []
+            platforms.value = plats ?? []
+            fillFormFromDevice(data)
+          },
+        )
+      }
     })
     .catch(() => {
       deviceError.value = 'Failed to load device.'
@@ -498,7 +688,17 @@ onMounted(loadDevices)
 <template>
   <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
-      <h4 class="m-0">Devices</h4>
+      <div class="flex items-center gap-2">
+        <h4 class="m-0">Devices</h4>
+        <UButton
+          v-if="authStore.canWrite"
+          label="New"
+          icon="i-lucide-plus"
+          color="neutral"
+          size="sm"
+          @click="openNew"
+        />
+      </div>
       <SearchInput v-model="globalFilter" />
     </div>
 
@@ -607,38 +807,74 @@ onMounted(loadDevices)
             }}</span>
           </template>
 
-          <label for="device-site" class="font-bold whitespace-nowrap">Site</label>
-          <UInput id="device-site" :model-value="device.site || ''" disabled class="w-full" />
-
-          <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
-          <UInput id="device-role" :model-value="device.role || ''" disabled class="w-full" />
-
-          <label for="device-manufacturer" class="font-bold whitespace-nowrap">Manufacturer</label>
+          <label for="device-name" class="font-bold whitespace-nowrap">Name</label>
           <UInput
-            id="device-manufacturer"
-            :model-value="device.manufacturer || ''"
-            disabled
+            v-if="isLocalDevice"
+            id="device-name"
+            v-model="createForm.name"
             class="w-full"
           />
+          <UInput v-else id="device-name" :model-value="device.name || ''" disabled class="w-full" />
 
-          <label for="device-model" class="font-bold whitespace-nowrap">Model</label>
+          <label for="device-site" class="font-bold whitespace-nowrap">Site</label>
+          <UInput v-if="isLocalDevice" id="device-site" v-model="createForm.site" class="w-full" />
+          <UInput v-else id="device-site" :model-value="device.site || ''" disabled class="w-full" />
+
+          <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
+          <UInput v-if="isLocalDevice" id="device-role" v-model="createForm.role" class="w-full" />
+          <UInput v-else id="device-role" :model-value="device.role || ''" disabled class="w-full" />
+
+          <label for="device-type" class="font-bold whitespace-nowrap">Device type</label>
+          <USelect
+            v-if="isLocalDevice"
+            id="device-type"
+            v-model="createForm.device_type_id"
+            :items="deviceTypeItems"
+            class="w-full"
+          />
           <UInput
-            id="device-model"
-            :model-value="device.model_name || ''"
+            v-else
+            id="device-type"
+            :model-value="[device.manufacturer, device.model_name].filter(Boolean).join(' ') || ''"
             disabled
             class="w-full"
           />
 
           <label for="device-platform" class="font-bold whitespace-nowrap">Platform</label>
+          <USelect
+            v-if="isLocalDevice"
+            id="device-platform"
+            v-model="createForm.platform_id"
+            :items="platformItems"
+            class="w-full"
+          />
           <UInput
+            v-else
             id="device-platform"
             :model-value="device.platform || ''"
             disabled
             class="w-full"
           />
 
+          <template v-if="isLocalDevice">
+            <label for="device-status" class="font-bold whitespace-nowrap">Status</label>
+            <USelect
+              id="device-status"
+              v-model="createForm.status"
+              :items="statusItems"
+              class="w-full"
+            />
+          </template>
+
           <label for="device-ipv4" class="font-bold whitespace-nowrap">Primary IPv4</label>
           <UInput
+            v-if="isLocalDevice"
+            id="device-ipv4"
+            v-model="createForm.primary_ipv4"
+            class="w-full font-mono"
+          />
+          <UInput
+            v-else
             id="device-ipv4"
             :model-value="device.primary_ipv4 || ''"
             disabled
@@ -700,9 +936,62 @@ onMounted(loadDevices)
     </template>
 
     <template #footer>
+      <UButton
+        v-if="isLocalDevice && authStore.canWrite"
+        label="Delete"
+        icon="i-lucide-trash"
+        color="error"
+        variant="ghost"
+        :loading="deletingDevice"
+        @click="removeLocalDevice"
+      />
+      <UButton
+        v-if="isLocalDevice && authStore.canWrite"
+        label="Save"
+        icon="i-lucide-check"
+        :loading="createSaving"
+        @click="saveLocalDevice"
+      />
       <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
     </template>
   </UModal>
+
+  <FormModal
+    v-model:open="createDialog"
+    :source="createForm"
+    title="New device"
+    :ui="{ content: 'sm:max-w-lg' }"
+  >
+    <template #body>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
+          <UInput v-model="createForm.name" class="w-full" autofocus />
+        </UFormField>
+        <UFormField label="Device type">
+          <USelect v-model="createForm.device_type_id" :items="deviceTypeItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Platform">
+          <USelect v-model="createForm.platform_id" :items="platformItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Site">
+          <UInput v-model="createForm.site" class="w-full" />
+        </UFormField>
+        <UFormField label="Role">
+          <UInput v-model="createForm.role" class="w-full" />
+        </UFormField>
+        <UFormField label="Status">
+          <USelect v-model="createForm.status" :items="statusItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Primary IPv4">
+          <UInput v-model="createForm.primary_ipv4" class="w-full font-mono" />
+        </UFormField>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="createDialog = false" />
+      <UButton label="Create" icon="i-lucide-check" :loading="createSaving" @click="saveNew" />
+    </template>
+  </FormModal>
 
   <FormModal
     v-model:open="interfacesDialog"

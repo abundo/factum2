@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/models"
@@ -98,6 +99,136 @@ func TestApiGetDevicesIncludeInterfaces(t *testing.T) {
 	}
 	if len(fullDev.Interfaces[0].Addresses) != 1 || fullDev.Interfaces[0].Addresses[0].Address != "10.1.1.1/24" {
 		t.Errorf("addresses = %+v, want [10.1.1.1/24]", fullDev.Interfaces[0].Addresses)
+	}
+}
+
+func TestApiDeviceCreateLocal(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	mfr := models.Manufacturer{Name: "Arista", Slug: "arista"}
+	if err := db.Create(&mfr).Error; err != nil {
+		t.Fatalf("manufacturer: %v", err)
+	}
+	dt := models.DeviceType{ManufacturerID: mfr.ID, Model: "DCS-7050", Slug: "dcs-7050"}
+	if err := db.Create(&dt).Error; err != nil {
+		t.Fatalf("device type: %v", err)
+	}
+	plat := models.Platform{Name: "Arista EOS", Slug: "eos"}
+	if err := db.Create(&plat).Error; err != nil {
+		t.Fatalf("platform: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "leaf-1",
+		DeviceTypeID: dt.ID,
+		PlatformID:   plat.ID,
+		Site:         "lab",
+		Status:       "active",
+		PrimaryIPv4:  "10.0.0.1/32",
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.ID == 0 || created.NetboxID != 0 || created.CfSource != "factum" {
+		t.Fatalf("created = %+v", created)
+	}
+	if created.Manufacturer != "Arista" || created.ModelName != "DCS-7050" || created.Platform != "eos" {
+		t.Fatalf("denormalized fields = %+v", created)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "leaf-2",
+		DeviceTypeID: dt.ID,
+		PlatformID:   plat.ID,
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("second status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{Name: "no-type"}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatalf("missing type: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing type status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/device/x", models.DeviceCreateDTO{
+		Name:         "leaf-1-renamed",
+		DeviceTypeID: dt.ID,
+		PlatformID:   plat.ID,
+		Site:         "lab2",
+		Status:       "offline",
+		PrimaryIPv4:  "10.0.0.2/32",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDeviceUpdate(c); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update: %v", err)
+	}
+	if updated.Name != "leaf-1-renamed" || updated.Site != "lab2" || updated.Status != "offline" {
+		t.Fatalf("updated = %+v", updated)
+	}
+
+	nbDev := models.Device{Name: "from-nb", NetboxID: 7, CfSource: "netbox"}
+	if err := db.Create(&nbDev).Error; err != nil {
+		t.Fatalf("nb device: %v", err)
+	}
+	c, rec = jsonRequest(t, http.MethodPut, "/api/device/x", models.DeviceCreateDTO{
+		Name:         "nope",
+		DeviceTypeID: dt.ID,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(nbDev.ID), 10)})
+	if err := ctrl.ApiDeviceUpdate(c); err != nil {
+		t.Fatalf("update nb: %v", err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("update nb status = %d", rec.Code)
+	}
+}
+
+func TestApiDeviceDeleteLocalVsNetbox(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	local := models.Device{Name: "local-1", CfSource: "factum"}
+	nb := models.Device{Name: "nb-1", NetboxID: 99, CfSource: "netbox"}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatalf("local: %v", err)
+	}
+	if err := db.Create(&nb).Error; err != nil {
+		t.Fatalf("netbox: %v", err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodDelete, "/api/device/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(nb.ID), 10)})
+	if err := ctrl.ApiDeviceDelete(c); err != nil {
+		t.Fatalf("delete netbox: %v", err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("netbox delete status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/device/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(local.ID), 10)})
+	if err := ctrl.ApiDeviceDelete(c); err != nil {
+		t.Fatalf("delete local: %v", err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("local delete status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
