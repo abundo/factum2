@@ -19,7 +19,7 @@ func TestSyncDevicePreservesOpticalKindWithoutCF(t *testing.T) {
 	}
 	if _, err := syncDevice(db, &netboxtool.NBDevice{
 		NetboxID: 55, Name: "roadm-a", Role: "router", Status: "active",
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var d models.Device
@@ -197,6 +197,38 @@ func gone[T any](t *testing.T, db *gorm.DB, id uint) bool {
 		t.Fatalf("lookup %T id=%d: %v", row, id, err)
 	}
 	return true
+}
+
+func TestSyncAddressesStoresValidatedDNSName(t *testing.T) {
+	db := newImportTestDB(t)
+	_, ifaceIDs := seedDeviceWithIfaces(t, db, "r1", 1, []models.Interface{
+		{NetboxID: 10, Name: "eth0"},
+	})
+	id := ifaceIDs["eth0"]
+	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+		{NetboxID: 200, Address: "10.0.0.1/24"},
+	}, map[uint]string{200: "lo0.r1.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	var addr models.Address
+	if err := db.Where("netbox_id = ?", 200).First(&addr).Error; err != nil {
+		t.Fatal(err)
+	}
+	if addr.DNSName != "lo0.r1.example.com" {
+		t.Errorf("dns_name = %q", addr.DNSName)
+	}
+
+	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+		{NetboxID: 200, Address: "10.0.0.1/24"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("netbox_id = ?", 200).First(&addr).Error; err != nil {
+		t.Fatal(err)
+	}
+	if addr.DNSName != "" {
+		t.Errorf("dns_name after missing map = %q, want empty", addr.DNSName)
+	}
 }
 
 func TestSlugify(t *testing.T) {
@@ -565,7 +597,7 @@ func TestSyncInterfaces_CopiesVLANNames(t *testing.T) {
 		TaggedVLANs:  []int{200},
 		VLANNames:    map[int]string{100: "MGMT", 200: "servers"},
 		Mode:         "tagged",
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatalf("syncInterfaces: %v", err)
 	}

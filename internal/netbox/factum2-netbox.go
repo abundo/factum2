@@ -107,6 +107,12 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	}
 	slog.Debug("Netbox devices", "loaded", len(nb_devices))
 
+	dnsNames, err := fetchAddressDNSNames(nb, reporter)
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+
 	var count_new int
 	var count_updated int
 	var count_deleted int
@@ -124,7 +130,7 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 			syncedDeviceIDs = append(syncedDeviceIDs, nb_device.NetboxID)
 		}
 
-		isNew, err := syncDevice(db, nb_device)
+		isNew, err := syncDevice(db, nb_device, dnsNames)
 		if err != nil {
 			reporter.EmitErr(err)
 			return err
@@ -696,7 +702,7 @@ func findOrCreateTenant(nb tenantAPI, customer models.Customer) (*netboxtool.NBT
 // syncDevice creates or updates a single device and reconciles its
 // interfaces, addresses and tags against Netbox. Returns true if the
 // device was newly created.
-func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice) (bool, error) {
+func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]string) (bool, error) {
 	// Scoped by vm as well as netbox_id: Netbox's dcim.Device and
 	// virtualization.VirtualMachine tables have independent ID sequences, so
 	// a physical device and a VM can share the same NetboxID.
@@ -792,7 +798,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice) (bool, error) {
 	if err := syncTags(db, device.ID, 0, nb_device.Tags); err != nil {
 		return false, err
 	}
-	if err := syncInterfaces(db, device.ID, nb_device.Interfaces); err != nil {
+	if err := syncInterfaces(db, device.ID, nb_device.Interfaces, dnsNames); err != nil {
 		return false, err
 	}
 
@@ -802,7 +808,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice) (bool, error) {
 // syncInterfaces creates/updates the interfaces of a device, matched by
 // netbox_id, and removes any factum interface no longer present in
 // nb_interfaces (along with its addresses and tags).
-func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInterface) error {
+func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInterface, dnsNames map[uint]string) error {
 	var existing []models.Interface
 	if err := db.Where("device_id = ?", deviceID).Find(&existing).Error; err != nil {
 		return err
@@ -838,7 +844,7 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 			return err
 		}
 
-		if err := syncAddresses(db, iface.ID, nb_intf.Addresses); err != nil {
+		if err := syncAddresses(db, iface.ID, nb_intf.Addresses, dnsNames); err != nil {
 			return err
 		}
 		if err := syncTags(db, 0, iface.ID, nb_intf.Tags); err != nil {
@@ -864,7 +870,7 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 // syncAddresses creates/updates the addresses of an interface, matched
 // by netbox_id, and removes any factum address no longer present in
 // nb_addresses.
-func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAddress) error {
+func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAddress, dnsNames map[uint]string) error {
 	var existing []models.Address
 	if err := db.Where("interface_id = ?", interfaceID).Find(&existing).Error; err != nil {
 		return err
@@ -884,6 +890,7 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 		addr.Address = nb_addr.Address
 		addr.VRF = nb_addr.VRF
 		addr.Role = nb_addr.Role
+		addr.DNSName = dnsNames[nb_addr.NetboxID]
 		if err := db.Save(&addr).Error; err != nil {
 			return err
 		}

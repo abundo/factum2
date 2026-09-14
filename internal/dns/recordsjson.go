@@ -31,7 +31,8 @@ type recordsJSONRecord struct {
 
 // writeRecords emits a dnsmgr2 JSON records file: one domain, then one
 // A/AAAA per device primary IP, then one A/AAAA per interface address
-// named <sanitized-interface>.<sanitized-device>.
+// named <sanitized-interface>.<sanitized-device>, then A/AAAA for each
+// Netbox dns_name on those addresses.
 func writeRecords(w io.Writer, domain string, devices []*models.Device) (int, error) {
 	return writeRecordsWithZones(w, domain, devices, nil)
 }
@@ -55,6 +56,10 @@ func writeRecordsWithZones(w io.Writer, domain string, devices []*models.Device,
 			d.Records = append(d.Records, recs...)
 			recordCount += len(recs)
 			writtenDefault = true
+		} else {
+			recs := addressDNSNameRecords(devices, name, false)
+			d.Records = append(d.Records, recs...)
+			recordCount += len(recs)
 		}
 		recs := zoneRecordsJSON(zone.Records)
 		d.Records = append(d.Records, recs...)
@@ -91,6 +96,28 @@ func deviceRecordsJSON(domain string, devices []*models.Device) []recordsJSONRec
 			}
 			name := label + "." + host
 			for _, addr := range intf.Addresses {
+				out = appendAddressJSON(out, name, addr.Address)
+			}
+		}
+	}
+	out = append(out, addressDNSNameRecords(devices, domain, true)...)
+	return out
+}
+
+// addressDNSNameRecords emits A/AAAA records from Netbox dns_name on
+// interface IP addresses that belong in zone.
+func addressDNSNameRecords(devices []*models.Device, zone string, allowUnqualified bool) []recordsJSONRecord {
+	var out []recordsJSONRecord
+	for _, device := range devices {
+		for _, intf := range device.Interfaces {
+			for _, addr := range intf.Addresses {
+				if addr.DNSName == "" {
+					continue
+				}
+				name := dnsNameRelative(addr.DNSName, zone, allowUnqualified)
+				if name == "" {
+					continue
+				}
 				out = appendAddressJSON(out, name, addr.Address)
 			}
 		}

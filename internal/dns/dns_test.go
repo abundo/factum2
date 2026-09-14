@@ -149,6 +149,43 @@ func TestWriteRecords(t *testing.T) {
 	}
 }
 
+func TestWriteRecordsIncludesAddressDNSName(t *testing.T) {
+	devices := []*models.Device{
+		{
+			Name:        "r1",
+			PrimaryIPv4: "10.0.0.1/32",
+			Interfaces: []models.Interface{
+				{
+					Name: "Ethernet1/1",
+					Addresses: []models.Address{
+						{Address: "10.1.1.1/24", DNSName: "uplink.r1.example.com"},
+						{Address: "2001:db8:1::1/64", DNSName: "lo0"},
+					},
+				},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	n, err := writeRecords(&buf, "example.com", devices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseRecordsJSON(t, buf.Bytes())
+	want := []recordsJSONRecord{
+		{Name: "r1", Type: "A", Value: "10.0.0.1"},
+		{Name: "ethernet1-1.r1", Type: "A", Value: "10.1.1.1"},
+		{Name: "ethernet1-1.r1", Type: "AAAA", Value: "2001:db8:1::1"},
+		{Name: "uplink.r1", Type: "A", Value: "10.1.1.1"},
+		{Name: "lo0", Type: "AAAA", Value: "2001:db8:1::1"},
+	}
+	if n != len(want) {
+		t.Errorf("wrote %d records, want %d", n, len(want))
+	}
+	if !recordsJSONEqual(got.Domains[0].Records, want) {
+		t.Errorf("records = %#v, want %#v", got.Domains[0].Records, want)
+	}
+}
+
 func TestWriteRecordsSanitizesDeviceName(t *testing.T) {
 	devices := []*models.Device{
 		{

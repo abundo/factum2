@@ -169,6 +169,8 @@ type Address struct {
 	InterfaceID uint   `json:"interface_id" gorm:"index"`
 	NetboxID    uint   `json:"netbox_id"`
 	Address     string `json:"address" gorm:"type:varchar(80)"`
+	// DNSName is Netbox ipam.IPAddress.dns_name, validated at Netbox sync.
+	DNSName string `json:"dns_name" gorm:"type:varchar(255)"`
 	// VRF is the name of the VRF this address belongs to, "" for
 	// global/default VRF - mirrors netboxtool.NBAddress.VRF.
 	VRF string `json:"vrf" gorm:"type:varchar(255)"`
