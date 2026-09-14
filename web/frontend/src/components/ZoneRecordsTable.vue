@@ -135,7 +135,11 @@
               class="w-full flex items-center min-w-0"
               @keydown="onCellKeydown($event, row, 'value')"
             >
-              <span class="text-muted font-mono ps-2 shrink-0 select-none" aria-hidden="true">
+              <span
+                class="text-muted font-mono ps-2 shrink-0 select-none"
+                aria-hidden="true"
+                :title="t('zoneRecords.comment')"
+              >
                 ;
               </span>
               <UTooltip v-bind="cellTooltipProps(row.original.value, row.original, 'value')">
@@ -151,7 +155,8 @@
                     color="neutral"
                     size="xs"
                     :ui="cellFieldUi"
-                    :placeholder="t('zoneRecords.commentPlaceholder')"
+                    :aria-label="t('zoneRecords.comment')"
+                    :title="tooltipText(row.original.value) ? undefined : t('zoneRecords.comment')"
                     autocomplete="off"
                     :disabled="disabled"
                     @update:model-value="syncRowChanged(row.original)"
@@ -383,7 +388,7 @@ const STRINGS = {
   'zoneRecords.insertDomainAbove': 'Insert $DOMAIN above',
   'zoneRecords.insertDomainBelow': 'Insert $DOMAIN below',
   'zoneRecords.resizeColumn': 'Drag to resize column',
-  'zoneRecords.commentPlaceholder': 'comment',
+  'zoneRecords.comment': 'Comment',
   'zoneRecords.domain': '$DOMAIN',
   'zoneRecords.domainPlaceholder': 'subdomain',
   'zoneRecords.mxPriority': 'Priority',
@@ -854,8 +859,6 @@ function valuePlaceholder(type) {
       return '3 1 1 abcdef…'
     case 'TXT':
       return 'v=spf1 -all'
-    case COMMENT_TYPE:
-      return t('zoneRecords.commentPlaceholder')
     default:
       return ''
   }
