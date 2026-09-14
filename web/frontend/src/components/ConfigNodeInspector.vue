@@ -771,6 +771,7 @@ function toggleFeature(id) {
               <GoTemplateEditor
                 :model-value="featureDrafts[feat.id].add_commands"
                 compact
+                :line-wrapping="false"
                 :autofocus="false"
                 :schema="cliSchema"
                 placeholder="Go text/template. One CLI command per output line."
@@ -783,6 +784,7 @@ function toggleFeature(id) {
               <GoTemplateEditor
                 :model-value="featureDrafts[feat.id].remove_commands"
                 compact
+                :line-wrapping="false"
                 :autofocus="false"
                 :schema="cliSchema"
                 placeholder="Go text/template. Idempotent teardown."

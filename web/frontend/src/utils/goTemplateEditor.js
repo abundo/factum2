@@ -144,6 +144,7 @@ export function createGoTemplateEditor({
   placeholder,
   onChange,
   onApply,
+  lineWrapping = true,
 }) {
   const appearanceComp = new Compartment()
   const view = new EditorView({
@@ -155,7 +156,7 @@ export function createGoTemplateEditor({
         highlightActiveLineGutter(),
         highlightActiveLine(),
         history(),
-        EditorView.lineWrapping,
+        lineWrapping ? EditorView.lineWrapping : [],
         bracketMatching(),
         closeBrackets(),
         highlightSelectionMatches(),

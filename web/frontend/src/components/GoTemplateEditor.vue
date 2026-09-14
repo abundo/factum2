@@ -8,6 +8,7 @@ const props = defineProps({
   placeholder: { type: String, default: '' },
   compact: { type: Boolean, default: false },
   autofocus: { type: Boolean, default: true },
+  lineWrapping: { type: Boolean, default: true },
 })
 
 const model = defineModel({ type: String, default: '' })
@@ -44,6 +45,7 @@ onMounted(async () => {
     schema: props.schema ?? {},
     dark: layoutState.darkTheme,
     placeholder: props.placeholder,
+    lineWrapping: props.lineWrapping,
     onChange: (value) => {
       model.value = value
     },
@@ -88,7 +90,7 @@ function insertBuiltin(name) {
     <div class="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref="host"
-        class="overflow-hidden rounded-md border border-default bg-muted"
+        class="min-w-0 w-full overflow-hidden rounded-md border border-default bg-muted"
         :class="compact ? 'h-48' : 'min-h-48 flex-1 lg:min-h-64'"
         :aria-busy="!ready"
       />
