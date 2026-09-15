@@ -1,4 +1,8 @@
-<script setup></script>
+<script setup>
+import { bindToastToLog } from '@/layout/composables/logPanel'
+
+bindToastToLog()
+</script>
 
 <template>
   <UApp>

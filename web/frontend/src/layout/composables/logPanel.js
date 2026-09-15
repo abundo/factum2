@@ -1,4 +1,5 @@
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 
 const STORAGE_KEY_OPEN = 'factum:logpanel-open'
 const STORAGE_KEY_HEIGHT = 'factum:logpanel-height'
@@ -113,4 +114,53 @@ export function useLogPanel() {
   }
 
   return { state, open, close, toggle, setHeight, clear, togglePause, append, connect, disconnect }
+}
+
+const TOAST_LEVEL = {
+  error: 'ERROR',
+  warning: 'WARN',
+  warn: 'WARN',
+  success: 'INFO',
+  info: 'INFO',
+  primary: 'INFO',
+  secondary: 'INFO',
+  neutral: 'INFO',
+}
+
+function toastMessage(toast) {
+  return [toast.title, toast.description].filter(Boolean).join(': ')
+}
+
+let toastBound = false
+
+// Mirror every Nuxt UI toast into this tab's log window. Call once from a
+// setup() that shares the app's toast state (App.vue).
+export function bindToastToLog() {
+  if (toastBound) return
+  toastBound = true
+  const toast = useToast()
+  const { append } = useLogPanel()
+  const seen = new Set()
+  watch(
+    () => toast.toasts.value.map((t) => t.id),
+    () => {
+      for (const t of toast.toasts.value) {
+        if (!t?.id || seen.has(t.id)) continue
+        seen.add(t.id)
+        const color = String(t.color || '').toLowerCase()
+        append({
+          level: TOAST_LEVEL[color] || 'INFO',
+          source: 'web',
+          message: toastMessage(t),
+          attrs: t.color ? { toast: t.color } : undefined,
+        })
+      }
+      if (seen.size > MAX_LINES * 2) {
+        const live = new Set(toast.toasts.value.map((t) => t.id))
+        for (const id of seen) {
+          if (!live.has(id)) seen.delete(id)
+        }
+      }
+    },
+  )
 }
