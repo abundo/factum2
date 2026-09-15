@@ -50,8 +50,8 @@ export function deleteDeviceTypeInterface(id) {
   return http.delete(`/dcim/interface-templates/${id}`).then((res) => res.data)
 }
 
-export function getInterfaces() {
-  return http.get('/dcim/interfaces').then((res) => res.data)
+export function getInterfaces(params = {}) {
+  return http.get('/dcim/interfaces', { params }).then((res) => res.data)
 }
 
 export function createInterface(payload) {

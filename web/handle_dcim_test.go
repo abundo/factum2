@@ -363,11 +363,11 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 	if err := ctrl.ApiGetDCIMInterfaces(c); err != nil {
 		t.Fatal(err)
 	}
-	var listed []DCIMInterfaceDTO
+	var listed DCIMInterfaceListDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0].DeviceName != "nb-1" || listed[0].Source != "netbox" {
+	if listed.Total != 1 || len(listed.Items) != 1 || listed.Items[0].DeviceName != "nb-1" || listed.Items[0].Source != "netbox" {
 		t.Fatalf("list = %+v", listed)
 	}
 
@@ -436,8 +436,19 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 3 {
-		t.Fatalf("listed = %d, want 3: %+v", len(listed), listed)
+	if listed.Total != 3 || len(listed.Items) != 3 {
+		t.Fatalf("listed total=%d items=%d, want 3: %+v", listed.Total, len(listed.Items), listed)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/interfaces?limit=1&offset=0", nil, nil, nil)
+	if err := ctrl.ApiGetDCIMInterfaces(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 3 || len(listed.Items) != 1 || listed.Limit != 1 {
+		t.Fatalf("paged = %+v", listed)
 	}
 
 	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/interfaces/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})

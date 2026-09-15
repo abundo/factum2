@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
@@ -639,14 +640,90 @@ func interfaceSource(netboxID uint) string {
 	return "factum"
 }
 
+type DCIMInterfaceListDTO struct {
+	Items  []DCIMInterfaceDTO `json:"items"`
+	Total  int64              `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+}
+
+func parseListLimitOffset(c *echo.Context, defaultLimit, maxLimit int) (limit, offset int) {
+	limit = defaultLimit
+	if v := strings.TrimSpace(c.QueryParam("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	if v := strings.TrimSpace(c.QueryParam("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	return limit, offset
+}
+
+func likeContains(q string) string {
+	q = strings.ReplaceAll(q, `\`, `\\`)
+	q = strings.ReplaceAll(q, `%`, `\%`)
+	q = strings.ReplaceAll(q, `_`, `\_`)
+	return "%" + q + "%"
+}
+
 func (ctrl *Controller) ApiGetDCIMInterfaces(c *echo.Context) error {
-	ctx := c.Request().Context()
-	ifaces, err := gorm.G[models.Interface](ctrl.DB).Order("name").Find(ctx)
-	if err != nil {
+	limit, offset := parseListLimitOffset(c, 100, 500)
+	q := strings.TrimSpace(c.QueryParam("q"))
+	sort := strings.TrimSpace(c.QueryParam("sort"))
+	desc := c.QueryParam("desc") == "true" || c.QueryParam("desc") == "1"
+
+	dbq := ctrl.DB.Model(&models.Interface{}).
+		Joins("JOIN devices ON devices.id = interfaces.device_id")
+	if q != "" {
+		pat := likeContains(q)
+		dbq = dbq.Where(
+			"LOWER(interfaces.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(interfaces.description) LIKE LOWER(?) ESCAPE '\\' OR LOWER(interfaces.type) LIKE LOWER(?) ESCAPE '\\' OR LOWER(devices.name) LIKE LOWER(?) ESCAPE '\\'",
+			pat, pat, pat, pat,
+		)
+	}
+
+	var total int64
+	if err := dbq.Count(&total).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+
+	orderCol := "devices.name, interfaces.name"
+	switch sort {
+	case "name":
+		orderCol = "interfaces.name"
+	case "type":
+		orderCol = "interfaces.type"
+	case "description":
+		orderCol = "interfaces.description"
+	case "enabled":
+		orderCol = "interfaces.enabled"
+	case "source":
+		orderCol = "(interfaces.netbox_id <> 0)"
+	case "device_name":
+		orderCol = "devices.name, interfaces.name"
+	}
+	if desc {
+		if sort == "device_name" || sort == "" {
+			orderCol = "devices.name DESC, interfaces.name DESC"
+		} else {
+			orderCol += " DESC"
+		}
+	}
+
+	var ifaces []models.Interface
+	if err := dbq.Select("interfaces.*").Order(orderCol).Limit(limit).Offset(offset).Find(&ifaces).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	out := DCIMInterfaceListDTO{Items: []DCIMInterfaceDTO{}, Total: total, Limit: limit, Offset: offset}
 	if len(ifaces) == 0 {
-		return c.JSON(http.StatusOK, []DCIMInterfaceDTO{})
+		return c.JSON(http.StatusOK, out)
 	}
 	deviceIDs := make([]uint, 0, len(ifaces))
 	seen := map[uint]bool{}
@@ -657,18 +734,18 @@ func (ctrl *Controller) ApiGetDCIMInterfaces(c *echo.Context) error {
 		seen[iface.DeviceID] = true
 		deviceIDs = append(deviceIDs, iface.DeviceID)
 	}
-	devices, err := gorm.G[models.Device](ctrl.DB).Where("id IN ?", deviceIDs).Find(ctx)
-	if err != nil {
+	var devices []models.Device
+	if err := ctrl.DB.Where("id IN ?", deviceIDs).Find(&devices).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	devByID := make(map[uint]models.Device, len(devices))
 	for _, d := range devices {
 		devByID[d.ID] = d
 	}
-	out := make([]DCIMInterfaceDTO, 0, len(ifaces))
+	out.Items = make([]DCIMInterfaceDTO, 0, len(ifaces))
 	for _, iface := range ifaces {
 		d := devByID[iface.DeviceID]
-		out = append(out, DCIMInterfaceDTO{
+		out.Items = append(out.Items, DCIMInterfaceDTO{
 			ID:          iface.ID,
 			DeviceID:    iface.DeviceID,
 			DeviceName:  d.Name,

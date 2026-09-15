@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { getDevices } from '@/api/devices'
 import { createInterface, deleteInterface, getInterfaces, updateInterface } from '@/api/dcim'
@@ -19,6 +19,15 @@ const loading = ref(true)
 const error = ref(null)
 const globalFilter = ref('')
 const sorting = ref([{ id: 'device_name', desc: false }])
+const page = ref(1)
+const pageSize = ref(100)
+const total = ref(0)
+let searchTimer = null
+
+const pageSizeItems = [50, 100, 250]
+
+const pageFrom = computed(() => (total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1))
+const pageTo = computed(() => Math.min(page.value * pageSize.value, total.value))
 
 const columns = [
   { id: 'actions', header: '' },
@@ -65,13 +74,26 @@ const localDeviceItems = computed(() =>
     .map((d) => ({ label: d.name, value: d.id })),
 )
 
+function loadDevices() {
+  return getDevices().then((devs) => {
+    devices.value = devs ?? []
+  })
+}
+
 function load() {
   loading.value = true
   error.value = null
-  Promise.all([getInterfaces(), getDevices()])
-    .then(([ifaces, devs]) => {
-      items.value = ifaces ?? []
-      devices.value = devs ?? []
+  const sort = sorting.value?.[0]
+  getInterfaces({
+    limit: pageSize.value,
+    offset: (page.value - 1) * pageSize.value,
+    q: globalFilter.value.trim() || undefined,
+    sort: sort?.id || 'device_name',
+    desc: sort?.desc ? true : undefined,
+  })
+    .then((data) => {
+      items.value = data?.items ?? []
+      total.value = data?.total ?? 0
     })
     .catch(() => {
       error.value = 'Failed to load interfaces.'
@@ -159,7 +181,23 @@ function remove(row) {
     })
 }
 
-onMounted(load)
+watch([page, pageSize, sorting], load, { deep: true })
+
+watch(globalFilter, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    if (page.value !== 1) {
+      page.value = 1
+      return
+    }
+    load()
+  }, 300)
+})
+
+onMounted(() => {
+  loadDevices()
+  load()
+})
 </script>
 
 <template>
@@ -181,7 +219,6 @@ onMounted(load)
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
       :data="items"
       :columns="columns"
       :loading="loading"
@@ -237,6 +274,19 @@ onMounted(load)
         </div>
       </template>
     </UTable>
+
+    <div class="flex flex-wrap items-center justify-between gap-3 mt-3 shrink-0">
+      <div class="flex items-center gap-2 text-sm text-muted">
+        <span>{{ pageFrom }}–{{ pageTo }} of {{ total }}</span>
+        <USelect v-model="pageSize" :items="pageSizeItems" class="w-24" @update:model-value="page = 1" />
+      </div>
+      <UPagination
+        v-model:page="page"
+        :total="total"
+        :items-per-page="pageSize"
+        :disabled="loading"
+      />
+    </div>
   </div>
 
   <FormModal
