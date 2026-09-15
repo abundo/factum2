@@ -1044,7 +1044,7 @@ onMounted(loadDevices)
           :items="detailTabItems"
           class="min-h-0 flex-1"
           :ui="{
-            list: 'w-fit max-w-full justify-start',
+            list: 'w-full',
             content: 'min-h-0 flex-1 overflow-auto rounded-md border border-default p-3 mt-2',
           }"
         >
