@@ -33,6 +33,7 @@ declare module 'vue' {
     SearchInput: typeof import('./src/components/SearchInput.vue')['default']
     ServiceEditDialog: typeof import('./src/components/ServiceEditDialog.vue')['default']
     ServiceTypeFieldEditor: typeof import('./src/components/ServiceTypeFieldEditor.vue')['default']
+    SiteSelector: typeof import('./src/components/SiteSelector.vue')['default']
     SiteTree: typeof import('./src/components/SiteTree.vue')['default']
     SortableColumnHeader: typeof import('./src/components/SortableColumnHeader.vue')['default']
     TechnicalServiceForm: typeof import('./src/components/TechnicalServiceForm.vue')['default']

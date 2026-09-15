@@ -29,6 +29,7 @@ import {
 import OxidizedNodePanel from '@/components/OxidizedNodePanel.vue'
 import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
+import SiteSelector from '@/components/SiteSelector.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
@@ -58,6 +59,12 @@ const columns = [
 
 const createDialog = ref(false)
 const createSaving = ref(false)
+const siteSelectorVisible = ref(false)
+
+function onSiteSelected(site) {
+  createForm.value.site = site?.name || ''
+}
+
 function emptyDeviceForm() {
   return {
     name: '',
@@ -965,7 +972,16 @@ onMounted(loadDevices)
               />
 
               <label for="device-site" class="font-bold whitespace-nowrap">Site</label>
-              <UInput v-if="isLocalDevice" id="device-site" v-model="createForm.site" class="w-full" />
+              <div v-if="isLocalDevice" class="flex gap-2 min-w-0">
+                <UInput id="device-site" v-model="createForm.site" class="w-full" />
+                <UButton
+                  icon="i-lucide-map-pin"
+                  label="Browse"
+                  variant="outline"
+                  color="neutral"
+                  @click="siteSelectorVisible = true"
+                />
+              </div>
               <UInput
                 v-else
                 id="device-site"
@@ -1419,7 +1435,16 @@ onMounted(loadDevices)
           <USelect v-model="createForm.platform_id" :items="platformItems" class="w-full" />
         </UFormField>
         <UFormField label="Site">
-          <UInput v-model="createForm.site" class="w-full" />
+          <div class="flex gap-2">
+            <UInput v-model="createForm.site" class="w-full" />
+            <UButton
+              icon="i-lucide-map-pin"
+              label="Browse"
+              variant="outline"
+              color="neutral"
+              @click="siteSelectorVisible = true"
+            />
+          </div>
         </UFormField>
         <UFormField label="Role">
           <UInput v-model="createForm.role" class="w-full" />
@@ -1485,4 +1510,9 @@ onMounted(loadDevices)
     @attached="reloadDeviceInterfaces"
   />
 
+  <SiteSelector
+    v-model:visible="siteSelectorVisible"
+    :selected-name="createForm.site"
+    @select="onSiteSelected"
+  />
 </template>
