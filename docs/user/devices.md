@@ -42,7 +42,12 @@ push and device-sync. `factum2-driver-cli` still takes `--username` /
 
 **Network map** draws sites and links from Factum's topology (cables
 synced from NetBox). Use it to see how devices connect, not to edit
-cabling — change cables in NetBox and sync.
+cabling — change cables in NetBox and sync. Sites without GPS are omitted.
+
+**Organization → Sites** (when Organization is enabled) is the hierarchical
+site tree. NetBox regions, sites, and locations all import as sites, nested
+the same way they nest in NetBox. You can add Factum sites under any node;
+those stay in Factum and are not pushed to NetBox.
 
 **Assign locations** pins a device on the map and writes the coordinates
 back to NetBox. A site is optional: leave it blank to set GPS on that

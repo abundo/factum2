@@ -13,6 +13,7 @@ import (
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
+	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
 )
 
@@ -61,10 +62,11 @@ type NetboxWebhookPayload struct {
 // netbox-sourced factum row by the payload's id — GetDevice would return
 // nil once Netbox has already removed the object.
 //
-// Cable / site: create/update re-fetches that one object and upserts the
-// Connection/Site row; delete removes it by the payload's netbox_id. These
-// are not "resync one named device" — they have no name lookup, and a
-// deleted cable/site cannot be re-fetched.
+// Cable / site / region / location: create/update re-fetches that one
+// object and upserts the Connection or hierarchical Site row; delete
+// removes it by the payload's netbox_id. These are not "resync one named
+// device" — they have no name lookup, and a deleted object cannot be
+// re-fetched.
 //
 // Tenants and contacts are not applied here: customer→tenant and
 // contact→contact sync are factum→Netbox.
@@ -109,7 +111,11 @@ func (ctrl *Controller) ApiNetboxWebhook(c *echo.Context) error {
 	case "dcim.cable":
 		return ctrl.netboxWebhookCable(c, payload)
 	case "dcim.site":
-		return ctrl.netboxWebhookSite(c, payload)
+		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.site")
+	case "dcim.region":
+		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.region")
+	case "dcim.location":
+		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.location")
 	default:
 		slog.Debug("netbox webhook", "object_type", payload.ObjectType, "status", "ignored")
 		return c.JSON(http.StatusOK, map[string]any{"status": "ignored"})
@@ -188,27 +194,39 @@ func (ctrl *Controller) netboxWebhookCable(c *echo.Context, payload NetboxWebhoo
 	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "object_type": "dcim.cable", "netbox_id": netboxID})
 }
 
-func (ctrl *Controller) netboxWebhookSite(c *echo.Context, payload NetboxWebhookPayload) error {
+func netboxKindFromObjectType(objectType string) string {
+	switch objectType {
+	case "dcim.region":
+		return models.SiteNetboxKindRegion
+	case "dcim.location":
+		return models.SiteNetboxKindLocation
+	default:
+		return models.SiteNetboxKindSite
+	}
+}
+
+func (ctrl *Controller) netboxWebhookTreeItem(c *echo.Context, payload NetboxWebhookPayload, objectType string) error {
 	netboxID, ok := netboxWebhookObjectID(payload.Data)
 	if !ok {
-		slog.Debug("netbox webhook", "site", "missing id")
+		slog.Debug("netbox webhook", objectType, "missing id")
 		return c.JSON(http.StatusOK, map[string]any{"status": "ignored"})
 	}
+	kind := netboxKindFromObjectType(objectType)
 	if payload.Event == "deleted" {
-		deleted, err := netbox.DeleteSiteByNetboxID(ctrl.DB, netboxID)
+		deleted, err := netbox.DeleteSyncedSiteNode(ctrl.DB, kind, netboxID)
 		if err != nil {
-			slog.Error("netbox webhook delete site", "netbox_id", netboxID, "err", err)
+			slog.Error("netbox webhook delete "+objectType, "netbox_id", netboxID, "err", err)
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
-		slog.Info("netbox webhook deleted site", "netbox_id", netboxID, "deleted", deleted)
+		slog.Info("netbox webhook deleted "+objectType, "netbox_id", netboxID, "deleted", deleted)
 		return c.JSON(http.StatusOK, map[string]any{"status": "deleted", "netbox_id": netboxID})
 	}
 	go func() {
-		if err := netbox.SyncSite(ctrl.DB, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
-			slog.Error("netbox webhook site sync", "netbox_id", netboxID, "err", err)
+		if err := netbox.SyncDCIMTreeItem(ctrl.DB, kind, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
+			slog.Error("netbox webhook "+objectType+" sync", "netbox_id", netboxID, "err", err)
 		}
 	}()
-	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "object_type": "dcim.site", "netbox_id": netboxID})
+	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "object_type": objectType, "netbox_id": netboxID})
 }
 
 // webhookReporter wraps the reporter given to netbox.SyncDB for the webhook

@@ -94,6 +94,7 @@ const groups = computed(() => {
             section('Organization', [
               { label: 'Customers', icon: 'i-lucide-building-2', to: '/tenant/customer' },
               { label: 'Contacts', icon: 'i-lucide-book-user', to: '/tenant/contact' },
+              { label: 'Sites', icon: 'i-lucide-map-pin', to: '/tenant/site' },
             ]),
           ]
         : []),

@@ -38,8 +38,8 @@ go.work.sum
 # Skill runtime state (skills themselves under .grok/skills are committed)
 .grok/skills/**/.state/
 
-# MkDocs local build
-site/
+# MkDocs local build (repo root only; do not ignore views named site/)
+/site/
 
 # Compose lab runtime (seed.py / dest-file sync). prepare.py creates dest
 # files if missing; do not track them — the first sync rewrites them.

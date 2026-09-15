@@ -180,6 +180,14 @@ func GUI(p *GuiParams) error {
 	api.POST("/contact", contacts_.Create, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/contact/:id", ctrl.ApiContactDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
+	// ----- API sites (Organization tree) -----
+	api.GET("/sites/tree", ctrl.ApiSiteTree, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/sites/:id", ctrl.ApiSiteGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/sites", ctrl.ApiSiteList, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/sites", ctrl.ApiSiteCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/sites/:id", ctrl.ApiSiteUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/sites/:id", ctrl.ApiSiteDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+
 	// ----- API Services -----
 	services_ := NewSecureCRUDHandler[models.Service, models.ServiceDTO](DB)
 	api.GET("/service/:id", ctrl.ApiServiceByID, ctrl.RequireAPIAuth, ctrl.RequireRead)

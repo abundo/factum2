@@ -26,6 +26,8 @@ var requiredWebhookObjectTypes = []string{
 	"ipam.ipaddress",
 	"dcim.cable",
 	"dcim.site",
+	"dcim.region",
+	"dcim.location",
 }
 
 // checkAPI is the Netbox extras surface Check needs so tests can stub

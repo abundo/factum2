@@ -73,7 +73,7 @@ func AssignDeviceLocation(db *gorm.DB, nb *netboxtool.NetboxClient, device model
 	}
 
 	var previous models.Site
-	hasPrevious := db.Where("netbox_id = ?", siteID).First(&previous).Error == nil
+	hasPrevious := db.Where("netbox_kind = ? AND netbox_id = ?", models.SiteNetboxKindSite, siteID).First(&previous).Error == nil
 
 	plotted := netboxSiteWithCoords(siteID, siteName, lat, lng)
 	if _, _, _, err := ApplySite(db, siteID, plotted); err != nil {

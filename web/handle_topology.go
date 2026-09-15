@@ -172,6 +172,9 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 	}
 	out.Sites = make([]TopologySiteDTO, 0, len(sites))
 	for _, s := range sites {
+		if !s.HasCoordinates() {
+			continue
+		}
 		out.Sites = append(out.Sites, TopologySiteDTO{
 			ID:        s.ID,
 			Name:      s.Name,

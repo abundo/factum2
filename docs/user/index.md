@@ -19,7 +19,7 @@ currently on GitHub.
 | Area | Menu | Typical use |
 | --- | --- | --- |
 | Dashboard | Home | Welcome plus admin-configured shortcut links |
-| Customers / Contacts | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
+| Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
 | Prefixes | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |

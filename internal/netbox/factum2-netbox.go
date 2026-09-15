@@ -300,67 +300,6 @@ func syncCables(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repo
 	return nil
 }
 
-// syncSites mirrors Netbox's full site inventory into the local Site
-// table, keyed by Netbox site id - unlike Device.Site/SiteID, which only
-// ever reference sites that have at least one device, this is what lets
-// the network map plot a site's location even when it has none.
-// nb.GetSites already filters out sites with no coordinates and the
-// placeholder "Default" site.
-func syncSites(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Reporter) error {
-	nb_sites, err := nb.GetSites()
-	if err != nil {
-		return err
-	}
-
-	var existing []models.Site
-	if err := db.Select("id", "netbox_id").Find(&existing).Error; err != nil {
-		return err
-	}
-	existingIDs := make(map[uint]bool, len(existing))
-	for _, s := range existing {
-		existingIDs[s.NetboxID] = true
-	}
-
-	syncedIDs := make([]uint, 0, len(nb_sites))
-	var count_new, count_updated int
-	for _, nb_site := range nb_sites {
-		syncedIDs = append(syncedIDs, nb_site.ID)
-
-		site := models.Site{
-			NetboxID:  nb_site.ID,
-			Name:      nb_site.Name,
-			Latitude:  float64(*nb_site.Latitude),
-			Longitude: float64(*nb_site.Longitude),
-		}
-		err := db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "netbox_id"}},
-			UpdateAll: true,
-		}).Create(&site).Error
-		if err != nil {
-			return err
-		}
-		if existingIDs[nb_site.ID] {
-			count_updated++
-		} else {
-			count_new++
-		}
-	}
-
-	// Guard against an empty/failed site fetch wiping every local site,
-	// matching syncCables'/deleteMissingDevices' guard for the same reason.
-	var count_deleted int
-	if len(nb_sites) > 0 {
-		result := db.Where("netbox_id NOT IN ?", syncedIDs).Delete(&models.Site{})
-		if result.Error != nil {
-			return result.Error
-		}
-		count_deleted = int(result.RowsAffected)
-	}
-
-	reporter.Emit(jobevent.Info, "Netbox site sync: %d new, %d updated, %d deleted", count_new, count_updated, count_deleted)
-	return nil
-}
-
 // slugInvalidChars matches runs of characters not valid in a Netbox slug.
 var slugInvalidChars = regexp.MustCompile(`[^a-z0-9]+`)
 

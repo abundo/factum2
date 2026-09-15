@@ -82,6 +82,8 @@ func AutoMigrateAll(db *gorm.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_manufacturers_netbox_id ON manufacturers (netbox_id) WHERE netbox_id != 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_netbox_id ON device_types (netbox_id) WHERE netbox_id != 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_platforms_netbox_id ON platforms (netbox_id) WHERE netbox_id != 0`,
+		`DROP INDEX IF EXISTS idx_sites_netbox_id`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_netbox_kind_id ON sites (netbox_kind, netbox_id) WHERE netbox_id != 0`,
 	} {
 		if err := db.Exec(s).Error; err != nil {
 			return err

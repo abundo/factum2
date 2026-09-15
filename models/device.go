@@ -202,17 +202,77 @@ type Connection struct {
 	Label        string `json:"label" gorm:"type:varchar(255)"`
 }
 
-// Site is a Netbox dcim.Site, synced independently of Device (see
-// internal/netbox.syncSites) so a site with GPS coordinates but no devices
-// still has somewhere to be recorded - Device.Site/SiteID alone only ever
-// reference sites that have at least one device.
+const (
+	SiteSourceFactum = "factum"
+	SiteSourceNetbox = "netbox"
+
+	// SiteNetboxKind* is the NetBox object a synced row came from.
+	// Factum-created sites leave this empty. Region/site/location IDs
+	// occupy separate NetBox sequences, so uniqueness is (kind, id).
+	SiteNetboxKindRegion   = "region"
+	SiteNetboxKindSite     = "site"
+	SiteNetboxKindLocation = "location"
+)
+
+// Site is one node in the Organization sites tree. NetBox regions, sites
+// and locations all map onto this table (parented the same way they nest
+// in NetBox); operators can also create sites here (source=factum). GPS
+// is optional — the network map only plots rows that have coordinates.
 type Site struct {
 	FactumModel
-	NetboxID  uint    `json:"netbox_id" gorm:"uniqueIndex"`
-	Name      string  `json:"name" gorm:"type:varchar(255)"`
+	ParentID   *uint   `json:"parent_id" gorm:"index"`
+	Name       string  `json:"name" gorm:"type:varchar(255);not null"`
+	Slug       string  `json:"slug" gorm:"type:varchar(255)"`
+	Source     string  `json:"source" gorm:"type:varchar(32)"`
+	NetboxKind string  `json:"netbox_kind" gorm:"type:varchar(32)"`
+	NetboxID   uint    `json:"netbox_id"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+}
+
+// SiteDTO is the create/update body for /api/sites. Source/NetboxKind/
+// NetboxID are sync-managed and excluded so a caller cannot fake a NetBox
+// origin or rewrite the import key.
+type SiteDTO struct {
+	ID        uint    `json:"id"`
+	ParentID  *uint   `json:"parent_id"`
+	Name      string  `json:"name"`
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 }
+
+func (s *Site) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(s.Slug) == "" {
+		s.Slug = Slugify(s.Name)
+	}
+	if s.Source == "" {
+		if s.NetboxID != 0 {
+			s.Source = SiteSourceNetbox
+		} else {
+			s.Source = SiteSourceFactum
+		}
+	}
+	if s.NetboxID != 0 && s.NetboxKind == "" {
+		s.NetboxKind = SiteNetboxKindSite
+	}
+	return nil
+}
+
+func (s *Site) BeforeUpdate(tx *gorm.DB) error {
+	if strings.TrimSpace(s.Slug) == "" {
+		s.Slug = Slugify(s.Name)
+	}
+	return nil
+}
+
+func (s Site) HasCoordinates() bool {
+	return s.Latitude != 0 || s.Longitude != 0
+}
+
+func (s Site) IsLocal() bool {
+	return s.Source != SiteSourceNetbox
+}
+
 
 // Manufacturer is the shared DCIM catalog (NetBox dcim.Manufacturer).
 // Source is "netbox" when upserted from sync, "factum" when created in the UI.

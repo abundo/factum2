@@ -40,26 +40,19 @@ func SyncCable(db *gorm.DB, netboxID uint, reporter jobevent.Reporter) error {
 	return nil
 }
 
-// SyncSite applies one Netbox site to factum's Site table. A missing,
-// Default, or uncoordinated site deletes any local row for that id.
+// SyncSite applies one Netbox dcim.site to factum's Site table.
 func SyncSite(db *gorm.DB, netboxID uint, reporter jobevent.Reporter) error {
-	nb, err := netboxFromSettings(db)
-	if err != nil {
-		reporter.EmitErr(err)
-		return err
-	}
-	site, err := nb.GetSite(netboxID)
-	if err != nil {
-		reporter.EmitErr(err)
-		return err
-	}
-	created, updated, deleted, err := ApplySite(db, netboxID, site)
-	if err != nil {
-		reporter.EmitErr(err)
-		return err
-	}
-	reporter.Emit(jobevent.Info, "Netbox site sync: %d new, %d updated, %d deleted", created, updated, deleted)
-	return nil
+	return SyncDCIMTreeItem(db, models.SiteNetboxKindSite, netboxID, reporter)
+}
+
+// SyncRegion applies one Netbox dcim.region to factum's Site table.
+func SyncRegion(db *gorm.DB, netboxID uint, reporter jobevent.Reporter) error {
+	return SyncDCIMTreeItem(db, models.SiteNetboxKindRegion, netboxID, reporter)
+}
+
+// SyncLocation applies one Netbox dcim.location to factum's Site table.
+func SyncLocation(db *gorm.DB, netboxID uint, reporter jobevent.Reporter) error {
+	return SyncDCIMTreeItem(db, models.SiteNetboxKindLocation, netboxID, reporter)
 }
 
 func netboxFromSettings(db *gorm.DB) (*netboxtool.NetboxClient, error) {
@@ -142,44 +135,27 @@ func DeleteConnectionByNetboxID(db *gorm.DB, netboxID uint) (int, error) {
 	return 1, nil
 }
 
-// ApplySite upserts or removes one Site. site == nil means gone / Default /
-// no coordinates — delete the local row.
+// ApplySite upserts or removes one dcim.site row. site == nil means gone or
+// Default — delete the local synced row. Missing coordinates no longer
+// delete the row; the org tree keeps unplotted sites. Parent is left
+// unchanged so a map pin does not strip a synced region parent.
 func ApplySite(db *gorm.DB, netboxID uint, site *netboxtool.NetboxSite) (created, updated, deleted int, err error) {
-	if site == nil || site.Latitude == nil || site.Longitude == nil {
+	if site == nil {
 		n, err := DeleteSiteByNetboxID(db, netboxID)
 		return 0, 0, n, err
 	}
-
-	var existing models.Site
-	lookupErr := db.Select("id").Where("netbox_id = ?", site.ID).First(&existing).Error
-	if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		return 0, 0, 0, lookupErr
+	item := dcimTreeItem{
+		Kind: models.SiteNetboxKindSite,
+		ID:   site.ID,
+		Name: site.Name,
+		Slug: models.Slugify(site.Name),
 	}
-	isNew := errors.Is(lookupErr, gorm.ErrRecordNotFound)
-
-	row := models.Site{
-		NetboxID:  site.ID,
-		Name:      site.Name,
-		Latitude:  float64(*site.Latitude),
-		Longitude: float64(*site.Longitude),
+	if site.Latitude != nil {
+		item.Latitude = float64(*site.Latitude)
 	}
-	if err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "netbox_id"}},
-		UpdateAll: true,
-	}).Create(&row).Error; err != nil {
-		return 0, 0, 0, err
+	if site.Longitude != nil {
+		item.Longitude = float64(*site.Longitude)
 	}
-	if isNew {
-		return 1, 0, 0, nil
-	}
-	return 0, 1, 0, nil
-}
-
-// DeleteSiteByNetboxID removes one Site by its Netbox id. No-op if none matches.
-func DeleteSiteByNetboxID(db *gorm.DB, netboxID uint) (int, error) {
-	result := db.Where("netbox_id = ?", netboxID).Delete(&models.Site{})
-	if result.Error != nil {
-		return 0, result.Error
-	}
-	return int(result.RowsAffected), nil
+	created, updated, err = upsertNetboxNode(db, item, false)
+	return created, updated, 0, err
 }

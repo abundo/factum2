@@ -104,8 +104,8 @@ function testEmail() {
               <label for="organization_enabled" class="font-bold">Organization</label>
             </div>
             <small class="text-muted-color -mt-4"
-              >Customers and contacts. Off by default. Turning this off hides those menu entries; it
-              does not delete any data.</small
+              >Customers, contacts and sites. Off by default. Turning this off hides those menu
+              entries; it does not delete any data.</small
             >
             <div class="flex items-center gap-2">
               <USwitch

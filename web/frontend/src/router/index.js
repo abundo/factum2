@@ -48,6 +48,12 @@ const router = createRouter({
           component: () => import('@/views/contact/ContactList.vue'),
         },
         {
+          path: '/tenant/site',
+          name: 'sites',
+          meta: { title: 'Sites', requiresRead: true, requiresOrganization: true },
+          component: () => import('@/views/site/SitePage.vue'),
+        },
+        {
           path: '/maintenance',
           name: 'maintenance',
           meta: { requiresRead: true },

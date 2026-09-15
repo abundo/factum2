@@ -32,6 +32,10 @@ func TestApiGetTopology_OmitsUnlocatedDevices(t *testing.T) {
 	if err := db.Create(&site).Error; err != nil {
 		t.Fatal(err)
 	}
+	region := models.Site{Name: "Sweden", NetboxKind: models.SiteNetboxKindRegion, NetboxID: 1, Source: models.SiteSourceNetbox}
+	if err := db.Create(&region).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	c, rec := jsonRequest(t, http.MethodGet, "/api/topology", nil, nil, nil)
 	if err := (&Controller{DB: db}).ApiGetTopology(c); err != nil {

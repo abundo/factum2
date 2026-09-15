@@ -14,7 +14,7 @@ TLS. After install, you almost never edit YAML to turn NetBox or DNS on.
 
 Feature switches (all off by default except as noted):
 
-- **Organization** — customers and contacts
+- **Organization** — customers, contacts, and hierarchical sites
 - **Optical / WDM modeling** — ROADM/transponder inventory, paths,
   maintenance impact
 - **IP address management** — namespaces, VRFs, prefixes
