@@ -179,6 +179,15 @@ function openNew() {
   createDialog.value = true
 }
 
+watch(
+  () => createForm.value.device_type_id,
+  (id) => {
+    if (!createDialog.value) return
+    const dt = deviceTypes.value.find((t) => t.id === id)
+    if (dt) createForm.value.platform_id = dt.platform_id || 0
+  },
+)
+
 function deviceWritePayload(form) {
   return {
     name: form.name.trim(),

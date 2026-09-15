@@ -9,6 +9,7 @@ import {
   getDeviceTypeInterfaces,
   getDeviceTypes,
   getManufacturers,
+  getPlatforms,
   updateDeviceType,
   updateDeviceTypeInterface,
 } from '@/api/dcim'
@@ -24,6 +25,7 @@ const authStore = useAuthStore()
 
 const items = ref([])
 const manufacturers = ref([])
+const platforms = ref([])
 const loading = ref(true)
 const error = ref(null)
 const globalFilter = ref('')
@@ -33,12 +35,13 @@ const columns = [
   { id: 'actions', header: '' },
   { id: 'manufacturer', header: 'Manufacturer' },
   { accessorKey: 'model', header: 'Model' },
+  { id: 'platform', header: 'Platform' },
   { accessorKey: 'slug', header: 'Slug' },
   { accessorKey: 'source', header: 'Source' },
 ]
 
 const dialog = ref(false)
-const form = ref({ manufacturer_id: undefined, model: '', slug: '' })
+const form = ref({ manufacturer_id: undefined, model: '', slug: '', platform_id: 0 })
 const editingId = ref(null)
 const saving = ref(false)
 const deleting = ref(false)
@@ -84,14 +87,24 @@ const manufacturerById = computed(() => {
   for (const m of manufacturers.value) map.set(m.id, m.name)
   return map
 })
+const platformItems = computed(() => [
+  { label: 'None', value: 0 },
+  ...platforms.value.map((p) => ({ label: `${p.name} (${p.slug})`, value: p.id })),
+])
+const platformById = computed(() => {
+  const map = new Map()
+  for (const p of platforms.value) map.set(p.id, p)
+  return map
+})
 
 function load() {
   loading.value = true
   error.value = null
-  Promise.all([getDeviceTypes(), getManufacturers()])
-    .then(([types, mfrs]) => {
+  Promise.all([getDeviceTypes(), getManufacturers(), getPlatforms()])
+    .then(([types, mfrs, plats]) => {
       items.value = types ?? []
       manufacturers.value = mfrs ?? []
+      platforms.value = plats ?? []
     })
     .catch(() => {
       error.value = 'Failed to load device types.'
@@ -103,7 +116,7 @@ function load() {
 
 function openNew() {
   editingId.value = null
-  form.value = { manufacturer_id: undefined, model: '', slug: '' }
+  form.value = { manufacturer_id: undefined, model: '', slug: '', platform_id: 0 }
   dialog.value = true
 }
 
@@ -113,6 +126,7 @@ function openEdit(row) {
     manufacturer_id: row.manufacturer_id,
     model: row.model ?? '',
     slug: row.slug ?? '',
+    platform_id: row.platform_id || 0,
   }
   dialog.value = true
 }
@@ -131,6 +145,7 @@ function save() {
     manufacturer_id: form.value.manufacturer_id,
     model: form.value.model.trim(),
     slug: form.value.slug.trim(),
+    platform_id: form.value.platform_id || 0,
   }
   const req = editingId.value
     ? updateDeviceType(editingId.value, payload)
@@ -314,6 +329,13 @@ onMounted(load)
       <template #manufacturer-cell="{ row }">
         {{ manufacturerById.get(row.original.manufacturer_id) || row.original.manufacturer_id }}
       </template>
+      <template #platform-cell="{ row }">
+        {{
+          platformById.get(row.original.platform_id)
+            ? `${platformById.get(row.original.platform_id).name} (${platformById.get(row.original.platform_id).slug})`
+            : '—'
+        }}
+      </template>
       <template #actions-cell="{ row }">
         <div class="flex gap-2">
           <UButton
@@ -357,6 +379,9 @@ onMounted(load)
         </UFormField>
         <UFormField label="Model">
           <UInput v-model="form.model" class="w-full" />
+        </UFormField>
+        <UFormField label="Platform">
+          <USelect v-model="form.platform_id" :items="platformItems" class="w-full" />
         </UFormField>
         <UFormField label="Slug" hint="Leave blank to generate from the model">
           <UInput v-model="form.slug" class="w-full font-mono" />

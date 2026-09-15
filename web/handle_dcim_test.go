@@ -110,13 +110,13 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	if err := db.Create(&mfr).Error; err != nil {
 		t.Fatalf("manufacturer: %v", err)
 	}
-	dt := models.DeviceType{ManufacturerID: mfr.ID, Model: "DCS-7050", Slug: "dcs-7050"}
-	if err := db.Create(&dt).Error; err != nil {
-		t.Fatalf("device type: %v", err)
-	}
 	plat := models.Platform{Name: "Arista EOS", Slug: "eos"}
 	if err := db.Create(&plat).Error; err != nil {
 		t.Fatalf("platform: %v", err)
+	}
+	dt := models.DeviceType{ManufacturerID: mfr.ID, Model: "DCS-7050", Slug: "dcs-7050", PlatformID: plat.ID}
+	if err := db.Create(&dt).Error; err != nil {
+		t.Fatalf("device type: %v", err)
 	}
 
 	c, rec := jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
@@ -145,6 +145,27 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	}
 	if created.DeviceTypeID != dt.ID {
 		t.Fatalf("device_type_id = %d, want %d", created.DeviceTypeID, dt.ID)
+	}
+	if created.PlatformID != plat.ID {
+		t.Fatalf("platform_id = %d, want %d", created.PlatformID, plat.ID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "leaf-from-type-platform",
+		DeviceTypeID: dt.ID,
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatalf("create from type platform: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("from type platform status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var fromType models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &fromType); err != nil {
+		t.Fatalf("decode from type: %v", err)
+	}
+	if fromType.Platform != "eos" || fromType.PlatformID != plat.ID {
+		t.Fatalf("platform copied from device type = %+v", fromType)
 	}
 
 	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{

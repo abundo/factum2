@@ -407,12 +407,18 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 	applyOptionalBool(&device.CfBackupOxidized, dto.CfBackupOxidized)
 	applyOptionalBool(&device.CfAlarmInterfaces, dto.CfAlarmInterfaces)
 	device.OpticalKind = kind
+	platformID := dto.PlatformID
+	if platformID == 0 {
+		platformID = dt.PlatformID
+	}
+	device.PlatformID = 0
 	device.Platform = ""
-	if dto.PlatformID != 0 {
+	if platformID != 0 {
 		var plat models.Platform
-		if err := db.First(&plat, dto.PlatformID).Error; err != nil {
+		if err := db.First(&plat, platformID).Error; err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "platform not found")
 		}
+		device.PlatformID = plat.ID
 		device.Platform = plat.Slug
 	}
 	return nil

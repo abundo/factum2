@@ -317,6 +317,7 @@ type DeviceType struct {
 	ManufacturerID uint   `json:"manufacturer_id" gorm:"index;not null"`
 	Model          string `json:"model" gorm:"type:varchar(255);not null"`
 	Slug           string `json:"slug" gorm:"type:varchar(255);not null"`
+	PlatformID     uint   `json:"platform_id" gorm:"index"`
 	Source         string `json:"source" gorm:"type:varchar(32)"`
 	NetboxID       uint   `json:"netbox_id"`
 }
@@ -326,6 +327,7 @@ type DeviceTypeDTO struct {
 	ManufacturerID uint   `json:"manufacturer_id"`
 	Model          string `json:"model"`
 	Slug           string `json:"slug"`
+	PlatformID     uint   `json:"platform_id"`
 }
 
 func (d *DeviceType) BeforeCreate(tx *gorm.DB) error {
