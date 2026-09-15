@@ -460,6 +460,109 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 	}
 }
 
+func TestApiDCIMAddressesCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	dev := models.Device{Name: "pe-1", CfSource: "factum"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	iface := models.Interface{DeviceID: dev.ID, Name: "Ethernet1", Type: "1000base-t"}
+	if err := db.Create(&iface).Error; err != nil {
+		t.Fatal(err)
+	}
+	nbAddr := models.Address{InterfaceID: iface.ID, Address: "192.0.2.1/32", NetboxID: 88}
+	if err := db.Create(&nbAddr).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/dcim/addresses", nil, nil, nil)
+	if err := ctrl.ApiGetDCIMAddresses(c); err != nil {
+		t.Fatal(err)
+	}
+	var listed DCIMAddressListDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 1 || listed.Items[0].DeviceName != "pe-1" || listed.Items[0].Source != "netbox" {
+		t.Fatalf("list = %+v", listed)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.1/24", DNSName: "lo.pe-1.example", VRF: "MGMT",
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Address
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == 0 || created.NetboxID != 0 || created.Address != "10.0.0.1/24" || created.VRF != "MGMT" {
+		t.Fatalf("created = %+v", created)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.1/24",
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("dup status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "not-an-ip",
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad cidr status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/addresses/x", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.2/24", DNSName: "lo2.pe-1.example",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiUpdateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/addresses/x", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "203.0.113.1/32",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(nbAddr.ID), 10)})
+	if err := ctrl.ApiUpdateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("nb update status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/addresses/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(nbAddr.ID), 10)})
+	if err := ctrl.ApiDeleteDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("nb delete status = %d", rec.Code)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/addresses/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDeleteDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiInterfaceTemplatesCRUD(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

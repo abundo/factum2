@@ -193,6 +193,16 @@ type Address struct {
 	Role string `json:"role" gorm:"type:varchar(255)"`
 }
 
+// AddressCreateDTO is the writable subset of Address. NetboxID is never
+// accepted from the client — Factum-created rows stay NetboxID=0.
+type AddressCreateDTO struct {
+	InterfaceID uint   `json:"interface_id"`
+	Address     string `json:"address"`
+	DNSName     string `json:"dns_name"`
+	VRF         string `json:"vrf"`
+	Role        string `json:"role"`
+}
+
 // Connection is a Netbox cable directly connecting two device interfaces,
 // synced read-only from Netbox (internal/netbox.syncCables) - covers every
 // interface-to-interface cable Netbox knows about, not just the

@@ -12,7 +12,9 @@ import {
   updateDeviceInterfaces,
 } from '@/api/devices'
 import {
+  createAddress,
   createInterface,
+  deleteAddress,
   deleteInterface,
   getDeviceTypes,
   getManufacturers,
@@ -358,10 +360,6 @@ function statusColor(status) {
   }
 }
 
-function addressList(iface) {
-  return (iface.addresses ?? []).map((a) => a.address).join(', ')
-}
-
 // Compact VLAN summary for the interfaces table: switchport mode + up to
 // maxShown VID numbers (untagged first, then tagged), with "…" when truncated.
 const VLAN_SUMMARY_MAX = 3
@@ -643,6 +641,75 @@ function saveNewIface() {
     })
     .finally(() => {
       ifaceSaving.value = false
+    })
+}
+
+const addrFormOpen = ref(false)
+const addrSaving = ref(false)
+const addrDeleting = ref(false)
+const addrForm = ref({
+  interface_id: 0,
+  interface_name: '',
+  address: '',
+  dns_name: '',
+  vrf: '',
+  role: '',
+})
+
+function openAddAddr(iface) {
+  addrForm.value = {
+    interface_id: iface.id,
+    interface_name: iface.name,
+    address: '',
+    dns_name: '',
+    vrf: iface.vrf ?? '',
+    role: '',
+  }
+  addrFormOpen.value = true
+}
+
+function saveNewAddr() {
+  if (!addrForm.value.address.trim()) {
+    toast.add({ color: 'error', title: 'Address is required' })
+    return
+  }
+  addrSaving.value = true
+  createAddress({
+    interface_id: addrForm.value.interface_id,
+    address: addrForm.value.address.trim(),
+    dns_name: addrForm.value.dns_name.trim(),
+    vrf: addrForm.value.vrf.trim(),
+    role: addrForm.value.role.trim(),
+  })
+    .then(() => {
+      addrFormOpen.value = false
+      reloadDeviceInterfaces()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Add address failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      addrSaving.value = false
+    })
+}
+
+function removeAddr(addr) {
+  addrDeleting.value = true
+  deleteAddress(addr.id)
+    .then(() => reloadDeviceInterfaces())
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Delete failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      addrDeleting.value = false
     })
 }
 
@@ -1322,7 +1389,34 @@ onMounted(loadDevices)
                   </div>
                 </template>
                 <template #addresses-cell="{ row }">
-                  <span class="whitespace-nowrap">{{ addressList(row.original) }}</span>
+                  <div class="flex flex-wrap items-center gap-1">
+                    <span
+                      v-for="addr in row.original.addresses ?? []"
+                      :key="addr.id"
+                      class="inline-flex items-center gap-0.5 whitespace-nowrap text-sm"
+                    >
+                      <span>{{ addr.address }}</span>
+                      <UButton
+                        v-if="authStore.canWrite && !addr.netbox_id"
+                        icon="i-lucide-x"
+                        size="xs"
+                        variant="ghost"
+                        color="error"
+                        :loading="addrDeleting"
+                        title="Remove address"
+                        @click="removeAddr(addr)"
+                      />
+                    </span>
+                    <UButton
+                      v-if="authStore.canWrite"
+                      icon="i-lucide-plus"
+                      size="xs"
+                      variant="ghost"
+                      color="neutral"
+                      title="Add IP address"
+                      @click="openAddAddr(row.original)"
+                    />
+                  </div>
                 </template>
               </UTable>
               <div v-if="authStore.opticalEnabled && isOpticalDevice" class="mt-4 shrink-0">
@@ -1500,6 +1594,39 @@ onMounted(loadDevices)
     <template #footer>
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="ifaceFormOpen = false" />
       <UButton label="Create" icon="i-lucide-check" :loading="ifaceSaving" @click="saveNewIface" />
+    </template>
+  </FormModal>
+
+  <FormModal
+    v-model:open="addrFormOpen"
+    :source="addrForm"
+    :title="`Add IP address on ${addrForm.interface_name || 'interface'}`"
+    :ui="{ content: 'sm:max-w-sm' }"
+  >
+    <template #body>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Address">
+          <UInput
+            v-model="addrForm.address"
+            class="w-full font-mono"
+            placeholder="10.0.0.1/24"
+            autofocus
+          />
+        </UFormField>
+        <UFormField label="DNS name">
+          <UInput v-model="addrForm.dns_name" class="w-full" />
+        </UFormField>
+        <UFormField label="VRF">
+          <UInput v-model="addrForm.vrf" class="w-full" />
+        </UFormField>
+        <UFormField label="Role">
+          <UInput v-model="addrForm.role" class="w-full" />
+        </UFormField>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="addrFormOpen = false" />
+      <UButton label="Add" icon="i-lucide-check" :loading="addrSaving" @click="saveNewAddr" />
     </template>
   </FormModal>
 

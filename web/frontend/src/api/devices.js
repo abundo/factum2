@@ -1,7 +1,7 @@
 import http from './http'
 
-export function getDevices() {
-  return http.get('/device').then((res) => res.data)
+export function getDevices(params = {}) {
+  return http.get('/device', { params }).then((res) => res.data)
 }
 
 export function createDevice(payload) {

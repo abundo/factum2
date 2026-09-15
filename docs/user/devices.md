@@ -36,7 +36,9 @@ NetBox-synced catalog rows and devices are read-only here.
 **Devices** in the sidebar lists name, site, role, status, manufacturer,
 model, and primary IPv4. Open a row to:
 
-- Inspect interfaces and addresses
+- Inspect interfaces and addresses. Add a Factum IP on any interface
+  (NetBox-synced addresses stay read-only). The same inventory is under
+  **IPAM → IP addresses** when IPAM is enabled.
 - Refresh interfaces from the device (needs write permission): descriptions
   are reloaded, and interfaces that no longer exist on the device are
   removed from Factum and NetBox (ports defined by the device type's

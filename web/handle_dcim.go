@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -875,6 +876,230 @@ func (ctrl *Controller) ApiDeleteDCIMInterface(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	if err := ctrl.DB.Delete(&iface).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+type DCIMAddressDTO struct {
+	ID            uint   `json:"id"`
+	Address       string `json:"address"`
+	DNSName       string `json:"dns_name"`
+	VRF           string `json:"vrf"`
+	Role          string `json:"role"`
+	InterfaceID   uint   `json:"interface_id"`
+	InterfaceName string `json:"interface_name"`
+	DeviceID      uint   `json:"device_id"`
+	DeviceName    string `json:"device_name"`
+	NetboxID      uint   `json:"netbox_id"`
+	Source        string `json:"source"`
+}
+
+type DCIMAddressListDTO struct {
+	Items  []DCIMAddressDTO `json:"items"`
+	Total  int64            `json:"total"`
+	Limit  int              `json:"limit"`
+	Offset int              `json:"offset"`
+}
+
+func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
+	limit, offset := parseListLimitOffset(c, 100, 500)
+	q := strings.TrimSpace(c.QueryParam("q"))
+	sort := strings.TrimSpace(c.QueryParam("sort"))
+	desc := c.QueryParam("desc") == "true" || c.QueryParam("desc") == "1"
+
+	dbq := ctrl.DB.Model(&models.Address{}).
+		Joins("JOIN interfaces ON interfaces.id = addresses.interface_id").
+		Joins("JOIN devices ON devices.id = interfaces.device_id")
+	if q != "" {
+		pat := likeContains(q)
+		dbq = dbq.Where(
+			"LOWER(addresses.address) LIKE LOWER(?) ESCAPE '\\' OR LOWER(addresses.dns_name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(addresses.vrf) LIKE LOWER(?) ESCAPE '\\' OR LOWER(interfaces.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(devices.name) LIKE LOWER(?) ESCAPE '\\'",
+			pat, pat, pat, pat, pat,
+		)
+	}
+
+	var total int64
+	if err := dbq.Count(&total).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	orderCol := "devices.name, interfaces.name, addresses.address"
+	switch sort {
+	case "address":
+		orderCol = "addresses.address"
+	case "dns_name":
+		orderCol = "addresses.dns_name"
+	case "vrf":
+		orderCol = "addresses.vrf"
+	case "role":
+		orderCol = "addresses.role"
+	case "interface_name":
+		orderCol = "interfaces.name"
+	case "source":
+		orderCol = "(addresses.netbox_id <> 0)"
+	case "device_name":
+		orderCol = "devices.name, interfaces.name, addresses.address"
+	}
+	if desc {
+		if sort == "device_name" || sort == "" {
+			orderCol = "devices.name DESC, interfaces.name DESC, addresses.address DESC"
+		} else {
+			orderCol += " DESC"
+		}
+	}
+
+	var addrs []models.Address
+	if err := dbq.Select("addresses.*").Order(orderCol).Limit(limit).Offset(offset).Find(&addrs).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	out := DCIMAddressListDTO{Items: []DCIMAddressDTO{}, Total: total, Limit: limit, Offset: offset}
+	if len(addrs) == 0 {
+		return c.JSON(http.StatusOK, out)
+	}
+	ifaceIDs := make([]uint, 0, len(addrs))
+	seenIface := map[uint]bool{}
+	for _, a := range addrs {
+		if seenIface[a.InterfaceID] {
+			continue
+		}
+		seenIface[a.InterfaceID] = true
+		ifaceIDs = append(ifaceIDs, a.InterfaceID)
+	}
+	var ifaces []models.Interface
+	if err := ctrl.DB.Where("id IN ?", ifaceIDs).Find(&ifaces).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	ifaceByID := make(map[uint]models.Interface, len(ifaces))
+	deviceIDs := make([]uint, 0, len(ifaces))
+	seenDev := map[uint]bool{}
+	for _, iface := range ifaces {
+		ifaceByID[iface.ID] = iface
+		if seenDev[iface.DeviceID] {
+			continue
+		}
+		seenDev[iface.DeviceID] = true
+		deviceIDs = append(deviceIDs, iface.DeviceID)
+	}
+	var devices []models.Device
+	if err := ctrl.DB.Where("id IN ?", deviceIDs).Find(&devices).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	devByID := make(map[uint]models.Device, len(devices))
+	for _, d := range devices {
+		devByID[d.ID] = d
+	}
+	out.Items = make([]DCIMAddressDTO, 0, len(addrs))
+	for _, a := range addrs {
+		iface := ifaceByID[a.InterfaceID]
+		d := devByID[iface.DeviceID]
+		out.Items = append(out.Items, DCIMAddressDTO{
+			ID:            a.ID,
+			Address:       a.Address,
+			DNSName:       a.DNSName,
+			VRF:           a.VRF,
+			Role:          a.Role,
+			InterfaceID:   a.InterfaceID,
+			InterfaceName: iface.Name,
+			DeviceID:      iface.DeviceID,
+			DeviceName:    d.Name,
+			NetboxID:      a.NetboxID,
+			Source:        interfaceSource(a.NetboxID),
+		})
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+func applyAddressWrite(db *gorm.DB, addr *models.Address, dto models.AddressCreateDTO, creating bool) error {
+	if dto.InterfaceID == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "interface_id is required")
+	}
+	var iface models.Interface
+	if err := db.First(&iface, dto.InterfaceID).Error; err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "interface not found")
+	}
+	raw := strings.TrimSpace(dto.Address)
+	if raw == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "address is required")
+	}
+	pfx, err := netip.ParsePrefix(raw)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "address must be a CIDR prefix (e.g. 10.0.0.1/24)")
+	}
+	canon := pfx.String()
+	q := db.Model(&models.Address{}).Where("interface_id = ? AND address = ?", dto.InterfaceID, canon)
+	if !creating {
+		q = q.Where("id <> ?", addr.ID)
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "address already exists on this interface")
+	}
+	addr.InterfaceID = dto.InterfaceID
+	addr.Address = canon
+	addr.DNSName = strings.TrimSpace(dto.DNSName)
+	addr.VRF = strings.TrimSpace(dto.VRF)
+	addr.Role = strings.TrimSpace(dto.Role)
+	return nil
+}
+
+func (ctrl *Controller) ApiCreateDCIMAddress(c *echo.Context) error {
+	var dto models.AddressCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	var addr models.Address
+	if err := applyAddressWrite(ctrl.DB, &addr, dto, true); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Create(&addr).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, addr)
+}
+
+func (ctrl *Controller) ApiUpdateDCIMAddress(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var addr models.Address
+	if err := ctrl.DB.First(&addr, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if addr.NetboxID != 0 {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "addresses synced from NetBox cannot be edited here"})
+	}
+	var dto models.AddressCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := applyAddressWrite(ctrl.DB, &addr, dto, false); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Save(&addr).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, addr)
+}
+
+func (ctrl *Controller) ApiDeleteDCIMAddress(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var addr models.Address
+	if err := ctrl.DB.First(&addr, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if addr.NetboxID != 0 {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "addresses synced from NetBox cannot be deleted here"})
+	}
+	if err := ctrl.DB.Delete(&addr).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusNoContent)

@@ -120,6 +120,12 @@ const router = createRouter({
           component: () => import('@/views/ipam/IpamPage.vue'),
         },
         {
+          path: '/ipam/addresses',
+          name: 'ipam-addresses',
+          meta: { title: 'IP addresses', requiresRead: true, requiresIpam: true },
+          component: () => import('@/views/ipam/IpamAddressList.vue'),
+        },
+        {
           path: '/dns/zones',
           name: 'dns-zones',
           meta: { title: 'Zones', requiresRead: true, requiresDnsZones: true },

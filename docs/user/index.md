@@ -21,7 +21,7 @@ currently on GitHub.
 | Dashboard | Home | Welcome plus admin-configured shortcut links |
 | Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
-| Prefixes | IPAM | Only if **IP address management** is enabled |
+| Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |
 | Certificates | Certificates | Only if **Certificates** is enabled (Destinations) |
 | Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |

@@ -290,6 +290,11 @@ func GUI(p *GuiParams) error {
 	api.PUT("/dcim/interfaces/:id", ctrl.ApiUpdateDCIMInterface, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/dcim/interfaces/:id", ctrl.ApiDeleteDCIMInterface, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
+	api.GET("/dcim/addresses", ctrl.ApiGetDCIMAddresses, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/dcim/addresses", ctrl.ApiCreateDCIMAddress, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/dcim/addresses/:id", ctrl.ApiUpdateDCIMAddress, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/dcim/addresses/:id", ctrl.ApiDeleteDCIMAddress, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+
 	platforms_ := NewSecureCRUDHandler[models.Platform, models.PlatformDTO](DB)
 	api.GET("/dcim/platforms", platforms_.GetAll, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/dcim/platforms/:id", platforms_.GetOne, ctrl.RequireAPIAuth, ctrl.RequireRead)

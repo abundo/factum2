@@ -66,6 +66,22 @@ export function deleteInterface(id) {
   return http.delete(`/dcim/interfaces/${id}`).then((res) => res.data)
 }
 
+export function getAddresses(params = {}) {
+  return http.get('/dcim/addresses', { params }).then((res) => res.data)
+}
+
+export function createAddress(payload) {
+  return http.post('/dcim/addresses', payload).then((res) => res.data)
+}
+
+export function updateAddress(id, payload) {
+  return http.put(`/dcim/addresses/${id}`, payload).then((res) => res.data)
+}
+
+export function deleteAddress(id) {
+  return http.delete(`/dcim/addresses/${id}`).then((res) => res.data)
+}
+
 export function getPlatforms() {
   return http.get('/dcim/platforms').then((res) => res.data)
 }

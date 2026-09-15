@@ -1,0 +1,355 @@
+<script setup>
+import { computed, onMounted, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
+import { getDevices } from '@/api/devices'
+import {
+  createAddress,
+  deleteAddress,
+  getAddresses,
+  updateAddress,
+} from '@/api/dcim'
+import SearchInput from '@/components/SearchInput.vue'
+import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useAuthStore } from '@/stores/auth'
+
+defineOptions({ name: 'IpamAddressList' })
+
+const toast = useToast()
+const authStore = useAuthStore()
+
+const items = ref([])
+const devices = ref([])
+const loading = ref(true)
+const error = ref(null)
+const globalFilter = ref('')
+const sorting = ref([{ id: 'device_name', desc: false }])
+const page = ref(1)
+const pageSize = ref(100)
+const total = ref(0)
+let searchTimer = null
+
+const pageSizeItems = [50, 100, 250]
+
+const pageFrom = computed(() => (total.value === 0 ? 0 : (page.value - 1) * pageSize.value + 1))
+const pageTo = computed(() => Math.min(page.value * pageSize.value, total.value))
+
+const columns = [
+  { id: 'actions', header: '' },
+  { accessorKey: 'device_name', header: 'Device' },
+  { accessorKey: 'interface_name', header: 'Interface' },
+  { accessorKey: 'address', header: 'Address' },
+  { accessorKey: 'dns_name', header: 'DNS name' },
+  { accessorKey: 'vrf', header: 'VRF' },
+  { accessorKey: 'role', header: 'Role' },
+  { accessorKey: 'source', header: 'Source' },
+]
+
+const dialog = ref(false)
+const form = ref({
+  device_id: undefined,
+  interface_id: undefined,
+  address: '',
+  dns_name: '',
+  vrf: '',
+  role: '',
+})
+const editingId = ref(null)
+const saving = ref(false)
+const deleting = ref(false)
+
+const canWrite = computed(() => authStore.canWrite)
+const dialogTitle = computed(() => (editingId.value ? 'Edit IP address' : 'New IP address'))
+const editingLocal = computed(() => {
+  if (!editingId.value) return true
+  return items.value.find((i) => i.id === editingId.value)?.source !== 'netbox'
+})
+
+function isLocal(row) {
+  return row.source !== 'netbox'
+}
+
+function sourceBadgeColor(source) {
+  if (source === 'factum') return 'success'
+  return 'neutral'
+}
+
+const deviceItems = computed(() => devices.value.map((d) => ({ label: d.name, value: d.id })))
+
+const selectedDevice = computed(() => devices.value.find((d) => d.id === form.value.device_id))
+
+const interfaceItems = computed(() =>
+  (selectedDevice.value?.interfaces ?? []).map((i) => ({ label: i.name, value: i.id })),
+)
+
+function loadDevices() {
+  return getDevices({ include: 'interfaces' }).then((devs) => {
+    devices.value = devs ?? []
+  })
+}
+
+function load() {
+  loading.value = true
+  error.value = null
+  const sort = sorting.value?.[0]
+  getAddresses({
+    limit: pageSize.value,
+    offset: (page.value - 1) * pageSize.value,
+    q: globalFilter.value.trim() || undefined,
+    sort: sort?.id || 'device_name',
+    desc: sort?.desc ? true : undefined,
+  })
+    .then((data) => {
+      items.value = data?.items ?? []
+      total.value = data?.total ?? 0
+    })
+    .catch(() => {
+      error.value = 'Failed to load IP addresses.'
+    })
+    .finally(() => {
+      loading.value = false
+    })
+}
+
+function openNew() {
+  editingId.value = null
+  form.value = {
+    device_id: undefined,
+    interface_id: undefined,
+    address: '',
+    dns_name: '',
+    vrf: '',
+    role: '',
+  }
+  dialog.value = true
+}
+
+function openEdit(row) {
+  editingId.value = row.id
+  form.value = {
+    device_id: row.device_id,
+    interface_id: row.interface_id,
+    address: row.address ?? '',
+    dns_name: row.dns_name ?? '',
+    vrf: row.vrf ?? '',
+    role: row.role ?? '',
+  }
+  dialog.value = true
+}
+
+function save() {
+  if (!form.value.interface_id) {
+    toast.add({ color: 'error', title: 'Interface is required' })
+    return
+  }
+  if (!form.value.address.trim()) {
+    toast.add({ color: 'error', title: 'Address is required' })
+    return
+  }
+  saving.value = true
+  const payload = {
+    interface_id: form.value.interface_id,
+    address: form.value.address.trim(),
+    dns_name: form.value.dns_name.trim(),
+    vrf: form.value.vrf.trim(),
+    role: form.value.role.trim(),
+  }
+  const req = editingId.value ? updateAddress(editingId.value, payload) : createAddress(payload)
+  req
+    .then(() => {
+      dialog.value = false
+      load()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Save failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function remove(row) {
+  deleting.value = true
+  deleteAddress(row.id)
+    .then(() => load())
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Delete failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      deleting.value = false
+    })
+}
+
+watch(
+  () => form.value.device_id,
+  (id, prev) => {
+    if (id !== prev && !editingId.value) {
+      form.value.interface_id = undefined
+    }
+  },
+)
+
+watch([page, pageSize, sorting], load, { deep: true })
+
+watch(globalFilter, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    if (page.value !== 1) {
+      page.value = 1
+      return
+    }
+    load()
+  }, 300)
+})
+
+onMounted(() => {
+  loadDevices()
+  load()
+})
+</script>
+
+<template>
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
+      <div class="flex items-center gap-2">
+        <h4 class="m-0">IP addresses</h4>
+        <UButton
+          v-if="canWrite"
+          label="New"
+          icon="i-lucide-plus"
+          color="neutral"
+          size="sm"
+          @click="openNew"
+        />
+      </div>
+      <SearchInput v-model="globalFilter" />
+    </div>
+
+    <UTable
+      v-model:sorting="sorting"
+      :data="items"
+      :columns="columns"
+      :loading="loading"
+      :empty="error ?? 'No IP addresses found.'"
+      :virtualize="{ estimateSize: 46 }"
+      sticky
+      class="min-h-0 flex-1"
+    >
+      <template #device_name-header="{ column }">
+        <SortableColumnHeader :column="column" label="Device" />
+      </template>
+      <template #interface_name-header="{ column }">
+        <SortableColumnHeader :column="column" label="Interface" />
+      </template>
+      <template #address-header="{ column }">
+        <SortableColumnHeader :column="column" label="Address" />
+      </template>
+      <template #source-header="{ column }">
+        <SortableColumnHeader :column="column" label="Source" />
+      </template>
+      <template #source-cell="{ row }">
+        <UBadge
+          :label="row.original.source || '—'"
+          :color="sourceBadgeColor(row.original.source)"
+          variant="subtle"
+        />
+      </template>
+      <template #actions-cell="{ row }">
+        <div class="flex gap-2">
+          <UButton
+            icon="i-lucide-pencil"
+            variant="outline"
+            color="neutral"
+            size="sm"
+            @click="openEdit(row.original)"
+          />
+          <UButton
+            v-if="canWrite && isLocal(row.original)"
+            icon="i-lucide-trash"
+            variant="ghost"
+            color="error"
+            size="sm"
+            :loading="deleting"
+            @click="remove(row.original)"
+          />
+        </div>
+      </template>
+    </UTable>
+
+    <div class="flex flex-wrap items-center justify-between gap-3 mt-3 shrink-0">
+      <div class="flex items-center gap-2 text-sm text-muted">
+        <span>{{ pageFrom }}–{{ pageTo }} of {{ total }}</span>
+        <USelect v-model="pageSize" :items="pageSizeItems" class="w-24" @update:model-value="page = 1" />
+      </div>
+      <UPagination
+        v-model:page="page"
+        :total="total"
+        :items-per-page="pageSize"
+        :disabled="loading"
+      />
+    </div>
+  </div>
+
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="dialogTitle"
+    :ui="{ content: 'sm:max-w-sm' }"
+  >
+    <template #body>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Device">
+          <USelect
+            v-model="form.device_id"
+            :items="deviceItems"
+            :disabled="!!editingId && !editingLocal"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Interface">
+          <USelect
+            v-model="form.interface_id"
+            :items="interfaceItems"
+            :disabled="!form.device_id || (!!editingId && !editingLocal)"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Address">
+          <UInput
+            v-model="form.address"
+            class="w-full font-mono"
+            placeholder="10.0.0.1/24"
+            autofocus
+            :disabled="!!editingId && !editingLocal"
+          />
+        </UFormField>
+        <UFormField label="DNS name">
+          <UInput v-model="form.dns_name" class="w-full" :disabled="!!editingId && !editingLocal" />
+        </UFormField>
+        <UFormField label="VRF">
+          <UInput v-model="form.vrf" class="w-full" :disabled="!!editingId && !editingLocal" />
+        </UFormField>
+        <UFormField label="Role">
+          <UInput v-model="form.role" class="w-full" :disabled="!!editingId && !editingLocal" />
+        </UFormField>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="dialog = false" />
+      <UButton
+        v-if="canWrite && editingLocal"
+        label="Save"
+        icon="i-lucide-check"
+        :loading="saving"
+        @click="save"
+      />
+    </template>
+  </FormModal>
+</template>

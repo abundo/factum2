@@ -110,7 +110,12 @@ const groups = computed(() => {
           : []),
       ]),
       ...(authStore.ipamEnabled
-        ? [section('IPAM', [{ label: 'Prefixes', icon: 'i-lucide-binary', to: '/ipam' }])]
+        ? [
+            section('IPAM', [
+              { label: 'Prefixes', icon: 'i-lucide-binary', to: '/ipam' },
+              { label: 'IP addresses', icon: 'i-lucide-network', to: '/ipam/addresses' },
+            ]),
+          ]
         : []),
       ...(authStore.dnsZonesEnabled
         ? [

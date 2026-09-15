@@ -830,8 +830,8 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 }
 
 // syncAddresses creates/updates the addresses of an interface, matched
-// by netbox_id, and removes any factum address no longer present in
-// nb_addresses.
+// by netbox_id, and removes NetBox-synced rows no longer present in
+// nb_addresses. Factum-created addresses (NetboxID=0) are left alone.
 func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAddress, dnsNames map[uint]string) error {
 	var existing []models.Address
 	if err := db.Where("interface_id = ?", interfaceID).Find(&existing).Error; err != nil {
@@ -839,6 +839,9 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 	}
 	byNetboxID := make(map[uint]models.Address, len(existing))
 	for _, addr := range existing {
+		if addr.NetboxID == 0 {
+			continue
+		}
 		byNetboxID[addr.NetboxID] = addr
 	}
 
@@ -859,6 +862,9 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 	}
 
 	for _, addr := range existing {
+		if addr.NetboxID == 0 {
+			continue
+		}
 		if !seen[addr.NetboxID] {
 			if err := db.Delete(&models.Address{}, addr.ID).Error; err != nil {
 				return err

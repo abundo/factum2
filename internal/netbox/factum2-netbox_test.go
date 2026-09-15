@@ -231,6 +231,52 @@ func TestSyncAddressesStoresValidatedDNSName(t *testing.T) {
 	}
 }
 
+func TestSyncAddressesKeepsFactumRows(t *testing.T) {
+	db := newImportTestDB(t)
+	_, ifaceIDs := seedDeviceWithIfaces(t, db, "r1", 1, []models.Interface{
+		{NetboxID: 10, Name: "eth0"},
+	})
+	id := ifaceIDs["eth0"]
+	local := models.Address{InterfaceID: id, Address: "10.9.9.9/32"}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+		{NetboxID: 200, Address: "10.0.0.1/24"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var rows []models.Address
+	if err := db.Where("interface_id = ?", id).Order("address").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want netbox + factum", rows)
+	}
+	var sawLocal, sawNB bool
+	for _, r := range rows {
+		if r.ID == local.ID && r.Address == "10.9.9.9/32" && r.NetboxID == 0 {
+			sawLocal = true
+		}
+		if r.NetboxID == 200 && r.Address == "10.0.0.1/24" {
+			sawNB = true
+		}
+	}
+	if !sawLocal || !sawNB {
+		t.Fatalf("rows = %+v", rows)
+	}
+
+	if err := syncAddresses(db, id, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("interface_id = ?", id).Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != local.ID {
+		t.Fatalf("after emptying netbox addresses: %+v", rows)
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := []struct {
 		in, want string
