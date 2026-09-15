@@ -341,7 +341,7 @@ function doUnrealize() {
       })
       if (data?.service) {
         serviceRow.value = { ...serviceRow.value, ...data.service }
-        schemaValues.value = { ...(data.service.fields || {}) }
+        schemaValues.value = { ...data.service.fields }
         genericEndpoints.value = []
       }
       emit('saved')

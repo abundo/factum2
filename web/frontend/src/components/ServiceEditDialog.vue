@@ -628,7 +628,7 @@ function doUnrealize() {
       unrealizeOpen.value = false
       if (data?.service) {
         service.value = { ...service.value, ...data.service }
-        schemaValues.value = { ...(data.service.fields || {}) }
+        schemaValues.value = { ...data.service.fields }
         genericEndpoints.value = []
       }
       toast.add({ color: 'success', title: 'Unrealized', description: 'Technical realization removed.' })
