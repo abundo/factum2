@@ -1,8 +1,11 @@
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { Wunderbaum } from 'wunderbaum'
-import { getSiteTree } from '@/api/sites'
+import { createSite, getSiteTree } from '@/api/sites'
+import FormModal from '@/components/FormModal.vue'
 import SearchInput from '@/components/SearchInput.vue'
+import { useAuthStore } from '@/stores/auth'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
 
@@ -12,11 +15,23 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:visible', 'select'])
 
+const toast = useToast()
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.canWrite)
+
 const el = ref(null)
 const error = ref(null)
 const selected = ref(null)
 const filter = ref('')
+const creating = ref(false)
+const saving = ref(false)
+const treeRev = ref(0)
+const createForm = ref(emptyCreateForm())
 let tree
+
+function emptyCreateForm() {
+  return { name: '', parent_id: 0, latitude: '', longitude: '' }
+}
 
 function toWbNode(n) {
   const node = {
@@ -61,6 +76,7 @@ function destroyTree() {
   if (tree) {
     tree.resizeObserver?.disconnect()
     tree = null
+    if (el.value) el.value.replaceChildren()
   }
 }
 
@@ -85,6 +101,77 @@ function findByName(name) {
     if (title === want) match = node
   })
   return match
+}
+
+function parentItems() {
+  const items = [{ label: '(root)', value: 0 }]
+  if (!tree) return items
+  tree.visit((node) => {
+    const id = node.data?.id
+    if (!id) return
+    items.push({ label: node.title || node.data?.name || String(id), value: id })
+  })
+  return items
+}
+
+const createParentItems = computed(() => {
+  treeRev.value
+  return parentItems()
+})
+
+function parseCoord(v) {
+  if (v === '' || v == null) return 0
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function openCreate() {
+  const node = tree?.getActiveNode()
+  createForm.value = {
+    name: '',
+    parent_id: node?.data?.id || 0,
+    latitude: '',
+    longitude: '',
+  }
+  creating.value = true
+}
+
+function saveCreate() {
+  const name = (createForm.value.name ?? '').trim()
+  if (!name) {
+    toast.add({ color: 'error', title: 'Name is required' })
+    return
+  }
+  const parent = createForm.value.parent_id
+  const payload = {
+    name,
+    parent_id: !parent || parent === 0 ? null : Number(parent),
+    latitude: parseCoord(createForm.value.latitude),
+    longitude: parseCoord(createForm.value.longitude),
+  }
+  saving.value = true
+  createSite(payload)
+    .then((row) => {
+      creating.value = false
+      createForm.value = emptyCreateForm()
+      emit('select', {
+        id: row.id,
+        name: row.name || '',
+        source: row.source,
+        parent_id: row.parent_id ?? null,
+      })
+      close()
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Error',
+        description: err.response?.data?.error ?? 'Create failed.',
+      })
+    })
+    .finally(() => {
+      saving.value = false
+    })
 }
 
 function buildTree(source) {
@@ -131,7 +218,9 @@ function loadTree() {
   getSiteTree()
     .then((rows) => {
       if (el.value !== host) return
+      destroyTree()
       buildTree((rows ?? []).map(toWbNode))
+      treeRev.value += 1
       const roots = tree?.root?.children ?? []
       for (const node of roots) {
         if (!node.expanded) node.setExpanded(true)
@@ -143,6 +232,7 @@ function loadTree() {
       if (el.value !== host) return
       error.value = err.response?.data?.error ?? 'Failed to load sites.'
       buildTree([])
+      treeRev.value += 1
     })
 }
 
@@ -213,14 +303,65 @@ onBeforeUnmount(destroyTree)
     </template>
 
     <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
-      <UButton label="Select" icon="i-lucide-check" :disabled="!selected" @click="confirmSelect" />
+      <div class="flex w-full items-center justify-between gap-2">
+        <UButton
+          v-if="canWrite"
+          label="New site"
+          icon="i-lucide-plus"
+          variant="outline"
+          @click="openCreate"
+        />
+        <span v-else />
+        <div class="flex gap-2">
+          <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+          <UButton label="Select" icon="i-lucide-check" :disabled="!selected" @click="confirmSelect" />
+        </div>
+      </div>
     </template>
   </UModal>
+
+  <FormModal
+    :open="creating"
+    :source="createForm"
+    title="New site"
+    :ui="{
+      overlay: 'site-selector-create-layer',
+      content: 'site-selector-create-layer',
+    }"
+    @update:open="
+      (v) => {
+        if (!v) creating = false
+      }
+    "
+  >
+    <template #body>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
+          <UInput id="site-selector-create-name" v-model="createForm.name" class="w-full" autofocus />
+        </UFormField>
+        <UFormField label="Parent">
+          <USelect v-model="createForm.parent_id" :items="createParentItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Latitude">
+          <UInput v-model="createForm.latitude" class="w-full" />
+        </UFormField>
+        <UFormField label="Longitude">
+          <UInput v-model="createForm.longitude" class="w-full" />
+        </UFormField>
+      </div>
+    </template>
+    <template #footer>
+      <UButton label="Cancel" variant="ghost" @click="creating = false" />
+      <UButton label="Add" :loading="saving" @click="saveCreate" />
+    </template>
+  </FormModal>
 </template>
 
 <style>
 .site-selector-layer {
   z-index: 200 !important;
+}
+.site-selector-create-layer {
+  z-index: 210 !important;
 }
 </style>
