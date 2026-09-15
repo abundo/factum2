@@ -1,7 +1,7 @@
 interface {{.LocalIface}}
  no switchport
 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
- description ID={{.Name}} S=ELINE
+ description {{.Name}}
  encapsulation vlan
   client dot1q {{index .Current.Fields "vlan"}}
   exit
@@ -27,7 +27,7 @@ exit
 interface {{$peer.LocalIface}}
  no switchport
 interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
- description ID={{.Name}} S=ELINE
+ description {{.Name}}
  encapsulation vlan
   client dot1q {{index $peer.Fields "vlan"}}
   exit
