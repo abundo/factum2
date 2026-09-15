@@ -18,7 +18,6 @@ import (
 	"github.com/abundo/netboxtool"
 	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // --------------------------------------------------------------------------
@@ -179,19 +178,19 @@ func deleteFactumInterfaceByNetboxID(db *gorm.DB, netboxID uint, label string) {
 // description) without waiting for a full Netbox sync. Matched on
 // (device_id, netbox_id) - same unique key syncInterfaces uses.
 func upsertFactumSubinterface(db *gorm.DB, deviceID, netboxID, parentNetboxID uint, name, description string) error {
-	iface := models.Interface{
-		DeviceID:    deviceID,
-		NetboxID:    netboxID,
-		Name:        name,
-		Description: description,
-		Type:        "virtual",
-		ParentID:    parentNetboxID,
-		Enabled:     true,
+	var iface models.Interface
+	err := db.Where("device_id = ? AND name = ?", deviceID, name).Take(&iface).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
 	}
-	return db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "device_id"}, {Name: "netbox_id"}},
-		UpdateAll: true,
-	}).Create(&iface).Error
+	iface.DeviceID = deviceID
+	iface.NetboxID = netboxID
+	iface.Name = name
+	iface.Description = description
+	iface.Type = "virtual"
+	iface.ParentID = parentNetboxID
+	iface.Enabled = true
+	return db.Save(&iface).Error
 }
 
 // reconcileELineSubinterface ensures a "<physical-interface-name>.<vlan>"
