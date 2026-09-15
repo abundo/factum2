@@ -350,6 +350,12 @@ func catalogSourceNetbox(source string) bool {
 	return source == "netbox"
 }
 
+func applyOptionalBool(dst *bool, src *bool) {
+	if src != nil {
+		*dst = *src
+	}
+}
+
 func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreateDTO) error {
 	name := strings.TrimSpace(dto.Name)
 	if name == "" {
@@ -370,15 +376,37 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 	if status == "" {
 		status = "active"
 	}
+	kind := strings.ToLower(strings.TrimSpace(dto.OpticalKind))
+	if kind != "" {
+		if alias, ok := models.OpticalKindAliases[kind]; ok {
+			kind = alias
+		}
+		if !models.IsOpticalKind(kind) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid optical_kind")
+		}
+	}
 	device.Name = name
 	device.Comments = strings.TrimSpace(dto.Comments)
-	device.Enabled = true
+	if dto.Enabled != nil {
+		device.Enabled = *dto.Enabled
+	} else if device.ID == 0 {
+		device.Enabled = true
+	}
 	device.Manufacturer = mfr.Name
 	device.ModelName = dt.Model
+	device.DeviceTypeID = dt.ID
 	device.Site = strings.TrimSpace(dto.Site)
 	device.Role = strings.TrimSpace(dto.Role)
 	device.Status = status
 	device.PrimaryIPv4 = strings.TrimSpace(dto.PrimaryIPv4)
+	device.PrimaryIPv6 = strings.TrimSpace(dto.PrimaryIPv6)
+	device.CfLocation = strings.TrimSpace(dto.CfLocation)
+	applyOptionalBool(&device.CfMonitorIcinga, dto.CfMonitorIcinga)
+	applyOptionalBool(&device.CfMonitorLibrenms, dto.CfMonitorLibrenms)
+	applyOptionalBool(&device.CfMonitorGrafana, dto.CfMonitorGrafana)
+	applyOptionalBool(&device.CfBackupOxidized, dto.CfBackupOxidized)
+	applyOptionalBool(&device.CfAlarmInterfaces, dto.CfAlarmInterfaces)
+	device.OpticalKind = kind
 	device.Platform = ""
 	if dto.PlatformID != 0 {
 		var plat models.Platform
@@ -417,6 +445,9 @@ func (ctrl *Controller) ApiDeviceCreate(c *echo.Context) error {
 	if err := ctrl.DB.Create(&device).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	if err := instantiateDeviceTypeInterfaces(ctrl.DB, device.ID, device.DeviceTypeID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
 	return c.JSON(http.StatusCreated, device)
 }
 
@@ -442,6 +473,9 @@ func (ctrl *Controller) ApiDeviceUpdate(c *echo.Context) error {
 		return httpErrorJSON(c, err)
 	}
 	if err := ctrl.DB.Save(&existing).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := instantiateDeviceTypeInterfaces(ctrl.DB, existing.ID, existing.DeviceTypeID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, existing)
@@ -520,4 +554,354 @@ func (ctrl *Controller) guardFactumCatalog(kind string, next echo.HandlerFunc) e
 		}
 		return next(c)
 	}
+}
+
+func instantiateDeviceTypeInterfaces(db *gorm.DB, deviceID, deviceTypeID uint) error {
+	if deviceID == 0 || deviceTypeID == 0 {
+		return nil
+	}
+	var tmpls []models.InterfaceTemplate
+	if err := db.Where("device_type_id = ?", deviceTypeID).Find(&tmpls).Error; err != nil {
+		return err
+	}
+	for _, tmpl := range tmpls {
+		if err := ensureDeviceInterfaceFromTemplate(db, deviceID, tmpl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureDeviceInterfaceFromTemplate(db *gorm.DB, deviceID uint, tmpl models.InterfaceTemplate) error {
+	var n int64
+	if err := db.Model(&models.Interface{}).Where("device_id = ? AND name = ?", deviceID, tmpl.Name).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	typ := strings.TrimSpace(tmpl.Type)
+	if typ == "" {
+		typ = "other"
+	}
+	iface := models.Interface{
+		DeviceID:    deviceID,
+		Name:        tmpl.Name,
+		Type:        typ,
+		Label:       tmpl.Label,
+		Description: tmpl.Description,
+		Enabled:     true,
+	}
+	return db.Create(&iface).Error
+}
+
+func applyInterfaceTemplateToLocalDevices(db *gorm.DB, tmpl models.InterfaceTemplate) error {
+	var devices []models.Device
+	if err := db.Where("device_type_id = ?", tmpl.DeviceTypeID).Find(&devices).Error; err != nil {
+		return err
+	}
+	for _, d := range devices {
+		if !isLocalDevice(d) {
+			continue
+		}
+		if err := ensureDeviceInterfaceFromTemplate(db, d.ID, tmpl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DCIMInterfaceDTO struct {
+	ID          uint   `json:"id"`
+	DeviceID    uint   `json:"device_id"`
+	DeviceName  string `json:"device_name"`
+	Site        string `json:"site"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+	VRF         string `json:"vrf"`
+	NetboxID    uint   `json:"netbox_id"`
+	Source      string `json:"source"`
+}
+
+func interfaceSource(netboxID uint) string {
+	if netboxID != 0 {
+		return "netbox"
+	}
+	return "factum"
+}
+
+func (ctrl *Controller) ApiGetDCIMInterfaces(c *echo.Context) error {
+	ctx := c.Request().Context()
+	ifaces, err := gorm.G[models.Interface](ctrl.DB).Order("name").Find(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if len(ifaces) == 0 {
+		return c.JSON(http.StatusOK, []DCIMInterfaceDTO{})
+	}
+	deviceIDs := make([]uint, 0, len(ifaces))
+	seen := map[uint]bool{}
+	for _, iface := range ifaces {
+		if seen[iface.DeviceID] {
+			continue
+		}
+		seen[iface.DeviceID] = true
+		deviceIDs = append(deviceIDs, iface.DeviceID)
+	}
+	devices, err := gorm.G[models.Device](ctrl.DB).Where("id IN ?", deviceIDs).Find(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	devByID := make(map[uint]models.Device, len(devices))
+	for _, d := range devices {
+		devByID[d.ID] = d
+	}
+	out := make([]DCIMInterfaceDTO, 0, len(ifaces))
+	for _, iface := range ifaces {
+		d := devByID[iface.DeviceID]
+		out = append(out, DCIMInterfaceDTO{
+			ID:          iface.ID,
+			DeviceID:    iface.DeviceID,
+			DeviceName:  d.Name,
+			Site:        d.Site,
+			Name:        iface.Name,
+			Type:        iface.Type,
+			Label:       iface.Label,
+			Description: iface.Description,
+			Enabled:     iface.Enabled,
+			VRF:         iface.VRF,
+			NetboxID:    iface.NetboxID,
+			Source:      interfaceSource(iface.NetboxID),
+		})
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+func applyLocalInterfaceWrite(db *gorm.DB, iface *models.Interface, dto models.InterfaceCreateDTO, creating bool) error {
+	name := strings.TrimSpace(dto.Name)
+	if name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+	}
+	q := db.Model(&models.Interface{}).Where("device_id = ? AND name = ?", iface.DeviceID, name)
+	if !creating {
+		q = q.Where("id <> ?", iface.ID)
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "interface name already exists on this device")
+	}
+	typ := strings.TrimSpace(dto.Type)
+	if typ == "" {
+		typ = "other"
+	}
+	iface.Name = name
+	iface.Type = typ
+	iface.Label = strings.TrimSpace(dto.Label)
+	iface.Description = strings.TrimSpace(dto.Description)
+	if dto.Enabled != nil {
+		iface.Enabled = *dto.Enabled
+	} else if creating {
+		iface.Enabled = true
+	}
+	return nil
+}
+
+func (ctrl *Controller) ApiCreateDCIMInterface(c *echo.Context) error {
+	var dto models.InterfaceCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if dto.DeviceID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "device_id is required"})
+	}
+	var device models.Device
+	if err := ctrl.DB.First(&device, dto.DeviceID).Error; err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "device not found"})
+	}
+	if !isLocalDevice(device) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces on NetBox-synced devices cannot be created here"})
+	}
+	iface := models.Interface{DeviceID: device.ID}
+	if err := applyLocalInterfaceWrite(ctrl.DB, &iface, dto, true); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Create(&iface).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, iface)
+}
+
+func (ctrl *Controller) ApiUpdateDCIMInterface(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var iface models.Interface
+	if err := ctrl.DB.First(&iface, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if iface.NetboxID != 0 {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces synced from NetBox cannot be edited here"})
+	}
+	var device models.Device
+	if err := ctrl.DB.First(&device, iface.DeviceID).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
+	}
+	if !isLocalDevice(device) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces on NetBox-synced devices cannot be edited here"})
+	}
+	var dto models.InterfaceCreateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := applyLocalInterfaceWrite(ctrl.DB, &iface, dto, false); err != nil {
+		return httpErrorJSON(c, err)
+	}
+	if err := ctrl.DB.Save(&iface).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, iface)
+}
+
+func (ctrl *Controller) ApiDeleteDCIMInterface(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var iface models.Interface
+	if err := ctrl.DB.First(&iface, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if iface.NetboxID != 0 {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces synced from NetBox cannot be deleted here"})
+	}
+	var device models.Device
+	if err := ctrl.DB.First(&device, iface.DeviceID).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
+	}
+	if !isLocalDevice(device) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces on NetBox-synced devices cannot be deleted here"})
+	}
+	if err := ctrl.DB.Where("interface_id = ?", iface.ID).Delete(&models.Address{}).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := ctrl.DB.Delete(&iface).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (ctrl *Controller) ApiGetInterfaceTemplates(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var dt models.DeviceType
+	if err := ctrl.DB.First(&dt, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var rows []models.InterfaceTemplate
+	if err := ctrl.DB.Where("device_type_id = ?", id).Order("name").Find(&rows).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if rows == nil {
+		rows = []models.InterfaceTemplate{}
+	}
+	return c.JSON(http.StatusOK, rows)
+}
+
+func (ctrl *Controller) ApiCreateInterfaceTemplate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var dt models.DeviceType
+	if err := ctrl.DB.First(&dt, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var dto models.InterfaceTemplateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	name := strings.TrimSpace(dto.Name)
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name is required"})
+	}
+	typ := strings.TrimSpace(dto.Type)
+	if typ == "" {
+		typ = "other"
+	}
+	row := models.InterfaceTemplate{
+		DeviceTypeID: dt.ID,
+		Name:         name,
+		Type:         typ,
+		Label:        strings.TrimSpace(dto.Label),
+		Description:  strings.TrimSpace(dto.Description),
+		Source:       "factum",
+	}
+	if err := ctrl.DB.Create(&row).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := applyInterfaceTemplateToLocalDevices(ctrl.DB, row); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, row)
+}
+
+func (ctrl *Controller) ApiUpdateInterfaceTemplate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var row models.InterfaceTemplate
+	if err := ctrl.DB.First(&row, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if catalogSourceNetbox(row.Source) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interface templates synced from NetBox cannot be edited here"})
+	}
+	var dto models.InterfaceTemplateDTO
+	if err := c.Bind(&dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	name := strings.TrimSpace(dto.Name)
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name is required"})
+	}
+	typ := strings.TrimSpace(dto.Type)
+	if typ == "" {
+		typ = "other"
+	}
+	row.Name = name
+	row.Type = typ
+	row.Label = strings.TrimSpace(dto.Label)
+	row.Description = strings.TrimSpace(dto.Description)
+	if err := ctrl.DB.Save(&row).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, row)
+}
+
+func (ctrl *Controller) ApiDeleteInterfaceTemplate(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var row models.InterfaceTemplate
+	if err := ctrl.DB.First(&row, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if catalogSourceNetbox(row.Source) {
+		return c.JSON(http.StatusForbidden, map[string]any{"error": "interface templates synced from NetBox cannot be deleted here"})
+	}
+	if err := ctrl.DB.Delete(&row).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
 }

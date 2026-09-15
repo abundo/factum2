@@ -279,6 +279,15 @@ func GUI(p *GuiParams) error {
 	api.POST("/dcim/device-types", deviceTypes_.Create, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/dcim/device-types/:id", ctrl.guardFactumCatalog("device type", deviceTypes_.Update), ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/dcim/device-types/:id", ctrl.guardFactumCatalog("device type", deviceTypes_.Delete), ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.GET("/dcim/device-types/:id/interface-templates", ctrl.ApiGetInterfaceTemplates, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/dcim/device-types/:id/interface-templates", ctrl.ApiCreateInterfaceTemplate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/dcim/interface-templates/:id", ctrl.ApiUpdateInterfaceTemplate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/dcim/interface-templates/:id", ctrl.ApiDeleteInterfaceTemplate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+
+	api.GET("/dcim/interfaces", ctrl.ApiGetDCIMInterfaces, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/dcim/interfaces", ctrl.ApiCreateDCIMInterface, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/dcim/interfaces/:id", ctrl.ApiUpdateDCIMInterface, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/dcim/interfaces/:id", ctrl.ApiDeleteDCIMInterface, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	platforms_ := NewSecureCRUDHandler[models.Platform, models.PlatformDTO](DB)
 	api.GET("/dcim/platforms", platforms_.GetAll, ctrl.RequireAPIAuth, ctrl.RequireRead)

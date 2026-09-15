@@ -12,12 +12,11 @@ const props = defineProps({
   // doc comment in internal/drivers/driver_vrp.go).
   platform: { type: String, default: '' },
   deviceName: { type: String, default: '' },
+  canSave: { type: Boolean, default: true },
 })
 
-const open = defineModel('open', { type: Boolean, default: false })
-
 // Emitted after a save actually succeeds, so DeviceList.vue's already-open
-// device/interfaces reloads - this dialog has no list of its own to keep in
+// device/interfaces reloads - this panel has no list of its own to keep in
 // sync, same pattern as ServiceEditDialog.vue's 'saved'/'deleted'.
 const emit = defineEmits(['saved'])
 
@@ -209,11 +208,24 @@ function snapshotFromInterfaces() {
   originalPayload.value = originals
 }
 
-watch(open, (isOpen) => {
-  if (!isOpen) return
-  addVlanInput.value = null
-  snapshotFromInterfaces()
-})
+watch(
+  () => props.deviceId,
+  () => {
+    addVlanInput.value = null
+    snapshotFromInterfaces()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.interfaces,
+  () => {
+    addVlanInput.value = null
+    snapshotFromInterfaces()
+  },
+)
+
+defineExpose({ hasChanges })
 
 function getState(ifaceId, vid) {
   return matrix.value[ifaceId]?.[vid] ?? 'excluded'
@@ -386,7 +398,6 @@ function save() {
         description: 'Changes were saved to Netbox and factum cache refreshed.',
         duration: 3000,
       })
-      open.value = false
       // Pass the post-sync device payload so DeviceList can refresh without
       // a second GET (the API already re-pulled interfaces/VLANs via SyncDB).
       emit('saved', data)
@@ -410,18 +421,8 @@ function metaFor(state) {
 </script>
 
 <template>
-  <FormModal
-    v-model:open="open"
-    :dirty="hasChanges"
-    :title="deviceName ? `VLANs — ${deviceName}` : 'VLANs'"
-    :ui="{
-      content: 'w-[90vw] h-[90vh] sm:max-w-none flex flex-col',
-      body: 'flex-1 min-h-0 overflow-hidden',
-    }"
-  >
-    <template #body>
-      <div class="flex flex-col h-full min-h-0 gap-3">
-        <div class="flex flex-wrap items-end gap-2 shrink-0">
+  <div class="flex flex-col h-full min-h-0 gap-3">
+    <div class="flex flex-wrap items-end gap-2 shrink-0">
           <div class="flex flex-col gap-1">
             <label for="add-vlan" class="text-sm text-muted-color">Add VLAN column</label>
             <div class="flex gap-2 items-center">
@@ -535,18 +536,15 @@ function metaFor(state) {
             </tbody>
           </table>
         </div>
-      </div>
-    </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="open = false" />
+    <div class="flex justify-end gap-2 shrink-0">
       <UButton
         label="Save"
         icon="i-lucide-check"
         :loading="saving"
-        :disabled="!hasChanges"
+        :disabled="!hasChanges || !canSave"
         @click="save"
       />
-    </template>
-  </FormModal>
+    </div>
+  </div>
 </template>

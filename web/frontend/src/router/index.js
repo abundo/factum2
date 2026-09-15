@@ -84,6 +84,12 @@ const router = createRouter({
           component: () => import('@/views/device/DeviceList.vue'),
         },
         {
+          path: '/dcim/interfaces',
+          name: 'dcim-interfaces',
+          meta: { title: 'Interfaces', requiresRead: true },
+          component: () => import('@/views/dcim/InterfaceList.vue'),
+        },
+        {
           path: '/dcim/manufacturers',
           name: 'dcim-manufacturers',
           meta: { title: 'Manufacturers', requiresRead: true },

@@ -16,7 +16,19 @@ tables (source `netbox`) that you can also create locally (source
 its slug should match a driver such as `eos` or `sros` if you want
 interface refresh.
 
+**DCIM → Interfaces** lists every device interface, whether it came from
+NetBox or was created in Factum. Add ports on a local device from that
+page or from the device's Interfaces dialog. NetBox-synced interfaces are
+read-only here.
+
+**DCIM → Device types → Interfaces** holds the port templates for a type
+(synced from NetBox, or created locally). Creating a local device copies
+those templates onto it. Adding a template also adds the port to existing
+local devices of that type that do not already have that name.
+
 Local devices can be edited and deleted from the device detail dialog.
+Every field on that form is writable for a Factum-created device, including
+addresses, location, comments, enabled, monitoring flags, and optical kind.
 NetBox-synced catalog rows and devices are read-only here.
 
 ## Device list

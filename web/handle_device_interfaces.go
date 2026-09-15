@@ -215,7 +215,7 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
-	templateTypes, templatesKnown := loadRefreshTemplateTypes(nb, device.Manufacturer, device.ModelName)
+	templateTypes, templatesKnown := loadRefreshTemplateTypes(ctrl.DB, nb, device)
 
 	if err := applyLiveInterfaceRefresh(ctrl.DB, nb, device, deviceInterfaces, templateTypes, templatesKnown); err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
@@ -228,11 +228,21 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 	return c.JSON(http.StatusOK, updated[0])
 }
 
-func loadRefreshTemplateTypes(nb interfaceRefreshNetbox, manufacturer, model string) (map[string]string, bool) {
-	if manufacturer == "" || model == "" {
+func loadRefreshTemplateTypes(db *gorm.DB, nb interfaceRefreshNetbox, device models.Device) (map[string]string, bool) {
+	if device.DeviceTypeID != 0 && db != nil {
+		var tmpls []models.InterfaceTemplate
+		if err := db.Where("device_type_id = ?", device.DeviceTypeID).Find(&tmpls).Error; err == nil && len(tmpls) > 0 {
+			types := make(map[string]string, len(tmpls))
+			for _, tmpl := range tmpls {
+				types[tmpl.Name] = tmpl.Type
+			}
+			return types, true
+		}
+	}
+	if device.Manufacturer == "" || device.ModelName == "" {
 		return nil, false
 	}
-	dt, err := nb.GetDeviceType(manufacturer, model)
+	dt, err := nb.GetDeviceType(device.Manufacturer, device.ModelName)
 	if err != nil || dt == nil {
 		return nil, false
 	}

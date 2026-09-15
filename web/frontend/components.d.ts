@@ -24,6 +24,7 @@ declare module 'vue' {
     IpamPrefixTree: typeof import('./src/components/IpamPrefixTree.vue')['default']
     LdapTreeBrowser: typeof import('./src/components/LdapTreeBrowser.vue')['default']
     OxidizedNodeDialog: typeof import('./src/components/OxidizedNodeDialog.vue')['default']
+    OxidizedNodePanel: typeof import('./src/components/OxidizedNodePanel.vue')['default']
     PasswordInput: typeof import('./src/components/PasswordInput.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

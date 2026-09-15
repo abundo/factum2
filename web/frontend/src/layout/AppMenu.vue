@@ -101,6 +101,7 @@ const groups = computed(() => {
       section('DCIM', [
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
+        { label: 'Interfaces', icon: 'i-lucide-cable', to: '/dcim/interfaces' },
         { label: 'Manufacturers', icon: 'i-lucide-factory', to: '/dcim/manufacturers' },
         { label: 'Device types', icon: 'i-lucide-cpu', to: '/dcim/device-types' },
         { label: 'Platforms', icon: 'i-lucide-layers', to: '/dcim/platforms' },

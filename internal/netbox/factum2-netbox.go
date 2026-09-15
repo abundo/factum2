@@ -153,6 +153,11 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
+	if err := syncDeviceTypeTemplates(db, nb, nb_devices); err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+
 	reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", count_new, count_updated, count_deleted)
 
 	// Cable reconciliation needs Netbox's complete cable inventory to tell
@@ -680,9 +685,11 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	if mfr, err := upsertManufacturer(db, nb_device.Manufacturer, nb_device.ManufacturerID); err != nil {
 		return false, err
 	} else if mfr.ID != 0 {
-		if _, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID); err != nil {
+		dt, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID)
+		if err != nil {
 			return false, err
 		}
+		device.DeviceTypeID = dt.ID
 	}
 	if _, err := upsertPlatform(db, nb_device.Platform, nb_device.PlatformID); err != nil {
 		return false, err
@@ -790,7 +797,10 @@ func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInt
 		iface.Label = nb_intf.Label
 		iface.ParentID = nb_intf.ParentID
 		if err := db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "device_id"}, {Name: "netbox_id"}},
+			Columns: []clause.Column{{Name: "device_id"}, {Name: "netbox_id"}},
+			TargetWhere: clause.Where{Exprs: []clause.Expression{
+				clause.Expr{SQL: "netbox_id != 0"},
+			}},
 			UpdateAll: true,
 		}).Create(&iface).Error; err != nil {
 			return err

@@ -29,17 +29,20 @@ type Device struct {
 	ManufacturerID uint   `json:"manufacturer_id"`
 	ModelName      string `json:"model_name" gorm:"type:varchar(255)"`
 	ModelID        uint   `json:"model_id"`
-	Platform       string `json:"platform" gorm:"type:varchar(255)"`
-	PlatformID     uint   `json:"platform_id"`
-	PrimaryIPv4    string `json:"primary_ipv4" gorm:"type:varchar(255)"`
-	PrimaryIPv4ID  uint   `json:"primary_ipv4_id"`
-	PrimaryIPv6    string `json:"primary_ipv6" gorm:"type:varchar(255)"`
-	PrimaryIPv6ID  uint   `json:"primary_ipv6_id"`
-	Role           string `json:"role" gorm:"type:varchar(255)"`
-	RoleID         uint   `json:"role_id"`
-	Site           string `json:"site" gorm:"type:varchar(255)"`
-	SiteID         uint   `json:"site_id"`
-	Status         string `json:"status" gorm:"type:varchar(255)"`
+	// DeviceTypeID is the Factum catalog row (models.DeviceType), not
+	// NetBox's device-type id (that is ModelID). 0 if unset.
+	DeviceTypeID  uint   `json:"device_type_id" gorm:"index"`
+	Platform      string `json:"platform" gorm:"type:varchar(255)"`
+	PlatformID    uint   `json:"platform_id"`
+	PrimaryIPv4   string `json:"primary_ipv4" gorm:"type:varchar(255)"`
+	PrimaryIPv4ID uint   `json:"primary_ipv4_id"`
+	PrimaryIPv6   string `json:"primary_ipv6" gorm:"type:varchar(255)"`
+	PrimaryIPv6ID uint   `json:"primary_ipv6_id"`
+	Role          string `json:"role" gorm:"type:varchar(255)"`
+	RoleID        uint   `json:"role_id"`
+	Site          string `json:"site" gorm:"type:varchar(255)"`
+	SiteID        uint   `json:"site_id"`
+	Status        string `json:"status" gorm:"type:varchar(255)"`
 	// Latitude/Longitude are the device's own GPS coordinates if Netbox has
 	// them, else inherited from its site - nil if neither is set. See
 	// internal/netbox.syncDevice.
@@ -74,8 +77,10 @@ type Device struct {
 
 type Interface struct {
 	FactumModel
-	DeviceID    uint   `json:"device_id" gorm:"uniqueIndex:idx_interfaces_device_id_netbox_id"`
-	NetboxID    uint   `json:"netbox_id" gorm:"uniqueIndex:idx_interfaces_device_id_netbox_id"`
+	DeviceID uint `json:"device_id" gorm:"index"`
+	// NetboxID uniqueness is a partial index WHERE netbox_id <> 0 so many
+	// Factum-local interfaces (netbox_id=0) can coexist on one device.
+	NetboxID    uint   `json:"netbox_id"`
 	Name        string `json:"name" gorm:"type:varchar(255)"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	Enabled     bool   `json:"enabled"`
@@ -273,7 +278,6 @@ func (s Site) IsLocal() bool {
 	return s.Source != SiteSourceNetbox
 }
 
-
 // Manufacturer is the shared DCIM catalog (NetBox dcim.Manufacturer).
 // Source is "netbox" when upserted from sync, "factum" when created in the UI.
 type Manufacturer struct {
@@ -341,6 +345,52 @@ func (d *DeviceType) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+func (d *DeviceType) BeforeDelete(tx *gorm.DB) error {
+	return tx.Where("device_type_id = ?", d.ID).Delete(&InterfaceTemplate{}).Error
+}
+
+// InterfaceTemplate is a port defined on a DeviceType (NetBox
+// dcim.InterfaceTemplate). Copied onto a device when that device is
+// created locally, and shown under DCIM → Device types.
+type InterfaceTemplate struct {
+	FactumModel
+	DeviceTypeID uint   `json:"device_type_id" gorm:"uniqueIndex:idx_interface_templates_type_name;not null"`
+	Name         string `json:"name" gorm:"uniqueIndex:idx_interface_templates_type_name;type:varchar(255);not null"`
+	Type         string `json:"type" gorm:"type:varchar(255)"`
+	Label        string `json:"label" gorm:"type:varchar(255)"`
+	Description  string `json:"description" gorm:"type:varchar(255)"`
+	Source       string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID     uint   `json:"netbox_id"`
+}
+
+type InterfaceTemplateDTO struct {
+	ID           uint   `json:"id"`
+	DeviceTypeID uint   `json:"device_type_id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Label        string `json:"label"`
+	Description  string `json:"description"`
+}
+
+func (t *InterfaceTemplate) BeforeCreate(tx *gorm.DB) error {
+	if t.Source == "" {
+		t.Source = "factum"
+	}
+	return nil
+}
+
+// InterfaceCreateDTO is the POST/PUT /api/dcim/interfaces body for a
+// Factum-local device interface (NetboxID stays 0).
+type InterfaceCreateDTO struct {
+	ID          uint   `json:"id"`
+	DeviceID    uint   `json:"device_id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"`
+}
+
 // Platform is the shared DCIM catalog (NetBox dcim.Platform).
 // Slug is what drivers match on (eos, sros, vrp, …).
 type Platform struct {
@@ -385,18 +435,28 @@ func Slugify(s string) string {
 	return strings.Trim(s, "-")
 }
 
-// DeviceCreateDTO is the POST /api/device body for a Factum-local device
+// DeviceCreateDTO is the POST/PUT /api/device body for a Factum-local device
 // (NetboxID stays 0, CfSource is "factum"). Manufacturer/model/platform
 // strings on Device are copied from the catalog rows at create time.
+// Pointer bools distinguish omitted (leave existing / default) from false.
 type DeviceCreateDTO struct {
-	Name         string `json:"name"`
-	DeviceTypeID uint   `json:"device_type_id"`
-	PlatformID   uint   `json:"platform_id"`
-	Site         string `json:"site"`
-	Role         string `json:"role"`
-	Status       string `json:"status"`
-	PrimaryIPv4  string `json:"primary_ipv4"`
-	Comments     string `json:"comments"`
+	Name              string `json:"name"`
+	DeviceTypeID      uint   `json:"device_type_id"`
+	PlatformID        uint   `json:"platform_id"`
+	Site              string `json:"site"`
+	Role              string `json:"role"`
+	Status            string `json:"status"`
+	PrimaryIPv4       string `json:"primary_ipv4"`
+	PrimaryIPv6       string `json:"primary_ipv6"`
+	Comments          string `json:"comments"`
+	Enabled           *bool  `json:"enabled"`
+	CfLocation        string `json:"cf_location"`
+	CfMonitorIcinga   *bool  `json:"cf_monitor_icinga"`
+	CfMonitorLibrenms *bool  `json:"cf_monitor_librenms"`
+	CfMonitorGrafana  *bool  `json:"cf_monitor_grafana"`
+	CfBackupOxidized  *bool  `json:"cf_backup_oxidized"`
+	CfAlarmInterfaces *bool  `json:"cf_alarm_interfaces"`
+	OpticalKind       string `json:"optical_kind"`
 }
 
 // Tag is shared by device-tags and interface-tags: exactly one of

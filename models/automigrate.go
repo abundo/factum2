@@ -14,6 +14,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 
 		&Device{},
 		&Interface{},
+		&InterfaceTemplate{},
 		&Address{},
 		&Tag{},
 		&Connection{},
@@ -82,6 +83,9 @@ func AutoMigrateAll(db *gorm.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_manufacturers_netbox_id ON manufacturers (netbox_id) WHERE netbox_id != 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_netbox_id ON device_types (netbox_id) WHERE netbox_id != 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_platforms_netbox_id ON platforms (netbox_id) WHERE netbox_id != 0`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_interfaces_device_id_netbox_id ON interfaces (device_id, netbox_id) WHERE netbox_id != 0`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_interfaces_device_id_name ON interfaces (device_id, name)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_interface_templates_netbox_id ON interface_templates (netbox_id) WHERE netbox_id != 0`,
 		`DROP INDEX IF EXISTS idx_sites_netbox_id`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_netbox_kind_id ON sites (netbox_kind, netbox_id) WHERE netbox_id != 0`,
 	} {
