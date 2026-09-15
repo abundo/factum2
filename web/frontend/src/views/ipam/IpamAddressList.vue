@@ -38,6 +38,7 @@ const columns = [
   { accessorKey: 'device_name', header: 'Device' },
   { accessorKey: 'interface_name', header: 'Interface' },
   { accessorKey: 'address', header: 'Address' },
+  { accessorKey: 'prefix', header: 'Prefix' },
   { accessorKey: 'dns_name', header: 'DNS name' },
   { accessorKey: 'vrf', header: 'VRF' },
   { accessorKey: 'role', header: 'Role' },
@@ -251,6 +252,15 @@ onMounted(() => {
       <template #address-header="{ column }">
         <SortableColumnHeader :column="column" label="Address" />
       </template>
+      <template #prefix-header="{ column }">
+        <SortableColumnHeader :column="column" label="Prefix" />
+      </template>
+      <template #prefix-cell="{ row }">
+        <span class="font-mono">{{ row.original.prefix || '—' }}</span>
+      </template>
+      <template #vrf-cell="{ row }">
+        {{ row.original.vrf || '—' }}
+      </template>
       <template #source-header="{ column }">
         <SortableColumnHeader :column="column" label="Source" />
       </template>
@@ -321,7 +331,7 @@ onMounted(() => {
             class="w-full"
           />
         </UFormField>
-        <UFormField label="Address">
+        <UFormField label="Address" hint="Must sit inside an allocated prefix; VRF is taken from that prefix.">
           <UInput
             v-model="form.address"
             class="w-full font-mono"
@@ -333,7 +343,7 @@ onMounted(() => {
         <UFormField label="DNS name">
           <UInput v-model="form.dns_name" class="w-full" :disabled="!!editingId && !editingLocal" />
         </UFormField>
-        <UFormField label="VRF">
+        <UFormField label="VRF" hint="Optional. Used to pick the prefix when the same space exists in more than one VRF.">
           <UInput v-model="form.vrf" class="w-full" :disabled="!!editingId && !editingLocal" />
         </UFormField>
         <UFormField label="Role">

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/netip"
 	"testing"
+
+	"github.com/abundo/factum2/models"
 )
 
 func mustP(t *testing.T, s string) netip.Prefix {
@@ -37,6 +39,34 @@ func TestParsePrefix(t *testing.T) {
 	}
 	if _, err := ParsePrefix("not-a-prefix"); err == nil {
 		t.Fatal("expected error for garbage prefix")
+	}
+}
+
+func TestContainingPrefix(t *testing.T) {
+	prefixes := []models.IpamPrefix{
+		{FactumModel: models.FactumModel{ID: 1}, Prefix: "10.0.0.0/16", VRFID: 1},
+		{FactumModel: models.FactumModel{ID: 2}, Prefix: "10.0.1.0/24", VRFID: 1},
+		{FactumModel: models.FactumModel{ID: 3}, Prefix: "10.0.1.0/24", VRFID: 2},
+	}
+	vrfs := map[uint]models.IpamVRF{
+		1: {FactumModel: models.FactumModel{ID: 1}, Name: "default"},
+		2: {FactumModel: models.FactumModel{ID: 2}, Name: "VOICE"},
+	}
+	host, err := netip.ParsePrefix("10.0.1.5/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ContainingPrefix(prefixes, vrfs, host, "")
+	if got == nil || got.ID != 2 {
+		t.Fatalf("longest match = %+v", got)
+	}
+	got = ContainingPrefix(prefixes, vrfs, host, "VOICE")
+	if got == nil || got.ID != 3 {
+		t.Fatalf("vrf match = %+v", got)
+	}
+	outside, _ := netip.ParsePrefix("192.0.2.1/32")
+	if ContainingPrefix(prefixes, vrfs, outside, "") != nil {
+		t.Fatal("expected no match outside allocated space")
 	}
 }
 

@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
@@ -856,6 +858,9 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 		addr.VRF = nb_addr.VRF
 		addr.Role = nb_addr.Role
 		addr.DNSName = dnsNames[nb_addr.NetboxID]
+		if p, err := netip.ParsePrefix(strings.TrimSpace(nb_addr.Address)); err == nil {
+			_ = ipam.ResolveAddressPrefix(db, &addr, p, addr.VRF, nil)
+		}
 		if err := db.Save(&addr).Error; err != nil {
 			return err
 		}

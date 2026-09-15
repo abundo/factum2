@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
+	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -916,6 +917,8 @@ type DCIMAddressDTO struct {
 	DNSName       string `json:"dns_name"`
 	VRF           string `json:"vrf"`
 	Role          string `json:"role"`
+	PrefixID      *uint  `json:"prefix_id"`
+	Prefix        string `json:"prefix"`
 	InterfaceID   uint   `json:"interface_id"`
 	InterfaceName string `json:"interface_name"`
 	DeviceID      uint   `json:"device_id"`
@@ -939,12 +942,14 @@ func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
 
 	dbq := ctrl.DB.Model(&models.Address{}).
 		Joins("JOIN interfaces ON interfaces.id = addresses.interface_id").
-		Joins("JOIN devices ON devices.id = interfaces.device_id")
+		Joins("JOIN devices ON devices.id = interfaces.device_id").
+		Joins("LEFT JOIN ipam_prefixes ON ipam_prefixes.id = addresses.prefix_id").
+		Joins("LEFT JOIN ipam_vrfs ON ipam_vrfs.id = ipam_prefixes.vrf_id")
 	if q != "" {
 		pat := likeContains(q)
 		dbq = dbq.Where(
-			"LOWER(addresses.address) LIKE LOWER(?) ESCAPE '\\' OR LOWER(addresses.dns_name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(addresses.vrf) LIKE LOWER(?) ESCAPE '\\' OR LOWER(interfaces.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(devices.name) LIKE LOWER(?) ESCAPE '\\'",
-			pat, pat, pat, pat, pat,
+			"LOWER(addresses.address) LIKE LOWER(?) ESCAPE '\\' OR LOWER(addresses.dns_name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(COALESCE(ipam_vrfs.name, addresses.vrf)) LIKE LOWER(?) ESCAPE '\\' OR LOWER(ipam_prefixes.prefix) LIKE LOWER(?) ESCAPE '\\' OR LOWER(interfaces.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(devices.name) LIKE LOWER(?) ESCAPE '\\'",
+			pat, pat, pat, pat, pat, pat,
 		)
 	}
 
@@ -960,7 +965,9 @@ func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
 	case "dns_name":
 		orderCol = "addresses.dns_name"
 	case "vrf":
-		orderCol = "addresses.vrf"
+		orderCol = "COALESCE(ipam_vrfs.name, addresses.vrf)"
+	case "prefix":
+		orderCol = "ipam_prefixes.prefix"
 	case "role":
 		orderCol = "addresses.role"
 	case "interface_name":
@@ -1019,23 +1026,69 @@ func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
 	for _, d := range devices {
 		devByID[d.ID] = d
 	}
+	prefixIDs := make([]uint, 0)
+	seenPfx := map[uint]bool{}
+	for _, a := range addrs {
+		if a.PrefixID == nil || *a.PrefixID == 0 || seenPfx[*a.PrefixID] {
+			continue
+		}
+		seenPfx[*a.PrefixID] = true
+		prefixIDs = append(prefixIDs, *a.PrefixID)
+	}
+	pfxByID := map[uint]models.IpamPrefix{}
+	vrfByID := map[uint]models.IpamVRF{}
+	if len(prefixIDs) > 0 {
+		var pfxs []models.IpamPrefix
+		if err := ctrl.DB.Where("id IN ?", prefixIDs).Find(&pfxs).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		vrfIDs := make([]uint, 0)
+		seenV := map[uint]bool{}
+		for _, p := range pfxs {
+			pfxByID[p.ID] = p
+			if seenV[p.VRFID] {
+				continue
+			}
+			seenV[p.VRFID] = true
+			vrfIDs = append(vrfIDs, p.VRFID)
+		}
+		if len(vrfIDs) > 0 {
+			var vrfs []models.IpamVRF
+			if err := ctrl.DB.Where("id IN ?", vrfIDs).Find(&vrfs).Error; err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			}
+			for _, v := range vrfs {
+				vrfByID[v.ID] = v
+			}
+		}
+	}
 	out.Items = make([]DCIMAddressDTO, 0, len(addrs))
 	for _, a := range addrs {
 		iface := ifaceByID[a.InterfaceID]
 		d := devByID[iface.DeviceID]
-		out.Items = append(out.Items, DCIMAddressDTO{
+		dto := DCIMAddressDTO{
 			ID:            a.ID,
 			Address:       a.Address,
 			DNSName:       a.DNSName,
 			VRF:           a.VRF,
 			Role:          a.Role,
+			PrefixID:      a.PrefixID,
 			InterfaceID:   a.InterfaceID,
 			InterfaceName: iface.Name,
 			DeviceID:      iface.DeviceID,
 			DeviceName:    d.Name,
 			NetboxID:      a.NetboxID,
 			Source:        interfaceSource(a.NetboxID),
-		})
+		}
+		if a.PrefixID != nil {
+			if p, ok := pfxByID[*a.PrefixID]; ok {
+				dto.Prefix = p.Prefix
+				if v, ok := vrfByID[p.VRFID]; ok {
+					dto.VRF = v.Name
+				}
+			}
+		}
+		out.Items = append(out.Items, dto)
 	}
 	return c.JSON(http.StatusOK, out)
 }
@@ -1073,6 +1126,13 @@ func applyAddressWrite(db *gorm.DB, addr *models.Address, dto models.AddressCrea
 	addr.DNSName = strings.TrimSpace(dto.DNSName)
 	addr.VRF = strings.TrimSpace(dto.VRF)
 	addr.Role = strings.TrimSpace(dto.Role)
+	if err := ipam.ResolveAddressPrefix(db, addr, pfx, addr.VRF, dto.PrefixID); err != nil {
+		var se *ipam.StatusError
+		if errors.As(err, &se) {
+			return echo.NewHTTPError(se.Status, se.Message)
+		}
+		return err
+	}
 	return nil
 }
 

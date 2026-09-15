@@ -487,6 +487,19 @@ func TestApiDCIMAddressesCRUD(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
 
+	ns := models.IpamNamespace{Name: "global"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatal(err)
+	}
+	vrf := models.IpamVRF{NamespaceID: ns.ID, Name: "MGMT", IsDefault: true}
+	if err := db.Create(&vrf).Error; err != nil {
+		t.Fatal(err)
+	}
+	pfx := models.IpamPrefix{NamespaceID: ns.ID, VRFID: vrf.ID, Prefix: "10.0.0.0/24", Family: 4}
+	if err := db.Create(&pfx).Error; err != nil {
+		t.Fatal(err)
+	}
+
 	dev := models.Device{Name: "pe-1", CfSource: "factum"}
 	if err := db.Create(&dev).Error; err != nil {
 		t.Fatal(err)
@@ -527,6 +540,19 @@ func TestApiDCIMAddressesCRUD(t *testing.T) {
 	}
 	if created.ID == 0 || created.NetboxID != 0 || created.Address != "10.0.0.1/24" || created.VRF != "MGMT" {
 		t.Fatalf("created = %+v", created)
+	}
+	if created.PrefixID == nil || *created.PrefixID != pfx.ID {
+		t.Fatalf("created prefix_id = %v want %d", created.PrefixID, pfx.ID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "203.0.113.1/32",
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no-prefix status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{

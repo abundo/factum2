@@ -399,6 +399,62 @@ func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string, dhcp Pre
 	return &row, nil
 }
 
+// ResolveAddressPrefix sets addr.PrefixID to the covering allocated
+// prefix. preferredID, when non-nil, must contain the address. vrfName
+// disambiguates overlapping namespaces. Returns a 400 StatusError when
+// no covering prefix exists (or the preferred id is invalid).
+func ResolveAddressPrefix(db *gorm.DB, addr *models.Address, host netip.Prefix, vrfName string, preferredID *uint) error {
+	if preferredID != nil && *preferredID != 0 {
+		var row models.IpamPrefix
+		if err := db.First(&row, *preferredID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return statusErr(400, "prefix not found")
+			}
+			return err
+		}
+		p, err := ParsePrefix(row.Prefix)
+		if err != nil {
+			return statusErr(400, "prefix not found")
+		}
+		if p.Addr().BitLen() != host.Addr().BitLen() || !p.Contains(host.Addr()) {
+			return statusErr(400, "address is not inside the selected prefix")
+		}
+		id := row.ID
+		addr.PrefixID = &id
+		var vrf models.IpamVRF
+		if err := db.First(&vrf, row.VRFID).Error; err == nil {
+			addr.VRF = vrf.Name
+		}
+		return nil
+	}
+
+	var prefixes []models.IpamPrefix
+	if err := db.Find(&prefixes).Error; err != nil {
+		return err
+	}
+	var vrfRows []models.IpamVRF
+	if err := db.Find(&vrfRows).Error; err != nil {
+		return err
+	}
+	vrfs := make(map[uint]models.IpamVRF, len(vrfRows))
+	for _, v := range vrfRows {
+		vrfs[v.ID] = v
+	}
+	best := ContainingPrefix(prefixes, vrfs, host, vrfName)
+	if best == nil && vrfName != "" {
+		best = ContainingPrefix(prefixes, vrfs, host, "")
+	}
+	if best == nil {
+		return statusErr(400, "address does not belong to any allocated prefix")
+	}
+	id := best.ID
+	addr.PrefixID = &id
+	if v, ok := vrfs[best.VRFID]; ok {
+		addr.VRF = v.Name
+	}
+	return nil
+}
+
 func DeletePrefix(db *gorm.DB, nsID, prefixID uint) error {
 	var row models.IpamPrefix
 	if err := db.Where("id = ? AND namespace_id = ?", prefixID, nsID).First(&row).Error; err != nil {
@@ -423,6 +479,13 @@ func DeletePrefix(db *gorm.DB, nsID, prefixID uint) error {
 		if strictlyContains(parent, child) {
 			return statusErr(409, "prefix still has more-specific allocations")
 		}
+	}
+	var n int64
+	if err := db.Model(&models.Address{}).Where("prefix_id = ?", prefixID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return statusErr(409, "prefix still has IP addresses")
 	}
 	return db.Delete(&row).Error
 }

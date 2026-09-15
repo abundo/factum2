@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/abundo/factum2/models"
 )
 
 // ParsePrefix accepts a CIDR or a bare address that means "the whole
@@ -46,6 +48,38 @@ func containsPrefix(parent, child netip.Prefix) bool {
 
 func strictlyContains(parent, child netip.Prefix) bool {
 	return containsPrefix(parent, child) && parent.Bits() < child.Bits()
+}
+
+// ContainingPrefix picks the most-specific allocated prefix that contains
+// host. When vrfName is non-empty, only prefixes in a VRF of that name
+// (case-insensitive) are considered.
+func ContainingPrefix(prefixes []models.IpamPrefix, vrfs map[uint]models.IpamVRF, host netip.Prefix, vrfName string) *models.IpamPrefix {
+	vrfName = strings.TrimSpace(vrfName)
+	var best *models.IpamPrefix
+	bestBits := -1
+	for i := range prefixes {
+		p, err := ParsePrefix(prefixes[i].Prefix)
+		if err != nil {
+			continue
+		}
+		if p.Addr().BitLen() != host.Addr().BitLen() {
+			continue
+		}
+		if !p.Contains(host.Addr()) {
+			continue
+		}
+		if vrfName != "" {
+			v, ok := vrfs[prefixes[i].VRFID]
+			if !ok || !strings.EqualFold(v.Name, vrfName) {
+				continue
+			}
+		}
+		if p.Bits() > bestBits {
+			bestBits = p.Bits()
+			best = &prefixes[i]
+		}
+	}
+	return best
 }
 
 type allocation struct {

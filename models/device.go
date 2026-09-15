@@ -183,10 +183,15 @@ type Address struct {
 	InterfaceID uint   `json:"interface_id" gorm:"index"`
 	NetboxID    uint   `json:"netbox_id"`
 	Address     string `json:"address" gorm:"type:varchar(80)"`
+	// PrefixID is the most-specific allocated ipam_prefixes row that
+	// contains this address. Prefix length and VRF are read from that
+	// row rather than parsed from Address / the denormalized VRF name.
+	PrefixID *uint `json:"prefix_id" gorm:"index"`
 	// DNSName is Netbox ipam.IPAddress.dns_name, validated at Netbox sync.
 	DNSName string `json:"dns_name" gorm:"type:varchar(255)"`
 	// VRF is the name of the VRF this address belongs to, "" for
-	// global/default VRF - mirrors netboxtool.NBAddress.VRF.
+	// global/default VRF - mirrors netboxtool.NBAddress.VRF. Kept in
+	// sync with the related prefix's VRF when PrefixID is set.
 	VRF string `json:"vrf" gorm:"type:varchar(255)"`
 	// Role is Netbox's native ipam.IPAddress.role (e.g. "anycast"), not a
 	// custom field - hence no Cf prefix, unlike Interface.CfRole.
@@ -201,6 +206,7 @@ type AddressCreateDTO struct {
 	DNSName     string `json:"dns_name"`
 	VRF         string `json:"vrf"`
 	Role        string `json:"role"`
+	PrefixID    *uint  `json:"prefix_id"`
 }
 
 // Connection is a Netbox cable directly connecting two device interfaces,
