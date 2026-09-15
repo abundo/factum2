@@ -1,0 +1,4 @@
+interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+ description {{.Name}}
+{{range .Others}}{{if .NeighborIP}} neighbor {{.NeighborIP}}
+{{end}}{{end}}

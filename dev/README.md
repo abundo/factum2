@@ -45,8 +45,11 @@ Settings/admin/tokens (all lab features on, including the DNS zone
 editor), registers the NetBox webhook and custom fields
 (`factum2-netbox check --update`), then starts factum-web and factum-worker.
 After web is up it posts **sample service definitions** (ELINE, ELAN,
-POLARIX) into Catalog → Service types — Factum itself ships none. Re-run
-`./dev/service_definitions.py` on an already-running lab.
+POLARIX) into Catalog → Service types — Factum itself ships none. ELINE
+CLI add/remove bodies come from `dev/templates/eline-*.tmpl` (written by
+`prepare.py`). EOS uses a real MPLS LDP pseudowire + patch-panel apply.
+Re-run `./dev/prepare.py` then `./dev/service_definitions.py` on an
+already-running lab to refresh a stub EOS pack.
 Each step prints elapsed seconds (`==> wait-apps +45s`). Each dest container (dns, icinga,
 librenms, oxidized, prometheus) runs its own factum2-worker with only that
 dest's command, matching production. factum-worker handles netbox and

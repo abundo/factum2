@@ -16,6 +16,7 @@ import urllib.request
 from typing import Any
 
 from lab import env, load_env, log
+from prepare import eline_templates
 
 TOKEN = "lab-factum-api-token-not-for-production"
 DEFAULT_URL = "http://127.0.0.1:18091"
@@ -47,7 +48,24 @@ DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "ELINE",
         "description": "L2VPN point to point",
-        "schema": [SERVICE_ID, BW],
+        "schema": [
+            SERVICE_ID,
+            BW,
+            {
+                "name": "mtu",
+                "type": "int",
+                "required": False,
+                "description": "Pseudowire MTU",
+                "default_value": 9100,
+            },
+            {
+                "name": "control_word",
+                "type": "bool",
+                "required": False,
+                "description": "EOS pseudowire control-word",
+                "default_value": True,
+            },
+        ],
         "interfaces": {
             "min": 2,
             "max": 2,
@@ -145,12 +163,7 @@ DEFINITIONS: list[dict[str, Any]] = [
     },
 ]
 
-ELINE_ADD = """interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
- description {{.Name}}
-{{range .Others}}{{if .NeighborIP}} neighbor {{.NeighborIP}}
-{{end}}{{end}}"""
 
-ELINE_REMOVE = """no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}"""
 
 
 class FactumClient:
@@ -187,6 +200,9 @@ class FactumClient:
     def post(self, path: str, body: Any) -> Any:
         return self.request("POST", path, body)
 
+    def put(self, path: str, body: Any) -> Any:
+        return self.request("PUT", path, body)
+
     def delete(self, path: str) -> Any:
         return self.request("DELETE", path)
 
@@ -222,6 +238,10 @@ def _remove_stray_eline_cli(client: FactumClient, scopes: list[dict[str, Any]]) 
         client.delete(f"/api/config/scopes/{stray['id']}")
 
 
+def _feature_body(add: str, remove: str) -> dict[str, Any]:
+    return {"name": "apply", "add_commands": add, "remove_commands": remove}
+
+
 def _ensure_eline_cli(client: FactumClient, type_id: int) -> None:
     scopes = client.get("/api/config/scopes") or []
     global_ = _named(scopes, "global", "folder")
@@ -234,8 +254,24 @@ def _ensure_eline_cli(client: FactumClient, type_id: int) -> None:
         return
     kids = _scopes_by_parent(scopes, type_folder["id"])
     for plat in ("eos", "ios-xr", "sros"):
+        add, remove = eline_templates(plat)
         existing = _named(kids, plat, "cli")
         if existing:
+            feats = client.get(f"/api/config/scopes/{existing['id']}/features") or []
+            apply_feat = next((f for f in feats if f.get("name") == "apply"), feats[0] if feats else None)
+            body = (apply_feat or {}).get("add_commands") or ""
+            stub = plat == "eos" and "pseudowire ldp" not in body
+            empty = not body.strip()
+            if apply_feat and (empty or stub):
+                client.put(f"/api/config/features/{apply_feat['id']}", _feature_body(add, remove))
+                log(f"Updated ELINE CLI features for {plat}")
+                continue
+            if not apply_feat:
+                client.post(
+                    f"/api/config/scopes/{existing['id']}/features",
+                    _feature_body(add, remove),
+                )
+                log(f"Filled empty ELINE CLI features for {plat}")
             continue
         obj = client.post(
             "/api/config/scopes",
@@ -251,11 +287,7 @@ def _ensure_eline_cli(client: FactumClient, type_id: int) -> None:
         )
         client.post(
             f"/api/config/scopes/{obj['id']}/features",
-            {
-                "name": "apply",
-                "add_commands": ELINE_ADD,
-                "remove_commands": ELINE_REMOVE,
-            },
+            _feature_body(add, remove),
         )
         log(f"Seeded ELINE CLI for {plat}")
 

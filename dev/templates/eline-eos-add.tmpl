@@ -1,0 +1,41 @@
+interface {{.LocalIface}}
+ no switchport
+interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+ description ID={{.Name}} S=ELINE
+ encapsulation vlan
+  client dot1q {{index .Current.Fields "vlan"}}
+  exit
+exit
+{{if .Others}}{{$peer := index .Others 0}}{{if $peer.NeighborIP}}
+mpls ldp
+ pseudowires
+  pseudowire {{.Name}}
+   neighbor {{$peer.NeighborIP}}
+   pseudowire-id {{.ServiceNumericID}}
+   mtu {{with index .Vars "mtu"}}{{.}}{{else}}{{with index .Fields "mtu"}}{{.}}{{else}}9100{{end}}{{end}}
+   control-word
+  exit
+ exit
+exit
+patch panel
+ patch {{.Name}}
+  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 2 pseudowire ldp {{.Name}}
+ exit
+exit
+{{else}}
+interface {{$peer.LocalIface}}
+ no switchport
+interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+ description ID={{.Name}} S=ELINE
+ encapsulation vlan
+  client dot1q {{index $peer.Fields "vlan"}}
+  exit
+exit
+patch panel
+ patch {{.Name}}
+  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 2 interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+ exit
+exit
+{{end}}{{end}}

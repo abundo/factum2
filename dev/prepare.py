@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Create dest-file dirs, hub TLS, Oxidized/Grafana config, and BIND layout.
+"""Create dest-file dirs, hub TLS, Oxidized/Grafana config, BIND layout,
+and lab ELINE CLI templates.
+
 With --demo, fetch the NetBox demo dump so postgres/init/02-netbox-demo.sh
 can load it on first init.
 
 Feature flags (DNS, IPAM, …) live in Settings and are turned on by seed.py.
-This script only prepares the files those features write.
+This script only prepares the files those features write. Catalog rows
+(including ELINE CLI objects) are posted later by service_definitions.py,
+which reads the templates written here.
 
 --wipe removes bind-mounted dest data (used by `make dev-reset`); it does
 not start anything.
@@ -49,6 +53,82 @@ HUB_CERT_DNS = (
 )
 
 SENTINEL = DIR / "data" / "netbox" / "load-demo"
+
+# GenericRenderData bodies for Catalog CLI under _catalog/cli/ELINE/<platform>.
+# Rendered per UNI. No .Remote / .LocalVLAN — VLAN is Current.Fields "vlan",
+# far-end loopback is (index .Others 0).NeighborIP (empty on same-device).
+ELINE_EOS_ADD = """\
+interface {{.LocalIface}}
+ no switchport
+interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+ description {{.Name}}
+ encapsulation vlan
+  client dot1q {{index .Current.Fields "vlan"}}
+  exit
+exit
+{{if .Others}}{{$peer := index .Others 0}}{{if $peer.NeighborIP}}
+mpls ldp
+ pseudowires
+  pseudowire {{.Name}}
+   neighbor {{$peer.NeighborIP}}
+   pseudowire-id {{.ServiceNumericID}}
+   mtu {{with index .Vars "mtu"}}{{.}}{{else}}{{with index .Fields "mtu"}}{{.}}{{else}}9100{{end}}{{end}}
+   control-word
+  exit
+ exit
+exit
+patch panel
+ patch {{.Name}}
+  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 2 pseudowire ldp {{.Name}}
+ exit
+exit
+{{else}}
+interface {{$peer.LocalIface}}
+ no switchport
+interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+ description {{.Name}}
+ encapsulation vlan
+  client dot1q {{index $peer.Fields "vlan"}}
+  exit
+exit
+patch panel
+ patch {{.Name}}
+  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 2 interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+ exit
+exit
+{{end}}{{end}}
+"""
+
+ELINE_EOS_REMOVE = """\
+mpls ldp
+ pseudowires
+  no pseudowire {{.Name}}
+  exit
+exit
+patch panel
+ no patch {{.Name}}
+ exit
+no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+"""
+
+# Fallback for ios-xr / sros until those packs are filled in.
+ELINE_ADD = """\
+interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+ description {{.Name}}
+{{range .Others}}{{if .NeighborIP}} neighbor {{.NeighborIP}}
+{{end}}{{end}}
+"""
+
+ELINE_REMOVE = """\
+no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+"""
+
+ELINE_ADD_PATH = DIR / "templates" / "eline-add.tmpl"
+ELINE_REMOVE_PATH = DIR / "templates" / "eline-remove.tmpl"
+ELINE_EOS_ADD_PATH = DIR / "templates" / "eline-eos-add.tmpl"
+ELINE_EOS_REMOVE_PATH = DIR / "templates" / "eline-eos-remove.tmpl"
 
 DATA_DIRS = (
     "data/icinga",
@@ -157,6 +237,34 @@ def _ensure_hub_certs() -> None:
     key.chmod(0o644)
 
 
+def _read_tmpl(path: Path, fallback: str) -> str:
+    if path.is_file() and path.stat().st_size:
+        return path.read_text()
+    return fallback
+
+
+def eline_templates(platform: str = "") -> tuple[str, str]:
+    """Return (add, remove) bodies for a platform, preferring prepare() files."""
+    if platform == "eos":
+        return (
+            _read_tmpl(ELINE_EOS_ADD_PATH, ELINE_EOS_ADD),
+            _read_tmpl(ELINE_EOS_REMOVE_PATH, ELINE_EOS_REMOVE),
+        )
+    return (
+        _read_tmpl(ELINE_ADD_PATH, ELINE_ADD),
+        _read_tmpl(ELINE_REMOVE_PATH, ELINE_REMOVE),
+    )
+
+
+def _preload_eline_templates() -> None:
+    (DIR / "templates").mkdir(parents=True, exist_ok=True)
+    log("Writing lab ELINE CLI templates")
+    ELINE_ADD_PATH.write_text(ELINE_ADD)
+    ELINE_REMOVE_PATH.write_text(ELINE_REMOVE)
+    ELINE_EOS_ADD_PATH.write_text(ELINE_EOS_ADD)
+    ELINE_EOS_REMOVE_PATH.write_text(ELINE_EOS_REMOVE)
+
+
 def prepare(*, demo: bool = False) -> None:
     for name in DATA_DIRS:
         (DIR / name).mkdir(parents=True, exist_ok=True)
@@ -170,6 +278,7 @@ def prepare(*, demo: bool = False) -> None:
         SENTINEL.unlink()
 
     _ensure_hub_certs()
+    _preload_eline_templates()
 
     oxidized_src = DIR / "oxidized" / "config"
     oxidized_dst = DIR / "data" / "oxidized" / "config"

@@ -1,0 +1,9 @@
+mpls ldp
+ pseudowires
+  no pseudowire {{.Name}}
+  exit
+exit
+patch panel
+ no patch {{.Name}}
+ exit
+no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
