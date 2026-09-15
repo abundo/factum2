@@ -150,6 +150,24 @@ const router = createRouter({
           component: () => import('@/views/dns/DnsDNSSECPoliciesPage.vue'),
         },
         {
+          path: '/certs',
+          name: 'certs',
+          meta: { title: 'Certificates', requiresRead: true, requiresCerts: true },
+          component: () => import('@/views/certs/CertListPage.vue'),
+        },
+        {
+          path: '/certs/accounts',
+          name: 'cert-accounts',
+          meta: { title: 'ACME accounts', requiresRead: true, requiresCerts: true },
+          component: () => import('@/views/certs/CertAccountsPage.vue'),
+        },
+        {
+          path: '/certs/challenges',
+          name: 'cert-challenges',
+          meta: { title: 'Challenges', requiresRead: true, requiresCerts: true },
+          component: () => import('@/views/certs/CertChallengesPage.vue'),
+        },
+        {
           path: '/ipam/:id',
           redirect: '/ipam',
         },
@@ -315,6 +333,9 @@ router.beforeEach((to) => {
     return { path: '/' }
   }
   if (to.meta?.requiresDnsZones && !authStore.dnsZonesEnabled) {
+    return { path: '/' }
+  }
+  if (to.meta?.requiresCerts && !authStore.certsEnabled) {
     return { path: '/' }
   }
 })

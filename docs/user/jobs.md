@@ -15,8 +15,8 @@ that target — except housekeeping, which runs in-process on the primary.
 Tiles are grouped:
 
 - **Sources** — BECS, Lime, NetBox (update Factum)
-- **Destinations** — DNS, Icinga, LibreNMS, Oxidized, Prometheus (generated
-  from Factum)
+- **Destinations** — DNS, Certificates, Icinga, LibreNMS, Oxidized, Prometheus
+  (generated from Factum)
 - **Maintenance** — housekeeping (trim old job history)
 
 **Sync** on a tile queues that target. **Sync all** runs every enabled

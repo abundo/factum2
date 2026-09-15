@@ -1,9 +1,10 @@
 #!/bin/bash
-# Run ISC BIND and factum2-worker (factum-dns) in the same container so
-# dnsmgr2 can write zone files and rndc-reload named locally.
+# Run ISC BIND and factum2-worker (dns + certs) in the same container so
+# dnsmgr2 can write zone files and rndc-reload named locally, and lego
+# can RFC2136-update the same named.
 set -euo pipefail
 
-mkdir -p /etc/bind /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 \
+mkdir -p /etc/bind /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /var/lib/lego \
 	/run/named /run/factum2-worker /etc/dnsmgr2 /etc/kea
 chown bind:bind /var/cache/bind /var/lib/bind /run/named
 

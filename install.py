@@ -110,6 +110,7 @@ KNOWN_BINARIES = (
     "factum2",
     "factum2-becs",
     "factum2-device-sync",
+    "factum2-certs",
     "factum2-dns",
     "factum2-driver",
     "factum2-icinga",

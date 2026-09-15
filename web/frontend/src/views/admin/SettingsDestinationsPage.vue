@@ -12,6 +12,19 @@ import {
 
 const { settings, loading, saving, forbidden, loadError, save } = useSettings()
 
+function fillCertsDefaults() {
+  if (!settings.certs_lego_yaml) settings.certs_lego_yaml = '/var/lib/lego/.lego.yaml'
+  if (!settings.certs_env_file) settings.certs_env_file = '/var/lib/lego/.env'
+  if (!settings.certs_lego_bin) settings.certs_lego_bin = 'lego'
+  if (!settings.certs_lego_storage) settings.certs_lego_storage = '/var/lib/lego/storage'
+  if (!settings.certs_default_key_type) settings.certs_default_key_type = 'EC256'
+}
+
+function onCertsToggle(val) {
+  settings.certs_enabled = val
+  if (val) fillCertsDefaults()
+}
+
 function onDelayedDeleteToggle(val) {
   settings.librenms_delayed_delete_enabled = val
   if (
@@ -36,6 +49,14 @@ const destinationTabItems = [
   { label: 'LibreNMS', value: 'librenms', slot: 'librenms' },
   { label: 'Oxidized', value: 'oxidized', slot: 'oxidized' },
   { label: 'Prometheus', value: 'prometheus', slot: 'prometheus' },
+  { label: 'Certificates', value: 'certs', slot: 'certs' },
+]
+
+const certKeyTypeItems = [
+  { label: 'EC256', value: 'EC256' },
+  { label: 'EC384', value: 'EC384' },
+  { label: 'RSA2048', value: 'RSA2048' },
+  { label: 'RSA4096', value: 'RSA4096' },
 ]
 </script>
 
@@ -266,8 +287,8 @@ const destinationTabItems = [
               />
               <small class="text-muted-color"
                 >JSON array of subnets written by dnsmgr2. Include it from the main Kea config as
-                <code>"subnet4": &lt;?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?&gt;</code> — not the
-                main config file itself.</small
+                <code>"subnet4": &lt;?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?&gt;</code> — not
+                the main config file itself.</small
               >
             </div>
             <div>
@@ -706,6 +727,85 @@ const destinationTabItems = [
                 class="w-full"
               />
             </div>
+          </div>
+        </template>
+
+        <template #certs>
+          <div class="flex flex-col gap-6 py-4">
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.certs_enabled"
+                id="certs_enabled"
+                @update:model-value="onCertsToggle"
+              />
+              <label for="certs_enabled" class="font-bold">Enabled</label>
+            </div>
+            <small class="text-muted-color -mt-4"
+              >Certificate table, ACME accounts, and DNS-01/RFC2136 challenges. Sync writes
+              <span class="font-mono">.lego.yaml</span> and <span class="font-mono">.env</span>,
+              then runs lego. Certificate distribution and service restarts are out of scope.</small
+            >
+            <div>
+              <label for="certs_lego_yaml" class="block font-bold mb-3">lego YAML path</label>
+              <UInput
+                id="certs_lego_yaml"
+                v-model="settings.certs_lego_yaml"
+                placeholder="/var/lib/lego/.lego.yaml"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="certs_env_file" class="block font-bold mb-3">.env path</label>
+              <UInput
+                id="certs_env_file"
+                v-model="settings.certs_env_file"
+                placeholder="/var/lib/lego/.env"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="certs_lego_bin" class="block font-bold mb-3">lego binary</label>
+              <UInput
+                id="certs_lego_bin"
+                v-model="settings.certs_lego_bin"
+                placeholder="lego"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="certs_lego_storage" class="block font-bold mb-3">lego storage dir</label>
+              <UInput
+                id="certs_lego_storage"
+                v-model="settings.certs_lego_storage"
+                placeholder="/var/lib/lego"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="certs_default_key_type" class="block font-bold mb-3"
+                >Default certificate key type</label
+              >
+              <USelect
+                id="certs_default_key_type"
+                v-model="settings.certs_default_key_type"
+                :items="certKeyTypeItems"
+                class="w-full"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.certs_default_enable_common_name"
+                id="certs_default_enable_common_name"
+                @update:model-value="settings.certs_default_enable_common_name = $event"
+              />
+              <label for="certs_default_enable_common_name" class="font-bold"
+                >Default enable Common Name</label
+              >
+            </div>
+            <small class="text-muted-color -mt-4"
+              >CN is deprecated in ACME. Per-certificate overrides live on each certificate
+              row.</small
+            >
           </div>
         </template>
       </UTabs>

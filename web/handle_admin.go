@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/abundo/factum2/internal/certs"
 	"github.com/abundo/factum2/internal/mail"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -40,6 +41,9 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	settings.ID = id
+	if settings.CertsEnabled != nil && *settings.CertsEnabled {
+		certs.ApplySettingsDefaults(settings)
+	}
 
 	if err := ctrl.DB.Save(settings).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})

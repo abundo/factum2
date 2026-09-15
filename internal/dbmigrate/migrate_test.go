@@ -73,6 +73,39 @@ func TestMigrationsIncludeDnsDbFile(t *testing.T) {
 	}
 }
 
+func TestMigrationsIncludeCerts(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "00010_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatal("missing 00010_*.sql for certificate tables")
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"certs_enabled",
+		"cert_accounts",
+		"cert_challenges",
+		"certificates",
+		"certificate_domains",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}
+
 func TestMigrationsIncludeServiceDefinitions(t *testing.T) {
 	entries, err := fs.ReadDir(migrationFS, "sql")
 	if err != nil {

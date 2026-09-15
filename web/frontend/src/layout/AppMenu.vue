@@ -122,6 +122,15 @@ const groups = computed(() => {
             ]),
           ]
         : []),
+      ...(authStore.certsEnabled
+        ? [
+            section('Certificates', [
+              { label: 'Certificates', icon: 'i-lucide-file-key', to: '/certs' },
+              { label: 'Accounts', icon: 'i-lucide-user-cog', to: '/certs/accounts' },
+              { label: 'Challenges', icon: 'i-lucide-shield', to: '/certs/challenges' },
+            ]),
+          ]
+        : []),
       section('Provisioning', [
         { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
         { label: 'Config', icon: 'i-lucide-settings-2', to: '/config' },

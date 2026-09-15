@@ -48,6 +48,11 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&DnsZone{},
 		&DnsZoneRecord{},
 
+		&CertAccount{},
+		&CertChallenge{},
+		&Certificate{},
+		&CertificateDomain{},
+
 		&Service{},
 		&Agreement{},
 

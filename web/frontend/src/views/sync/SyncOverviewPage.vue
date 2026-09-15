@@ -14,6 +14,7 @@ const targetInfo = {
   netbox: { label: 'Netbox', icon: 'i-lucide-network', section: 'source' },
 
   dns: { label: 'DNS', icon: 'i-lucide-globe', section: 'destination' },
+  certs: { label: 'Certificates', icon: 'i-lucide-file-key', section: 'destination' },
   icinga: { label: 'Icinga', icon: 'i-lucide-heart', section: 'destination' },
   librenms: { label: 'LibreNMS', icon: 'i-lucide-line-chart', section: 'destination' },
   oxidized: { label: 'Oxidized', icon: 'i-lucide-save', section: 'destination' },

@@ -46,6 +46,16 @@ builds:
       ldflags:
           - -s -w -X github.com/abundo/factum2/internal/buildinfo.Version={{.Version}} -X github.com/abundo/factum2/internal/buildinfo.Commit={{.Commit}} -X github.com/abundo/factum2/internal/buildinfo.Date={{.CommitDate}}
 
+    - id: factum2-certs
+      main: ./cmd/certs
+      binary: factum2-certs
+      env: [CGO_ENABLED=0]
+      goos: [linux]
+      goarch: [amd64, arm64]
+      flags: [-trimpath]
+      ldflags:
+          - -s -w -X github.com/abundo/factum2/internal/buildinfo.Version={{.Version}} -X github.com/abundo/factum2/internal/buildinfo.Commit={{.Commit}} -X github.com/abundo/factum2/internal/buildinfo.Date={{.CommitDate}}
+
     - id: factum2-dns
       main: ./cmd/dns
       binary: factum2-dns

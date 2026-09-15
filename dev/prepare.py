@@ -137,6 +137,7 @@ DATA_DIRS = (
     "data/bind",
     "data/bind-zones",
     "data/dnsmgr2",
+    "data/lego",
     "data/prometheus",
     "data/grafana",
     "data/netbox",
@@ -346,6 +347,7 @@ def prepare(*, demo: bool = False) -> None:
         "data/bind",
         "data/bind-zones",
         "data/dnsmgr2",
+        "data/lego",
         "data/prometheus",
         "data/grafana",
     ):

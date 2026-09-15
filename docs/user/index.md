@@ -23,6 +23,7 @@ currently on GitHub.
 | Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
 | Prefixes | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |
+| Certificates | Certificates | Only if **Certificates** is enabled (Destinations) |
 | Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |
 | Job overview / status / scheduler | Jobs | Trigger and watch syncs |
 | Settings, users, workers | Admin | Administrators only |
@@ -44,5 +45,6 @@ change settings, users, and workers.
 - [Config](config.md)
 - [Jobs](jobs.md)
 - [DNS](dns.md)
+- [Certificates](certs.md)
 - [Admin settings](settings.md)
 - [Software bill of materials](sbom.md)

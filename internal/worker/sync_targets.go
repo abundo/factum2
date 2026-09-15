@@ -17,7 +17,7 @@ const HousekeepingTarget = "housekeeping"
 // name doubles as the role/command name a factum2-worker instance activates
 // to handle it - each one matches a corresponding "factum2-<name> sync" CLI
 // command.
-var SyncTargets = []string{"becs", "netbox", "lime", "librenms", "icinga", "oxidized", "prometheus", "dns", "device-sync"}
+var SyncTargets = []string{"becs", "netbox", "lime", "librenms", "icinga", "oxidized", "prometheus", "dns", "certs", "device-sync"}
 
 // sourceSyncTargets are the upstream systems synced *into* factum, as
 // opposed to the downstream destinations synced *from* factum - see
@@ -77,6 +77,7 @@ func EnabledSyncTargets(s *models.Settings) []string {
 		"oxidized":    s.OxidizedEnabled,
 		"prometheus":  s.PrometheusEnabled,
 		"dns":         s.DnsEnabled,
+		"certs":       s.CertsEnabled,
 		"device-sync": s.DeviceSyncEnabled,
 	}
 	out := make([]string, 0, len(SyncTargets))

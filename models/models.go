@@ -321,6 +321,9 @@ type Settings struct {
 	OxidizedEnabled   *bool `gorm:"column:oxidized_enabled" form:"oxidized_enabled" json:"oxidized_enabled"`
 	PrometheusEnabled *bool `gorm:"column:prometheus_enabled" form:"prometheus_enabled" json:"prometheus_enabled"`
 	DeviceSyncEnabled *bool `gorm:"column:device_sync_enabled" form:"device_sync_enabled" json:"device_sync_enabled"`
+	// CertsEnabled gates the Certificates GUI, /api/certs/*, and the
+	// dest "certs" sync (factum2-certs writes .lego.yaml/.env and runs lego).
+	CertsEnabled *bool `gorm:"column:certs_enabled" form:"certs_enabled" json:"certs_enabled"`
 
 	// factum
 	FactumApiToken string `gorm:"column:factum_api_token" form:"factum_api_token" json:"factum_api_token"`
@@ -397,6 +400,15 @@ type Settings struct {
 	DhcpKea6IncludeFile string `gorm:"column:dhcp_kea6_include_file" form:"dhcp_kea6_include_file" json:"dhcp_kea6_include_file"`
 	DhcpKea6TmpDir      string `gorm:"column:dhcp_kea6_tmp_dir" form:"dhcp_kea6_tmp_dir" json:"dhcp_kea6_tmp_dir"`
 	DhcpKea6CmdRestart  string `gorm:"column:dhcp_kea6_cmd_restart" form:"dhcp_kea6_cmd_restart" json:"dhcp_kea6_cmd_restart"`
+
+	// Certificates / lego (https://github.com/go-acme/lego). Paths are
+	// written by factum2-certs on sync. Empty yaml/env paths skip writing.
+	CertsLegoYaml                string `gorm:"column:certs_lego_yaml" form:"certs_lego_yaml" json:"certs_lego_yaml"`
+	CertsEnvFile                 string `gorm:"column:certs_env_file" form:"certs_env_file" json:"certs_env_file"`
+	CertsLegoBin                 string `gorm:"column:certs_lego_bin" form:"certs_lego_bin" json:"certs_lego_bin"`
+	CertsLegoStorage             string `gorm:"column:certs_lego_storage" form:"certs_lego_storage" json:"certs_lego_storage"`
+	CertsDefaultKeyType          string `gorm:"column:certs_default_key_type" form:"certs_default_key_type" json:"certs_default_key_type"`
+	CertsDefaultEnableCommonName *bool  `gorm:"column:certs_default_enable_common_name" form:"certs_default_enable_common_name" json:"certs_default_enable_common_name"`
 
 	// Email / SMTP - a general-purpose outbound mail relay, not tied to
 	// Icinga specifically (factum2-icinga-notifications is the first

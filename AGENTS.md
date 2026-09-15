@@ -81,7 +81,7 @@ Factum is a hub, not a source of truth for everything: NetBox and Lime CRM
 are upstream sources synced _into_ factum's Postgres DB (`factum2-netbox
 sync`, `factum2-lime sync` — see `internal/netbox`, `internal/lime`), while
 DNS, Icinga, LibreNMS, Oxidized and Prometheus are downstream targets
-synced _from_ factum (`factum2-dns sync`, `factum2-icinga sync`,
+synced _from_ factum (`factum2-dns sync`, `factum2-certs sync`, `factum2-icinga sync`,
 `factum2-librenms-cli sync`, `factum2-oxidized sync`, `factum2-prometheus
 sync`) — same shape as Icinga: `internal/oxidized`'s
 `FactumOxidizedClient.Sync` filters devices (enabled, `CfBackupOxidized`,

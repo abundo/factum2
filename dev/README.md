@@ -20,7 +20,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | Grafana (devices + VMs) | http://127.0.0.1:18003 |
 | Dest | Alertmanager | http://127.0.0.1:19093 |
 | Dest | snmp-exporter | http://127.0.0.1:19116 |
-| Dest | BIND (`lab.example`) + factum-dns worker | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
+| Dest | BIND (`lab.example`) + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker (netbox, device-sync) | `127.0.0.1:18443` |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
@@ -51,8 +51,9 @@ CLI add/remove bodies come from `dev/templates/eline-*.tmpl` (written by
 Re-run `./dev/prepare.py` then `./dev/service_definitions.py` on an
 already-running lab to refresh a stub EOS pack.
 Each step prints elapsed seconds (`==> wait-apps +45s`). Each dest container (dns, icinga,
-librenms, oxidized, prometheus) runs its own factum2-worker with only that
-dest's command, matching production. factum-worker handles netbox and
+librenms, oxidized, prometheus) runs its own factum2-worker with that
+dest's command, matching production. The dns worker also runs **certs**
+(lego). factum-worker handles netbox and
 device-sync.
 NetBox starts empty. To load the upstream
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data) SQL
@@ -110,12 +111,13 @@ container. Manual CLIs:
 ./dev/compose.sh exec oxidized /opt/factum2/factum2-oxidized sync
 ./dev/compose.sh exec prometheus /opt/factum2/factum2-prometheus sync
 ./dev/compose.sh exec dns /opt/factum2/factum2-dns sync
+./dev/compose.sh exec dns /opt/factum2/factum2-certs sync
 ```
 
 Dest files are local to each dest container (still bind-mounted from
 `dev/data/` so `make dev-reset` can wipe them): Icinga `/factum`, Oxidized
 `~/.config/oxidized`, Prometheus `/etc/prometheus/targets.json`, DNS
-`/etc/dnsmgr2` and `/var/lib/bind`.
+`/etc/dnsmgr2` and `/var/lib/bind`. Certificates: `/var/lib/lego`.
 
 Oxidized 0.37 exits if `router.db` has no usable nodes, which takes down
 oxidized-web. `prepare.py` (and the oxidized entrypoint) write a dummy

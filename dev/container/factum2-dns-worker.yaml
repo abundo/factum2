@@ -1,6 +1,7 @@
 ---
-# Worker co-located with BIND in the dns container. Only the dns command:
-# factum2-dns writes records + dnsmgr2.yaml, then applies BIND/Kea in-process.
+# Worker co-located with BIND in the dns container.
+# dns: factum2-dns writes records + dnsmgr2.yaml, then applies BIND/Kea.
+# certs: factum2-certs writes .lego.yaml/.env and runs lego (RFC2136 against this named).
 factum:
     url: http://factum-web:8091
     token: lab-factum-api-token-not-for-production
@@ -13,4 +14,7 @@ worker:
     commands:
         dns:
             cmd: /opt/factum2/factum2-dns
+            args: ["sync", "--job"]
+        certs:
+            cmd: /opt/factum2/factum2-certs
             args: ["sync", "--job"]

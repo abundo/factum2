@@ -27,6 +27,7 @@ export const useAuthStore = defineStore('auth', {
     oxidizedEnabled: (state) => !!state.user?.oxidized_enabled,
     dnsZonesEnabled: (state) => !!state.user?.dns_zones_enabled,
     dhcpEnabled: (state) => !!state.user?.dhcp_enabled,
+    certsEnabled: (state) => !!state.user?.certs_enabled,
   },
   actions: {
     async fetchCurrentUser() {

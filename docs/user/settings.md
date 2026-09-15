@@ -46,7 +46,7 @@ used by the corresponding sync tool, which may run on the primary
 
 ## Settings → Destinations
 
-DNS, DHCP, Icinga, LibreNMS, Oxidized, and Prometheus each have an
+DNS, DHCP, Icinga, LibreNMS, Oxidized, Prometheus, and Certificates each have an
 enabled flag. DNS, Icinga, LibreNMS, Oxidized, and Prometheus also have
 a destination file or API URL, and ignore lists (newline-separated).
 The DNS tab also has the path of the generated **dnsmgr2 config file** and
@@ -58,6 +58,10 @@ JSON array of subnets that the main Kea config must include; it is not
 the main config file.
 LibreNMS delayed delete lives here. Oxidized **API URL** is what the GUI
 Oxidized browser uses; it must be reachable from `factum2-web`.
+
+The Certificates tab is [ACME / lego](certs.md): YAML and dotenv paths,
+lego binary, default key type and Common Name. Sync writes those files
+and runs lego; it does not install certificates on hosts.
 
 These tools normally run on the destination host, talking back through a
 [worker](jobs.md) — not by opening Postgres from that host.

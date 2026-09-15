@@ -11,7 +11,7 @@ GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinf
 
 .PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs sbom
 
-build: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
+build: factum2 factum2-becs factum2-certs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
 
 # JS deps can ship stray .go files (e.g. flatted); they are not this module.
 GO_PACKAGES := $(shell go list ./... | grep -v /node_modules/)
@@ -76,6 +76,7 @@ DEV_DIR := dev
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 # Core lab apps. Schema is applied before factum-web starts. Each dest
 # (dns, icinga, librenms, oxidized, prometheus) runs its own factum2-worker.
+# The dns worker also handles certs (lego).
 # icingadb / icingaweb need the extra MariaDB DBs (existing mysql volumes
 # skip docker-entrypoint-initdb.d), so dev-up creates those then starts
 # Icinga Web in parallel with NetBox/LibreNMS instead of after --wait.
@@ -116,6 +117,9 @@ factum2-becs:
 factum2-device-sync:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-device-sync cmd/device-sync/factum2-device-sync-cli.go
+factum2-certs:
+	@mkdir -p $(BUILD_DIR)
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-certs cmd/certs/factum2-certs-cli.go
 factum2-dns:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-dns cmd/dns/factum2-dns-cli.go

@@ -18,7 +18,7 @@ x-lab-restart: &lab-restart
 # Host build/ is bind-mounted at /opt/factum2. install.py --source --compose
 # rebuilds those binaries and restarts factum-web / factum-worker and every
 # dest that runs a co-located factum2-worker (dns, icinga, librenms,
-# oxidized, prometheus).
+# oxidized, prometheus). The dns worker also handles certs.
 x-factum: &factum
   <<: *lab-restart
   image: factum-dev:local
@@ -536,8 +536,9 @@ services:
       retries: 20
     mem_limit: 384m
 
-  # BIND + factum2-worker (dns command only). factum2-dns writes
+  # BIND + factum2-worker (dns + certs). factum2-dns writes
   # /etc/dnsmgr2 then applies BIND/Kea in-process, which reloads named via rndc.
+  # factum2-certs writes /var/lib/lego and runs lego against this named.
   dns:
     <<: *lab-restart
     image: factum-dev-dns:local
@@ -558,6 +559,7 @@ services:
       - ./data/bind:/etc/bind:z
       - ./data/bind-zones:/var/lib/bind:z
       - ./data/dnsmgr2:/var/lib/dnsmgr2:z
+      - ./data/lego:/var/lib/lego:z
     environment:
       TZ: UTC
     healthcheck:

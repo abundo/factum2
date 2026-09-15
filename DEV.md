@@ -143,6 +143,7 @@ account, which any admin can already see via `GET /api/admin/settings`.
 | ------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `factum2`                      | `cmd/factum2`              | Query the factum HTTP API (`get-device`, `get-devices`, `show-config`); also `migrate` (uses `factum2.yaml`) |
 | `factum2-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
+| `factum2-certs`                | `cmd/certs`                | Write lego `.lego.yaml` / `.env` and run lego (`sync`)                                                       |
 | `factum2-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
 | `factum2-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
 | `factum2-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification        |

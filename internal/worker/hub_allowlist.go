@@ -19,6 +19,7 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/librenms-config`},
 	{http.MethodGet, `/api/icinga-config`},
 	{http.MethodGet, `/api/dns-config`},
+	{http.MethodGet, `/api/certs-config`},
 	{http.MethodGet, `/api/oxidized-config`},
 	{http.MethodGet, `/api/prometheus-config`},
 	{http.MethodGet, `/api/netbox-config`},

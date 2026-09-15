@@ -1,7 +1,10 @@
-# BIND + factum2-worker (factum-dns) for the lab dns service.
-# Binaries are bind-mounted from the host build/ directory.
+# BIND + factum2-worker (dns + certs) for the lab dns service.
+# Factum binaries are bind-mounted from the host build/ directory.
 # named-checkzone (bind9-utils) is required when factum2-dns applies zones.
+# lego is baked in so factum2-certs can issue via DNS-01/RFC2136 against named.
 FROM docker.io/debian:bookworm-slim
+ARG TARGETARCH
+ARG LEGO_VERSION=v5.4.1
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		bind9 \
@@ -10,7 +13,11 @@ RUN apt-get update \
 		curl \
 		tzdata \
 	&& rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /run/named \
+RUN arch="${TARGETARCH:-amd64}" \
+	&& curl -fsSL "https://github.com/go-acme/lego/releases/download/${LEGO_VERSION}/lego_${LEGO_VERSION}_linux_${arch}.tar.gz" \
+		| tar -xz -C /usr/local/bin lego \
+	&& chmod 755 /usr/local/bin/lego
+RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /var/lib/lego /run/named \
 		/run/factum2-worker /etc/dnsmgr2 /etc/kea \
 	&& chown bind:bind /var/cache/bind /var/lib/bind /run/named
 COPY dns/entrypoint.sh /entrypoint.sh
