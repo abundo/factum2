@@ -150,6 +150,29 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 		t.Fatalf("platform_id = %d, want %d", created.PlatformID, plat.ID)
 	}
 
+	site := models.Site{Name: "STO", Source: models.SiteSourceFactum, Latitude: 59.3, Longitude: 18.0}
+	if err := db.Create(&site).Error; err != nil {
+		t.Fatalf("site: %v", err)
+	}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "leaf-at-site",
+		DeviceTypeID: dt.ID,
+		SiteID:       site.ID,
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatalf("create with site_id: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("site_id status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var withSite models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &withSite); err != nil {
+		t.Fatalf("decode with site: %v", err)
+	}
+	if withSite.SiteID != site.ID || withSite.Site != "STO" {
+		t.Fatalf("site fields = %+v, want id=%d name=STO", withSite, site.ID)
+	}
+
 	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
 		Name:         "leaf-from-type-platform",
 		DeviceTypeID: dt.ID,

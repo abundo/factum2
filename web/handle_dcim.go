@@ -397,7 +397,9 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 	device.Manufacturer = mfr.Name
 	device.ModelName = dt.Model
 	device.DeviceTypeID = dt.ID
-	device.Site = strings.TrimSpace(dto.Site)
+	if err := applyDeviceSite(db, device, dto); err != nil {
+		return err
+	}
 	device.Role = strings.TrimSpace(dto.Role)
 	device.Status = status
 	device.PrimaryIPv4 = strings.TrimSpace(dto.PrimaryIPv4)
@@ -423,6 +425,33 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 		device.PlatformID = plat.ID
 		device.Platform = plat.Slug
 	}
+	return nil
+}
+
+func applyDeviceSite(db *gorm.DB, device *models.Device, dto models.DeviceCreateDTO) error {
+	if dto.SiteID != 0 {
+		var site models.Site
+		if err := db.First(&site, dto.SiteID).Error; err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "site not found")
+		}
+		device.SiteID = site.ID
+		device.Site = site.Name
+		return nil
+	}
+	name := strings.TrimSpace(dto.Site)
+	if name == "" {
+		device.SiteID = 0
+		device.Site = ""
+		return nil
+	}
+	var site models.Site
+	if err := db.Where("LOWER(name) = LOWER(?)", name).First(&site).Error; err == nil {
+		device.SiteID = site.ID
+		device.Site = site.Name
+		return nil
+	}
+	device.SiteID = 0
+	device.Site = name
 	return nil
 }
 

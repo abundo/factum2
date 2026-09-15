@@ -20,6 +20,7 @@ import {
   getManufacturers,
   getPlatforms,
 } from '@/api/dcim'
+import { getSite, getSites } from '@/api/sites'
 import { interfaceTypeItems } from '@/utils/interfaceTypes'
 import {
   createXConnect,
@@ -62,9 +63,40 @@ const columns = [
 const createDialog = ref(false)
 const createSaving = ref(false)
 const siteSelectorVisible = ref(false)
+const selectedSite = ref(null)
+const sites = ref([])
 
 function onSiteSelected(site) {
-  createForm.value.site = site?.name || ''
+  if (!site) {
+    createForm.value.site = ''
+    createForm.value.site_id = 0
+    selectedSite.value = null
+    return
+  }
+  createForm.value.site = site.name || ''
+  createForm.value.site_id = site.id || 0
+  const cached = site.id && sites.value.find((s) => s.id === site.id)
+  selectedSite.value = cached || site
+  if (site.id && !cached) {
+    getSite(site.id)
+      .then((row) => {
+        selectedSite.value = row
+        if (!sites.value.some((s) => s.id === row.id)) {
+          sites.value = [...sites.value, row]
+        }
+      })
+      .catch(() => {})
+  }
+}
+
+function clearSite() {
+  onSiteSelected(null)
+}
+
+function formatCoord(v) {
+  if (v == null || v === '' || Number(v) === 0) return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? String(n) : ''
 }
 
 function emptyDeviceForm() {
@@ -73,6 +105,7 @@ function emptyDeviceForm() {
     device_type_id: undefined,
     platform_id: 0,
     site: '',
+    site_id: 0,
     role: '',
     status: 'active',
     primary_ipv4: '',
@@ -166,17 +199,33 @@ const deviceLocation = computed(() => {
 })
 
 function loadCatalog() {
-  Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms()])
-    .then(([mfrs, types, plats]) => {
+  Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms(), getSites()])
+    .then(([mfrs, types, plats, siteRows]) => {
       manufacturers.value = mfrs ?? []
       deviceTypes.value = types ?? []
       platforms.value = plats ?? []
+      sites.value = siteRows ?? []
     })
     .catch(() => {})
 }
 
+function resolveSelectedSite(d) {
+  const id = createForm.value.site_id || d?.site_id || 0
+  const name = (createForm.value.site || d?.site || '').trim()
+  const found =
+    (id && sites.value.find((s) => s.id === id)) ||
+    (name && sites.value.find((s) => (s.name || '').toLowerCase() === name.toLowerCase())) ||
+    null
+  selectedSite.value = found
+  if (found) {
+    createForm.value.site_id = found.id
+    createForm.value.site = found.name
+  }
+}
+
 function openNew() {
   createForm.value = emptyDeviceForm()
+  selectedSite.value = null
   loadCatalog()
   createDialog.value = true
 }
@@ -195,6 +244,7 @@ function deviceWritePayload(form) {
     name: form.name.trim(),
     device_type_id: form.device_type_id,
     platform_id: form.platform_id || 0,
+    site_id: form.site_id || 0,
     site: form.site.trim(),
     role: form.role.trim(),
     status: form.status,
@@ -250,6 +300,7 @@ function fillFormFromDevice(d) {
     device_type_id: d.device_type_id || dt?.id,
     platform_id: plat?.id || 0,
     site: d.site ?? '',
+    site_id: d.site_id || 0,
     role: d.role ?? '',
     status: d.status || 'active',
     primary_ipv4: d.primary_ipv4 ?? '',
@@ -574,17 +625,23 @@ function loadDevice(row) {
       snapshotDescriptions()
       resetXcForm(data.optical_kind)
       const local = !data.netbox_id && data.cf_source !== 'netbox'
-      if (local) {
-        loadCatalog()
-        Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms()]).then(
-          ([mfrs, types, plats]) => {
-            manufacturers.value = mfrs ?? []
-            deviceTypes.value = types ?? []
-            platforms.value = plats ?? []
-            fillFormFromDevice(data)
-          },
-        )
-      }
+      Promise.all([getManufacturers(), getDeviceTypes(), getPlatforms(), getSites()])
+        .then(([mfrs, types, plats, siteRows]) => {
+          manufacturers.value = mfrs ?? []
+          deviceTypes.value = types ?? []
+          platforms.value = plats ?? []
+          sites.value = siteRows ?? []
+          if (local) fillFormFromDevice(data)
+          else {
+            createForm.value.site = data.site ?? ''
+            createForm.value.site_id = data.site_id || 0
+          }
+          resolveSelectedSite(data)
+        })
+        .catch(() => {
+          if (local) fillFormFromDevice(data)
+          resolveSelectedSite(data)
+        })
     })
     .catch(() => {
       deviceError.value = 'Failed to load device.'
@@ -1047,24 +1104,38 @@ onMounted(loadDevices)
                 class="w-full"
               />
 
-              <label for="device-site" class="font-bold whitespace-nowrap">Site</label>
-              <div v-if="isLocalDevice" class="flex gap-2 min-w-0">
-                <UInput id="device-site" v-model="createForm.site" class="w-full" />
-                <UButton
-                  icon="i-lucide-map-pin"
-                  label="Browse"
-                  variant="outline"
-                  color="neutral"
-                  @click="siteSelectorVisible = true"
-                />
+              <label class="font-bold whitespace-nowrap">Site</label>
+              <div class="min-w-0 flex items-center gap-2">
+                <div class="min-w-0 flex-1 text-sm">
+                  <template v-if="selectedSite">
+                    <span class="font-medium">{{ selectedSite.name }}</span>
+                    <span
+                      v-if="formatCoord(selectedSite.latitude) || formatCoord(selectedSite.longitude)"
+                      class="text-muted-color"
+                    >
+                      {{ formatCoord(selectedSite.latitude) || '—' }},
+                      {{ formatCoord(selectedSite.longitude) || '—' }}
+                    </span>
+                  </template>
+                  <span v-else class="text-muted-color">{{ device.site || 'No site' }}</span>
+                </div>
+                <template v-if="isLocalDevice && authStore.canWrite">
+                  <UButton
+                    icon="i-lucide-map-pin"
+                    label="Browse"
+                    variant="outline"
+                    color="neutral"
+                    @click="siteSelectorVisible = true"
+                  />
+                  <UButton
+                    v-if="selectedSite || createForm.site"
+                    label="Clear"
+                    variant="ghost"
+                    color="neutral"
+                    @click="clearSite"
+                  />
+                </template>
               </div>
-              <UInput
-                v-else
-                id="device-site"
-                :model-value="device.site || ''"
-                disabled
-                class="w-full"
-              />
 
               <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
               <UInput
@@ -1538,14 +1609,33 @@ onMounted(loadDevices)
           <USelect v-model="createForm.platform_id" :items="platformItems" class="w-full" />
         </UFormField>
         <UFormField label="Site">
-          <div class="flex gap-2">
-            <UInput v-model="createForm.site" class="w-full" />
+          <div class="flex items-center gap-2">
+            <div class="min-w-0 flex-1 text-sm">
+              <template v-if="selectedSite">
+                <span class="font-medium">{{ selectedSite.name }}</span>
+                <span
+                  v-if="formatCoord(selectedSite.latitude) || formatCoord(selectedSite.longitude)"
+                  class="text-muted-color"
+                >
+                  {{ formatCoord(selectedSite.latitude) || '—' }},
+                  {{ formatCoord(selectedSite.longitude) || '—' }}
+                </span>
+              </template>
+              <span v-else class="text-muted-color">No site</span>
+            </div>
             <UButton
               icon="i-lucide-map-pin"
               label="Browse"
               variant="outline"
               color="neutral"
               @click="siteSelectorVisible = true"
+            />
+            <UButton
+              v-if="selectedSite"
+              label="Clear"
+              variant="ghost"
+              color="neutral"
+              @click="clearSite"
             />
           </div>
         </UFormField>

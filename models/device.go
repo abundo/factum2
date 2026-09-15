@@ -455,6 +455,7 @@ type DeviceCreateDTO struct {
 	Name              string `json:"name"`
 	DeviceTypeID      uint   `json:"device_type_id"`
 	PlatformID        uint   `json:"platform_id"`
+	SiteID            uint   `json:"site_id"`
 	Site              string `json:"site"`
 	Role              string `json:"role"`
 	Status            string `json:"status"`
