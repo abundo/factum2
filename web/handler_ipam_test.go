@@ -451,3 +451,130 @@ func TestIpamPrefixDHCP(t *testing.T) {
 		t.Fatalf("updated: %+v", pfx)
 	}
 }
+
+func TestIpamVRFListAllAndPrefixHosts(t *testing.T) {
+	ctrl := setupIPAM(t)
+	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "core"}, nil, nil)
+	if err := ctrl.ApiIpamNamespaceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var ns ipam.NamespaceView
+	if err := json.Unmarshal(rec.Body.Bytes(), &ns); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatUint(uint64(ns.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{Name: "cust-a"}, []string{"id"}, []string{id})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/vrfs", nil, nil, nil)
+	if err := ctrl.ApiIpamVRFListAll(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list vrfs status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var vrfs []ipam.VRFListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &vrfs); err != nil {
+		t.Fatal(err)
+	}
+	if len(vrfs) != 2 {
+		t.Fatalf("vrfs = %+v, want 2", vrfs)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "10.0.0.0/16", VRFID: ns.VRFs[0].ID,
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var p16 models.IpamPrefix
+	if err := json.Unmarshal(rec.Body.Bytes(), &p16); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "10.0.1.0/24", VRFID: ns.VRFs[0].ID,
+	}, []string{"id"}, []string{id})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var p24 models.IpamPrefix
+	if err := json.Unmarshal(rec.Body.Bytes(), &p24); err != nil {
+		t.Fatal(err)
+	}
+
+	dev := models.Device{Name: "sw1"}
+	if err := ctrl.DB.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	iface := models.Interface{DeviceID: dev.ID, Name: "eth0"}
+	if err := ctrl.DB.Create(&iface).Error; err != nil {
+		t.Fatal(err)
+	}
+	pfxID := p24.ID
+	addr := models.Address{InterfaceID: iface.ID, Address: "10.0.1.10/24", PrefixID: &pfxID}
+	if err := ctrl.DB.Create(&addr).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/prefixes/x/hosts?page=1", nil,
+		[]string{"prefixId"}, []string{strconv.FormatUint(uint64(p16.ID), 10)})
+	if err := ctrl.ApiIpamPrefixHosts(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hosts status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var page ipam.HostPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Page != 1 || page.PageCount != 256 || len(page.Hosts) != 256 {
+		t.Fatalf("page = %+v", page)
+	}
+	if page.PagePrefix != "10.0.1.0/24" {
+		t.Fatalf("page prefix = %s", page.PagePrefix)
+	}
+	var taken, free int
+	var saw10 bool
+	for _, h := range page.Hosts {
+		if h.Allocated {
+			taken++
+		} else {
+			free++
+		}
+		if h.Address == "10.0.1.10" {
+			saw10 = true
+			if !h.Allocated {
+				t.Fatal("10.0.1.10 should be allocated")
+			}
+		}
+	}
+	if !saw10 {
+		t.Fatal("missing 10.0.1.10")
+	}
+	if taken != 256 {
+		t.Fatalf("child /24 should occupy the whole page, taken=%d free=%d", taken, free)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/prefixes/x/hosts", nil,
+		[]string{"prefixId"}, []string{strconv.FormatUint(uint64(p24.ID), 10)})
+	if err := ctrl.ApiIpamPrefixHosts(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.PageCount != 1 || len(page.Hosts) != 256 {
+		t.Fatalf("/24 page = page_count=%d hosts=%d", page.PageCount, len(page.Hosts))
+	}
+	taken = 0
+	for _, h := range page.Hosts {
+		if h.Allocated {
+			taken++
+		}
+	}
+	if taken != 1 {
+		t.Fatalf("/24 taken = %d, want 1", taken)
+	}
+}

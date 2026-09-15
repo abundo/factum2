@@ -369,6 +369,8 @@ func GUI(p *GuiParams) error {
 	ipamg.DELETE("/namespaces/:id/prefixes/:prefixId", ctrl.ApiIpamPrefixDelete, ctrl.RequireWrite)
 	ipamg.GET("/namespaces/:id/tree", ctrl.ApiIpamTree, ctrl.RequireRead)
 	ipamg.GET("/tree", ctrl.ApiIpamForest, ctrl.RequireRead)
+	ipamg.GET("/vrfs", ctrl.ApiIpamVRFListAll, ctrl.RequireRead)
+	ipamg.GET("/prefixes/:prefixId/hosts", ctrl.ApiIpamPrefixHosts, ctrl.RequireRead)
 
 	cfg := api.Group("/config", ctrl.RequireAPIAuth)
 	cfg.GET("/scopes", ctrl.ApiConfigScopeList, ctrl.RequireRead)

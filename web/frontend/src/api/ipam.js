@@ -54,3 +54,13 @@ export function getTree(namespaceId, prefix) {
 export function getForest(parent) {
   return http.get('/ipam/tree', { params: parent ? { parent } : {} }).then((res) => res.data ?? [])
 }
+
+export function listVrfs() {
+  return http.get('/ipam/vrfs').then((res) => res.data ?? [])
+}
+
+export function getPrefixHosts(prefixId, page) {
+  return http
+    .get(`/ipam/prefixes/${prefixId}/hosts`, { params: { page: page || 0 } })
+    .then((res) => res.data)
+}

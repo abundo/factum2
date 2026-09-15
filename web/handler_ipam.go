@@ -168,6 +168,34 @@ func (ctrl *Controller) ApiIpamPoolDelete(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+func (ctrl *Controller) ApiIpamVRFListAll(c *echo.Context) error {
+	rows, err := ipam.ListAllVRFs(ctrl.DB)
+	if err != nil {
+		return ipamWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, rows)
+}
+
+func (ctrl *Controller) ApiIpamPrefixHosts(c *echo.Context) error {
+	prefixID, err := pathUint(c, "prefixId")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid prefix id"})
+	}
+	page := 0
+	if raw := c.QueryParam("page"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid page"})
+		}
+		page = n
+	}
+	out, err := ipam.PrefixHosts(ctrl.DB, prefixID, page)
+	if err != nil {
+		return ipamWriteError(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 func (ctrl *Controller) ApiIpamVRFList(c *echo.Context) error {
 	id, err := pathUint(c, "id")
 	if err != nil {

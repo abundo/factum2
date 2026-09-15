@@ -19,6 +19,7 @@ import {
   getDeviceTypes,
   getManufacturers,
   getPlatforms,
+  updateAddress,
 } from '@/api/dcim'
 import { getSite, getSites } from '@/api/sites'
 import { interfaceTypeItems } from '@/utils/interfaceTypes'
@@ -31,6 +32,7 @@ import {
 } from '@/api/optical'
 import OxidizedNodePanel from '@/components/OxidizedNodePanel.vue'
 import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
+import IpamAddressPicker from '@/components/IpamAddressPicker.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SiteSelector from '@/components/SiteSelector.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
@@ -702,8 +704,10 @@ function saveNewIface() {
 }
 
 const addrFormOpen = ref(false)
+const addrPickerOpen = ref(false)
 const addrSaving = ref(false)
 const addrDeleting = ref(false)
+const addrEditingId = ref(null)
 const addrForm = ref({
   interface_id: 0,
   interface_name: '',
@@ -712,8 +716,14 @@ const addrForm = ref({
   vrf: '',
   role: '',
 })
+const addrDialogTitle = computed(() =>
+  addrEditingId.value
+    ? `Edit IP address on ${addrForm.value.interface_name || 'interface'}`
+    : `Add IP address on ${addrForm.value.interface_name || 'interface'}`,
+)
 
 function openAddAddr(iface) {
+  addrEditingId.value = null
   addrForm.value = {
     interface_id: iface.id,
     interface_name: iface.name,
@@ -723,6 +733,25 @@ function openAddAddr(iface) {
     role: '',
   }
   addrFormOpen.value = true
+  if (authStore.ipamEnabled) addrPickerOpen.value = true
+}
+
+function openEditAddr(iface, addr) {
+  addrEditingId.value = addr.id
+  addrForm.value = {
+    interface_id: iface.id,
+    interface_name: iface.name,
+    address: addr.address ?? '',
+    dns_name: addr.dns_name ?? '',
+    vrf: addr.vrf ?? '',
+    role: addr.role ?? '',
+  }
+  addrFormOpen.value = true
+}
+
+function onPickAddr(sel) {
+  addrForm.value.address = sel.address ?? ''
+  if (sel.vrf != null) addrForm.value.vrf = sel.vrf
 }
 
 function saveNewAddr() {
@@ -731,13 +760,17 @@ function saveNewAddr() {
     return
   }
   addrSaving.value = true
-  createAddress({
+  const payload = {
     interface_id: addrForm.value.interface_id,
     address: addrForm.value.address.trim(),
     dns_name: addrForm.value.dns_name.trim(),
     vrf: addrForm.value.vrf.trim(),
     role: addrForm.value.role.trim(),
-  })
+  }
+  const req = addrEditingId.value
+    ? updateAddress(addrEditingId.value, payload)
+    : createAddress(payload)
+  req
     .then(() => {
       addrFormOpen.value = false
       reloadDeviceInterfaces()
@@ -745,7 +778,7 @@ function saveNewAddr() {
     .catch((err) => {
       toast.add({
         color: 'error',
-        title: 'Add address failed',
+        title: addrEditingId.value ? 'Update address failed' : 'Add address failed',
         description: err?.response?.data?.error,
       })
     })
@@ -1466,7 +1499,18 @@ onMounted(loadDevices)
                       :key="addr.id"
                       class="inline-flex items-center gap-0.5 whitespace-nowrap text-sm"
                     >
-                      <span>{{ addr.address }}</span>
+                      <button
+                        type="button"
+                        class="hover:underline"
+                        :title="authStore.canWrite && !addr.netbox_id ? 'Edit address' : ''"
+                        @click="
+                          authStore.canWrite && !addr.netbox_id
+                            ? openEditAddr(row.original, addr)
+                            : undefined
+                        "
+                      >
+                        {{ addr.address }}
+                      </button>
                       <UButton
                         v-if="authStore.canWrite && !addr.netbox_id"
                         icon="i-lucide-x"
@@ -1690,18 +1734,28 @@ onMounted(loadDevices)
   <FormModal
     v-model:open="addrFormOpen"
     :source="addrForm"
-    :title="`Add IP address on ${addrForm.interface_name || 'interface'}`"
+    :title="addrDialogTitle"
     :ui="{ content: 'sm:max-w-sm' }"
   >
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Address">
-          <UInput
-            v-model="addrForm.address"
-            class="w-full font-mono"
-            placeholder="10.0.0.1/24"
-            autofocus
-          />
+          <div class="flex gap-2">
+            <UInput
+              v-model="addrForm.address"
+              class="w-full font-mono"
+              placeholder="10.0.0.1/24"
+              autofocus
+            />
+            <UButton
+              v-if="authStore.ipamEnabled"
+              label="Pick"
+              icon="i-lucide-layout-grid"
+              color="neutral"
+              variant="outline"
+              @click="addrPickerOpen = true"
+            />
+          </div>
         </UFormField>
         <UFormField label="DNS name">
           <UInput v-model="addrForm.dns_name" class="w-full" />
@@ -1716,9 +1770,16 @@ onMounted(loadDevices)
     </template>
     <template #footer>
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="addrFormOpen = false" />
-      <UButton label="Add" icon="i-lucide-check" :loading="addrSaving" @click="saveNewAddr" />
+      <UButton
+        :label="addrEditingId ? 'Save' : 'Add'"
+        icon="i-lucide-check"
+        :loading="addrSaving"
+        @click="saveNewAddr"
+      />
     </template>
   </FormModal>
+
+  <IpamAddressPicker v-model:open="addrPickerOpen" @select="onPickAddr" />
 
   <ServiceEditDialog
     v-model:open="serviceDialogOpen"

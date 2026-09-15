@@ -8,6 +8,7 @@ import {
   getAddresses,
   updateAddress,
 } from '@/api/dcim'
+import IpamAddressPicker from '@/components/IpamAddressPicker.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -45,6 +46,7 @@ const columns = [
   { accessorKey: 'source', header: 'Source' },
 ]
 
+const pickerOpen = ref(false)
 const dialog = ref(false)
 const form = ref({
   device_id: undefined,
@@ -122,6 +124,7 @@ function openNew() {
     role: '',
   }
   dialog.value = true
+  if (authStore.ipamEnabled) pickerOpen.value = true
 }
 
 function openEdit(row) {
@@ -332,13 +335,23 @@ onMounted(() => {
           />
         </UFormField>
         <UFormField label="Address" hint="Must sit inside an allocated prefix; VRF is taken from that prefix.">
-          <UInput
-            v-model="form.address"
-            class="w-full font-mono"
-            placeholder="10.0.0.1/24"
-            autofocus
-            :disabled="!!editingId && !editingLocal"
-          />
+          <div class="flex gap-2">
+            <UInput
+              v-model="form.address"
+              class="w-full font-mono"
+              placeholder="10.0.0.1/24"
+              autofocus
+              :disabled="!!editingId && !editingLocal"
+            />
+            <UButton
+              v-if="authStore.ipamEnabled && (!editingId || editingLocal)"
+              label="Pick"
+              icon="i-lucide-layout-grid"
+              color="neutral"
+              variant="outline"
+              @click="pickerOpen = true"
+            />
+          </div>
         </UFormField>
         <UFormField label="DNS name">
           <UInput v-model="form.dns_name" class="w-full" :disabled="!!editingId && !editingLocal" />
@@ -362,4 +375,14 @@ onMounted(() => {
       />
     </template>
   </FormModal>
+
+  <IpamAddressPicker
+    v-model:open="pickerOpen"
+    @select="
+      (sel) => {
+        form.address = sel.address ?? ''
+        if (sel.vrf != null) form.vrf = sel.vrf
+      }
+    "
+  />
 </template>

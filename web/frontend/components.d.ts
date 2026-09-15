@@ -20,6 +20,8 @@ declare module 'vue' {
     GoTemplateEditor: typeof import('./src/components/GoTemplateEditor.vue')['default']
     GoTemplateField: typeof import('./src/components/GoTemplateField.vue')['default']
     HomogeneousInterfaces: typeof import('./src/components/HomogeneousInterfaces.vue')['default']
+    IpamAddressPicker: typeof import('./src/components/IpamAddressPicker.vue')['default']
+    IpamPickerTree: typeof import('./src/components/IpamPickerTree.vue')['default']
     IpamPrefixForm: typeof import('./src/components/IpamPrefixForm.vue')['default']
     IpamPrefixTree: typeof import('./src/components/IpamPrefixTree.vue')['default']
     LdapTreeBrowser: typeof import('./src/components/LdapTreeBrowser.vue')['default']
