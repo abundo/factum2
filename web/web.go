@@ -309,6 +309,7 @@ func GUI(p *GuiParams) error {
 	api.GET("/topology/devices", ctrl.ApiGetTopologyDevices, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/topology/geocode", ctrl.ApiTopologyGeocode, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/topology/devices/:id/location", ctrl.ApiTopologyDeviceLocation, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.POST("/topology/sites/:id/location", ctrl.ApiTopologySiteLocation, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	certg := api.Group("/certs", ctrl.RequireAPIAuth, ctrl.RequireCertsEnabled)
 	certg.GET("/accounts", ctrl.ApiCertAccountList, ctrl.RequireRead)

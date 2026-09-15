@@ -352,3 +352,127 @@ func TestApiTopologyDeviceLocation_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestApiTopologyDeviceLocation_FactumDevice(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "local-rtr"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/devices/x/location", topologyLocationRequest{
+		Latitude:  ptrFloat(57.70887),
+		Longitude: ptrFloat(11.97456),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(dev.ID), 10)})
+	if err := (&Controller{DB: db}).ApiTopologyDeviceLocation(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologyLocationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Site != nil {
+		t.Errorf("site = %+v, want omitted", body.Site)
+	}
+	if body.Device.Latitude == nil || *body.Device.Latitude != 57.70887 {
+		t.Errorf("lat = %v", body.Device.Latitude)
+	}
+
+	var stored models.Device
+	if err := db.First(&stored, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Latitude == nil || *stored.Latitude != 57.70887 {
+		t.Errorf("stored lat = %v", stored.Latitude)
+	}
+}
+
+func TestApiTopologyDeviceLocation_FactumDeviceCreatesSite(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "local-rtr"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/devices/x/location", topologyLocationRequest{
+		SiteName:  "Hall",
+		Latitude:  ptrFloat(59.3),
+		Longitude: ptrFloat(18.0),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(dev.ID), 10)})
+	if err := (&Controller{DB: db}).ApiTopologyDeviceLocation(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologyLocationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Site == nil || body.Site.Name != "Hall" || body.Site.Source != models.SiteSourceFactum {
+		t.Errorf("site = %+v", body.Site)
+	}
+	if body.Device.Site != "Hall" {
+		t.Errorf("device site = %q", body.Device.Site)
+	}
+}
+
+func TestApiTopologySiteLocation_FactumSite(t *testing.T) {
+	db := newTestDB(t)
+	site := models.Site{Name: "Hall", Source: models.SiteSourceFactum}
+	if err := db.Create(&site).Error; err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "local-rtr", Site: "Hall", SiteID: site.ID}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/sites/x/location", topologyLocationRequest{
+		Latitude:  ptrFloat(59.329324),
+		Longitude: ptrFloat(18.068581),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(site.ID), 10)})
+	if err := (&Controller{DB: db}).ApiTopologySiteLocation(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologySiteLocationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Site.Latitude != 59.329324 || body.Site.Longitude != 18.068581 {
+		t.Errorf("site = %+v", body.Site)
+	}
+
+	var storedDev models.Device
+	if err := db.First(&storedDev, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedDev.Latitude == nil || *storedDev.Latitude != 59.329324 {
+		t.Errorf("inherited lat = %v", storedDev.Latitude)
+	}
+}
+
+func TestApiTopologySiteLocation_RejectsNetboxSite(t *testing.T) {
+	db := newTestDB(t)
+	site := models.Site{Name: "STO", Source: models.SiteSourceNetbox, NetboxID: 4, NetboxKind: models.SiteNetboxKindSite}
+	if err := db.Create(&site).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/sites/x/location", topologyLocationRequest{
+		Latitude:  ptrFloat(59.3),
+		Longitude: ptrFloat(18.0),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(site.ID), 10)})
+	if err := (&Controller{DB: db}).ApiTopologySiteLocation(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}

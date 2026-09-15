@@ -7,6 +7,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   assignDeviceLocation,
+  assignSiteLocation,
   getTopology,
   getTopologyDevices,
   reverseGeocode,
@@ -84,6 +85,8 @@ const assignMode = ref(false)
 const allDevices = ref([])
 const allDevicesLoading = ref(false)
 const assignSelected = ref(null)
+const assignSelectedSite = ref(null)
+const allSites = ref([])
 const pickingCoords = ref(false)
 const pickedCoords = ref(null)
 const pickedAddress = ref('')
@@ -568,9 +571,14 @@ function loadTopology() {
 
 function applyAllDevices(data) {
   allDevices.value = data.devices ?? []
+  allSites.value = data.sites ?? []
   if (assignSelected.value) {
     assignSelected.value =
       allDevices.value.find((d) => d.id === assignSelected.value.id) ?? assignSelected.value
+  }
+  if (assignSelectedSite.value) {
+    assignSelectedSite.value =
+      allSites.value.find((s) => s.id === assignSelectedSite.value.id) ?? assignSelectedSite.value
   }
 }
 
@@ -639,6 +647,7 @@ function lookupPickedAddress(lat, lng) {
 
 function selectAssignDevice(device, { fromMap = false } = {}) {
   assignSelected.value = device
+  assignSelectedSite.value = null
   selected.value = fromMap ? selected.value : null
   clearPickedAddress()
   pickedCoords.value = hasMappableCoords(device)
@@ -646,6 +655,23 @@ function selectAssignDevice(device, { fromMap = false } = {}) {
     : null
   if (hasMappableCoords(device)) {
     panTo(device.latitude, device.longitude)
+    setPicking(false)
+  } else {
+    setPicking(authStore.canWrite)
+  }
+  rebuild()
+}
+
+function selectAssignSite(site) {
+  assignSelectedSite.value = site
+  assignSelected.value = null
+  selected.value = null
+  clearPickedAddress()
+  pickedCoords.value = hasMappableCoords(site)
+    ? { lat: site.latitude, lng: site.longitude }
+    : null
+  if (hasMappableCoords(site)) {
+    panTo(site.latitude, site.longitude)
     setPicking(false)
   } else {
     setPicking(authStore.canWrite)
@@ -662,6 +688,7 @@ function toggleAssignMode() {
     pickedCoords.value = null
     clearPickedAddress()
     assignSelected.value = null
+    assignSelectedSite.value = null
     rebuild()
   }
   nextTick(() => map?.resize())
@@ -748,36 +775,21 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
   if (physical_address) body.physical_address = physical_address
   assignDeviceLocation(device.id, body)
     .then((data) => {
+      const viaNetbox = !!device.netbox_id
       toast.add({
         color: 'success',
         title: 'Assigned',
         description: site_name
-          ? `${device.name} → ${data.site?.name ?? site_name} in NetBox.`
-          : `Coordinates saved on ${device.name} in NetBox.`,
+          ? `${device.name} → ${data.site?.name ?? site_name}${viaNetbox ? ' in NetBox' : ''}.`
+          : `Coordinates saved on ${device.name}${viaNetbox ? ' in NetBox' : ''}.`,
         duration: 4000,
       })
       refreshDevicesAtSite(data.device ?? device, data.site, latitude, longitude)
-      if (data.site?.id) {
-        const rest = rawSites.value.filter(
-          (s) => s.id !== data.site.id && s.name !== data.site.name,
-        )
-        rawSites.value = [...rest, data.site]
-      }
+      upsertRawSite(data.site)
       pickedCoords.value = { lat: latitude, lng: longitude }
       setPicking(false)
       rebuild()
-      return Promise.all([
-        getTopology().then((topo) => {
-          rawDevices.value = topo.devices ?? []
-          rawEdges.value = topo.edges ?? []
-          rawSites.value = topo.sites ?? []
-          rebuild()
-          panTo(latitude, longitude)
-        }),
-        getTopologyDevices().then((list) => {
-          applyAllDevices(list)
-        }),
-      ])
+      return reloadAfterAssign(latitude, longitude)
     })
     .catch((err) => {
       toast.add({
@@ -792,7 +804,68 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
     })
 }
 
-watch([assignSelected, pickedCoords], () => {
+function upsertRawSite(site) {
+  if (!site?.id) return
+  const rest = rawSites.value.filter((s) => s.id !== site.id && s.name !== site.name)
+  rawSites.value = [...rest, site]
+}
+
+function reloadAfterAssign(latitude, longitude) {
+  return Promise.all([
+    getTopology().then((topo) => {
+      rawDevices.value = topo.devices ?? []
+      rawEdges.value = topo.edges ?? []
+      rawSites.value = topo.sites ?? []
+      rebuild()
+      panTo(latitude, longitude)
+    }),
+    getTopologyDevices().then((list) => {
+      applyAllDevices(list)
+    }),
+  ])
+}
+
+function onAssignSite({ latitude, longitude }) {
+  const site = assignSelectedSite.value
+  if (!site) return
+  assignSaving.value = true
+  assignSiteLocation(site.id, { latitude, longitude })
+    .then((data) => {
+      toast.add({
+        color: 'success',
+        title: 'Assigned',
+        description: `Coordinates saved on ${data.site?.name ?? site.name}.`,
+        duration: 4000,
+      })
+      upsertRawSite(data.site)
+      if (data.site) {
+        assignSelectedSite.value = {
+          ...site,
+          ...data.site,
+          latitude: data.site.latitude,
+          longitude: data.site.longitude,
+        }
+      }
+      refreshDevicesAtSite(null, data.site ?? site, latitude, longitude)
+      pickedCoords.value = { lat: latitude, lng: longitude }
+      setPicking(false)
+      rebuild()
+      return reloadAfterAssign(latitude, longitude)
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Could not save location',
+        description: err.response?.data?.error ?? err.message ?? 'Request failed.',
+        duration: 5000,
+      })
+    })
+    .finally(() => {
+      assignSaving.value = false
+    })
+}
+
+watch([assignSelected, assignSelectedSite, pickedCoords], () => {
   if (overlay) rebuild()
 })
 
@@ -913,8 +986,9 @@ onBeforeUnmount(() => {
       <SiteAssignPanel
         v-if="assignMode"
         :devices="allDevices"
-        :sites="rawSites"
+        :sites="allSites.length ? allSites : rawSites"
         :selected-id="assignSelected?.id ?? null"
+        :selected-site-id="assignSelectedSite?.id ?? null"
         :can-write="authStore.canWrite"
         :picking="pickingCoords"
         :picked="pickedCoords"
@@ -923,9 +997,11 @@ onBeforeUnmount(() => {
         :saving="assignSaving"
         :loading="allDevicesLoading"
         @select="selectAssignDevice"
+        @select-site="selectAssignSite"
         @update:picking="setPicking"
         @use-site="onUseSite"
         @assign="onAssign"
+        @assign-site="onAssignSite"
       />
       <div
         ref="mapWrap"

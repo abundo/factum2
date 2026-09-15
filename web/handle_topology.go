@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ type TopologyEdgeDTO struct {
 type TopologySiteDTO struct {
 	ID        uint    `json:"id"`
 	Name      string  `json:"name"`
+	Source    string  `json:"source"`
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 }
@@ -77,8 +79,19 @@ type TopologyDeviceListDTO struct {
 	Longitude    *float64 `json:"longitude"`
 }
 
+// TopologySiteListDTO is one site for the map's location-assignment panel,
+// including sites that have no GPS yet.
+type TopologySiteListDTO struct {
+	ID        uint     `json:"id"`
+	Name      string   `json:"name"`
+	Source    string   `json:"source"`
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+}
+
 type TopologyDevicesDTO struct {
 	Devices []TopologyDeviceListDTO `json:"devices"`
+	Sites   []TopologySiteListDTO   `json:"sites"`
 }
 
 type topologyLocationRequest struct {
@@ -175,12 +188,7 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 		if !s.HasCoordinates() {
 			continue
 		}
-		out.Sites = append(out.Sites, TopologySiteDTO{
-			ID:        s.ID,
-			Name:      s.Name,
-			Latitude:  s.Latitude,
-			Longitude: s.Longitude,
-		})
+		out.Sites = append(out.Sites, topologySiteDTO(s))
 	}
 	return out, nil
 }
@@ -216,9 +224,20 @@ func topologySiteDTO(s models.Site) TopologySiteDTO {
 	return TopologySiteDTO{
 		ID:        s.ID,
 		Name:      s.Name,
+		Source:    s.Source,
 		Latitude:  s.Latitude,
 		Longitude: s.Longitude,
 	}
+}
+
+func topologySiteListDTO(s models.Site) TopologySiteListDTO {
+	dto := TopologySiteListDTO{ID: s.ID, Name: s.Name, Source: s.Source}
+	if s.HasCoordinates() {
+		lat, lng := s.Latitude, s.Longitude
+		dto.Latitude = &lat
+		dto.Longitude = &lng
+	}
+	return dto
 }
 
 // ApiGetTopologyDevices returns every physical device (placed or not) for
@@ -237,6 +256,14 @@ func (ctrl *Controller) ApiGetTopologyDevices(c *echo.Context) error {
 			continue
 		}
 		out.Devices = append(out.Devices, topologyDeviceListDTO(d))
+	}
+	sites, err := gorm.G[models.Site](ctrl.DB).Order("Name").Find(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	out.Sites = make([]TopologySiteListDTO, 0, len(sites))
+	for _, s := range sites {
+		out.Sites = append(out.Sites, topologySiteListDTO(s))
 	}
 	return c.JSON(http.StatusOK, out)
 }
@@ -260,6 +287,17 @@ func (ctrl *Controller) ApiTopologyDeviceLocation(c *echo.Context) error {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	if device.NetboxID == 0 {
+		got, err := assignFactumDeviceLocation(ctrl.DB, device, req)
+		if err != nil {
+			if errors.Is(err, netbox.ErrInvalidLocation) {
+				return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+			}
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, factumLocationResponse(got))
 	}
 
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
@@ -292,6 +330,198 @@ func (ctrl *Controller) ApiTopologyDeviceLocation(c *echo.Context) error {
 		resp.Site = &s
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+type TopologySiteLocationResponse struct {
+	Site TopologySiteDTO `json:"site"`
+}
+
+// ApiTopologySiteLocation writes GPS onto a Factum-created site and
+// mirrors it onto devices that inherit that site's coordinates.
+func (ctrl *Controller) ApiTopologySiteLocation(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
+	var req topologyLocationRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	site, err := gorm.G[models.Site](ctrl.DB).Where("id = ?", id).First(c.Request().Context())
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "site not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	got, err := assignFactumSiteLocation(ctrl.DB, site, req.Latitude, req.Longitude)
+	if err != nil {
+		if errors.Is(err, netbox.ErrInvalidLocation) {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, TopologySiteLocationResponse{Site: topologySiteDTO(*got)})
+}
+
+func factumLocationResponse(got *netbox.AssignLocationResult) TopologyLocationResponse {
+	resp := TopologyLocationResponse{Device: topologyDeviceListDTO(got.Device)}
+	if got.Site != nil {
+		s := topologySiteDTO(*got.Site)
+		resp.Site = &s
+	}
+	return resp
+}
+
+func roundLocationCoord(v float64) float64 {
+	r, err := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 6, 64), 64)
+	if err != nil {
+		return v
+	}
+	return r
+}
+
+func locationCoords(lat, lng *float64) (float64, float64, error) {
+	if lat == nil || lng == nil {
+		return 0, 0, fmt.Errorf("%w: latitude and longitude are required", netbox.ErrInvalidLocation)
+	}
+	latV := roundLocationCoord(*lat)
+	lngV := roundLocationCoord(*lng)
+	if latV < -90 || latV > 90 {
+		return 0, 0, fmt.Errorf("%w: latitude must be between -90 and 90", netbox.ErrInvalidLocation)
+	}
+	if lngV < -180 || lngV > 180 {
+		return 0, 0, fmt.Errorf("%w: longitude must be between -180 and 180", netbox.ErrInvalidLocation)
+	}
+	return latV, lngV, nil
+}
+
+func assignFactumDeviceLocation(db *gorm.DB, device models.Device, req topologyLocationRequest) (*netbox.AssignLocationResult, error) {
+	if device.VM {
+		return nil, fmt.Errorf("%w: virtual machines have no coordinates of their own", netbox.ErrInvalidLocation)
+	}
+	name := strings.TrimSpace(req.SiteName)
+	if strings.EqualFold(name, "Default") {
+		return nil, fmt.Errorf("%w: Default is a placeholder and cannot be used as a site", netbox.ErrInvalidLocation)
+	}
+	lat, lng, err := locationCoords(req.Latitude, req.Longitude)
+	if err != nil {
+		return nil, err
+	}
+	if name == "" {
+		if err := db.Model(&models.Device{}).Where("id = ?", device.ID).Updates(map[string]any{
+			"latitude":  lat,
+			"longitude": lng,
+		}).Error; err != nil {
+			return nil, err
+		}
+		var out models.Device
+		if err := db.First(&out, device.ID).Error; err != nil {
+			return nil, err
+		}
+		return &netbox.AssignLocationResult{Device: out}, nil
+	}
+
+	site, err := ensureFactumSiteCoords(db, name, lat, lng)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Model(&models.Device{}).Where("id = ?", device.ID).Updates(map[string]any{
+		"site":      site.Name,
+		"site_id":   site.ID,
+		"latitude":  lat,
+		"longitude": lng,
+	}).Error; err != nil {
+		return nil, err
+	}
+	if err := inheritSiteCoords(db, *site, lat, lng, device.ID); err != nil {
+		return nil, err
+	}
+	var out models.Device
+	if err := db.First(&out, device.ID).Error; err != nil {
+		return nil, err
+	}
+	return &netbox.AssignLocationResult{Device: out, Site: site}, nil
+}
+
+func assignFactumSiteLocation(db *gorm.DB, site models.Site, latPtr, lngPtr *float64) (*models.Site, error) {
+	if !site.IsLocal() {
+		return nil, fmt.Errorf("%w: sites synced from NetBox cannot be edited here", netbox.ErrInvalidLocation)
+	}
+	lat, lng, err := locationCoords(latPtr, lngPtr)
+	if err != nil {
+		return nil, err
+	}
+	prev := site
+	if err := db.Model(&models.Site{}).Where("id = ?", site.ID).Updates(map[string]any{
+		"latitude":  lat,
+		"longitude": lng,
+	}).Error; err != nil {
+		return nil, err
+	}
+	site.Latitude = lat
+	site.Longitude = lng
+	if err := inheritSiteCoords(db, prev, lat, lng, 0); err != nil {
+		return nil, err
+	}
+	var out models.Site
+	if err := db.First(&out, site.ID).Error; err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func ensureFactumSiteCoords(db *gorm.DB, name string, lat, lng float64) (*models.Site, error) {
+	var site models.Site
+	err := db.Where("LOWER(name) = LOWER(?)", name).First(&site).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		site = models.Site{
+			Name:      name,
+			Latitude:  lat,
+			Longitude: lng,
+			Source:    models.SiteSourceFactum,
+		}
+		if err := db.Create(&site).Error; err != nil {
+			return nil, err
+		}
+		return &site, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !site.IsLocal() {
+		return nil, fmt.Errorf("%w: site %s is synced from NetBox and cannot be edited here", netbox.ErrInvalidLocation, site.Name)
+	}
+	if err := db.Model(&models.Site{}).Where("id = ?", site.ID).Updates(map[string]any{
+		"latitude":  lat,
+		"longitude": lng,
+	}).Error; err != nil {
+		return nil, err
+	}
+	site.Latitude = lat
+	site.Longitude = lng
+	return &site, nil
+}
+
+func inheritSiteCoords(db *gorm.DB, site models.Site, lat, lng float64, skipDeviceID uint) error {
+	q := db.Model(&models.Device{}).Where("site_id = ? OR site = ?", site.ID, site.Name)
+	if skipDeviceID != 0 {
+		q = q.Where("id <> ?", skipDeviceID)
+	}
+	if site.HasCoordinates() {
+		q = q.Where(
+			"(latitude IS NULL AND longitude IS NULL) OR (latitude = ? AND longitude = ?)",
+			site.Latitude, site.Longitude,
+		)
+	} else {
+		q = q.Where("latitude IS NULL AND longitude IS NULL")
+	}
+	return q.Updates(map[string]any{
+		"site":      site.Name,
+		"site_id":   site.ID,
+		"latitude":  lat,
+		"longitude": lng,
+	}).Error
 }
 
 type TopologyGeocodeDTO struct {
