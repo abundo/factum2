@@ -566,15 +566,19 @@ function loadTopology() {
     })
 }
 
+function applyAllDevices(data) {
+  allDevices.value = data.devices ?? []
+  if (assignSelected.value) {
+    assignSelected.value =
+      allDevices.value.find((d) => d.id === assignSelected.value.id) ?? assignSelected.value
+  }
+}
+
 function loadAllDevices() {
   allDevicesLoading.value = true
   return getTopologyDevices()
     .then((data) => {
-      allDevices.value = data.devices ?? []
-      if (assignSelected.value) {
-        assignSelected.value =
-          allDevices.value.find((d) => d.id === assignSelected.value.id) ?? assignSelected.value
-      }
+      applyAllDevices(data)
     })
     .catch(() => {
       toast.add({
@@ -671,6 +675,70 @@ function onUseSite(site) {
   rebuild()
 }
 
+function sameSite(d, siteName, siteId) {
+  if (siteId && d.site_id && d.site_id === siteId) return true
+  if (siteName && d.site === siteName) return true
+  return false
+}
+
+function coordsMatch(d, lat, lng) {
+  return d.latitude === lat && d.longitude === lng
+}
+
+// AssignLocation only returns the pinned device. Other devices at that
+// site inherit the site's GPS (see netbox.AssignDeviceLocation), so
+// refresh them in the assign panel and on the map instead of leaving
+// them stacked on the old point. Devices with their own distinct GPS
+// are left alone — same rule as the server.
+function refreshDevicesAtSite(assigned, site, latitude, longitude) {
+  if (assigned) {
+    assignSelected.value = assigned
+  }
+  // No site in the response means GPS was written on this device only —
+  // leave every other device (including ones that share its current
+  // site) where they are.
+  if (!site) {
+    if (!assigned) return
+    allDevices.value = allDevices.value.map((d) => (d.id === assigned.id ? assigned : d))
+    return
+  }
+
+  const siteName = site.name
+  const siteId = assigned?.site_id
+
+  const prev = rawSites.value.find(
+    (s) => (site?.id != null && s.id === site.id) || (siteName && s.name === siteName),
+  )
+  const inheritsSite = (d) => {
+    if (d.latitude == null && d.longitude == null) return true
+    return !!(prev && coordsMatch(d, prev.latitude, prev.longitude))
+  }
+
+  allDevices.value = allDevices.value.map((d) => {
+    if (assigned && d.id === assigned.id) return assigned
+    if (!sameSite(d, siteName, siteId) || !inheritsSite(d)) return d
+    return {
+      ...d,
+      site: siteName || d.site,
+      site_id: siteId || d.site_id,
+      latitude,
+      longitude,
+    }
+  })
+
+  if (!siteName) return
+  rawDevices.value = rawDevices.value.map((d) => {
+    if (assigned && d.id === assigned.id) {
+      return { ...d, latitude, longitude, site: siteName }
+    }
+    if (d.site !== siteName) return d
+    if (prev && coordsMatch(d, prev.latitude, prev.longitude)) {
+      return { ...d, latitude, longitude }
+    }
+    return d
+  })
+}
+
 function onAssign({ site_name, latitude, longitude, physical_address }) {
   const device = assignSelected.value
   if (!device) return
@@ -688,10 +756,7 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
           : `Coordinates saved on ${device.name} in NetBox.`,
         duration: 4000,
       })
-      if (data.device) {
-        allDevices.value = allDevices.value.map((d) => (d.id === data.device.id ? data.device : d))
-        assignSelected.value = data.device
-      }
+      refreshDevicesAtSite(data.device ?? device, data.site, latitude, longitude)
       if (data.site?.id) {
         const rest = rawSites.value.filter(
           (s) => s.id !== data.site.id && s.name !== data.site.name,
@@ -700,13 +765,19 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
       }
       pickedCoords.value = { lat: latitude, lng: longitude }
       setPicking(false)
-      return getTopology().then((topo) => {
-        rawDevices.value = topo.devices ?? []
-        rawEdges.value = topo.edges ?? []
-        rawSites.value = topo.sites ?? []
-        rebuild()
-        panTo(latitude, longitude)
-      })
+      rebuild()
+      return Promise.all([
+        getTopology().then((topo) => {
+          rawDevices.value = topo.devices ?? []
+          rawEdges.value = topo.edges ?? []
+          rawSites.value = topo.sites ?? []
+          rebuild()
+          panTo(latitude, longitude)
+        }),
+        getTopologyDevices().then((list) => {
+          applyAllDevices(list)
+        }),
+      ])
     })
     .catch((err) => {
       toast.add({
