@@ -80,11 +80,9 @@ function decorate(item, path) {
 }
 
 const groups = computed(() => {
-  const result = [
-    section('Home', [{ label: 'Dashboard', icon: 'i-lucide-home', to: '/', exact: true }]),
-  ]
+  const result = [[{ label: 'Home', icon: 'i-lucide-home', to: '/', exact: true }]]
 
-  // A user with no role (not admin/operator/viewer) only gets the dashboard
+  // A user with no role (not admin/operator/viewer) only gets Home
   // and their own profile - see web/auth.go's RequireRead/RequireWrite,
   // which reject every other API route for them.
   if (authStore.canRead) {
