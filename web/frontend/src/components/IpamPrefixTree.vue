@@ -47,10 +47,25 @@ let persistColsTimer
 
 const selectedKind = computed(() => selected.value?.kind || selected.value?.type || '')
 const isAllocated = computed(() => selectedKind.value === 'allocated')
-const isNamedRow = computed(() => selectedKind.value === 'namespace' || selectedKind.value === 'vrf')
+const isVrf = computed(() => selectedKind.value === 'vrf')
+const isNamedRow = computed(() => selectedKind.value === 'namespace' || isVrf.value)
+const isNetboxVrf = computed(() => isVrf.value && selected.value?.source === 'netbox')
+const vrfFieldsDisabled = computed(() => !authStore.canWrite || isNetboxVrf.value)
 const canSaveSelected = computed(
-  () => authStore.canWrite && (isAllocated.value || isNamedRow.value),
+  () => authStore.canWrite && (isAllocated.value || isNamedRow.value) && !isNetboxVrf.value,
 )
+
+function sourceLabel(source) {
+  if (source === 'netbox') return 'NetBox'
+  if (source === 'factum') return 'Factum'
+  return source || ''
+}
+
+function sourceBadgeColor(source) {
+  if (source === 'factum') return 'success'
+  if (source === 'netbox') return 'neutral'
+  return 'neutral'
+}
 
 function splitHextets(s) {
   if (!s) return []
@@ -197,6 +212,9 @@ function fillForm(node) {
       namespace_id: node.namespace_id,
       name: node.title ?? '',
       description: node.description ?? '',
+      rd: node.rd ?? '',
+      import_rt: node.import_rt ?? '',
+      export_rt: node.export_rt ?? '',
     }
     return
   }
@@ -246,7 +264,13 @@ function saveSelected() {
   } else if (kind === 'vrf') {
     const name = (f.name ?? '').trim()
     if (!f.id || !f.namespace_id || !name) return
-    req = updateVrf(f.namespace_id, f.id, { name, description: f.description ?? '' })
+    req = updateVrf(f.namespace_id, f.id, {
+      name,
+      description: f.description ?? '',
+      rd: f.rd ?? '',
+      import_rt: f.import_rt ?? '',
+      export_rt: f.export_rt ?? '',
+    })
   } else {
     return
   }
@@ -590,6 +614,13 @@ defineExpose({
           <div>
             <h5 class="m-0">{{ isNamedRow ? form.name || selected.title : selected.title }}</h5>
             <div class="text-sm text-muted-color mt-1">{{ kindLabel(selectedKind) }}</div>
+            <div v-if="isVrf && selected.source" class="mt-1">
+              <UBadge
+                :label="sourceLabel(selected.source)"
+                :color="sourceBadgeColor(selected.source)"
+                variant="subtle"
+              />
+            </div>
           </div>
           <IpamPrefixForm
             v-if="isAllocated"
@@ -602,12 +633,26 @@ defineExpose({
           <template v-else-if="isNamedRow">
             <div>
               <label class="block font-bold mb-2">Name</label>
-              <UInput v-model="form.name" :disabled="!authStore.canWrite" class="w-full" />
+              <UInput v-model="form.name" :disabled="vrfFieldsDisabled" class="w-full" />
             </div>
             <div>
               <label class="block font-bold mb-2">Description</label>
-              <UInput v-model="form.description" :disabled="!authStore.canWrite" class="w-full" />
+              <UInput v-model="form.description" :disabled="vrfFieldsDisabled" class="w-full" />
             </div>
+            <template v-if="isVrf">
+              <div>
+                <label class="block font-bold mb-2">RD</label>
+                <UInput v-model="form.rd" :disabled="vrfFieldsDisabled" class="w-full" />
+              </div>
+              <div>
+                <label class="block font-bold mb-2">Import route-target</label>
+                <UInput v-model="form.import_rt" :disabled="vrfFieldsDisabled" class="w-full" />
+              </div>
+              <div>
+                <label class="block font-bold mb-2">Export route-target</label>
+                <UInput v-model="form.export_rt" :disabled="vrfFieldsDisabled" class="w-full" />
+              </div>
+            </template>
           </template>
           <template v-else>
             <div>

@@ -234,6 +234,106 @@ func TestIpamDeleteRules(t *testing.T) {
 	}
 }
 
+func TestIpamVRFRouteTargetsAndNetboxReadonly(t *testing.T) {
+	ctrl := setupIPAM(t)
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{
+		Name: "cust-a", Description: "a", RD: "65000:1", ImportRT: "65000:1", ExportRT: "65000:2",
+	}, []string{"id"}, []string{"0"})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var local models.IpamVRF
+	if err := json.Unmarshal(rec.Body.Bytes(), &local); err != nil {
+		t.Fatal(err)
+	}
+	if local.RD != "65000:1" || local.ImportRT != "65000:1" || local.ExportRT != "65000:2" {
+		t.Fatalf("created = %+v", local)
+	}
+	if local.Source != models.VRFSourceFactum {
+		t.Fatalf("source = %q, want factum", local.Source)
+	}
+
+	nsID := strconv.FormatUint(uint64(local.NamespaceID), 10)
+	vrfID := strconv.FormatUint(uint64(local.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPut, "/api/ipam/namespaces/x/vrfs/x", ipamVRFBody{
+		Name: "cust-a", Description: "a2", RD: "65000:9", ImportRT: "65000:9", ExportRT: "65000:9",
+	}, []string{"id", "vrfId"}, []string{nsID, vrfID})
+	if err := ctrl.ApiIpamVRFUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &local); err != nil {
+		t.Fatal(err)
+	}
+	if local.Description != "a2" || local.RD != "65000:9" {
+		t.Fatalf("updated = %+v", local)
+	}
+
+	nb := models.IpamVRF{
+		NamespaceID: local.NamespaceID,
+		Name:        "from-netbox",
+		RD:          "1:1",
+		ImportRT:    "1:1",
+		ExportRT:    "1:1",
+		Source:      models.VRFSourceNetbox,
+		NetboxID:    42,
+	}
+	if err := ctrl.DB.Create(&nb).Error; err != nil {
+		t.Fatal(err)
+	}
+	nbID := strconv.FormatUint(uint64(nb.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPut, "/api/ipam/namespaces/x/vrfs/x", ipamVRFBody{
+		Name: "from-netbox", Description: "nope",
+	}, []string{"id", "vrfId"}, []string{nsID, nbID})
+	if err := ctrl.ApiIpamVRFUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("netbox update status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	}
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/ipam/namespaces/x/vrfs/x", nil,
+		[]string{"id", "vrfId"}, []string{nsID, nbID})
+	if err := ctrl.ApiIpamVRFDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("netbox delete status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/tree", nil, nil, nil)
+	if err := ctrl.ApiIpamForest(c); err != nil {
+		t.Fatal(err)
+	}
+	var roots []ipam.TreeNode
+	if err := json.Unmarshal(rec.Body.Bytes(), &roots); err != nil {
+		t.Fatal(err)
+	}
+	var sawLocal, sawNB bool
+	for _, n := range roots {
+		if n.Type == "vrf" && n.Title == "cust-a" {
+			sawLocal = true
+			if n.Data.RD != "65000:9" {
+				t.Fatalf("local tree rd = %q", n.Data.RD)
+			}
+		}
+		if n.Type == "vrf" && n.Title == "from-netbox" {
+			sawNB = true
+			if n.Data.Source != models.VRFSourceNetbox {
+				t.Fatalf("netbox tree source = %q", n.Data.Source)
+			}
+		}
+	}
+	if !sawLocal || !sawNB {
+		t.Fatalf("forest = %+v", roots)
+	}
+}
+
 func TestIpamForestTree(t *testing.T) {
 	ctrl := setupIPAM(t)
 	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "core"}, nil, nil)

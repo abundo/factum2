@@ -313,19 +313,43 @@ func ListVRFs(db *gorm.DB, nsID uint) ([]models.IpamVRF, error) {
 	return rows, nil
 }
 
-func CreateVRF(db *gorm.DB, nsID uint, name, description string) (*models.IpamVRF, error) {
+// VRFWrite is the operator-editable subset of a VRF. Source/NetboxID are
+// sync-managed and never accepted from the API.
+type VRFWrite struct {
+	Name        string
+	Description string
+	RD          string
+	ImportRT    string
+	ExportRT    string
+}
+
+func (w VRFWrite) normalized() VRFWrite {
+	return VRFWrite{
+		Name:        normalizeName(w.Name),
+		Description: strings.TrimSpace(w.Description),
+		RD:          strings.TrimSpace(w.RD),
+		ImportRT:    strings.TrimSpace(w.ImportRT),
+		ExportRT:    strings.TrimSpace(w.ExportRT),
+	}
+}
+
+func CreateVRF(db *gorm.DB, nsID uint, w VRFWrite) (*models.IpamVRF, error) {
 	nsID, err := resolveNamespaceID(db, nsID)
 	if err != nil {
 		return nil, err
 	}
-	name = normalizeName(name)
-	if name == "" {
+	w = w.normalized()
+	if w.Name == "" {
 		return nil, statusErr(400, "name is required")
 	}
 	row := models.IpamVRF{
 		NamespaceID: nsID,
-		Name:        name,
-		Description: strings.TrimSpace(description),
+		Name:        w.Name,
+		Description: w.Description,
+		RD:          w.RD,
+		ImportRT:    w.ImportRT,
+		ExportRT:    w.ExportRT,
+		Source:      models.VRFSourceFactum,
 	}
 	if err := db.Create(&row).Error; err != nil {
 		if isUniqueViolation(err) {
@@ -336,7 +360,7 @@ func CreateVRF(db *gorm.DB, nsID uint, name, description string) (*models.IpamVR
 	return &row, nil
 }
 
-func UpdateVRF(db *gorm.DB, nsID, vrfID uint, name, description string) (*models.IpamVRF, error) {
+func UpdateVRF(db *gorm.DB, nsID, vrfID uint, w VRFWrite) (*models.IpamVRF, error) {
 	var row models.IpamVRF
 	if err := db.Where("id = ? AND namespace_id = ?", vrfID, nsID).First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -344,12 +368,18 @@ func UpdateVRF(db *gorm.DB, nsID, vrfID uint, name, description string) (*models
 		}
 		return nil, err
 	}
-	name = normalizeName(name)
-	if name == "" {
+	if !row.IsLocal() {
+		return nil, statusErr(403, "VRFs synced from NetBox cannot be edited here")
+	}
+	w = w.normalized()
+	if w.Name == "" {
 		return nil, statusErr(400, "name is required")
 	}
-	row.Name = name
-	row.Description = strings.TrimSpace(description)
+	row.Name = w.Name
+	row.Description = w.Description
+	row.RD = w.RD
+	row.ImportRT = w.ImportRT
+	row.ExportRT = w.ExportRT
 	if err := db.Save(&row).Error; err != nil {
 		if isUniqueViolation(err) {
 			return nil, statusErr(409, "a VRF with that name already exists in this namespace")
@@ -366,6 +396,9 @@ func DeleteVRF(db *gorm.DB, nsID, vrfID uint) error {
 			return statusErr(404, "VRF not found")
 		}
 		return err
+	}
+	if !row.IsLocal() {
+		return statusErr(403, "VRFs synced from NetBox cannot be deleted here")
 	}
 	if row.IsDefault {
 		return statusErr(409, "the default VRF cannot be deleted")

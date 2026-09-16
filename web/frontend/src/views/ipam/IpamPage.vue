@@ -65,11 +65,10 @@ function itemsFor(node) {
       )
       break
     case 'vrf':
-      items.push(
-        { id: 'add-prefix', label: 'Add prefix' },
-        { id: 'sep2' },
-        { id: 'del-vrf', label: 'Delete VRF', danger: true },
-      )
+      items.push({ id: 'add-prefix', label: 'Add prefix' })
+      if (node.source !== 'netbox') {
+        items.push({ id: 'sep2' }, { id: 'del-vrf', label: 'Delete VRF', danger: true })
+      }
       break
     case 'allocated':
       items.push(
@@ -116,7 +115,14 @@ async function runMenu(id, node = menu.value.node) {
     return
   }
   if (id === 'add-vrf') {
-    form.value = { namespace_id: node?.namespace_id || 0, name: '', description: '' }
+    form.value = {
+      namespace_id: node?.namespace_id || 0,
+      name: '',
+      description: '',
+      rd: '',
+      import_rt: '',
+      export_rt: '',
+    }
     dialog.value = 'vrf'
     return
   }
@@ -204,7 +210,13 @@ function saveDialog() {
     }
     req = createNamespace(payload)
   } else if (dialog.value === 'vrf') {
-    const payload = { name: (f.name ?? '').trim(), description: f.description ?? '' }
+    const payload = {
+      name: (f.name ?? '').trim(),
+      description: f.description ?? '',
+      rd: (f.rd ?? '').trim(),
+      import_rt: (f.import_rt ?? '').trim(),
+      export_rt: (f.export_rt ?? '').trim(),
+    }
     if (!payload.name) {
       saving.value = false
       return
@@ -323,7 +335,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <p class="text-muted-color text-sm mb-3 shrink-0">
       Right-click empty space to add a prefix or VRF at the root (no namespace needed). Right-click a
       namespace for prefixes and extra VRFs in that space. Prefixes under a VRF cannot overlap the
-      root or any other VRF. Click a row to see details. Click [+] / [−] to expand or collapse.
+      root or any other VRF. VRFs synced from NetBox appear at the root (default VRF) and are
+      read-only. Click a row to see details. Click [+] / [−] to expand or collapse.
     </p>
     <IpamPrefixTree ref="treeRef" class="min-h-0 flex-1" @contextmenu="onContextMenu" />
   </div>
@@ -381,6 +394,18 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         <div>
           <label class="block font-bold mb-2">Description</label>
           <UInput v-model="form.description" />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">RD</label>
+          <UInput v-model="form.rd" placeholder="65000:1" />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Import route-target</label>
+          <UInput v-model="form.import_rt" placeholder="65000:1" />
+        </div>
+        <div>
+          <label class="block font-bold mb-2">Export route-target</label>
+          <UInput v-model="form.export_rt" placeholder="65000:1" />
         </div>
       </div>
     </template>

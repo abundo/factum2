@@ -43,6 +43,11 @@ type TreeNodeData struct {
 	DhcpRangeEnd   string  `json:"dhcp_range_end,omitempty"`
 	DhcpGateway    string  `json:"dhcp_gateway,omitempty"`
 	DhcpDnsServers string  `json:"dhcp_dns_servers,omitempty"`
+	RD             string  `json:"rd,omitempty"`
+	ImportRT       string  `json:"import_rt,omitempty"`
+	ExportRT       string  `json:"export_rt,omitempty"`
+	Source         string  `json:"source,omitempty"`
+	NetboxID       uint    `json:"netbox_id,omitempty"`
 }
 
 type treeEntry struct {
@@ -356,6 +361,11 @@ func namespaceChildren(db *gorm.DB, nsID uint) ([]TreeNode, error) {
 				IsDefault:   v.IsDefault,
 				Description: v.Description,
 				ChildCount:  int(n),
+				RD:          v.RD,
+				ImportRT:    v.ImportRT,
+				ExportRT:    v.ExportRT,
+				Source:      v.Source,
+				NetboxID:    v.NetboxID,
 			},
 		})
 	}

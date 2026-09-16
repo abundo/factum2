@@ -1,5 +1,12 @@
 package models
 
+import "gorm.io/gorm"
+
+const (
+	VRFSourceFactum = "factum"
+	VRFSourceNetbox = "netbox"
+)
+
 // IPAM is a factum-native prefix inventory, independent of NetBox's
 // ipam.IPAddress rows (models.Address). A namespace is one unique address
 // space; VRFs carve that space without overlap; allowed prefixes bound
@@ -53,15 +60,43 @@ type IpamVRF struct {
 	Name        string `json:"name" gorm:"uniqueIndex:idx_ipam_vrf_ns_name;not null;type:varchar(255)"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	IsDefault   bool   `json:"is_default"`
+	// RD is the BGP route distinguisher (e.g. "65000:1").
+	RD string `json:"rd" gorm:"type:varchar(255)"`
+	// ImportRT / ExportRT are route-targets, comma-separated when there
+	// are several (NetBox import_targets / export_targets).
+	ImportRT string `json:"import_rt" gorm:"type:text"`
+	ExportRT string `json:"export_rt" gorm:"type:text"`
+	// Source is "netbox" when upserted from sync, "factum" when created
+	// in the UI. NetBox-synced rows are read-only.
+	Source   string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID uint   `json:"netbox_id"`
 }
 
 func (IpamVRF) TableName() string { return "ipam_vrfs" }
+
+func (v *IpamVRF) BeforeCreate(tx *gorm.DB) error {
+	if v.Source == "" {
+		if v.NetboxID != 0 {
+			v.Source = VRFSourceNetbox
+		} else {
+			v.Source = VRFSourceFactum
+		}
+	}
+	return nil
+}
+
+func (v IpamVRF) IsLocal() bool {
+	return v.Source != VRFSourceNetbox
+}
 
 type IpamVRFIDTO struct {
 	ID          uint   `json:"id"`
 	NamespaceID uint   `json:"namespace_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	RD          string `json:"rd"`
+	ImportRT    string `json:"import_rt"`
+	ExportRT    string `json:"export_rt"`
 }
 
 // IpamPrefix is a CIDR allocated to exactly one VRF in a namespace.

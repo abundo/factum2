@@ -13,6 +13,10 @@ type VRFListItem struct {
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	IsDefault     bool   `json:"is_default"`
+	RD            string `json:"rd"`
+	ImportRT      string `json:"import_rt"`
+	ExportRT      string `json:"export_rt"`
+	Source        string `json:"source"`
 	PrefixCount   int64  `json:"prefix_count"`
 }
 
@@ -53,6 +57,10 @@ func ListAllVRFs(db *gorm.DB) ([]VRFListItem, error) {
 			Name:          r.Name,
 			Description:   r.Description,
 			IsDefault:     r.IsDefault,
+			RD:            r.RD,
+			ImportRT:      r.ImportRT,
+			ExportRT:      r.ExportRT,
+			Source:        r.Source,
 			PrefixCount:   counts[r.ID],
 		})
 	}

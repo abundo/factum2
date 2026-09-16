@@ -211,6 +211,19 @@ func (ctrl *Controller) ApiIpamVRFList(c *echo.Context) error {
 type ipamVRFBody struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	RD          string `json:"rd"`
+	ImportRT    string `json:"import_rt"`
+	ExportRT    string `json:"export_rt"`
+}
+
+func (b ipamVRFBody) write() ipam.VRFWrite {
+	return ipam.VRFWrite{
+		Name:        b.Name,
+		Description: b.Description,
+		RD:          b.RD,
+		ImportRT:    b.ImportRT,
+		ExportRT:    b.ExportRT,
+	}
 }
 
 func (ctrl *Controller) ApiIpamVRFCreate(c *echo.Context) error {
@@ -222,7 +235,7 @@ func (ctrl *Controller) ApiIpamVRFCreate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row, err := ipam.CreateVRF(ctrl.DB, id, body.Name, body.Description)
+	row, err := ipam.CreateVRF(ctrl.DB, id, body.write())
 	if err != nil {
 		return ipamWriteError(c, err)
 	}
@@ -242,7 +255,7 @@ func (ctrl *Controller) ApiIpamVRFUpdate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	row, err := ipam.UpdateVRF(ctrl.DB, id, vrfID, body.Name, body.Description)
+	row, err := ipam.UpdateVRF(ctrl.DB, id, vrfID, body.write())
 	if err != nil {
 		return ipamWriteError(c, err)
 	}
