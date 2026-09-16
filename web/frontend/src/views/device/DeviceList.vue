@@ -111,8 +111,6 @@ function emptyDeviceForm() {
     site_id: 0,
     role: '',
     status: 'active',
-    primary_ipv4: '',
-    primary_ipv6: '',
     comments: '',
     enabled: true,
     cf_location: '',
@@ -251,8 +249,6 @@ function deviceWritePayload(form) {
     site: form.site.trim(),
     role: form.role.trim(),
     status: form.status,
-    primary_ipv4: form.primary_ipv4.trim(),
-    primary_ipv6: form.primary_ipv6.trim(),
     comments: form.comments.trim(),
     enabled: !!form.enabled,
     cf_location: form.cf_location.trim(),
@@ -306,8 +302,6 @@ function fillFormFromDevice(d) {
     site_id: d.site_id || 0,
     role: d.role ?? '',
     status: d.status || 'active',
-    primary_ipv4: d.primary_ipv4 ?? '',
-    primary_ipv6: d.primary_ipv6 ?? '',
     comments: d.comments ?? '',
     enabled: d.enabled !== false,
     cf_location: d.cf_location ?? '',
@@ -748,12 +742,23 @@ const addrForm = ref({
   dns_name: '',
   vrf: '',
   role: '',
+  management: false,
 })
 const addrDialogTitle = computed(() =>
   addrEditingId.value
     ? `Edit IP address on ${addrForm.value.interface_name || 'interface'}`
     : `Add IP address on ${addrForm.value.interface_name || 'interface'}`,
 )
+
+function isManagementAddr(addr) {
+  const d = device.value
+  if (!d || !addr) return false
+  const ids = [d.primary_ipv4_id, d.primary_ipv6_id]
+  if (addr.id && ids.includes(addr.id)) return true
+  if (addr.netbox_id && ids.includes(addr.netbox_id)) return true
+  const a = addr.address || ''
+  return !!a && (a === d.primary_ipv4 || a === d.primary_ipv6)
+}
 
 function openAddAddr(iface) {
   addrEditingId.value = null
@@ -764,6 +769,7 @@ function openAddAddr(iface) {
     dns_name: '',
     vrf: iface.vrf ?? '',
     role: '',
+    management: false,
   }
   addrFormOpen.value = true
   if (authStore.ipamEnabled) addrPickerOpen.value = true
@@ -778,6 +784,7 @@ function openEditAddr(iface, addr) {
     dns_name: addr.dns_name ?? '',
     vrf: addr.vrf ?? '',
     role: addr.role ?? '',
+    management: isManagementAddr(addr),
   }
   addrFormOpen.value = true
 }
@@ -799,6 +806,7 @@ function saveNewAddr() {
     dns_name: addrForm.value.dns_name.trim(),
     vrf: addrForm.value.vrf.trim(),
     role: addrForm.value.role.trim(),
+    management: !!addrForm.value.management,
   }
   const req = addrEditingId.value
     ? updateAddress(addrEditingId.value, payload)
@@ -807,6 +815,7 @@ function saveNewAddr() {
     .then(() => {
       addrFormOpen.value = false
       reloadDeviceInterfaces()
+      loadDevices()
     })
     .catch((err) => {
       toast.add({
@@ -823,7 +832,10 @@ function saveNewAddr() {
 function removeAddr(addr) {
   addrDeleting.value = true
   deleteAddress(addr.id)
-    .then(() => reloadDeviceInterfaces())
+    .then(() => {
+      reloadDeviceInterfaces()
+      loadDevices()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -1261,32 +1273,20 @@ onMounted(loadDevices)
 
               <label for="device-ipv4" class="font-bold whitespace-nowrap">Primary IPv4</label>
               <UInput
-                v-if="isLocalDevice"
-                id="device-ipv4"
-                v-model="createForm.primary_ipv4"
-                class="w-full font-mono"
-              />
-              <UInput
-                v-else
                 id="device-ipv4"
                 :model-value="device.primary_ipv4 || ''"
                 disabled
-                class="w-full"
+                class="w-full font-mono"
+                title="Set from a management IP address on an interface"
               />
 
               <label for="device-ipv6" class="font-bold whitespace-nowrap">Primary IPv6</label>
               <UInput
-                v-if="isLocalDevice"
-                id="device-ipv6"
-                v-model="createForm.primary_ipv6"
-                class="w-full font-mono"
-              />
-              <UInput
-                v-else
                 id="device-ipv6"
                 :model-value="device.primary_ipv6 || ''"
                 disabled
-                class="w-full"
+                class="w-full font-mono"
+                title="Set from a management IP address on an interface"
               />
 
               <label for="device-location" class="font-bold whitespace-nowrap">Location</label>
@@ -1554,6 +1554,14 @@ onMounted(loadDevices)
                       >
                         {{ addr.address }}
                       </button>
+                      <UBadge
+                        v-if="isManagementAddr(addr)"
+                        color="info"
+                        variant="subtle"
+                        size="xs"
+                      >
+                        mgmt
+                      </UBadge>
                       <UButton
                         v-if="authStore.canWrite && !addr.netbox_id"
                         icon="i-lucide-x"
@@ -1732,9 +1740,6 @@ onMounted(loadDevices)
         <UFormField label="Status">
           <USelect v-model="createForm.status" :items="statusItems" class="w-full" />
         </UFormField>
-        <UFormField label="Primary IPv4">
-          <UInput v-model="createForm.primary_ipv4" class="w-full font-mono" />
-        </UFormField>
       </div>
     </template>
     <template #footer>
@@ -1832,6 +1837,7 @@ onMounted(loadDevices)
         <UFormField label="Role">
           <UInput v-model="addrForm.role" class="w-full" />
         </UFormField>
+        <UCheckbox v-model="addrForm.management" label="Management IP address" />
       </div>
     </template>
     <template #footer>

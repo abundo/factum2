@@ -207,6 +207,11 @@ type AddressCreateDTO struct {
 	VRF         string `json:"vrf"`
 	Role        string `json:"role"`
 	PrefixID    *uint  `json:"prefix_id"`
+	// Management, when set, assigns or clears this address as the device's
+	// primary IPv4 or IPv6 (Device.PrimaryIPv4ID / PrimaryIPv6ID). nil
+	// leaves the existing primary assignment unchanged (aside from
+	// keeping the denormalized address string in sync).
+	Management *bool `json:"management"`
 }
 
 // Connection is a Netbox cable directly connecting two device interfaces,
@@ -459,13 +464,15 @@ func Slugify(s string) string {
 // strings on Device are copied from the catalog rows at create time.
 // Pointer bools distinguish omitted (leave existing / default) from false.
 type DeviceCreateDTO struct {
-	Name              string `json:"name"`
-	DeviceTypeID      uint   `json:"device_type_id"`
-	PlatformID        uint   `json:"platform_id"`
-	SiteID            uint   `json:"site_id"`
-	Site              string `json:"site"`
-	Role              string `json:"role"`
-	Status            string `json:"status"`
+	Name         string `json:"name"`
+	DeviceTypeID uint   `json:"device_type_id"`
+	PlatformID   uint   `json:"platform_id"`
+	SiteID       uint   `json:"site_id"`
+	Site         string `json:"site"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+	// PrimaryIPv4/PrimaryIPv6 on this DTO are ignored. Primary addresses
+	// are assigned by referencing an interface address (management IP).
 	PrimaryIPv4       string `json:"primary_ipv4"`
 	PrimaryIPv6       string `json:"primary_ipv6"`
 	Comments          string `json:"comments"`

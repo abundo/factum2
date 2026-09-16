@@ -149,6 +149,9 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	if created.PlatformID != plat.ID {
 		t.Fatalf("platform_id = %d, want %d", created.PlatformID, plat.ID)
 	}
+	if created.PrimaryIPv4 != "" || created.PrimaryIPv4ID != 0 {
+		t.Fatalf("primary ipv4 must not be set from device DTO = %+v", created)
+	}
 
 	site := models.Site{Name: "STO", Source: models.SiteSourceFactum, Latitude: 59.3, Longitude: 18.0}
 	if err := db.Create(&site).Error; err != nil {
@@ -242,8 +245,11 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	if updated.Name != "leaf-1-renamed" || updated.Site != "lab2" || updated.Status != "offline" {
 		t.Fatalf("updated = %+v", updated)
 	}
-	if updated.Enabled || updated.PrimaryIPv6 != "2001:db8::1/128" || updated.Comments != "lab box" {
+	if updated.Enabled || updated.Comments != "lab box" {
 		t.Fatalf("updated extra = %+v", updated)
+	}
+	if updated.PrimaryIPv4 != "" || updated.PrimaryIPv6 != "" || updated.PrimaryIPv6ID != 0 {
+		t.Fatalf("primary IPs must not be set from device DTO = %+v", updated)
 	}
 	if updated.CfLocation != "row-a" || !updated.CfMonitorIcinga || !updated.CfBackupOxidized {
 		t.Fatalf("updated monitoring = %+v", updated)
@@ -616,6 +622,146 @@ func TestApiDCIMAddressesCRUD(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestApiDCIMAddressManagementPrimary(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	ns := models.IpamNamespace{Name: "global"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatal(err)
+	}
+	vrf := models.IpamVRF{NamespaceID: ns.ID, Name: "MGMT", IsDefault: true}
+	if err := db.Create(&vrf).Error; err != nil {
+		t.Fatal(err)
+	}
+	pfx4 := models.IpamPrefix{NamespaceID: ns.ID, VRFID: vrf.ID, Prefix: "10.0.0.0/24", Family: 4}
+	if err := db.Create(&pfx4).Error; err != nil {
+		t.Fatal(err)
+	}
+	pfx6 := models.IpamPrefix{NamespaceID: ns.ID, VRFID: vrf.ID, Prefix: "2001:db8::/64", Family: 6}
+	if err := db.Create(&pfx6).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	dev := models.Device{Name: "pe-mgmt", CfSource: "factum"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	iface := models.Interface{DeviceID: dev.ID, Name: "Management1", Type: "1000base-t"}
+	if err := db.Create(&iface).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.1/24", Management: boolPtr(true),
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create v4 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var v4 models.Address
+	if err := json.Unmarshal(rec.Body.Bytes(), &v4); err != nil {
+		t.Fatal(err)
+	}
+	var got models.Device
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv4ID != v4.ID || got.PrimaryIPv4 != "10.0.0.1/24" {
+		t.Fatalf("primary v4 after create = id=%d addr=%q, want id=%d 10.0.0.1/24", got.PrimaryIPv4ID, got.PrimaryIPv4, v4.ID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "2001:db8::1/64", Management: boolPtr(true),
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create v6 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var v6 models.Address
+	if err := json.Unmarshal(rec.Body.Bytes(), &v6); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv4ID != v4.ID || got.PrimaryIPv6ID != v6.ID || got.PrimaryIPv6 != "2001:db8::1/64" {
+		t.Fatalf("primaries after v6 = v4=%d/%q v6=%d/%q", got.PrimaryIPv4ID, got.PrimaryIPv4, got.PrimaryIPv6ID, got.PrimaryIPv6)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.2/24", Management: boolPtr(true),
+	}, nil, nil)
+	if err := ctrl.ApiCreateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("replace v4 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var v4b models.Address
+	if err := json.Unmarshal(rec.Body.Bytes(), &v4b); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv4ID != v4b.ID || got.PrimaryIPv4 != "10.0.0.2/24" || got.PrimaryIPv6ID != v6.ID {
+		t.Fatalf("replace v4 = %+v", got)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/addresses/x", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.3/24", Management: boolPtr(true),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(v4b.ID), 10)})
+	if err := ctrl.ApiUpdateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update v4 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv4ID != v4b.ID || got.PrimaryIPv4 != "10.0.0.3/24" {
+		t.Fatalf("denormalized v4 after edit = id=%d addr=%q", got.PrimaryIPv4ID, got.PrimaryIPv4)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/addresses/x", models.AddressCreateDTO{
+		InterfaceID: iface.ID, Address: "10.0.0.3/24", Management: boolPtr(false),
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(v4b.ID), 10)})
+	if err := ctrl.ApiUpdateDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear v4 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv4ID != 0 || got.PrimaryIPv4 != "" || got.PrimaryIPv6ID != v6.ID {
+		t.Fatalf("after uncheck v4 = %+v", got)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/addresses/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(v6.ID), 10)})
+	if err := ctrl.ApiDeleteDCIMAddress(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete v6 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := db.First(&got, dev.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.PrimaryIPv6ID != 0 || got.PrimaryIPv6 != "" {
+		t.Fatalf("after delete v6 = %+v", got)
 	}
 }
 

@@ -403,8 +403,6 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 	}
 	device.Role = strings.TrimSpace(dto.Role)
 	device.Status = status
-	device.PrimaryIPv4 = strings.TrimSpace(dto.PrimaryIPv4)
-	device.PrimaryIPv6 = strings.TrimSpace(dto.PrimaryIPv6)
 	device.CfLocation = strings.TrimSpace(dto.CfLocation)
 	applyOptionalBool(&device.CfMonitorIcinga, dto.CfMonitorIcinga)
 	applyOptionalBool(&device.CfMonitorLibrenms, dto.CfMonitorLibrenms)
@@ -1143,11 +1141,16 @@ func (ctrl *Controller) ApiCreateDCIMAddress(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	var addr models.Address
-	if err := applyAddressWrite(ctrl.DB, &addr, dto, true); err != nil {
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := applyAddressWrite(tx, &addr, dto, true); err != nil {
+			return err
+		}
+		if err := tx.Create(&addr).Error; err != nil {
+			return err
+		}
+		return syncDevicePrimaryFromAddress(tx, &addr, dto.Management)
+	}); err != nil {
 		return httpErrorJSON(c, err)
-	}
-	if err := ctrl.DB.Create(&addr).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusCreated, addr)
 }
@@ -1168,11 +1171,16 @@ func (ctrl *Controller) ApiUpdateDCIMAddress(c *echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if err := applyAddressWrite(ctrl.DB, &addr, dto, false); err != nil {
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := applyAddressWrite(tx, &addr, dto, false); err != nil {
+			return err
+		}
+		if err := tx.Save(&addr).Error; err != nil {
+			return err
+		}
+		return syncDevicePrimaryFromAddress(tx, &addr, dto.Management)
+	}); err != nil {
 		return httpErrorJSON(c, err)
-	}
-	if err := ctrl.DB.Save(&addr).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, addr)
 }
@@ -1189,10 +1197,119 @@ func (ctrl *Controller) ApiDeleteDCIMAddress(c *echo.Context) error {
 	if addr.NetboxID != 0 {
 		return c.JSON(http.StatusForbidden, map[string]any{"error": "addresses synced from NetBox cannot be deleted here"})
 	}
-	if err := ctrl.DB.Delete(&addr).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	clear := false
+	if err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&addr).Error; err != nil {
+			return err
+		}
+		return syncDevicePrimaryFromAddress(tx, &addr, &clear)
+	}); err != nil {
+		return httpErrorJSON(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+func addressFamilyIsIPv4(addr *models.Address) (bool, error) {
+	pfx, err := netip.ParsePrefix(addr.Address)
+	if err != nil {
+		return false, echo.NewHTTPError(http.StatusBadRequest, "address must be a CIDR prefix (e.g. 10.0.0.1/24)")
+	}
+	return pfx.Addr().Is4(), nil
+}
+
+func devicePrimaryRefersTo(device *models.Device, addr *models.Address, v4 bool) bool {
+	id := device.PrimaryIPv4ID
+	text := device.PrimaryIPv4
+	if !v4 {
+		id = device.PrimaryIPv6ID
+		text = device.PrimaryIPv6
+	}
+	if id != 0 {
+		if addr.ID != 0 && id == addr.ID {
+			return true
+		}
+		if addr.NetboxID != 0 && id == addr.NetboxID {
+			return true
+		}
+		return false
+	}
+	return text != "" && text == addr.Address
+}
+
+func setDevicePrimary(device *models.Device, addr *models.Address, v4 bool) {
+	if v4 {
+		device.PrimaryIPv4ID = addr.ID
+		device.PrimaryIPv4 = addr.Address
+		return
+	}
+	device.PrimaryIPv6ID = addr.ID
+	device.PrimaryIPv6 = addr.Address
+}
+
+func clearDevicePrimary(device *models.Device, v4 bool) {
+	if v4 {
+		device.PrimaryIPv4ID = 0
+		device.PrimaryIPv4 = ""
+		return
+	}
+	device.PrimaryIPv6ID = 0
+	device.PrimaryIPv6 = ""
+}
+
+func saveDevicePrimary(db *gorm.DB, device *models.Device) error {
+	return db.Model(&models.Device{}).Where("id = ?", device.ID).Updates(map[string]any{
+		"primary_ipv4":    device.PrimaryIPv4,
+		"primary_ipv4_id": device.PrimaryIPv4ID,
+		"primary_ipv6":    device.PrimaryIPv6,
+		"primary_ipv6_id": device.PrimaryIPv6ID,
+	}).Error
+}
+
+// syncDevicePrimaryFromAddress assigns or clears the device's primary IPv4
+// or IPv6 from an interface address. management true sets this address as
+// the primary for its family; false clears it if it currently is; nil
+// leaves the assignment but keeps the denormalized address string in sync
+// when this row is already the primary.
+func syncDevicePrimaryFromAddress(db *gorm.DB, addr *models.Address, management *bool) error {
+	var iface models.Interface
+	if err := db.First(&iface, addr.InterfaceID).Error; err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "interface not found")
+	}
+	var device models.Device
+	if err := db.First(&device, iface.DeviceID).Error; err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "device not found")
+	}
+	v4, err := addressFamilyIsIPv4(addr)
+	if err != nil {
+		return err
+	}
+	wasV4 := devicePrimaryRefersTo(&device, addr, true)
+	wasV6 := devicePrimaryRefersTo(&device, addr, false)
+	want := management
+	if want == nil {
+		if !wasV4 && !wasV6 {
+			return nil
+		}
+		t := true
+		want = &t
+	}
+	if *want {
+		setDevicePrimary(&device, addr, v4)
+		if v4 && wasV6 {
+			clearDevicePrimary(&device, false)
+		}
+		if !v4 && wasV4 {
+			clearDevicePrimary(&device, true)
+		}
+	} else {
+		if wasV4 {
+			clearDevicePrimary(&device, true)
+		}
+		if wasV6 {
+			clearDevicePrimary(&device, false)
+		}
+	}
+	return saveDevicePrimary(db, &device)
 }
 
 func (ctrl *Controller) ApiGetInterfaceTemplates(c *echo.Context) error {
