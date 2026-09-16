@@ -159,6 +159,95 @@ func TestDeleteDeviceByNetboxID_LeavesNonNetboxSource(t *testing.T) {
 	}
 }
 
+func TestDeleteMissingDevices_RemovesGonePhysicalKeepsRest(t *testing.T) {
+	db := newImportTestDB(t)
+	keep := models.Device{Name: "keep", NetboxID: 1, VM: false, CfSource: "netbox"}
+	stale := models.Device{Name: "stale", NetboxID: 2, VM: false, CfSource: "netbox"}
+	local := models.Device{Name: "local", NetboxID: 0, VM: false, CfSource: "factum"}
+	if err := db.Create(&keep).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := deleteMissingDevices(db, []uint{1}, nil)
+	if err != nil {
+		t.Fatalf("deleteMissingDevices: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted = %d, want 1", n)
+	}
+	if gone[models.Device](t, db, keep.ID) {
+		t.Error("kept device was deleted")
+	}
+	if !gone[models.Device](t, db, stale.ID) {
+		t.Error("missing netbox device was not deleted")
+	}
+	if gone[models.Device](t, db, local.ID) {
+		t.Error("factum-local device was deleted")
+	}
+}
+
+func TestDeleteMissingDevices_EmptyVMListStillDeletesPhysical(t *testing.T) {
+	db := newImportTestDB(t)
+	phys := models.Device{Name: "rtr1", NetboxID: 10, VM: false, CfSource: "netbox"}
+	vm := models.Device{Name: "vm1", NetboxID: 10, VM: true, CfSource: "netbox"}
+	if err := db.Create(&phys).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&vm).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := deleteMissingDevices(db, []uint{99}, []uint{})
+	if err != nil {
+		t.Fatalf("deleteMissingDevices: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted = %d, want 2 (gone physical + all VMs)", n)
+	}
+	if !gone[models.Device](t, db, phys.ID) {
+		t.Error("physical device still present")
+	}
+	if !gone[models.Device](t, db, vm.ID) {
+		t.Error("VM still present when NetBox returned no VMs")
+	}
+}
+
+func TestDeleteMissingDevices_EmptyInventoryDeletesAllNetboxSourced(t *testing.T) {
+	db := newImportTestDB(t)
+	phys := models.Device{Name: "rtr1", NetboxID: 1, VM: false, CfSource: "netbox"}
+	vm := models.Device{Name: "vm1", NetboxID: 2, VM: true, CfSource: "netbox"}
+	local := models.Device{Name: "local", CfSource: "factum"}
+	if err := db.Create(&phys).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&vm).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := deleteMissingDevices(db, nil, nil)
+	if err != nil {
+		t.Fatalf("deleteMissingDevices: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted = %d, want 2", n)
+	}
+	if !gone[models.Device](t, db, phys.ID) || !gone[models.Device](t, db, vm.ID) {
+		t.Error("netbox-sourced rows still present after empty inventory")
+	}
+	if gone[models.Device](t, db, local.ID) {
+		t.Error("factum-local device was deleted")
+	}
+}
+
 func TestDeleteDeviceByNetboxID_DoesNotCrossVMBoundary(t *testing.T) {
 	db := newImportTestDB(t)
 

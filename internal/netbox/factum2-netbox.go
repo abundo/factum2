@@ -144,10 +144,10 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
-	// Only a full sync has the complete list of devices that exist in
-	// Netbox, so device-level cleanup only runs then. Guard against an
-	// empty result wiping every netbox-sourced device in factum.
-	if fullSync && len(nb_devices) > 0 {
+	// Only a full sync has the complete Netbox inventory, so device-level
+	// cleanup only runs then. GetDevices/GetVMs already return on API
+	// errors; a successful empty fetch means the last device is gone.
+	if fullSync {
 		count_deleted, err = deleteMissingDevices(db, syncedDeviceIDs, syncedVMIDs)
 		if err != nil {
 			reporter.EmitErr(err)
@@ -276,10 +276,8 @@ func syncCables(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repo
 		}
 	}
 
-	// Guard against an empty/failed cable fetch wiping every local
-	// connection, matching deleteMissingDevices' guard for devices - if
-	// Netbox genuinely returned zero interface-to-interface cables, this
-	// leaves stale rows in place rather than assuming that.
+	// Skip connection cleanup on an empty cable list so a fetch that
+	// returned no interface-to-interface cables cannot wipe every row.
 	var count_deleted int
 	if len(nb_cables) > 0 {
 		result := db.Where("netbox_id NOT IN ?", syncedIDs).Delete(&models.Connection{})
@@ -1026,14 +1024,21 @@ func DeleteDeviceByNetboxID(db *gorm.DB, netboxID uint, vm bool) (int, error) {
 // list (rather than one combined list) since Netbox's dcim.Device and
 // virtualization.VirtualMachine tables have independent ID sequences, and a
 // device and a VM can share the same NetboxID.
+//
+// An empty synced-ID list means Netbox returned none of that type, so
+// every local netbox-sourced row of that type is stale. GORM's NOT IN
+// with an empty slice never matches, so that case has no netbox_id
+// predicate.
 func deleteMissingDevices(db *gorm.DB, syncedDeviceIDs, syncedVMIDs []uint) (int, error) {
-	var stale []models.Device
-	err := db.Where("cf_source = ? AND vm = ? AND netbox_id NOT IN ?", "netbox", false, syncedDeviceIDs).
-		Or("cf_source = ? AND vm = ? AND netbox_id NOT IN ?", "netbox", true, syncedVMIDs).
-		Find(&stale).Error
+	stale, err := staleNetboxDevices(db, false, syncedDeviceIDs)
 	if err != nil {
 		return 0, err
 	}
+	vms, err := staleNetboxDevices(db, true, syncedVMIDs)
+	if err != nil {
+		return 0, err
+	}
+	stale = append(stale, vms...)
 
 	for _, device := range stale {
 		if err := deleteDevice(db, device); err != nil {
@@ -1042,4 +1047,14 @@ func deleteMissingDevices(db *gorm.DB, syncedDeviceIDs, syncedVMIDs []uint) (int
 	}
 
 	return len(stale), nil
+}
+
+func staleNetboxDevices(db *gorm.DB, vm bool, syncedIDs []uint) ([]models.Device, error) {
+	var stale []models.Device
+	q := db.Where("cf_source = ? AND vm = ?", "netbox", vm)
+	if len(syncedIDs) > 0 {
+		q = q.Where("netbox_id NOT IN ?", syncedIDs)
+	}
+	err := q.Find(&stale).Error
+	return stale, err
 }
