@@ -471,12 +471,15 @@ function fitToPoints(devices, sites) {
 // what's actually visible instead of the site's full device count.
 function rebuild() {
   const devices = rawDevices.value.filter((d) => {
+    if (d.latitude == null || d.longitude == null) return false
     if (!activeRoles.value.has(d.role || 'Unassigned')) return false
     if (opticalOnly.value && !d.optical_kind) return false
     return true
   })
   const laidOutDevices = layoutDevices(devices)
-  const laidOutSites = layoutSites(rawSites.value)
+  const laidOutSites = layoutSites(
+    rawSites.value.filter((s) => s.latitude != null && s.longitude != null),
+  )
   overlay?.setProps({ layers: buildLayers(laidOutDevices, rawEdges.value, laidOutSites) })
   return { devices: laidOutDevices, sites: laidOutSites }
 }
@@ -667,9 +670,7 @@ function selectAssignSite(site) {
   assignSelected.value = null
   selected.value = null
   clearPickedAddress()
-  pickedCoords.value = hasMappableCoords(site)
-    ? { lat: site.latitude, lng: site.longitude }
-    : null
+  pickedCoords.value = hasMappableCoords(site) ? { lat: site.latitude, lng: site.longitude } : null
   if (hasMappableCoords(site)) {
     panTo(site.latitude, site.longitude)
     setPicking(false)
@@ -712,6 +713,51 @@ function coordsMatch(d, lat, lng) {
   return d.latitude === lat && d.longitude === lng
 }
 
+// Map layers read TopologyDeviceDTO (plain lat/lng). The assign panel uses
+// the list DTO, where GPS is optional — copy the assigned numbers onto the
+// shape rebuild()/layoutDevices expect.
+function deviceOnMap(d, latitude, longitude) {
+  return {
+    id: d.id,
+    name: d.name,
+    site: d.site,
+    role: d.role || 'Unassigned',
+    status: d.status,
+    manufacturer: d.manufacturer,
+    model_name: d.model_name,
+    optical_kind: d.optical_kind ?? '',
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+  }
+}
+
+function revealRole(role) {
+  const r = role || 'Unassigned'
+  if (activeRoles.value.has(r)) return
+  activeRoles.value = new Set([...activeRoles.value, r])
+}
+
+// Insert or move devices on the map immediately after an assign. A device
+// that had no GPS is missing from rawDevices (the topology payload omits
+// it), so mapping over the existing array would never add it.
+function placeDevicesOnMap(devices, latitude, longitude) {
+  if (latitude == null || longitude == null || !devices.length) return
+  const byId = new Map(rawDevices.value.map((d) => [d.id, d]))
+  for (const d of devices) {
+    const next = deviceOnMap(d, latitude, longitude)
+    byId.set(next.id, { ...byId.get(next.id), ...next })
+    revealRole(next.role)
+  }
+  rawDevices.value = [...byId.values()]
+}
+
+function showAssignedOnMap(latitude, longitude) {
+  pickedCoords.value = null
+  setPicking(false)
+  rebuild()
+  panTo(latitude, longitude)
+}
+
 // AssignLocation only returns the pinned device. Other devices at that
 // site inherit the site's GPS (see netbox.AssignDeviceLocation), so
 // refresh them in the assign panel and on the map instead of leaving
@@ -719,19 +765,22 @@ function coordsMatch(d, lat, lng) {
 // are left alone — same rule as the server.
 function refreshDevicesAtSite(assigned, site, latitude, longitude) {
   if (assigned) {
-    assignSelected.value = assigned
+    assignSelected.value = { ...assigned, latitude, longitude }
   }
   // No site in the response means GPS was written on this device only —
   // leave every other device (including ones that share its current
   // site) where they are.
   if (!site) {
     if (!assigned) return
-    allDevices.value = allDevices.value.map((d) => (d.id === assigned.id ? assigned : d))
+    allDevices.value = allDevices.value.map((d) =>
+      d.id === assigned.id ? { ...d, ...assigned, latitude, longitude } : d,
+    )
+    placeDevicesOnMap([{ ...assigned, latitude, longitude }], latitude, longitude)
     return
   }
 
   const siteName = site.name
-  const siteId = assigned?.site_id
+  const siteId = assigned?.site_id ?? site.id
 
   const prev = rawSites.value.find(
     (s) => (site?.id != null && s.id === site.id) || (siteName && s.name === siteName),
@@ -741,29 +790,35 @@ function refreshDevicesAtSite(assigned, site, latitude, longitude) {
     return !!(prev && coordsMatch(d, prev.latitude, prev.longitude))
   }
 
+  const moved = []
   allDevices.value = allDevices.value.map((d) => {
-    if (assigned && d.id === assigned.id) return assigned
+    if (assigned && d.id === assigned.id) {
+      const next = {
+        ...d,
+        ...assigned,
+        site: siteName || d.site,
+        site_id: siteId || d.site_id,
+        latitude,
+        longitude,
+      }
+      moved.push(next)
+      return next
+    }
     if (!sameSite(d, siteName, siteId) || !inheritsSite(d)) return d
-    return {
+    const next = {
       ...d,
       site: siteName || d.site,
       site_id: siteId || d.site_id,
       latitude,
       longitude,
     }
+    moved.push(next)
+    return next
   })
-
-  if (!siteName) return
-  rawDevices.value = rawDevices.value.map((d) => {
-    if (assigned && d.id === assigned.id) {
-      return { ...d, latitude, longitude, site: siteName }
-    }
-    if (d.site !== siteName) return d
-    if (prev && coordsMatch(d, prev.latitude, prev.longitude)) {
-      return { ...d, latitude, longitude }
-    }
-    return d
-  })
+  if (assigned && !moved.some((d) => d.id === assigned.id)) {
+    moved.push({ ...assigned, site: siteName, site_id: siteId, latitude, longitude })
+  }
+  placeDevicesOnMap(moved, latitude, longitude)
 }
 
 function onAssign({ site_name, latitude, longitude, physical_address }) {
@@ -786,9 +841,7 @@ function onAssign({ site_name, latitude, longitude, physical_address }) {
       })
       refreshDevicesAtSite(data.device ?? device, data.site, latitude, longitude)
       upsertRawSite(data.site)
-      pickedCoords.value = { lat: latitude, lng: longitude }
-      setPicking(false)
-      rebuild()
+      showAssignedOnMap(latitude, longitude)
       return reloadAfterAssign(latitude, longitude)
     })
     .catch((err) => {
@@ -825,9 +878,49 @@ function reloadAfterAssign(latitude, longitude) {
   ])
 }
 
-function onAssignSite({ latitude, longitude }) {
+function onAssignSite({ latitude, longitude, via_device_id, physical_address }) {
   const site = assignSelectedSite.value
   if (!site) return
+  if (via_device_id) {
+    const device = allDevices.value.find((d) => d.id === Number(via_device_id))
+    if (!device) return
+    assignSaving.value = true
+    const body = { latitude, longitude, site_name: site.name }
+    if (physical_address) body.physical_address = physical_address
+    assignDeviceLocation(device.id, body)
+      .then((data) => {
+        toast.add({
+          color: 'success',
+          title: 'Assigned',
+          description: `${data.site?.name ?? site.name} updated in NetBox via ${device.name}.`,
+          duration: 4000,
+        })
+        refreshDevicesAtSite(data.device ?? device, data.site ?? site, latitude, longitude)
+        upsertRawSite(data.site)
+        if (data.site) {
+          assignSelectedSite.value = {
+            ...site,
+            ...data.site,
+            latitude: data.site.latitude,
+            longitude: data.site.longitude,
+          }
+        }
+        showAssignedOnMap(latitude, longitude)
+        return reloadAfterAssign(latitude, longitude)
+      })
+      .catch((err) => {
+        toast.add({
+          color: 'error',
+          title: 'Could not save location',
+          description: err.response?.data?.error ?? err.message ?? 'Request failed.',
+          duration: 5000,
+        })
+      })
+      .finally(() => {
+        assignSaving.value = false
+      })
+    return
+  }
   assignSaving.value = true
   assignSiteLocation(site.id, { latitude, longitude })
     .then((data) => {
@@ -847,9 +940,7 @@ function onAssignSite({ latitude, longitude }) {
         }
       }
       refreshDevicesAtSite(null, data.site ?? site, latitude, longitude)
-      pickedCoords.value = { lat: latitude, lng: longitude }
-      setPicking(false)
-      rebuild()
+      showAssignedOnMap(latitude, longitude)
       return reloadAfterAssign(latitude, longitude)
     })
     .catch((err) => {
@@ -906,7 +997,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="card flex min-h-0 flex-1 flex-col">
+  <div class="card flex min-h-0 flex-1 flex-col overflow-hidden">
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <div class="flex flex-wrap items-center gap-4">
         <h4 class="m-0">Network map</h4>
@@ -982,7 +1073,7 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="flex min-h-0 flex-1 gap-3">
+    <div class="flex min-h-0 flex-1 gap-3 overflow-hidden">
       <SiteAssignPanel
         v-if="assignMode"
         :devices="allDevices"

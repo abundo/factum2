@@ -16,7 +16,14 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'select-site', 'update:picking', 'assign', 'assign-site', 'use-site'])
+const emit = defineEmits([
+  'select',
+  'select-site',
+  'update:picking',
+  'assign',
+  'assign-site',
+  'use-site',
+])
 
 const search = ref('')
 const missingSiteOnly = ref(false)
@@ -109,8 +116,30 @@ const groupedDevices = computed(() => {
 
 const selected = computed(() => props.devices.find((d) => d.id === props.selectedId) ?? null)
 
-const selectedSite = computed(
-  () => props.sites.find((s) => s.id === props.selectedSiteId) ?? null,
+const selectedSite = computed(() => props.sites.find((s) => s.id === props.selectedSiteId) ?? null)
+
+const viaDeviceId = ref(null)
+
+const netboxDevicesAtSite = computed(() => {
+  const site = selectedSite.value
+  if (!site || isFactumSite(site)) return []
+  return props.devices
+    .filter((d) => d.netbox_id && !d.vm && (d.site_id === site.id || d.site === site.name))
+    .slice()
+    .sort(byName)
+})
+
+const viaDeviceItems = computed(() =>
+  netboxDevicesAtSite.value.map((d) => ({
+    label: d.name,
+    value: d.id,
+  })),
+)
+
+const showSiteActions = computed(
+  () =>
+    !!selectedSite.value &&
+    (isFactumSite(selectedSite.value) || netboxDevicesAtSite.value.length > 0),
 )
 
 const siteItems = computed(() => {
@@ -147,8 +176,9 @@ const canSubmitDevice = computed(() => {
 
 const canSubmitSite = computed(() => {
   if (!props.canWrite || !selectedSite.value || props.saving) return false
-  if (!isFactumSite(selectedSite.value)) return false
-  return !!effectiveCoords.value
+  if (!effectiveCoords.value) return false
+  if (isFactumSite(selectedSite.value)) return true
+  return netboxDevicesAtSite.value.length > 0 && viaDeviceId.value != null
 })
 
 watch(
@@ -161,6 +191,16 @@ watch(
       el?.scrollIntoView({ block: 'nearest' })
     })
   },
+)
+
+watch(
+  () => [props.selectedSiteId, netboxDevicesAtSite.value.map((d) => d.id).join(',')],
+  () => {
+    const ids = new Set(netboxDevicesAtSite.value.map((d) => d.id))
+    if (viaDeviceId.value != null && ids.has(viaDeviceId.value)) return
+    viaDeviceId.value = netboxDevicesAtSite.value[0]?.id ?? null
+  },
+  { immediate: true },
 )
 
 function onExistingSite(name) {
@@ -186,15 +226,22 @@ function submit() {
 function submitSite() {
   if (!canSubmitSite.value) return
   const coords = effectiveCoords.value
-  emit('assign-site', {
+  const payload = {
     latitude: roundGps(coords.lat),
     longitude: roundGps(coords.lng),
-  })
+  }
+  if (!isFactumSite(selectedSite.value) && viaDeviceId.value != null) {
+    payload.via_device_id = Number(viaDeviceId.value)
+    if (props.address?.trim()) payload.physical_address = props.address.trim()
+  }
+  emit('assign-site', payload)
 }
 </script>
 
 <template>
-  <div class="flex w-80 shrink-0 flex-col min-h-0 rounded-lg border border-default bg-default">
+  <div
+    class="flex h-full w-80 shrink-0 flex-col min-h-0 overflow-hidden rounded-lg border border-default bg-default"
+  >
     <div class="p-3 border-b border-default space-y-2 shrink-0">
       <div class="font-medium">Assign locations</div>
       <SearchInput v-model="search" placeholder="Search devices..." size="sm" />
@@ -203,12 +250,12 @@ function submitSite() {
         Without a site
       </label>
       <div class="text-xs text-muted-color">
-        {{ filteredDevices.length }} of {{ devices.length }} devices ·
-        {{ filteredSites.length }} of {{ sites.length }} sites
+        {{ filteredDevices.length }} of {{ devices.length }} devices · {{ filteredSites.length }} of
+        {{ sites.length }} sites
       </div>
     </div>
 
-    <div ref="listEl" class="min-h-0 flex-1 overflow-y-auto">
+    <div ref="listEl" class="min-h-0 flex-1 basis-0 overflow-y-auto">
       <div v-if="loading" class="flex justify-center py-6">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin" />
       </div>
@@ -291,142 +338,168 @@ function submitSite() {
       </div>
     </div>
 
-    <div v-if="selectedSite" class="p-3 border-t border-default space-y-3 shrink-0">
-      <div>
-        <div class="font-medium">{{ selectedSite.name }}</div>
-        <div class="text-xs text-muted-color">
-          {{ isFactumSite(selectedSite) ? 'Factum site' : 'NetBox site' }}
-        </div>
+    <div
+      v-if="selectedSite || selected"
+      class="flex min-h-0 max-h-[55%] shrink-0 flex-col border-t border-default bg-default"
+    >
+      <div class="min-h-0 space-y-3 overflow-y-auto p-3">
+        <template v-if="selectedSite">
+          <div>
+            <div class="font-medium">{{ selectedSite.name }}</div>
+            <div class="text-xs text-muted-color">
+              {{ isFactumSite(selectedSite) ? 'Factum site' : 'NetBox site' }}
+            </div>
+          </div>
+
+          <div
+            v-if="!isFactumSite(selectedSite) && !netboxDevicesAtSite.length"
+            class="text-sm text-muted-color"
+          >
+            Coordinates for NetBox sites are written through a NetBox device at the site. This site
+            has none yet.
+          </div>
+          <template v-else>
+            <div class="text-sm">Click the map to set this site’s coordinates.</div>
+            <div v-if="!isFactumSite(selectedSite) && viaDeviceItems.length">
+              <label class="block text-xs font-medium mb-1">Assign in NetBox via</label>
+              <USelect
+                v-model="viaDeviceId"
+                :items="viaDeviceItems"
+                value-key="value"
+                label-key="label"
+                class="w-full"
+                :disabled="!canWrite"
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-medium mb-1">Coordinates</label>
+              <div class="text-sm font-mono">
+                {{
+                  effectiveCoords
+                    ? formatCoord(effectiveCoords.lat, effectiveCoords.lng)
+                    : 'Not set — click the map'
+                }}
+              </div>
+              <div v-if="addressLoading" class="text-xs text-muted-color mt-1">
+                Looking up address…
+              </div>
+              <div
+                v-else-if="address"
+                class="text-xs text-muted-color mt-1 line-clamp-3 whitespace-pre-line"
+              >
+                {{ address }}
+              </div>
+            </div>
+          </template>
+        </template>
+        <template v-else>
+          <div>
+            <div class="font-medium">{{ selected.name }}</div>
+            <div v-if="hardwareLabel(selected)" class="text-xs text-muted-color">
+              {{ hardwareLabel(selected) }}
+            </div>
+            <div class="text-xs text-muted-color">
+              {{ isFactumDevice(selected) ? 'Factum' : 'NetBox' }}
+              · {{ selected.role || 'Unassigned' }} · {{ selected.status || '—' }}
+            </div>
+          </div>
+
+          <div v-if="!hasSite(selected)" class="text-sm">
+            Click the map to set coordinates. A site is optional — skip it when this is the only
+            device at the location.
+          </div>
+          <div v-else-if="!formatCoord(selected.latitude, selected.longitude)" class="text-sm">
+            Site {{ selected.site }} has no coordinates. Click the map to set them, or clear the
+            site name to pin only this device.
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium mb-1">Site (optional)</label>
+            <UInput
+              v-model="siteName"
+              placeholder="Leave blank to pin this device only"
+              size="sm"
+              :disabled="!canWrite"
+            />
+          </div>
+
+          <div v-if="siteItems.length">
+            <label class="block text-xs font-medium mb-1">Existing sites</label>
+            <USelect
+              :model-value="namedSite?.name"
+              :items="siteItems"
+              value-key="value"
+              label-key="label"
+              placeholder="Assign to an existing site"
+              class="w-full"
+              :disabled="!canWrite"
+              @update:model-value="onExistingSite"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium mb-1">Coordinates</label>
+            <div class="text-sm font-mono">
+              {{
+                effectiveCoords
+                  ? formatCoord(effectiveCoords.lat, effectiveCoords.lng)
+                  : 'Not set — click the map'
+              }}
+            </div>
+            <div v-if="addressLoading" class="text-xs text-muted-color mt-1">
+              Looking up address…
+            </div>
+            <div
+              v-else-if="address"
+              class="text-xs text-muted-color mt-1 line-clamp-3 whitespace-pre-line"
+            >
+              {{ address }}
+            </div>
+          </div>
+        </template>
       </div>
 
-      <div v-if="!isFactumSite(selectedSite)" class="text-sm text-muted-color">
-        Coordinates for NetBox sites are set by assigning a NetBox device to the site.
+      <div
+        v-if="showSiteActions || selected"
+        class="flex shrink-0 flex-col gap-2 border-t border-default bg-default p-3"
+      >
+        <UButton
+          :label="picking ? 'Picking on map…' : 'Pick on map'"
+          icon="i-lucide-map-pin"
+          size="sm"
+          color="primary"
+          :variant="picking ? 'solid' : 'outline'"
+          block
+          :disabled="!canWrite"
+          @click="emit('update:picking', !picking)"
+        />
+        <UButton
+          v-if="selectedSite"
+          :label="isFactumSite(selectedSite) ? 'Save coordinates' : 'Assign in NetBox'"
+          icon="i-lucide-check"
+          size="sm"
+          color="primary"
+          :variant="canSubmitSite ? 'solid' : 'outline'"
+          block
+          :loading="saving"
+          :disabled="!canSubmitSite"
+          @click="submitSite"
+        />
+        <UButton
+          v-else
+          :label="isFactumDevice(selected) ? 'Save coordinates' : 'Assign in NetBox'"
+          icon="i-lucide-check"
+          size="sm"
+          color="primary"
+          :variant="canSubmitDevice ? 'solid' : 'outline'"
+          block
+          :loading="saving"
+          :disabled="!canSubmitDevice"
+          @click="submit"
+        />
       </div>
-
-      <template v-else>
-        <div class="text-sm">Click the map to set this site’s coordinates.</div>
-        <div>
-          <label class="block text-xs font-medium mb-1">Coordinates</label>
-          <div class="text-sm font-mono">
-            {{
-              effectiveCoords
-                ? formatCoord(effectiveCoords.lat, effectiveCoords.lng)
-                : 'Not set — click the map'
-            }}
-          </div>
-          <div v-if="addressLoading" class="text-xs text-muted-color mt-1">Looking up address…</div>
-          <div v-else-if="address" class="text-xs text-muted-color mt-1 whitespace-pre-line">
-            {{ address }}
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <UButton
-            :label="picking ? 'Picking on map…' : 'Pick on map'"
-            icon="i-lucide-map-pin"
-            size="xs"
-            color="primary"
-            :variant="picking ? 'solid' : 'outline'"
-            :disabled="!canWrite"
-            @click="emit('update:picking', !picking)"
-          />
-          <UButton
-            label="Save coordinates"
-            icon="i-lucide-check"
-            size="xs"
-            color="primary"
-            :variant="canSubmitSite ? 'solid' : 'outline'"
-            :loading="saving"
-            :disabled="!canSubmitSite"
-            @click="submitSite"
-          />
-        </div>
-      </template>
     </div>
-    <div v-else-if="selected" class="p-3 border-t border-default space-y-3 shrink-0">
-      <div>
-        <div class="font-medium">{{ selected.name }}</div>
-        <div v-if="hardwareLabel(selected)" class="text-xs text-muted-color">
-          {{ hardwareLabel(selected) }}
-        </div>
-        <div class="text-xs text-muted-color">
-          {{ isFactumDevice(selected) ? 'Factum' : 'NetBox' }}
-          · {{ selected.role || 'Unassigned' }} · {{ selected.status || '—' }}
-        </div>
-      </div>
-
-      <template>
-        <div v-if="!hasSite(selected)" class="text-sm">
-          Click the map to set coordinates. A site is optional — skip it when this is the only
-          device at the location.
-        </div>
-        <div v-else-if="!formatCoord(selected.latitude, selected.longitude)" class="text-sm">
-          Site {{ selected.site }} has no coordinates. Click the map to set them, or clear the site
-          name to pin only this device.
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium mb-1">Site (optional)</label>
-          <UInput
-            v-model="siteName"
-            placeholder="Leave blank to pin this device only"
-            size="sm"
-            :disabled="!canWrite"
-          />
-        </div>
-
-        <div v-if="siteItems.length">
-          <label class="block text-xs font-medium mb-1">Existing sites</label>
-          <USelect
-            :model-value="namedSite?.name"
-            :items="siteItems"
-            value-key="value"
-            label-key="label"
-            placeholder="Assign to an existing site"
-            class="w-full"
-            :disabled="!canWrite"
-            @update:model-value="onExistingSite"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium mb-1">Coordinates</label>
-          <div class="text-sm font-mono">
-            {{
-              effectiveCoords
-                ? formatCoord(effectiveCoords.lat, effectiveCoords.lng)
-                : 'Not set — click the map'
-            }}
-          </div>
-          <div v-if="addressLoading" class="text-xs text-muted-color mt-1">Looking up address…</div>
-          <div v-else-if="address" class="text-xs text-muted-color mt-1 whitespace-pre-line">
-            {{ address }}
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-2">
-          <UButton
-            :label="picking ? 'Picking on map…' : 'Pick on map'"
-            icon="i-lucide-map-pin"
-            size="xs"
-            color="primary"
-            :variant="picking ? 'solid' : 'outline'"
-            :disabled="!canWrite"
-            @click="emit('update:picking', !picking)"
-          />
-          <UButton
-            :label="isFactumDevice(selected) ? 'Save coordinates' : 'Assign in NetBox'"
-            icon="i-lucide-check"
-            size="xs"
-            color="primary"
-            :variant="canSubmitDevice ? 'solid' : 'outline'"
-            :loading="saving"
-            :disabled="!canSubmitDevice"
-            @click="submit"
-          />
-        </div>
-      </template>
-    </div>
-    <div v-else class="p-3 border-t border-default text-sm text-muted-color shrink-0">
+    <div v-else class="shrink-0 border-t border-default bg-default p-3 text-sm text-muted-color">
       Select a site or device to pan the map and set its location.
     </div>
   </div>
