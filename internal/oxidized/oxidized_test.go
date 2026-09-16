@@ -37,7 +37,7 @@ func TestSaveDevicesQualifiesShortNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(body)
-	want := "rtr1.example.com:10.1.1.1:eos\nrtr1.example.com:10.1.1.4:eos\nsw1.site.example.com:10.1.1.2:ios\n10.1.1.3:10.1.1.3:eos\n"
+	want := "rtr1.example.com:10.1.1.1:eos\nrtr1.example.com:10.1.1.4:eos\nsw1.site:10.1.1.2:ios\n10.1.1.3:10.1.1.3:eos\n"
 	if got != want {
 		t.Fatalf("router.db =\n%q\nwant\n%q", got, want)
 	}
@@ -232,7 +232,8 @@ func TestDeviceFQDN(t *testing.T) {
 		{"rtr1", "example.com", "rtr1.example.com"},
 		{"rtr1.example.com", "example.com", "rtr1.example.com"},
 		{"rtr1.example.com.", "example.com", "rtr1.example.com"},
-		{"rtr1.site", "example.com", "rtr1.site.example.com"},
+		{"rtr1.site", "example.com", "rtr1.site"},
+		{"lu17-lab-r0.itn.nu", "lab.example", "lu17-lab-r0.itn.nu"},
 		{"10.1.1.1", "example.com", "10.1.1.1"},
 		{"rtr1", "", "rtr1"},
 		{"", "example.com", ""},

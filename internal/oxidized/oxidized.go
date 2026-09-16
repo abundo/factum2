@@ -251,11 +251,10 @@ func routerDBIP(device *models.Device) string {
 	return strings.Split(device.PrimaryIPv4, "/")[0]
 }
 
-// deviceFQDN qualifies name with domain so oxidized can resolve it via DNS.
-// Names that already end with the default domain, and IPv4/IPv6 literals,
-// are returned unchanged. Unlike util.FormatName, extra labels such as
-// "rtr1.site" are still qualified ("rtr1.site.example.com") so they match
-// the absolute names factum2-dns publishes.
+// deviceFQDN qualifies a short hostname with domain. Names that already
+// contain a '.' (FQDNs such as lu17-lab-r0.itn.nu) and IP literals are
+// returned unchanged — same rule as util.FormatName, plus an IP check so
+// IPv6 addresses are not given a domain suffix.
 func deviceFQDN(name, domain string) string {
 	name = strings.TrimSuffix(strings.TrimSpace(name), ".")
 	domain = strings.Trim(strings.TrimSpace(domain), ".")
@@ -265,14 +264,7 @@ func deviceFQDN(name, domain string) string {
 	if net.ParseIP(name) != nil {
 		return name
 	}
-	if domain == "" {
-		return name
-	}
-	suffix := "." + domain
-	if strings.EqualFold(name, domain) || strings.HasSuffix(strings.ToLower(name), strings.ToLower(suffix)) {
-		return name
-	}
-	return name + suffix
+	return util.FormatName(domain, name)
 }
 
 // Reload asks oxidized to reload its router.db configuration file. Returns
