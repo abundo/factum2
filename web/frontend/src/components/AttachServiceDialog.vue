@@ -6,6 +6,7 @@ import { getService, getServices, putServiceEndpoints, updateServiceType } from 
 import SchemaFields from '@/components/SchemaFields.vue'
 import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import {
+  applySchemaDefaults,
   endpointsReady,
   findServiceScope,
   findServicesFolderId,
@@ -92,7 +93,7 @@ watch(open, (isOpen) => {
   schemaValues.value = {}
   connectionTypeId.value = null
   endpoints.value = []
-  roleFields.value = {}
+  roleFields.value = applySchemaDefaults(ifaceFields.value)
   existingEndpoints.value = []
   createdNode.value = null
   hydrating.value = true
@@ -117,6 +118,7 @@ watch(open, (isOpen) => {
 
 watch(selectedServiceId, (id) => {
   existingEndpoints.value = []
+  roleFields.value = applySchemaDefaults(ifaceFields.value)
   if (!id) return
   getService(id)
     .then((data) => {
@@ -126,7 +128,7 @@ watch(selectedServiceId, (id) => {
 })
 
 watch(selectedTypeName, () => {
-  schemaValues.value = {}
+  schemaValues.value = applySchemaDefaults(selectedType.value?.schema)
   connectionTypeId.value = null
   if (mode.value === 'new') {
     existingEndpoints.value = []
@@ -136,7 +138,7 @@ watch(selectedTypeName, () => {
 
 watch(mode, () => {
   existingEndpoints.value = []
-  roleFields.value = {}
+  roleFields.value = applySchemaDefaults(ifaceFields.value)
   createdNode.value = null
   if (mode.value === 'new') seedNewEndpoints()
 })
@@ -144,13 +146,14 @@ watch(mode, () => {
 function seedNewEndpoints() {
   const st = selectedType.value
   const n = st?.interfaces?.min || 0
+  const fields = applySchemaDefaults(st?.interfaces?.fields)
   const list = []
   for (let i = 0; i < n; i++) {
     list.push({
       role: 'interface',
       device_id: i === 0 ? props.deviceId : null,
       interface_id: i === 0 ? props.interfaceId : null,
-      fields: {},
+      fields: { ...fields },
       label: i === 0 ? `${props.deviceName} / ${props.interfaceName}` : '',
     })
   }
@@ -159,7 +162,7 @@ function seedNewEndpoints() {
       role: 'interface',
       device_id: props.deviceId,
       interface_id: props.interfaceId,
-      fields: {},
+      fields: { ...fields },
       label: `${props.deviceName} / ${props.interfaceName}`,
     })
   } else {

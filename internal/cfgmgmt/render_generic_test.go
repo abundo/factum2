@@ -61,6 +61,40 @@ func TestFillEndpointDefaultsSameNameOnly(t *testing.T) {
 	}
 }
 
+func TestFillEndpointDefaultsUsesFieldDefault(t *testing.T) {
+	st := &models.ServiceType{
+		Schema: []models.FieldSchema{
+			{Name: "bandwidth", Type: models.FieldTypeInt, Default: jsonRaw(t, 100)},
+		},
+		Interfaces: models.ServiceInterfacesSpec{
+			Fields: []models.FieldSchema{
+				{Name: "bandwidth", Type: models.FieldTypeInt},
+				{Name: "inner_vlan", Type: models.FieldTypeVLAN, Default: jsonRaw(t, 200)},
+			},
+		},
+	}
+	got := FillEndpointDefaults(st, map[string]any{}, map[string]any{})
+	if got["bandwidth"] != int64(100) && got["bandwidth"] != 100 && got["bandwidth"] != float64(100) {
+		n, ok := asInt(got["bandwidth"])
+		if !ok || n != 100 {
+			t.Errorf("same-name service default = %#v", got["bandwidth"])
+		}
+	}
+	n, ok := asInt(got["inner_vlan"])
+	if !ok || n != 200 {
+		t.Errorf("interface default = %#v", got["inner_vlan"])
+	}
+	got = FillEndpointDefaults(st, map[string]any{"bandwidth": 10}, map[string]any{"inner_vlan": 9})
+	n, ok = asInt(got["bandwidth"])
+	if !ok || n != 10 {
+		t.Errorf("explicit service bandwidth lost: %#v", got["bandwidth"])
+	}
+	n, ok = asInt(got["inner_vlan"])
+	if !ok || n != 9 {
+		t.Errorf("explicit inner_vlan overwritten: %#v", got["inner_vlan"])
+	}
+}
+
 func TestFillEndpointDefaultsDoesNotPersist(t *testing.T) {
 	db := newTestDB(t)
 	st := mustELINEType(t, db)

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
 import SchemaFields from '@/components/SchemaFields.vue'
+import { applySchemaDefaults } from '@/utils/serviceEndpoints'
 
 defineOptions({ name: 'HomogeneousInterfaces' })
 
@@ -26,7 +27,13 @@ const canAdd = computed(() => max.value === 0 || endpoints.value.length < max.va
 const canRemove = computed(() => endpoints.value.length > min.value)
 
 function emptyEndpoint() {
-  return { role: 'interface', device_id: null, interface_id: null, fields: {}, label: '' }
+  return {
+    role: 'interface',
+    device_id: null,
+    interface_id: null,
+    fields: applySchemaDefaults(props.spec?.fields),
+    label: '',
+  }
 }
 
 function addEndpoint() {

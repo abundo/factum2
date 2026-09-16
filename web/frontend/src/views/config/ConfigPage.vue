@@ -46,6 +46,7 @@ import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 import {
+  applySchemaDefaults,
   endpointsReady,
   findServiceScope,
   schemaMissingRequired,
@@ -382,14 +383,15 @@ function emptyEndpoint(extra = {}) {
 
 function seedCreateEndpoints(def, fromIface) {
   const n = def?.interfaces?.min || 0
+  const ifaceFields = applySchemaDefaults(def?.interfaces?.fields)
   const list = []
-  for (let i = 0; i < n; i++) list.push(emptyEndpoint())
+  for (let i = 0; i < n; i++) list.push(emptyEndpoint({ fields: ifaceFields }))
   if (fromIface?.device_id && fromIface?.interface_id) {
     const slot = {
       role: 'interface',
       device_id: fromIface.device_id,
       interface_id: fromIface.interface_id,
-      fields: {},
+      fields: { ...ifaceFields },
       label: fromIface.title || '',
     }
     if (list.length) list[0] = { ...list[0], ...slot }
@@ -400,7 +402,7 @@ function seedCreateEndpoints(def, fromIface) {
 
 function pickCreateDefinition(t) {
   createDefinition.value = t
-  createFields.value = {}
+  createFields.value = applySchemaDefaults(t.schema)
   createConnectionTypeId.value = t.connection_types?.[0]?.id ?? null
   seedCreateEndpoints(t, form.value.from_interface)
   createStep.value = 'form'
@@ -1350,12 +1352,23 @@ function toNum(v) {
   return Number.isFinite(n) ? n : undefined
 }
 
+function serializeDefault(v) {
+  if (v === undefined || v === null) return undefined
+  if (typeof v === 'string' && v.trim() === '') return undefined
+  if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) {
+    return serializeDefault(v.value)
+  }
+  return v
+}
+
 function serializeField(f, named) {
   const type = optionValue(f?.type) || 'string'
   const out = { type }
   if (named) {
     out.name = (f.name || '').trim()
     out.required = !!f.required
+    const d = serializeDefault(f.default)
+    if (d !== undefined) out.default = d
   }
   if (f.description) out.description = f.description
   if (type === 'int' || type === 'vlan' || type === 'list') {

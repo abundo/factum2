@@ -236,6 +236,70 @@ func TestValidateServiceFieldsRequired(t *testing.T) {
 	}
 }
 
+func TestValidateFieldSchemaDefault(t *testing.T) {
+	ok := models.FieldSchema{Name: "mtu", Type: models.FieldTypeInt, Default: jsonRaw(t, 1500), Min: f64(1)}
+	if err := ValidateFieldSchema(&ok, true); err != nil {
+		t.Fatal(err)
+	}
+	badType := models.FieldSchema{Name: "mtu", Type: models.FieldTypeInt, Default: jsonRaw(t, "nope")}
+	if err := ValidateFieldSchema(&badType, true); err == nil {
+		t.Fatal("expected type mismatch on default")
+	}
+	empty := models.FieldSchema{Name: "name", Type: models.FieldTypeString, Default: jsonRaw(t, "")}
+	if err := ValidateFieldSchema(&empty, true); err == nil {
+		t.Fatal("expected empty default reject")
+	}
+	item := models.FieldSchema{Type: models.FieldTypeString, Default: jsonRaw(t, "x")}
+	if err := ValidateFieldSchema(&item, false); err == nil {
+		t.Fatal("expected list-item default reject")
+	}
+	below := models.FieldSchema{Name: "mtu", Type: models.FieldTypeInt, Default: jsonRaw(t, 0), Min: f64(1)}
+	if err := ValidateFieldSchema(&below, true); err == nil {
+		t.Fatal("expected default below min reject")
+	}
+	enum := models.FieldSchema{
+		Name: "mode", Type: models.FieldTypeEnum,
+		Enum:    []models.EnumChoice{{Value: "a"}, {Value: "b"}},
+		Default: jsonRaw(t, "a"),
+	}
+	if err := ValidateFieldSchema(&enum, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateServiceFieldsAppliesDefault(t *testing.T) {
+	st := &models.ServiceType{
+		Schema: []models.FieldSchema{
+			{Name: "bandwidth_mbps", Type: models.FieldTypeInt, Required: true, Default: jsonRaw(t, 100), Min: f64(1)},
+			{Name: "control_word", Type: models.FieldTypeBool, Default: jsonRaw(t, false)},
+		},
+	}
+	if err := ValidateServiceType(st); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ValidateServiceFields(st, jsonRaw(t, map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := fieldsMap(raw)
+	n, ok := asInt(m["bandwidth_mbps"])
+	if !ok || n != 100 {
+		t.Fatalf("bandwidth default = %#v", m["bandwidth_mbps"])
+	}
+	if m["control_word"] != false {
+		t.Fatalf("bool false default = %#v", m["control_word"])
+	}
+	raw, err = ValidateServiceFields(st, jsonRaw(t, map[string]any{"bandwidth_mbps": 50}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = fieldsMap(raw)
+	n, ok = asInt(m["bandwidth_mbps"])
+	if !ok || n != 50 {
+		t.Fatalf("explicit bandwidth overwritten: %#v", m["bandwidth_mbps"])
+	}
+}
+
 func TestTypeCheckFieldListItems(t *testing.T) {
 	f := models.FieldSchema{
 		Name: "cidrs", Type: models.FieldTypeList, Min: f64(1), Max: f64(2),

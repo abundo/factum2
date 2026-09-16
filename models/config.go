@@ -249,6 +249,10 @@ type FieldSchema struct {
 
 	// Resource names a kind=resource pool. Prefix-typed nodes only, including items.
 	Resource string `json:"resource,omitempty"`
+
+	// Default is used when the field is empty on a service or endpoint.
+	// Named fields only; list items cannot set default.
+	Default json.RawMessage `json:"default,omitempty"`
 }
 
 // ServiceInterfacesSpec is the homogeneous UNI spec for a service type.

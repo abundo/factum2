@@ -1,9 +1,20 @@
-export function emptyServiceEndpoint(extra = {}) {
+export function applySchemaDefaults(schema, values = {}) {
+  const out = { ...values }
+  for (const f of schema ?? []) {
+    if (!f?.name) continue
+    if (!fieldEmpty(f, out[f.name])) continue
+    if (fieldEmpty(f, f.default)) continue
+    out[f.name] = f.default
+  }
+  return out
+}
+
+export function emptyServiceEndpoint(extra = {}, schema = []) {
   return {
     role: 'interface',
     device_id: extra.device_id ?? null,
     interface_id: extra.interface_id ?? null,
-    fields: { ...extra.fields },
+    fields: applySchemaDefaults(schema, extra.fields),
     label: extra.label ?? '',
   }
 }
@@ -15,18 +26,19 @@ export function isDraftEndpoint(ep) {
 export function reshapeEndpoints(spec, current = [], draft = null) {
   const min = spec?.min ?? 0
   const max = spec?.max ?? 0
+  const schema = spec?.fields ?? []
   let next = [...(current ?? [])]
   if (!next.length || next.every(isDraftEndpoint)) {
     next = []
-    for (let i = 0; i < min; i++) next.push(emptyServiceEndpoint())
+    for (let i = 0; i < min; i++) next.push(emptyServiceEndpoint({}, schema))
     if (draft?.device_id && draft?.interface_id) {
-      const slot = emptyServiceEndpoint(draft)
+      const slot = emptyServiceEndpoint(draft, schema)
       if (next.length) next[0] = { ...next[0], ...slot }
       else next.push(slot)
     }
     return next
   }
-  while (next.length < min) next.push(emptyServiceEndpoint())
+  while (next.length < min) next.push(emptyServiceEndpoint({}, schema))
   if (max > 0 && next.length > max) next = next.slice(0, max)
   return next
 }
@@ -38,7 +50,9 @@ export function fieldEmpty(field, v) {
 }
 
 export function schemaMissingRequired(schema, values) {
-  return (schema ?? []).some((f) => f.required && fieldEmpty(f, values?.[f.name]))
+  return (schema ?? []).some(
+    (f) => f.required && fieldEmpty(f, values?.[f.name]) && fieldEmpty(f, f.default),
+  )
 }
 
 export function endpointsReady(spec, endpoints) {

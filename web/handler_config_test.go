@@ -453,6 +453,7 @@ func TestApiConfigServiceTypeValidatesSchema(t *testing.T) {
 		"schema": []map[string]any{
 			{"name": "addr", "type": "snpa"},
 			{"name": "cidrs", "type": "list", "items": map[string]any{"type": "ipv4_prefix", "resource": "peering-v4"}},
+			{"name": "mtu", "type": "int", "default": 1500},
 		},
 	}, nil, nil)
 	if err := ctrl.ApiConfigServiceTypeCreate(c); err != nil {
@@ -465,11 +466,14 @@ func TestApiConfigServiceTypeValidatesSchema(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if len(created.Schema) != 2 || created.Schema[0].Type != models.FieldTypeMAC {
+	if len(created.Schema) != 3 || created.Schema[0].Type != models.FieldTypeMAC {
 		t.Fatalf("snpa not normalized: %+v", created.Schema)
 	}
 	if created.Schema[1].Items == nil || created.Schema[1].Items.Resource != "peering-v4" {
 		t.Fatalf("items.resource = %+v", created.Schema[1].Items)
+	}
+	if string(created.Schema[2].Default) != "1500" {
+		t.Fatalf("mtu default = %s", created.Schema[2].Default)
 	}
 }
 

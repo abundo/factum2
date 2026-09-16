@@ -662,7 +662,7 @@ func validateFieldSchema(f *models.FieldSchema, named bool, depth int) error {
 			return statusErrf(400, "%s does not take items", fieldLabel(*f))
 		}
 	}
-	return nil
+	return validateFieldDefault(f, named)
 }
 
 func fieldLabel(f models.FieldSchema) string {
@@ -701,10 +701,8 @@ func ValidateServiceFields(st *models.ServiceType, raw json.RawMessage) (json.Ra
 }
 
 func checkFields(schema []models.FieldSchema, fields map[string]any, requiredFmt string) (map[string]any, error) {
-	out := make(map[string]any, len(fields))
-	for k, v := range fields {
-		out[k] = v
-	}
+	fields = ApplyFieldDefaults(schema, fields)
+	out := copyFieldMap(fields)
 	for _, f := range schema {
 		v, ok := fields[f.Name]
 		empty := !ok || FieldEmpty(f, v)
@@ -721,6 +719,66 @@ func checkFields(schema []models.FieldSchema, fields map[string]any, requiredFmt
 		out[f.Name] = checked
 	}
 	return out, nil
+}
+
+func validateFieldDefault(f *models.FieldSchema, named bool) error {
+	if len(f.Default) == 0 || string(f.Default) == "null" {
+		f.Default = nil
+		return nil
+	}
+	if !named {
+		return statusErrf(400, "%s list items cannot set default", fieldLabel(*f))
+	}
+	var v any
+	if err := json.Unmarshal(f.Default, &v); err != nil {
+		return statusErrf(400, "%s default is not valid JSON", fieldLabel(*f))
+	}
+	checked, err := TypeCheckField(*f, v)
+	if err != nil {
+		return statusErr(400, err.Error())
+	}
+	if FieldEmpty(*f, checked) {
+		return statusErrf(400, "%s default is empty", fieldLabel(*f))
+	}
+	b, err := json.Marshal(checked)
+	if err != nil {
+		return err
+	}
+	f.Default = b
+	return nil
+}
+
+func fieldDefault(f models.FieldSchema) (any, bool) {
+	if len(f.Default) == 0 || string(f.Default) == "null" {
+		return nil, false
+	}
+	var v any
+	if err := json.Unmarshal(f.Default, &v); err != nil {
+		return nil, false
+	}
+	checked, err := TypeCheckField(f, v)
+	if err != nil || FieldEmpty(f, checked) {
+		return nil, false
+	}
+	return checked, true
+}
+
+// ApplyFieldDefaults copies schema defaults into empty keys. Missing keys
+// are created. Existing non-empty values are left unchanged.
+func ApplyFieldDefaults(schema []models.FieldSchema, fields map[string]any) map[string]any {
+	out := copyFieldMap(fields)
+	for _, f := range schema {
+		v, ok := out[f.Name]
+		if ok && !FieldEmpty(f, v) {
+			continue
+		}
+		dv, ok := fieldDefault(f)
+		if !ok {
+			continue
+		}
+		out[f.Name] = dv
+	}
+	return out
 }
 
 // TypeCheckField coerces and validates v against a definition field.

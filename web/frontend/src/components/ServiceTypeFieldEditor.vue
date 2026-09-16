@@ -1,4 +1,6 @@
 <script setup>
+import SchemaFieldControl from '@/components/SchemaFieldControl.vue'
+
 defineOptions({ name: 'ServiceTypeFieldEditor' })
 
 const fields = defineModel({ type: Array, default: () => [] })
@@ -39,7 +41,25 @@ function isPrefixType(type) {
 }
 
 function emptyField() {
-  return { name: '', type: 'string', required: false, description: '' }
+  return { name: '', type: 'string', required: false, description: '', default: undefined }
+}
+
+function defaultEditorField(field) {
+  return {
+    ...field,
+    required: false,
+    resource: undefined,
+    default: undefined,
+  }
+}
+
+function clearDefault(field) {
+  field.default = undefined
+}
+
+function hasDefault(field) {
+  const v = field?.default
+  return v !== undefined && v !== null && v !== ''
 }
 
 function addField() {
@@ -55,6 +75,7 @@ function removeField(i) {
 function onType(field, value) {
   const type = optionValue(value) || 'string'
   field.type = type
+  field.default = undefined
   if (type === 'list') {
     if (!field.items) field.items = { type: 'string' }
   } else {
@@ -158,6 +179,23 @@ function removeEnum(target, i) {
         <UCheckbox v-model="field.required" />
         Required
       </label>
+      <div v-if="typeOf(field) !== 'service_id'" class="flex flex-col gap-1">
+        <div class="flex items-center justify-between">
+          <label class="block font-bold m-0 text-sm">Default</label>
+          <UButton
+            v-if="hasDefault(field)"
+            size="xs"
+            variant="ghost"
+            label="Clear"
+            @click="clearDefault(field)"
+          />
+        </div>
+        <SchemaFieldControl
+          hide-label
+          :field="defaultEditorField(field)"
+          v-model="field.default"
+        />
+      </div>
       <div v-if="typeOf(field) === 'int'" class="grid grid-cols-3 gap-2">
         <div>
           <label class="block font-bold mb-1 text-sm">Min</label>

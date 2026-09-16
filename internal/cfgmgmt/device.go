@@ -199,6 +199,7 @@ func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 			return nil, err
 		}
 		st = found
+		svcFields = ApplyFieldDefaults(st.Schema, svcFields)
 	}
 	filled := FillEndpointDefaults(st, svcFields, fieldsMap(ep.Fields))
 	if err := requiredInterfaceFields(st, filled); err != nil {
@@ -273,12 +274,14 @@ func genericData(db *gorm.DB, svc *models.Service, ep *models.ServiceEndpoint, d
 }
 
 // FillEndpointDefaults copies same-name service-level values into empty
-// interface fields. It does not persist; stored endpoint JSON stays empty.
+// interface fields, then interface-field defaults. It does not persist;
+// stored endpoint JSON stays empty.
 func FillEndpointDefaults(st *models.ServiceType, serviceFields, epFields map[string]any) map[string]any {
 	out := copyFieldMap(epFields)
 	if st == nil {
 		return out
 	}
+	serviceFields = ApplyFieldDefaults(st.Schema, serviceFields)
 	for _, f := range st.Interfaces.Fields {
 		ev, eok := out[f.Name]
 		if eok && !FieldEmpty(f, ev) {
@@ -297,7 +300,7 @@ func FillEndpointDefaults(st *models.ServiceType, serviceFields, epFields map[st
 		}
 		out[f.Name] = sv
 	}
-	return out
+	return ApplyFieldDefaults(st.Interfaces.Fields, out)
 }
 
 func requiredInterfaceFields(st *models.ServiceType, filled map[string]any) error {
@@ -387,8 +390,12 @@ func sameEndpoint(a, b *models.ServiceEndpoint) bool {
 }
 
 func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Service, ep *models.ServiceEndpoint, device *models.Device, iface *models.Interface, filled map[string]any, currentDeviceID uint, commercialCache map[uint]*RenderCommercial) (RenderEndpoint, error) {
+	svcFields := fieldsMap(svc.Fields)
+	if st != nil {
+		svcFields = ApplyFieldDefaults(st.Schema, svcFields)
+	}
 	if filled == nil {
-		filled = FillEndpointDefaults(st, fieldsMap(svc.Fields), fieldsMap(ep.Fields))
+		filled = FillEndpointDefaults(st, svcFields, fieldsMap(ep.Fields))
 	}
 	re := RenderEndpoint{Fields: filled}
 	if device == nil && ep.DeviceID != 0 {
@@ -415,7 +422,7 @@ func buildRenderEndpoint(db *gorm.DB, st *models.ServiceType, svc *models.Servic
 	if currentDeviceID != 0 && device != nil && device.ID != currentDeviceID {
 		re.NeighborIP = loopbackAddr(db, device)
 	}
-	comm, err := resolveCommercial(db, st, svc, filled, fieldsMap(svc.Fields), commercialCache)
+	comm, err := resolveCommercial(db, st, svc, filled, svcFields, commercialCache)
 	if err != nil {
 		return re, err
 	}
