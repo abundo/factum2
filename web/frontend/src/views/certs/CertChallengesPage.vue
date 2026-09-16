@@ -71,6 +71,7 @@ function openCreate() {
 function openEdit(row) {
   editing.value = row
   Object.assign(form, emptyForm(), row)
+  dialog.value = true
 }
 
 async function save() {
@@ -146,67 +147,68 @@ onMounted(load)
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>{{ editing ? 'Edit challenge' : 'New challenge' }}</template>
-        <form class="space-y-3" @submit.prevent="save">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" required />
-          </UFormField>
-          <UFormField label="Kind">
-            <UInput v-model="form.kind" class="w-full" disabled />
-          </UFormField>
-          <UFormField label="Provider">
-            <UInput v-model="form.provider" class="w-full" disabled />
-          </UFormField>
-          <UFormField label="RFC2136 nameserver">
-            <UInput
-              v-model="form.rfc2136_nameserver"
-              class="w-full font-mono"
-              placeholder="ns.example.com:53"
-            />
-          </UFormField>
-          <UFormField label="TSIG algorithm">
-            <UInput v-model="form.rfc2136_tsig_algorithm" class="w-full font-mono" />
-          </UFormField>
-          <UFormField label="TSIG key">
-            <UInput v-model="form.rfc2136_tsig_key" class="w-full" />
-          </UFormField>
-          <UFormField label="TSIG secret">
-            <PasswordInput v-model="form.rfc2136_tsig_secret" />
-          </UFormField>
-          <UFormField label="TSIG key file (optional)">
-            <UInput v-model="form.rfc2136_tsig_file" class="w-full" />
-          </UFormField>
-          <UFormField label="TXT TTL">
-            <UInput v-model.number="form.rfc2136_ttl" type="number" class="w-full" />
-          </UFormField>
-          <UFormField label="Resolvers (one host:port per line)">
-            <UTextarea v-model="form.resolvers" :rows="2" class="w-full font-mono" />
-          </UFormField>
-          <UFormField label="DNS timeout (seconds)">
-            <UInput v-model.number="form.dns_timeout" type="number" class="w-full" />
-          </UFormField>
-          <div class="flex items-center gap-2">
-            <USwitch v-model="form.disable_authoritative_nameservers" id="noauth" />
-            <label for="noauth">Skip authoritative NS propagation check</label>
-          </div>
-          <div class="flex items-center gap-2">
-            <USwitch v-model="form.disable_recursive_nameservers" id="norec" />
-            <label for="norec">Skip recursive resolver propagation check</label>
-          </div>
-          <UFormField label="Extra env (KEY=value per line)">
-            <UTextarea v-model="form.extra_env" :rows="3" class="w-full font-mono" />
-          </UFormField>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
-            >
-            <UButton type="submit" :loading="saving">Save</UButton>
-          </div>
-        </form>
-      </UCard>
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="editing ? 'Edit challenge' : 'New challenge'"
+  >
+    <template #body>
+      <form id="cert-challenge-form" class="space-y-3" @submit.prevent="save">
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" required />
+        </UFormField>
+        <UFormField label="Kind">
+          <UInput v-model="form.kind" class="w-full" disabled />
+        </UFormField>
+        <UFormField label="Provider">
+          <UInput v-model="form.provider" class="w-full" disabled />
+        </UFormField>
+        <UFormField label="RFC2136 nameserver">
+          <UInput
+            v-model="form.rfc2136_nameserver"
+            class="w-full font-mono"
+            placeholder="ns.example.com:53"
+          />
+        </UFormField>
+        <UFormField label="TSIG algorithm">
+          <UInput v-model="form.rfc2136_tsig_algorithm" class="w-full font-mono" />
+        </UFormField>
+        <UFormField label="TSIG key">
+          <UInput v-model="form.rfc2136_tsig_key" class="w-full" />
+        </UFormField>
+        <UFormField label="TSIG secret">
+          <PasswordInput v-model="form.rfc2136_tsig_secret" />
+        </UFormField>
+        <UFormField label="TSIG key file (optional)">
+          <UInput v-model="form.rfc2136_tsig_file" class="w-full" />
+        </UFormField>
+        <UFormField label="TXT TTL">
+          <UInput v-model.number="form.rfc2136_ttl" type="number" class="w-full" />
+        </UFormField>
+        <UFormField label="Resolvers (one host:port per line)">
+          <UTextarea v-model="form.resolvers" :rows="2" class="w-full font-mono" />
+        </UFormField>
+        <UFormField label="DNS timeout (seconds)">
+          <UInput v-model.number="form.dns_timeout" type="number" class="w-full" />
+        </UFormField>
+        <div class="flex items-center gap-2">
+          <USwitch v-model="form.disable_authoritative_nameservers" id="noauth" />
+          <label for="noauth">Skip authoritative NS propagation check</label>
+        </div>
+        <div class="flex items-center gap-2">
+          <USwitch v-model="form.disable_recursive_nameservers" id="norec" />
+          <label for="norec">Skip recursive resolver propagation check</label>
+        </div>
+        <UFormField label="Extra env (KEY=value per line)">
+          <UTextarea v-model="form.extra_env" :rows="3" class="w-full font-mono" />
+        </UFormField>
+      </form>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
+        >Cancel</UButton
+      >
+      <UButton type="submit" form="cert-challenge-form" :loading="saving">Save</UButton>
     </template>
   </FormModal>
 </template>

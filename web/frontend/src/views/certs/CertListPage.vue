@@ -188,64 +188,65 @@ onMounted(load)
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>{{ editing ? 'Edit certificate' : 'New certificate' }}</template>
-        <form class="space-y-3" @submit.prevent="save">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" required />
-          </UFormField>
-          <UFormField label="Account">
-            <USelect v-model="form.account_id" :items="accountItems" class="w-full" />
-          </UFormField>
-          <UFormField label="Challenge">
-            <USelect v-model="form.challenge_id" :items="challengeItems" class="w-full" />
-          </UFormField>
-          <UFormField label="Key type (override)">
-            <USelect v-model="form.key_type" :items="keyTypeItems" class="w-full" />
-          </UFormField>
-          <UFormField label="Enable Common Name (override)">
-            <USelect v-model="form.enable_cn" :items="cnItems" class="w-full" />
-          </UFormField>
-          <UFormField label="Domains">
-            <div class="space-y-2">
-              <div v-for="(d, i) in form.domains" :key="i" class="flex gap-2">
-                <UInput
-                  v-model="form.domains[i]"
-                  class="w-full font-mono"
-                  placeholder="example.com or *.example.com"
-                />
-                <UButton
-                  type="button"
-                  size="xs"
-                  color="error"
-                  variant="ghost"
-                  icon="i-lucide-trash"
-                  :disabled="form.domains.length < 2"
-                  @click="form.domains.splice(i, 1)"
-                />
-              </div>
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="editing ? 'Edit certificate' : 'New certificate'"
+  >
+    <template #body>
+      <form id="cert-form" class="space-y-3" @submit.prevent="save">
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" required />
+        </UFormField>
+        <UFormField label="Account">
+          <USelect v-model="form.account_id" :items="accountItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Challenge">
+          <USelect v-model="form.challenge_id" :items="challengeItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Key type (override)">
+          <USelect v-model="form.key_type" :items="keyTypeItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Enable Common Name (override)">
+          <USelect v-model="form.enable_cn" :items="cnItems" class="w-full" />
+        </UFormField>
+        <UFormField label="Domains">
+          <div class="space-y-2">
+            <div v-for="(d, i) in form.domains" :key="i" class="flex gap-2">
+              <UInput
+                v-model="form.domains[i]"
+                class="w-full font-mono"
+                placeholder="example.com or *.example.com"
+              />
               <UButton
                 type="button"
                 size="xs"
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-plus"
-                @click="form.domains.push('')"
-              >
-                Add
-              </UButton>
+                color="error"
+                variant="ghost"
+                icon="i-lucide-trash"
+                :disabled="form.domains.length < 2"
+                @click="form.domains.splice(i, 1)"
+              />
             </div>
-          </UFormField>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
+            <UButton
+              type="button"
+              size="xs"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-plus"
+              @click="form.domains.push('')"
             >
-            <UButton type="submit" :loading="saving">Save</UButton>
+              Add
+            </UButton>
           </div>
-        </form>
-      </UCard>
+        </UFormField>
+      </form>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
+        >Cancel</UButton
+      >
+      <UButton type="submit" form="cert-form" :loading="saving">Save</UButton>
     </template>
   </FormModal>
 </template>

@@ -148,41 +148,38 @@ onMounted(load)
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>{{ editing ? 'Edit account' : 'New account' }}</template>
-        <form class="space-y-3" @submit.prevent="save">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" required />
-          </UFormField>
-          <UFormField label="Email">
-            <UInput v-model="form.email" type="email" class="w-full" />
-          </UFormField>
-          <UFormField label="ACME server">
-            <UInput v-model="form.server" class="w-full font-mono" />
-          </UFormField>
-          <UFormField label="Account key type">
-            <USelect v-model="form.key_type" :items="keyTypeItems" class="w-full" />
-          </UFormField>
-          <div class="flex items-center gap-2">
-            <USwitch v-model="form.accepts_terms_of_service" id="tos" />
-            <label for="tos">Accept terms of service</label>
-          </div>
-          <UFormField label="EAB KID (optional)">
-            <UInput v-model="form.eab_kid" class="w-full" />
-          </UFormField>
-          <UFormField label="EAB HMAC key (optional)">
-            <UInput v-model="form.eab_hmac_key" class="w-full" />
-          </UFormField>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
-            >
-            <UButton type="submit" :loading="saving">Save</UButton>
-          </div>
-        </form>
-      </UCard>
+  <FormModal v-model:open="dialog" :source="form" :title="editing ? 'Edit account' : 'New account'">
+    <template #body>
+      <form id="cert-account-form" class="space-y-3" @submit.prevent="save">
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" required />
+        </UFormField>
+        <UFormField label="Email">
+          <UInput v-model="form.email" type="email" class="w-full" />
+        </UFormField>
+        <UFormField label="ACME server">
+          <UInput v-model="form.server" class="w-full font-mono" />
+        </UFormField>
+        <UFormField label="Account key type">
+          <USelect v-model="form.key_type" :items="keyTypeItems" class="w-full" />
+        </UFormField>
+        <div class="flex items-center gap-2">
+          <USwitch v-model="form.accepts_terms_of_service" id="tos" />
+          <label for="tos">Accept terms of service</label>
+        </div>
+        <UFormField label="EAB KID (optional)">
+          <UInput v-model="form.eab_kid" class="w-full" />
+        </UFormField>
+        <UFormField label="EAB HMAC key (optional)">
+          <UInput v-model="form.eab_hmac_key" class="w-full" />
+        </UFormField>
+      </form>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
+        >Cancel</UButton
+      >
+      <UButton type="submit" form="cert-account-form" :loading="saving">Save</UButton>
     </template>
   </FormModal>
 </template>
