@@ -46,6 +46,7 @@ const form = ref({
   type: '1000base-t',
   label: '',
   description: '',
+  vrf: '',
   enabled: true,
 })
 const editingId = ref(null)
@@ -111,6 +112,7 @@ function openNew() {
     type: '1000base-t',
     label: '',
     description: '',
+    vrf: '',
     enabled: true,
   }
   dialog.value = true
@@ -124,6 +126,7 @@ function openEdit(row) {
     type: row.type || 'other',
     label: row.label ?? '',
     description: row.description ?? '',
+    vrf: row.vrf ?? '',
     enabled: !!row.enabled,
   }
   dialog.value = true
@@ -145,6 +148,7 @@ function save() {
     type: form.value.type,
     label: form.value.label.trim(),
     description: form.value.description.trim(),
+    vrf: form.value.vrf.trim(),
     enabled: form.value.enabled,
   }
   const req = editingId.value ? updateInterface(editingId.value, payload) : createInterface(payload)
@@ -318,6 +322,9 @@ onMounted(() => {
         </UFormField>
         <UFormField label="Description">
           <UInput v-model="form.description" class="w-full" />
+        </UFormField>
+        <UFormField label="VRF">
+          <UInput v-model="form.vrf" class="w-full" :disabled="!!editingId && !editingLocal" />
         </UFormField>
         <UFormField label="Enabled">
           <USwitch v-model="form.enabled" />

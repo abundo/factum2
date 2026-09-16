@@ -406,6 +406,7 @@ type InterfaceCreateDTO struct {
 	Type        string `json:"type"`
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	VRF         string `json:"vrf"`
 	Enabled     *bool  `json:"enabled"`
 }
 

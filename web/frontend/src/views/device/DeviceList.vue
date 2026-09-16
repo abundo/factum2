@@ -20,6 +20,7 @@ import {
   getManufacturers,
   getPlatforms,
   updateAddress,
+  updateInterface,
 } from '@/api/dcim'
 import { getSite, getSites } from '@/api/sites'
 import { interfaceTypeItems } from '@/utils/interfaceTypes'
@@ -665,28 +666,60 @@ const updatingInterfaces = ref(false)
 const ifaceFormOpen = ref(false)
 const ifaceSaving = ref(false)
 const ifaceDeleting = ref(false)
-const ifaceForm = ref({ name: '', type: '1000base-t', label: '', description: '', enabled: true })
+const ifaceEditingId = ref(null)
+const ifaceForm = ref(emptyIfaceForm())
+const ifaceDialogTitle = computed(() => (ifaceEditingId.value ? 'Edit interface' : 'New interface'))
+const ifaceFormWritable = computed(() => {
+  if (!ifaceEditingId.value) return isLocalDevice.value
+  if (!isLocalDevice.value) return false
+  const iface = (device.value?.interfaces ?? []).find((i) => i.id === ifaceEditingId.value)
+  return !iface?.netbox_id
+})
+
+function emptyIfaceForm() {
+  return { name: '', type: '1000base-t', label: '', description: '', vrf: '', enabled: true }
+}
 
 function openNewIface() {
-  ifaceForm.value = { name: '', type: '1000base-t', label: '', description: '', enabled: true }
+  ifaceEditingId.value = null
+  ifaceForm.value = emptyIfaceForm()
   ifaceFormOpen.value = true
 }
 
-function saveNewIface() {
+function openEditIface(iface) {
+  ifaceEditingId.value = iface.id
+  ifaceForm.value = {
+    name: iface.name ?? '',
+    type: iface.type || 'other',
+    label: iface.label ?? '',
+    description: iface.description ?? '',
+    vrf: iface.vrf ?? '',
+    enabled: !!iface.enabled,
+  }
+  ifaceFormOpen.value = true
+}
+
+function saveIface() {
   if (!device.value) return
+  if (!ifaceFormWritable.value) return
   if (!ifaceForm.value.name.trim()) {
     toast.add({ color: 'error', title: 'Name is required' })
     return
   }
   ifaceSaving.value = true
-  createInterface({
+  const payload = {
     device_id: device.value.id,
     name: ifaceForm.value.name.trim(),
     type: ifaceForm.value.type,
     label: ifaceForm.value.label.trim(),
     description: ifaceForm.value.description.trim(),
+    vrf: ifaceForm.value.vrf.trim(),
     enabled: ifaceForm.value.enabled,
-  })
+  }
+  const req = ifaceEditingId.value
+    ? updateInterface(ifaceEditingId.value, payload)
+    : createInterface(payload)
+  req
     .then(() => {
       ifaceFormOpen.value = false
       reloadDeviceInterfaces()
@@ -694,7 +727,7 @@ function saveNewIface() {
     .catch((err) => {
       toast.add({
         color: 'error',
-        title: 'Create failed',
+        title: ifaceEditingId.value ? 'Update failed' : 'Create failed',
         description: err?.response?.data?.error,
       })
     })
@@ -821,10 +854,7 @@ function removeIface(row) {
 
 const interfaceSorting = ref([{ id: 'name', desc: false }])
 const interfaceColumns = computed(() => {
-  const cols = []
-  if (isLocalDevice.value) {
-    cols.push({ id: 'actions', header: '' })
-  }
+  const cols = [{ id: 'actions', header: '' }]
   cols.push(
     { accessorKey: 'name', header: 'Name' },
     { accessorKey: 'type', header: 'Type' },
@@ -1396,17 +1426,30 @@ onMounted(loadDevices)
                 <template #vrf-header="{ column }">
                   <SortableColumnHeader :column="column" label="VRF" />
                 </template>
+                <template #vrf-cell="{ row }">
+                  {{ row.original.vrf || '—' }}
+                </template>
 
                 <template #actions-cell="{ row }">
-                  <UButton
-                    v-if="authStore.canWrite && isLocalDevice && !row.original.netbox_id"
-                    icon="i-lucide-trash"
-                    variant="ghost"
-                    color="error"
-                    size="sm"
-                    :loading="ifaceDeleting"
-                    @click="removeIface(row.original)"
-                  />
+                  <div class="flex gap-1">
+                    <UButton
+                      icon="i-lucide-pencil"
+                      variant="ghost"
+                      color="neutral"
+                      size="sm"
+                      title="Edit interface"
+                      @click="openEditIface(row.original)"
+                    />
+                    <UButton
+                      v-if="authStore.canWrite && isLocalDevice && !row.original.netbox_id"
+                      icon="i-lucide-trash"
+                      variant="ghost"
+                      color="error"
+                      size="sm"
+                      :loading="ifaceDeleting"
+                      @click="removeIface(row.original)"
+                    />
+                  </div>
                 </template>
                 <template #name-cell="{ row }">
                   <span class="whitespace-nowrap">{{ row.original.name }}</span>
@@ -1703,31 +1746,54 @@ onMounted(loadDevices)
   <FormModal
     v-model:open="ifaceFormOpen"
     :source="ifaceForm"
-    title="New interface"
+    :title="ifaceDialogTitle"
     :ui="{ content: 'sm:max-w-sm' }"
   >
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name">
-          <UInput v-model="ifaceForm.name" class="w-full font-mono" autofocus />
+          <UInput
+            v-model="ifaceForm.name"
+            class="w-full font-mono"
+            autofocus
+            :disabled="!!ifaceEditingId && !ifaceFormWritable"
+          />
         </UFormField>
         <UFormField label="Type">
-          <USelect v-model="ifaceForm.type" :items="interfaceTypeItems" class="w-full" />
+          <USelect
+            v-model="ifaceForm.type"
+            :items="interfaceTypeItems"
+            class="w-full"
+            :disabled="!!ifaceEditingId && !ifaceFormWritable"
+          />
         </UFormField>
         <UFormField label="Label">
-          <UInput v-model="ifaceForm.label" class="w-full" />
+          <UInput v-model="ifaceForm.label" class="w-full" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
         </UFormField>
         <UFormField label="Description">
-          <UInput v-model="ifaceForm.description" class="w-full" />
+          <UInput
+            v-model="ifaceForm.description"
+            class="w-full"
+            :disabled="!!ifaceEditingId && !ifaceFormWritable"
+          />
+        </UFormField>
+        <UFormField label="VRF">
+          <UInput v-model="ifaceForm.vrf" class="w-full" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
         </UFormField>
         <UFormField label="Enabled">
-          <USwitch v-model="ifaceForm.enabled" />
+          <USwitch v-model="ifaceForm.enabled" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
         </UFormField>
       </div>
     </template>
     <template #footer>
       <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="ifaceFormOpen = false" />
-      <UButton label="Create" icon="i-lucide-check" :loading="ifaceSaving" @click="saveNewIface" />
+      <UButton
+        v-if="authStore.canWrite && ifaceFormWritable"
+        :label="ifaceEditingId ? 'Save' : 'Create'"
+        icon="i-lucide-check"
+        :loading="ifaceSaving"
+        @click="saveIface"
+      />
     </template>
   </FormModal>
 

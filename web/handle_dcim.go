@@ -818,6 +818,7 @@ func applyLocalInterfaceWrite(db *gorm.DB, iface *models.Interface, dto models.I
 	iface.Type = typ
 	iface.Label = strings.TrimSpace(dto.Label)
 	iface.Description = strings.TrimSpace(dto.Description)
+	iface.VRF = strings.TrimSpace(dto.VRF)
 	if dto.Enabled != nil {
 		iface.Enabled = *dto.Enabled
 	} else if creating {

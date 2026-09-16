@@ -396,7 +396,7 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 
 	enabled := true
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/interfaces", models.InterfaceCreateDTO{
-		DeviceID: local.ID, Name: "Ethernet1", Type: "10gbase-x-sfpp", Enabled: &enabled,
+		DeviceID: local.ID, Name: "Ethernet1", Type: "10gbase-x-sfpp", VRF: "MGMT", Enabled: &enabled,
 	}, nil, nil)
 	if err := ctrl.ApiCreateDCIMInterface(c); err != nil {
 		t.Fatal(err)
@@ -408,7 +408,7 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.ID == 0 || created.NetboxID != 0 || created.Type != "10gbase-x-sfpp" {
+	if created.ID == 0 || created.NetboxID != 0 || created.Type != "10gbase-x-sfpp" || created.VRF != "MGMT" {
 		t.Fatalf("created = %+v", created)
 	}
 
@@ -443,13 +443,20 @@ func TestApiDCIMInterfacesCRUD(t *testing.T) {
 	}
 
 	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/interfaces/x", models.InterfaceCreateDTO{
-		Name: "Ethernet1-renamed", Type: "1000base-t", Description: "uplink",
+		Name: "Ethernet1-renamed", Type: "1000base-t", Description: "uplink", VRF: "CUST",
 	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
 	if err := ctrl.ApiUpdateDCIMInterface(c); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.Interface
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.VRF != "CUST" || updated.Name != "Ethernet1-renamed" {
+		t.Fatalf("updated = %+v", updated)
 	}
 
 	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/interfaces", nil, nil, nil)
