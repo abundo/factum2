@@ -28,7 +28,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 
 Factum-web, factum-worker, and each dest's co-located factum2-worker run in
 compose with the host `build/` directory bind-mounted at `/opt/factum2`.
-Rebuild with `./install.py --compose`.
+Rebuild the primary with `./install.py --compose`. Pass `--worker` to also restart dest workers.
 
 ## Start
 
@@ -72,8 +72,9 @@ LibreNMS does (status, hostname, location, uptime, ports), fed by
 Prometheus via snmp-exporter.
 
 ```sh
-./install.py --compose              # make + migrate + restart factum services
-./install.py --compose --skip-build # restart only
+./install.py --compose              # make + migrate + restart factum-web / factum-worker
+./install.py --compose --worker     # also restart dest workers
+./install.py --compose --skip-build # restart primary only, no rebuild
 ```
 
 ```sh

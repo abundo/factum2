@@ -26,10 +26,13 @@ from this release, the installer shows a diff and asks before overwriting
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
-  ./install.py --source --compose
-                               Local compose lab: make build + make frontend, migrate, restart
-                               factum-web/factum-worker and dest workers (build/ is bind-mounted;
+  ./install.py --compose
+                               Local compose lab: make build + make frontend, migrate,
+                               restart factum-web/factum-worker (build/ is bind-mounted;
                                no /opt/factum2, no systemd).
+  ./install.py --compose --worker
+                               Same, and also restart dest workers (dns, icinga,
+                               librenms, oxidized, prometheus).
 """
 
 from __future__ import annotations
@@ -96,15 +99,18 @@ RELEASE_WORK_ENV = "FACTUM2_RELEASE_WORK"
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum2*` file so a newly added cmd/ still installs.
 COMPOSE_DIR_DEFAULT = REPO_DIR / "dev"
-COMPOSE_FACTUM_SERVICES = (
+COMPOSE_PRIMARY_SERVICES = (
     "factum-web",
     "factum-worker",
+)
+COMPOSE_DEST_SERVICES = (
     "dns",
     "icinga",
     "librenms",
     "oxidized",
     "prometheus",
 )
+COMPOSE_FACTUM_SERVICES = COMPOSE_PRIMARY_SERVICES + COMPOSE_DEST_SERVICES
 
 KNOWN_BINARIES = (
     "factum2",
@@ -2971,7 +2977,8 @@ Modes:
   --source    This source tree — development. make release, then install
               build/ (replaces install_prod.sh).
   --compose   Local compose lab. make build + make frontend, then restart
-              bind-mounted services.
+              bind-mounted primary services (factum-web, factum-worker).
+  --worker    With --compose, also restart dest workers.
 
 Environment:
   GITHUB_TOKEN / GH_TOKEN   token for private repos (else `gh auth token`)
@@ -2987,6 +2994,7 @@ Examples:
   ./install.py --source lab-primary --dry-run
   ./install.py --source --skip-build --primary-only
   ./install.py --compose
+  ./install.py --compose --worker
   ./install.py --source --compose --skip-build
 """,
     )
@@ -3041,8 +3049,15 @@ Examples:
         const=str(COMPOSE_DIR_DEFAULT),
         metavar="DIR",
         help="local compose lab (default: dev/): bind-mount build/, migrate, "
-        "restart factum-web, factum-worker, and dest workers instead of "
-        "installing to /opt/factum2. Implies --source localhost.",
+        "restart factum-web and factum-worker instead of installing to "
+        "/opt/factum2. Implies --source localhost. Pass --worker to also "
+        "restart dest workers.",
+    )
+    p.add_argument(
+        "--worker",
+        action="store_true",
+        help="with --compose, also restart dest workers (dns, icinga, "
+        "librenms, oxidized, prometheus)",
     )
     p.add_argument(
         "--self-update",
@@ -3152,6 +3167,7 @@ def install_compose_lab(
     *,
     skip_build: bool,
     dry_run: bool,
+    update_workers: bool = False,
 ) -> int:
     """Build Go binaries + Vue SPA into the repo, then restart bind-mounted services."""
     build_dir = repo_dir / "build"
@@ -3179,11 +3195,18 @@ def install_compose_lab(
             raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
 
     argv = compose_argv(compose_dir)
-    services = list(COMPOSE_FACTUM_SERVICES)
+    services = list(
+        COMPOSE_FACTUM_SERVICES if update_workers else COMPOSE_PRIMARY_SERVICES
+    )
     if dry_run:
+        extra = (
+            ""
+            if update_workers
+            else " (pass --worker to also restart dest workers)"
+        )
         log(
             f"==> Would migrate, then restart {', '.join(services)} "
-            f"(binaries bind-mounted from {build_dir})"
+            f"(binaries bind-mounted from {build_dir}){extra}"
         )
         return 0
 
@@ -3208,22 +3231,25 @@ def install_compose_lab(
     # running factum2-worker keeps the previous inode (and stamped version)
     # until it re-execs — the hub handshake then 409s with version mismatch.
     # factum-web was stopped for migrate; dest workers and factum-worker
-    # were not. Restart dests first so they pick up the new stamp before
-    # the hub comes back. factum-worker's PID 1 *is* the bind-mounted
-    # binary: a mixed `compose restart` with the dests has left that
-    # container running the deleted inode, so recreate it on its own.
-    dest_services = [
-        s for s in services if s not in ("factum-web", "factum-worker")
-    ]
-    running_dest = [
-        s for s in dest_services if compose_service_running(compose_dir, s)
-    ]
-    if running_dest:
-        log(
-            f"==> Restarting {', '.join(running_dest)} "
-            "(bind-mounted binaries)"
-        )
-        run(argv + ["restart", *running_dest], dry_run=False)
+    # were not. With --worker, restart dests first so they pick up the new
+    # stamp before the hub comes back. factum-worker's PID 1 *is* the
+    # bind-mounted binary: a mixed `compose restart` with the dests has
+    # left that container running the deleted inode, so recreate it on
+    # its own.
+    if update_workers:
+        running_dest = [
+            s
+            for s in COMPOSE_DEST_SERVICES
+            if compose_service_running(compose_dir, s)
+        ]
+        if running_dest:
+            log(
+                f"==> Restarting {', '.join(running_dest)} "
+                "(bind-mounted binaries)"
+            )
+            run(argv + ["restart", *running_dest], dry_run=False)
+    else:
+        log("==> Skipping dest workers (pass --worker to update them)")
     log("==> Recreating factum-worker (bind-mounted binary)")
     run(
         argv + ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
@@ -3248,6 +3274,7 @@ def main_source(args: argparse.Namespace) -> int:
             compose_dir.resolve(),
             skip_build=args.skip_build,
             dry_run=args.dry_run,
+            update_workers=args.worker,
         )
 
     target_host: str = args.source
@@ -3403,6 +3430,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     if args.compose is not None and args.source is None:
         args.source = "localhost"
+    if args.worker and args.compose is None:
+        raise InstallError("--worker requires --compose")
+    if args.worker and args.primary_only:
+        raise InstallError("--worker cannot be combined with --primary-only")
     if args.skip_build and args.source is None:
         raise InstallError("--skip-build requires --source")
     if args.self_update and args.skip_self_update:

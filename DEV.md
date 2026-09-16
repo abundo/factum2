@@ -339,7 +339,8 @@ snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
 make dev-up            # docker or podman compose; first start pulls images (prints per-step elapsed time)
-./install.py --compose # rebuild build/ and restart factum-web / factum-worker / dest workers
+./install.py --compose          # rebuild build/ and restart factum-web / factum-worker
+./install.py --compose --worker # also restart dest workers
 make dev-down          # keep volumes
 make dev-reset         # stop everything, wipe volumes and dest files (does not start again)
 ```

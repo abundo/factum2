@@ -835,6 +835,22 @@ class ComposeLabTests(unittest.TestCase):
         self.assertIsNotNone(args.compose)
         # main() fills this in; parse_args leaves source unset
         self.assertIsNone(args.source)
+        self.assertFalse(args.worker)
+
+    def test_compose_worker_flag(self) -> None:
+        args = install.parse_args(["--compose", "--worker"])
+        self.assertTrue(args.worker)
+        self.assertIsNotNone(args.compose)
+
+    def test_worker_requires_compose(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--worker"])
+        self.assertIn("--worker requires --compose", str(ctx.exception))
+
+    def test_worker_rejects_primary_only(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--compose", "--worker", "--primary-only"])
+        self.assertIn("--worker cannot be combined with --primary-only", str(ctx.exception))
 
     def test_compose_default_dir(self) -> None:
         args = install.parse_args(["--source", "--compose"])
@@ -870,6 +886,26 @@ class ComposeLabTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
 
+    def test_main_compose_worker_dry_run_mentions_dests(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            compose_dir = Path(raw)
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            with patch.object(install, "log") as log:
+                rc = install.main(
+                    [
+                        "--compose",
+                        str(compose_dir),
+                        "--worker",
+                        "--skip-build",
+                        "--dry-run",
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            joined = " ".join(str(c.args[0]) for c in log.call_args_list)
+            self.assertIn("dns", joined)
+            self.assertIn("icinga", joined)
+            self.assertNotIn("pass --worker", joined)
+
     def test_compose_lab_rebuilds_frontend_even_if_vue_exists(self) -> None:
         """Stale web/static/vue must not skip the SPA rebuild on compose install."""
         with tempfile.TemporaryDirectory() as raw:
@@ -897,6 +933,68 @@ class ComposeLabTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn(["make", "build"], calls)
             self.assertIn(["make", "frontend"], calls)
+
+    def test_compose_lab_skips_dest_workers_by_default(self) -> None:
+        """--compose updates the primary only; dests stay on their current inode."""
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw) / "repo"
+            compose_dir = Path(raw) / "dev"
+            repo.mkdir()
+            compose_dir.mkdir()
+            (compose_dir / "compose.sh").write_text("#!/bin/sh\n")
+            (compose_dir / "factum2.yaml").write_text("db: {}\n")
+            build = repo / "build"
+            build.mkdir()
+            for name in install.KNOWN_BINARIES:
+                (build / name).write_bytes(b"x")
+
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            running = {
+                "postgres",
+                "factum-web",
+                "factum-worker",
+                "dns",
+                "icinga",
+                "librenms",
+            }
+
+            def fake_running(_compose_dir: Path, service: str) -> bool:
+                return service in running
+
+            with (
+                patch.object(install, "run", fake_run),
+                patch.object(install, "compose_service_running", fake_running),
+                patch.object(
+                    install, "git_describe", return_value="v1.0.5-22-g40dc744"
+                ),
+            ):
+                rc = install.install_compose_lab(
+                    repo, compose_dir, skip_build=True, dry_run=False
+                )
+            self.assertEqual(rc, 0)
+            self.assertFalse(any("restart" in c for c in calls))
+
+            recreate = next(c for c in calls if "--force-recreate" in c)
+            self.assertEqual(
+                recreate[recreate.index("up") :],
+                ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
+            )
+            up = next(
+                c
+                for c in calls
+                if "up" in c and "--force-recreate" not in c
+            )
+            self.assertEqual(
+                up[up.index("up") :],
+                ["up", "-d", "--no-deps", *install.COMPOSE_PRIMARY_SERVICES],
+            )
+            for dest in install.COMPOSE_DEST_SERVICES:
+                self.assertNotIn(dest, up)
 
     def test_compose_lab_restarts_running_dest_workers(self) -> None:
         """up -d does not re-exec bind-mounted binaries; dests must restart."""
@@ -938,7 +1036,11 @@ class ComposeLabTests(unittest.TestCase):
                 ),
             ):
                 rc = install.install_compose_lab(
-                    repo, compose_dir, skip_build=True, dry_run=False
+                    repo,
+                    compose_dir,
+                    skip_build=True,
+                    dry_run=False,
+                    update_workers=True,
                 )
             self.assertEqual(rc, 0)
 
@@ -1011,7 +1113,15 @@ class ComposeLabTests(unittest.TestCase):
                 recreate[recreate.index("up") :],
                 ["up", "-d", "--no-deps", "--force-recreate", "factum-worker"],
             )
-            self.assertTrue(any("up" in c for c in calls))
+            up = next(
+                c
+                for c in calls
+                if "up" in c and "--force-recreate" not in c
+            )
+            self.assertEqual(
+                up[up.index("up") :],
+                ["up", "-d", "--no-deps", *install.COMPOSE_PRIMARY_SERVICES],
+            )
 
     _PODMAN_PS = """\
 CONTAINER ID  IMAGE                                     COMMAND               CREATED      STATUS                PORTS                                                                                 NAMES
