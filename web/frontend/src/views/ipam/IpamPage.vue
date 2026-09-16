@@ -40,7 +40,13 @@ function applyFilter(q) {
 function itemsFor(node) {
   const write = authStore.canWrite
   if (!node) {
-    return write ? [{ id: 'add-ns', label: 'Add namespace' }] : []
+    return write
+      ? [
+          { id: 'add-prefix', label: 'Add prefix' },
+          { id: 'add-vrf', label: 'Add VRF' },
+          { id: 'add-ns', label: 'Add namespace' },
+        ]
+      : []
   }
   const kind = node.kind || node.type
   const items = [
@@ -94,8 +100,7 @@ function closeMenu() {
   menu.value = { ...menu.value, open: false }
 }
 
-async function runMenu(id) {
-  const node = menu.value.node
+async function runMenu(id, node = menu.value.node) {
   closeMenu()
   if (id === 'expand') {
     treeRef.value?.expandNode(node?.key)
@@ -111,21 +116,21 @@ async function runMenu(id) {
     return
   }
   if (id === 'add-vrf') {
-    form.value = { namespace_id: node.namespace_id, name: '', description: '' }
+    form.value = { namespace_id: node?.namespace_id || 0, name: '', description: '' }
     dialog.value = 'vrf'
     return
   }
   if (id === 'add-prefix') {
-    const kind = node.kind || node.type
+    const kind = node?.kind || node?.type
     let vrfId = 0
     if (kind === 'vrf') vrfId = node.vrf_id || node.id
     else if (kind === 'allocated') vrfId = node.vrf_id || 0
     form.value = {
-      namespace_id: node.namespace_id,
+      namespace_id: node?.namespace_id || 0,
       vrf_id: vrfId,
       prefix: '',
       description: '',
-      parent_key: node.key,
+      parent_key: node?.key,
       dhcp_enabled: false,
       dhcp_range_start: '',
       dhcp_range_end: '',
@@ -296,15 +301,29 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
           v-if="authStore.canWrite"
           icon="i-lucide-plus"
           size="sm"
+          label="Prefix"
+          @click="runMenu('add-prefix', null)"
+        />
+        <UButton
+          v-if="authStore.canWrite"
+          icon="i-lucide-plus"
+          size="sm"
+          label="VRF"
+          @click="runMenu('add-vrf', null)"
+        />
+        <UButton
+          v-if="authStore.canWrite"
+          icon="i-lucide-plus"
+          size="sm"
           label="Namespace"
           @click="runMenu('add-ns')"
         />
       </div>
     </div>
     <p class="text-muted-color text-sm mb-3 shrink-0">
-      Right-click a namespace to add a prefix (or an extra VRF). Prefixes under a VRF cannot overlap
-      the namespace root or any other VRF. Click a row to see details. Click [+] / [−] to expand or
-      collapse.
+      Right-click empty space to add a prefix or VRF at the root (no namespace needed). Right-click a
+      namespace for prefixes and extra VRFs in that space. Prefixes under a VRF cannot overlap the
+      root or any other VRF. Click a row to see details. Click [+] / [−] to expand or collapse.
     </p>
     <IpamPrefixTree ref="treeRef" class="min-h-0 flex-1" @contextmenu="onContextMenu" />
   </div>

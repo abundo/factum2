@@ -249,9 +249,9 @@ func ParseNodeKey(s string) (string, uint, error) {
 	return kind, uint(id), nil
 }
 
-// Roots returns every namespace as a top-level tree node, with the first
-// level of children already loaded so a refresh shows root prefixes and
-// extra VRFs without an extra expand click.
+// Roots returns the forest. Named namespaces are top-level nodes (with
+// first-level children already loaded). The empty namespace is not shown;
+// its prefixes and extra VRFs sit at the root instead.
 func Roots(db *gorm.DB) ([]TreeNode, error) {
 	var rows []models.IpamNamespace
 	if err := db.Order("name").Find(&rows).Error; err != nil {
@@ -262,6 +262,10 @@ func Roots(db *gorm.DB) ([]TreeNode, error) {
 		kids, err := namespaceChildren(db, ns.ID)
 		if err != nil {
 			return nil, err
+		}
+		if isEmptyNamespace(&ns) {
+			out = append(out, kids...)
+			continue
 		}
 		out = append(out, TreeNode{
 			Key:      nodeKey("ns", ns.ID),

@@ -295,6 +295,112 @@ func TestIpamForestTree(t *testing.T) {
 	}
 }
 
+func TestIpamEmptyNamespaceRoot(t *testing.T) {
+	ctrl := setupIPAM(t)
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "10.0.0.0/16",
+	}, []string{"id"}, []string{"0"})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create root prefix status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var pfx models.IpamPrefix
+	if err := json.Unmarshal(rec.Body.Bytes(), &pfx); err != nil {
+		t.Fatal(err)
+	}
+	if pfx.NamespaceID == 0 || pfx.VRFID == 0 {
+		t.Fatalf("root prefix should land in the empty namespace: %+v", pfx)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{Name: "cust-a"}, []string{"id"}, []string{"0"})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create root vrf status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/tree", nil, nil, nil)
+	if err := ctrl.ApiIpamForest(c); err != nil {
+		t.Fatal(err)
+	}
+	var roots []ipam.TreeNode
+	if err := json.Unmarshal(rec.Body.Bytes(), &roots); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	var sawPfx, sawVrf, sawNS bool
+	for _, n := range roots {
+		if n.Type == "namespace" {
+			sawNS = true
+		}
+		if n.Type == "allocated" && n.Title == "10.0.0.0/16" {
+			sawPfx = true
+			if n.Data.NamespaceID != pfx.NamespaceID {
+				t.Fatalf("prefix namespace_id = %d, want %d", n.Data.NamespaceID, pfx.NamespaceID)
+			}
+		}
+		if n.Type == "vrf" && n.Title == "cust-a" {
+			sawVrf = true
+		}
+		if n.Type == "vrf" && n.Title == "default" {
+			t.Fatal("default VRF must not appear as a tree node")
+		}
+	}
+	if !sawPfx || !sawVrf {
+		t.Fatalf("empty-ns root children = %+v", roots)
+	}
+	if sawNS {
+		t.Fatalf("empty namespace must not appear as a tree node: %+v", roots)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "core"}, nil, nil)
+	if err := ctrl.ApiIpamNamespaceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodGet, "/api/ipam/tree", nil, nil, nil)
+	if err := ctrl.ApiIpamForest(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &roots); err != nil {
+		t.Fatal(err)
+	}
+	sawPfx, sawVrf, sawNS = false, false, false
+	for _, n := range roots {
+		if n.Type == "allocated" && n.Title == "10.0.0.0/16" {
+			sawPfx = true
+		}
+		if n.Type == "vrf" && n.Title == "cust-a" {
+			sawVrf = true
+		}
+		if n.Type == "namespace" && n.Title == "core" {
+			sawNS = true
+		}
+		if n.Type == "namespace" && n.Title == "" {
+			t.Fatal("empty namespace must not appear as a tree node")
+		}
+	}
+	if !sawPfx || !sawVrf || !sawNS {
+		t.Fatalf("mixed forest = %+v", roots)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/prefixes", ipamPrefixBody{
+		Prefix: "10.1.0.0/16",
+	}, []string{"id"}, []string{"0"})
+	if err := ctrl.ApiIpamPrefixCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var pfx2 models.IpamPrefix
+	if err := json.Unmarshal(rec.Body.Bytes(), &pfx2); err != nil {
+		t.Fatal(err)
+	}
+	if pfx2.NamespaceID != pfx.NamespaceID {
+		t.Fatalf("second root prefix namespace = %d, want %d", pfx2.NamespaceID, pfx.NamespaceID)
+	}
+}
+
 func TestIpamNestedRootPrefix(t *testing.T) {
 	ctrl := setupIPAM(t)
 	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "ns"}, nil, nil)

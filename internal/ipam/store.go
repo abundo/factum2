@@ -11,6 +11,10 @@ import (
 
 const defaultVRFName = "default"
 
+// emptyNamespaceName is the implicit address space for prefixes and extra
+// VRFs added at the forest root (no named namespace).
+const emptyNamespaceName = ""
+
 // StatusError is an application-level failure with an HTTP-ish status so
 // handlers don't have to string-match error text.
 type StatusError struct {
@@ -48,6 +52,58 @@ func loadNamespace(tx *gorm.DB, id uint) (*models.IpamNamespace, error) {
 		return nil, err
 	}
 	return &ns, nil
+}
+
+func isEmptyNamespace(ns *models.IpamNamespace) bool {
+	return ns != nil && ns.Name == emptyNamespaceName
+}
+
+// EnsureEmptyNamespace returns the unnamed namespace, creating it (and its
+// default VRF) if needed. Prefixes and extra VRFs stored here are shown at
+// the forest root.
+func EnsureEmptyNamespace(db *gorm.DB) (*models.IpamNamespace, error) {
+	var ns models.IpamNamespace
+	err := db.Where("name = ?", emptyNamespaceName).First(&ns).Error
+	if err == nil {
+		return &ns, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		ns = models.IpamNamespace{Name: emptyNamespaceName}
+		// Select so GORM writes the empty name instead of omitting it.
+		if err := tx.Select("Name").Create(&ns).Error; err != nil {
+			return err
+		}
+		vrf := models.IpamVRF{NamespaceID: ns.ID, Name: defaultVRFName, IsDefault: true}
+		return tx.Create(&vrf).Error
+	})
+	if err == nil {
+		return &ns, nil
+	}
+	if isUniqueViolation(err) {
+		if err := db.Where("name = ?", emptyNamespaceName).First(&ns).Error; err != nil {
+			return nil, err
+		}
+		return &ns, nil
+	}
+	return nil, err
+}
+
+// resolveNamespaceID maps 0 to the empty namespace (creating it if needed).
+func resolveNamespaceID(db *gorm.DB, nsID uint) (uint, error) {
+	if nsID != 0 {
+		if _, err := loadNamespace(db, nsID); err != nil {
+			return 0, err
+		}
+		return nsID, nil
+	}
+	ns, err := EnsureEmptyNamespace(db)
+	if err != nil {
+		return 0, err
+	}
+	return ns.ID, nil
 }
 
 func GetNamespace(db *gorm.DB, id uint) (*NamespaceView, error) {
@@ -258,7 +314,8 @@ func ListVRFs(db *gorm.DB, nsID uint) ([]models.IpamVRF, error) {
 }
 
 func CreateVRF(db *gorm.DB, nsID uint, name, description string) (*models.IpamVRF, error) {
-	if _, err := loadNamespace(db, nsID); err != nil {
+	nsID, err := resolveNamespaceID(db, nsID)
+	if err != nil {
 		return nil, err
 	}
 	name = normalizeName(name)
@@ -335,7 +392,8 @@ func ListPrefixes(db *gorm.DB, nsID uint) ([]models.IpamPrefix, error) {
 }
 
 func Allocate(db *gorm.DB, nsID, vrfID uint, raw, description string, dhcp PrefixDHCP) (*models.IpamPrefix, error) {
-	if _, err := loadNamespace(db, nsID); err != nil {
+	nsID, err := resolveNamespaceID(db, nsID)
+	if err != nil {
 		return nil, err
 	}
 	p, err := ParsePrefix(raw)

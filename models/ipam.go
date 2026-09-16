@@ -7,7 +7,9 @@ package models
 
 // IpamNamespace is one unique address space. Two namespaces may both hold
 // 10.0.0.0/8. Created with a default VRF; allowed prefixes (pools) are
-// added separately.
+// added separately. The empty-name namespace is implicit: its prefixes
+// and extra VRFs appear at the forest root so operators who do not use
+// namespaces can allocate there directly.
 type IpamNamespace struct {
 	FactumModel
 	Name        string `json:"name" gorm:"uniqueIndex;not null;type:varchar(255)"`
