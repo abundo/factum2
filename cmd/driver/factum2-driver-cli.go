@@ -11,7 +11,11 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"context"
 	"errors"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -48,6 +52,33 @@ type deviceExecParams struct {
 
 func initDriverSSHPool(p *cmdbase.ParamsAgent) error {
 	return drivers.InitSSHPoolFromDriver(p.Config.Driver)
+}
+
+// initDriverSSHPoolStart installs the in-process pool with client remote
+// forced off so ServeMux handlers never HTTP to this process's own socket.
+// Unix listen still uses SessionSocketPath(yaml.Socket).
+func initDriverSSHPoolStart(p *cmdbase.ParamsAgent) error {
+	d := p.Config.Driver
+	d.Socket = "none"
+	d.SessionURL = ""
+	return drivers.InitSSHPoolFromDriver(d)
+}
+
+func deviceStart() boa.CmdIfc {
+	return boa.CmdT[Params]{
+		Use:   "start",
+		Short: "Serve the SSH session pool (unix socket by default)",
+		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
+			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPoolStart(&p.ParamsAgent); err != nil {
+				return err
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			defer drivers.CloseSSHPool()
+			return drivers.ServeSSHSession(ctx, p.Config.Driver)
+		},
+	}
 }
 
 func deviceExec() boa.CmdIfc {
@@ -302,6 +333,7 @@ func main() {
 		Short:   "driver",
 		Version: buildinfo.Version,
 		SubCmds: boa.SubCmds(
+			deviceStart(),
 			deviceExec(),
 			deviceVersion(),
 			deviceGetRunningConfig(),

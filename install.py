@@ -82,6 +82,9 @@ POSTGRES_COMPOSE_NAMES = (
 SYSTEMD_DIR = Path("/etc/systemd/system")
 PRIMARY_UNITS = ("factum2-web.service", "factum2-worker.service")
 WORKER_UNIT = "factum2-worker.service"
+# Opt-in SSH session daemon. Copied on primary and worker hosts but not
+# enabled and not part of PRIMARY_UNITS (holds device passwords in RAM).
+DRIVER_UNIT = "factum2-driver.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
@@ -2169,6 +2172,16 @@ def install_primary(
         )
         if action == "installed":
             newly.append(unit)
+    # Copy but do not enable or restart — operators opt in with
+    # systemctl enable --now factum2-driver.
+    install_unit(
+        examples_dir / DRIVER_UNIT,
+        DRIVER_UNIT,
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        assume_yes=assume_yes,
+    )
     migrate_database(
         install_dir,
         config_path,
@@ -2246,6 +2259,14 @@ def install_worker(
     action = install_unit(
         examples_dir / WORKER_UNIT,
         WORKER_UNIT,
+        target_host=host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        assume_yes=assume_yes,
+    )
+    install_unit(
+        examples_dir / DRIVER_UNIT,
+        DRIVER_UNIT,
         target_host=host,
         ssh_user=ssh_user,
         dry_run=dry_run,

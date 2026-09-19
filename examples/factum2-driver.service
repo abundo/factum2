@@ -1,0 +1,33 @@
+
+# factum2-driver.service, optional SSH session owner
+#
+# Opt-in. install.py copies this unit on the primary and on worker/jump
+# hosts but does not enable it. Device passwords live in this process's
+# RAM. Enable when web, device-sync, and one-shot CLI should share one
+# SSH CLI session per device:
+#   sudo systemctl enable --now factum2-driver
+#
+# Default listen is unix only (/run/factum2-driver/session.sock, group
+# factum, mode 0660). Existing factum2-worker.yaml is enough; no
+# driver.token required. See docs/install/ssh-session.md.
+
+[Unit]
+Description=Factum SSH session pool
+After=network.target network-online.target
+Requires=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/factum2
+RuntimeDirectory=factum2-driver
+RuntimeDirectoryMode=0750
+Group=factum
+ExecStart=/opt/factum2/factum2-driver -f /etc/factum2/factum2-worker.yaml start
+TimeoutStopSec=10s
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

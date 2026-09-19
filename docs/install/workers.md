@@ -68,6 +68,11 @@ before closing worker-net access to the primary's `:443`.
 The allowlist in `worker.commands` is the security boundary: a hub
 message can only select a named command, never an arbitrary shell line.
 
+To share SSH CLI sessions with `factum2-web` / device-sync / the driver
+CLI from a host that can reach the boxes, enable the opt-in
+[`factum2-driver` session daemon](ssh-session.md) on this node. Do not
+put `factum2-driver start` in `worker.commands`.
+
 Full detail, including the unix-socket ACL and `FACTUM_WORKER_API_SOCKET`,
 is in the
 [repository README](https://github.com/abundo/factum2/blob/main/README.md#installing-a-worker-node).

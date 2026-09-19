@@ -58,12 +58,26 @@ worker:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync", "--job"]
 
-# SSH CLI session pool for factum2-device-sync and factum2-driver (in-process).
+# SSH CLI session pool for factum2-device-sync and factum2-driver.
 # Default-on for vrp and ciscosmb. Kill switch (legacy dial-and-close):
 #   platforms: []
 #   platforms: [none]
 # [none, vrp] is also off. 0 / "" knobs use compiled defaults.
+#
+# Optional factum2-driver start daemon (unix by default, no token):
+#   sudo systemctl enable --now factum2-driver
+# socket is the shared unix listen (start) and probe (CLI/device-sync) path.
+# listen/token are daemon-only; session_url/session_token are client-only
+# (jump-host). See docs/install/ssh-session.md.
 # driver:
 #   platforms: [vrp, ciscosmb]
 #   idle_timeout: 8m
 #   max_sessions: 64
+#   # socket: /run/factum2-driver/session.sock
+#   # socket: none   # disable unix listen and client probe
+#   # listen: 127.0.0.1:8092   # opt-in loopback TCP; requires token
+#   # token: <change-me>
+#   # session_url: https://jump.example:8092
+#   # session_token: <same as daemon token>
+#   # tls_ca: /etc/factum2/driver-ca.crt
+#   # allow_cidrs: ["10.0.0.0/8"]  # non-loopback: device dial IPs

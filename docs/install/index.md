@@ -66,7 +66,9 @@ That copies binaries to `/opt/factum2`, stops `factum2-web` if it is
 running, applies schema migrations, then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
-- **each enabled worker node:** `factum2-worker.service`
+  (also copies `factum2-driver.service` but does not enable it)
+- **each enabled worker node:** `factum2-worker.service` (and the same
+  opt-in `factum2-driver.service`)
 
 ## 4. First admin user
 
@@ -85,6 +87,8 @@ at **Documentation** (`/doc`).
   of `factum2-web`
 - [Worker nodes](workers.md) — DNS, Icinga, LibreNMS, Oxidized, Prometheus
   hosts
+- [SSH session daemon](ssh-session.md) — opt-in `factum2-driver start`
+  (unix on the primary, or a jump host)
 - [Admin settings](../user/settings.md) — NetBox, Lime, destinations, JWT
   is already in YAML
 

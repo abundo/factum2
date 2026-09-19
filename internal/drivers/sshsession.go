@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,8 +27,15 @@ const (
 	defaultMaxSessions    = 64
 	defaultIdleTimeout    = 8 * time.Minute
 	defaultKeepalive      = 30 * time.Second
+	defaultHTTPTimeout    = 180 * time.Second
 	sshCmdLogMax          = 80
+
+	// DefaultSessionSocket is the unix path factum2-driver start binds and
+	// callers probe. Independent of the worker hub socket.
+	DefaultSessionSocket = "/run/factum2-driver/session.sock"
 )
+
+var remoteRetry = 5 * time.Second
 
 var (
 	errPoolFull        = errors.New("ssh session pool is full")
@@ -35,6 +44,7 @@ var (
 	errPagerLeftover   = errors.New("ssh pager leftover")
 	errSSHPoolClosed   = errors.New("ssh session pool is closed")
 	errSSHPoolNotReady = errors.New("ssh session is not ready")
+	errRemoteConnect   = errors.New("ssh session remote connect failed")
 )
 
 // Line-anchored pager prompt. Do not use a substring "More:" — that matches
@@ -90,6 +100,10 @@ type SSHPoolConfig struct {
 	QueueDepth     int
 	AcquireTimeout time.Duration
 	Keepalive      time.Duration
+	SessionURL     string
+	SessionToken   string
+	TLSCA          string
+	Socket         string
 }
 
 type hygieneProfile struct {
@@ -129,9 +143,40 @@ type sshPoolGlobals struct {
 	enabled      map[string]struct{}
 	legacyLogged map[string]struct{}
 	pool         *memoryPool
+	poolCfg      SSHPoolConfig
+	remote       *sessionRemote
+}
+
+type sessionRemote struct {
+	client    *sessionHTTPClient
+	socket    string
+	baseURL   string
+	down      bool
+	lastProbe time.Time
 }
 
 var sshGlobals sshPoolGlobals
+
+// SessionSocketPath resolves the session-owner unix socket for both
+// factum2-driver start (listen) and callers (probe). yamlOverride is
+// driver.socket. FACTUM_DRIVER_SESSION_SOCKET relocates or disables when
+// yaml is empty. "none" and "0" disable unix. Must not use HubSocketPath.
+func SessionSocketPath(yamlOverride string) string {
+	if yamlOverride == "none" || yamlOverride == "0" {
+		return ""
+	}
+	if yamlOverride != "" {
+		return yamlOverride
+	}
+	switch v := os.Getenv("FACTUM_DRIVER_SESSION_SOCKET"); v {
+	case "none", "0":
+		return ""
+	case "":
+		return DefaultSessionSocket
+	default:
+		return v
+	}
+}
 
 func sessionKey(p DriverParam) string {
 	_, _, addr := sshDialHostPort(p)
@@ -214,9 +259,13 @@ func applySSHPoolDefaults(cfg SSHPoolConfig) (SSHPoolConfig, error) {
 // Empty duration strings stay zero (compiled defaults at InitSSHPool).
 func PoolConfigFromDriver(d util.ConfigDriver) (SSHPoolConfig, error) {
 	cfg := SSHPoolConfig{
-		Platforms:   d.Platforms,
-		MaxSessions: d.MaxSessions,
-		QueueDepth:  d.QueueDepth,
+		Platforms:    d.Platforms,
+		MaxSessions:  d.MaxSessions,
+		QueueDepth:   d.QueueDepth,
+		SessionURL:   d.SessionURL,
+		SessionToken: d.SessionToken,
+		TLSCA:        d.TLSCA,
+		Socket:       d.Socket,
 	}
 	var err error
 	if d.IdleTimeout != "" {
@@ -263,8 +312,43 @@ func InitSSHPool(cfg SSHPoolConfig) error {
 	}
 	sshGlobals.enabled = enabledPlatformSet(cfg.Platforms)
 	sshGlobals.legacyLogged = map[string]struct{}{}
+	sshGlobals.poolCfg = cfg
 	sshGlobals.pool = newMemoryPool(cfg)
+	if err := setupRemoteLocked(cfg); err != nil {
+		sshGlobals.pool.Close()
+		sshGlobals.pool = nil
+		sshGlobals.enabled = nil
+		return err
+	}
 	sshGlobals.inited = true
+	return nil
+}
+
+func setupRemoteLocked(cfg SSHPoolConfig) error {
+	if cfg.SessionURL != "" {
+		client, err := newSessionURLClient(cfg.SessionURL, cfg.SessionToken, cfg.TLSCA)
+		if err != nil {
+			return err
+		}
+		sshGlobals.remote = &sessionRemote{client: client, baseURL: cfg.SessionURL}
+		slog.Info("ssh.remote", "state", "configured", "url", cfg.SessionURL)
+		return nil
+	}
+	path := SessionSocketPath(cfg.Socket)
+	if path == "" {
+		sshGlobals.remote = nil
+		return nil
+	}
+	client := newSessionUnixClient(path)
+	r := &sessionRemote{client: client, socket: path, baseURL: sessionUnixBaseURL}
+	if _, err := os.Stat(path); err != nil {
+		r.down = true
+		r.lastProbe = time.Now()
+		slog.Info("ssh.remote", "state", "down", "socket", path)
+	} else {
+		slog.Info("ssh.remote", "state", "up", "socket", path)
+	}
+	sshGlobals.remote = r
 	return nil
 }
 
@@ -273,16 +357,34 @@ func stopSSHPoolLocked() {
 		sshGlobals.pool.Close()
 		sshGlobals.pool = nil
 	}
+	sshGlobals.remote = nil
 	sshGlobals.enabled = nil
 	sshGlobals.inited = false
 }
 
-// ResetSSHPoolForTest closes the process pool and re-inits compiled defaults.
+func replaceMemoryPoolLocked() {
+	if sshGlobals.pool != nil {
+		sshGlobals.pool.Close()
+	}
+	sshGlobals.pool = newMemoryPool(sshGlobals.poolCfg)
+}
+
+// CloseSSHPool closes every in-process SSH client. Used by factum2-driver start on SIGTERM.
+func CloseSSHPool() {
+	sshGlobals.mu.Lock()
+	defer sshGlobals.mu.Unlock()
+	if sshGlobals.pool != nil {
+		sshGlobals.pool.Close()
+	}
+}
+
+// ResetSSHPoolForTest closes the process pool and re-inits compiled defaults
+// with remote probe off so tests stay in-process.
 func ResetSSHPoolForTest() {
 	sshGlobals.mu.Lock()
 	stopSSHPoolLocked()
 	sshGlobals.mu.Unlock()
-	if err := InitSSHPool(SSHPoolConfig{}); err != nil {
+	if err := InitSSHPool(SSHPoolConfig{Socket: "none"}); err != nil {
 		panic(err)
 	}
 }
@@ -291,6 +393,9 @@ func initSSHPoolForTest(cfg SSHPoolConfig) error {
 	sshGlobals.mu.Lock()
 	stopSSHPoolLocked()
 	sshGlobals.mu.Unlock()
+	if cfg.Socket == "" && cfg.SessionURL == "" {
+		cfg.Socket = "none"
+	}
 	return InitSSHPool(cfg)
 }
 
@@ -307,6 +412,84 @@ func getPool() *memoryPool {
 		panic("drivers: InitSSHPool was not called; call initDriverSSHPool / web.GUI")
 	}
 	return sshGlobals.pool
+}
+
+func localRun(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
+	return getPool().Run(ctx, req)
+}
+
+func runPooled(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
+	if client, ok := takeRemote(); ok {
+		res, err := client.Run(ctx, req)
+		if err == nil {
+			return res, nil
+		}
+		if !errors.Is(err, errRemoteConnect) {
+			return nil, err
+		}
+		markRemoteDown()
+		slog.Warn("ssh.remote_fallback", "key", sessionKey(req.Param), "err", err)
+		return getPool().Run(ctx, req)
+	}
+	return getPool().Run(ctx, req)
+}
+
+func takeRemote() (*sessionHTTPClient, bool) {
+	sshGlobals.mu.Lock()
+	defer sshGlobals.mu.Unlock()
+	if !sshGlobals.inited {
+		panic("drivers: InitSSHPool was not called; call initDriverSSHPool / web.GUI")
+	}
+	r := sshGlobals.remote
+	if r == nil {
+		return nil, false
+	}
+	if r.down {
+		now := time.Now()
+		if now.Sub(r.lastProbe) < remoteRetry {
+			return nil, false
+		}
+		r.lastProbe = now
+		if !probeRemote(r) {
+			return nil, false
+		}
+		r.down = false
+		slog.Warn("ssh.remote_up", "socket", r.socket, "url", r.baseURL)
+		replaceMemoryPoolLocked()
+	}
+	return r.client, true
+}
+
+func markRemoteDown() {
+	sshGlobals.mu.Lock()
+	defer sshGlobals.mu.Unlock()
+	if sshGlobals.remote == nil {
+		return
+	}
+	if !sshGlobals.remote.down {
+		sshGlobals.remote.down = true
+		sshGlobals.remote.lastProbe = time.Now()
+	}
+}
+
+func probeRemote(r *sessionRemote) bool {
+	if r.socket != "" {
+		_, err := os.Stat(r.socket)
+		return err == nil
+	}
+	if r.baseURL == "" {
+		return false
+	}
+	u, err := url.Parse(r.baseURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	c, err := net.DialTimeout("tcp", u.Host, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
 }
 
 func sshUseMemoryPool(platform string) bool {
@@ -646,6 +829,30 @@ func (p *memoryPool) Close() {
 		s.mu.Unlock()
 		delete(p.sessions, k)
 	}
+}
+
+func (p *memoryPool) Evict(key string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false
+	}
+	s, ok := p.sessions[key]
+	if !ok {
+		return false
+	}
+	s.mu.Lock()
+	s.closeLocked("evict")
+	waiters := s.waiters
+	s.waiters = nil
+	s.busy = false
+	s.mu.Unlock()
+	delete(p.sessions, key)
+	for _, w := range waiters {
+		close(w.ch)
+	}
+	slog.Info("ssh.evict", "key", key, "reason", "api")
+	return true
 }
 
 func (p *memoryPool) Stats() []sshSessionStat {

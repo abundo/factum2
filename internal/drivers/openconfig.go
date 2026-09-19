@@ -493,7 +493,7 @@ func (s *sshShellSession) capture() string {
 // idle wait once for the whole batch rather than once per line.
 func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
 	if sshUseMemoryPool(p.Platform) {
-		res, err := getPool().Run(ctx, sshRunRequest{
+		res, err := runPooled(ctx, sshRunRequest{
 			Param: p,
 			Mode:  sshRunBatch,
 			Cmds:  cmds,
@@ -562,7 +562,7 @@ func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMar
 		if len(sshCmds) > 0 {
 			sshCmds[len(sshCmds)-1].EndMarker = endMarker
 		}
-		res, err := getPool().Run(ctx, sshRunRequest{
+		res, err := runPooled(ctx, sshRunRequest{
 			Param: p,
 			Mode:  sshRunPipeline,
 			Cmds:  sshCmds,
