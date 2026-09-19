@@ -1040,7 +1040,7 @@ func (ctrl *Controller) ApiServiceEndpointsPut(c *echo.Context) error {
 						"error": fmt.Sprintf("endpoints saved but failed to add config on %s: %s", device.Name, credErr.Error()),
 					})
 				}
-				res := ctrl.applyServiceCLIToDevice(&svc, &device, addByDev[deviceID], rows, creds, settings, comment)
+				res := ctrl.applyServiceCLIToDevice(&svc, &device, addByDev[deviceID], rows, creds, settings, comment, sessionUserLabel(c))
 				if res.Error != "" {
 					slog.Error("service endpoint add failed after replace", "service_id", svc.ID, "device", res.Device, "err", res.Error)
 					return c.JSON(http.StatusBadGateway, map[string]any{
@@ -1148,7 +1148,7 @@ func (ctrl *Controller) apiServiceGenericPush(c *echo.Context, svc *models.Servi
 			})
 			continue
 		}
-		drv, err := ctrl.newDriverForDevice(&device, creds, settings)
+		drv, err := ctrl.newDriverForDevice(&device, creds, settings, sessionUserLabel(c))
 		if err != nil {
 			results = append(results, ApiServiceElinePushResult{Device: device.Name, Error: err.Error()})
 			continue

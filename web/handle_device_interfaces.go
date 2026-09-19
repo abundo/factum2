@@ -74,16 +74,17 @@ func isGlobalVlanPlatform(device *models.Device) bool {
 	return false
 }
 
-func (ctrl *Controller) newDriverForDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error) {
+func (ctrl *Controller) newDriverForDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, actor string) (drivers.DriverClient, error) {
 	if ctrl.driverFn != nil {
 		return ctrl.driverFn(device, creds, settings)
 	}
-	return drivers.NewDriver(drivers.DriverParam{
+	p := drivers.DriverParam{
 		Name:     drivers.DeviceFQDN(device.Name, settings.DefaultDomain),
 		Platform: strings.ToLower(device.Platform),
 		Username: creds.Username,
 		Password: creds.Password,
-	})
+	}
+	return drivers.NewDriver(drivers.WithActor(p, actor))
 }
 
 // deviceSyncCredentials is the username/password internal/device-sync would
@@ -200,7 +201,7 @@ func (ctrl *Controller) ApiDeviceInterfacesRefresh(c *echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
 
-	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(&device, creds, settings, sessionUserLabel(c))
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
@@ -385,7 +386,7 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
 
-	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(&device, creds, settings, sessionUserLabel(c))
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
@@ -498,7 +499,7 @@ func (ctrl *Controller) ApiDeviceInterfacesUpdateVlans(c *echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}
 
-	drv, err := ctrl.newDriverForDevice(&device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(&device, creds, settings, sessionUserLabel(c))
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": err.Error()})
 	}

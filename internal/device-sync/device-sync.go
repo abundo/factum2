@@ -320,12 +320,12 @@ func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
 		auth = ds.cfg.Auth["default"]
 	}
 	platform := strings.ToLower(full.Platform)
-	driver, err := drivers.NewDriver(drivers.DriverParam{
+	driver, err := drivers.NewDriver(drivers.WithActor(drivers.DriverParam{
 		Name:     drivers.DeviceFQDN(full.Name, ds.cfg.DefaultDomain),
 		Platform: platform,
 		Username: auth.Username,
 		Password: auth.Password,
-	})
+	}, "device-sync"))
 	if err != nil {
 		ds.reporter.Emit(jobevent.Error, "%s: unknown platform %s: %v", full.Name, full.Platform, err)
 		return nil

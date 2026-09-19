@@ -658,14 +658,14 @@ func netboxConfigured(settings *models.Settings) bool {
 	return strings.TrimSpace(settings.NetboxApiURL) != "" && strings.TrimSpace(settings.NetboxApiToken) != ""
 }
 
-func (ctrl *Controller) applyELINEToDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, intent *drivers.ELINEIntent) ApiServiceElinePushResult {
+func (ctrl *Controller) applyELINEToDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, intent *drivers.ELINEIntent, actor string) ApiServiceElinePushResult {
 	result := ApiServiceElinePushResult{Device: device.Name}
 
 	if !isSupportedDriverPlatform(device) {
 		result.Error = "driver provisioning is not supported for platform " + device.Platform
 		return result
 	}
-	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(device, creds, settings, actor)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -715,14 +715,14 @@ func (ctrl *Controller) applyELINECmds(drv drivers.DriverClient, device *models.
 // path: device is no longer one of the service's current endpoints (its
 // side moved elsewhere), so its stale pseudowire/patch/subinterfaces must
 // be removed without configuring anything new.
-func (ctrl *Controller) removeELINEFromDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, removal *drivers.ELINERemoval, comment string) ApiServiceElinePushResult {
+func (ctrl *Controller) removeELINEFromDevice(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings, removal *drivers.ELINERemoval, comment, actor string) ApiServiceElinePushResult {
 	result := ApiServiceElinePushResult{Device: device.Name}
 
 	if !isSupportedDriverPlatform(device) {
 		result.Error = "driver provisioning is not supported for platform " + device.Platform
 		return result
 	}
-	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(device, creds, settings, actor)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -837,7 +837,7 @@ func stampAppliedOnDevice(db *gorm.DB, device *models.Device, eps []models.Servi
 	return nil
 }
 
-func (ctrl *Controller) applyServiceCLIToDevice(svc *models.Service, device *models.Device, epsOnDevice, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings, comment string) ApiServiceElinePushResult {
+func (ctrl *Controller) applyServiceCLIToDevice(svc *models.Service, device *models.Device, epsOnDevice, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings, comment, actor string) ApiServiceElinePushResult {
 	result := ApiServiceElinePushResult{Device: device.Name}
 	if !isSupportedDriverPlatform(device) {
 		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
@@ -856,7 +856,7 @@ func (ctrl *Controller) applyServiceCLIToDevice(svc *models.Service, device *mod
 		result.Error = err.Error()
 		return result
 	}
-	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(device, creds, settings, actor)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -901,7 +901,7 @@ func (ctrl *Controller) applyServiceCLIToDevice(svc *models.Service, device *mod
 	return result
 }
 
-func (ctrl *Controller) removeServiceCLIFromDevice(svc *models.Service, device *models.Device, snapshots, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings, comment string) ApiServiceElinePushResult {
+func (ctrl *Controller) removeServiceCLIFromDevice(svc *models.Service, device *models.Device, snapshots, siblings []models.ServiceEndpoint, creds deviceCredentialsRequest, settings *models.Settings, comment, actor string) ApiServiceElinePushResult {
 	result := ApiServiceElinePushResult{Device: device.Name}
 	if !isSupportedDriverPlatform(device) {
 		result.Error = "CLI object exists but this platform cannot apply CLI sessions yet"
@@ -924,7 +924,7 @@ func (ctrl *Controller) removeServiceCLIFromDevice(svc *models.Service, device *
 		result.Error = err.Error()
 		return result
 	}
-	drv, err := ctrl.newDriverForDevice(device, creds, settings)
+	drv, err := ctrl.newDriverForDevice(device, creds, settings, actor)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -1034,7 +1034,7 @@ func (ctrl *Controller) removeEndpointSnapshotsFromDevices(c *echo.Context, serv
 			continue
 		}
 		comment := serviceCommitComment(c, service.ServiceID, "remove")
-		results = append(results, ctrl.removeServiceCLIFromDevice(service, &device, byDev[deviceID], siblings, creds, settings, comment))
+		results = append(results, ctrl.removeServiceCLIFromDevice(service, &device, byDev[deviceID], siblings, creds, settings, comment, sessionUserLabel(c)))
 	}
 	return results, nil
 }

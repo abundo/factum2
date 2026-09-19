@@ -7,6 +7,7 @@ package drivers
 
 import (
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/abundo/factum2/internal/factum"
@@ -108,6 +109,14 @@ type DriverParam struct {
 	Username string
 	Password string
 	Platform string
+	actor    string // audit label; set via WithActor, empty is fine
+}
+
+// WithActor returns a copy of p with the SSH session actor set. The field
+// is unexported so JSON/constructors are not required to supply it.
+func WithActor(p DriverParam, name string) DriverParam {
+	p.actor = name
+	return p
 }
 
 // DeviceFQDN returns name as-is if it already looks like an FQDN (contains a
@@ -192,7 +201,7 @@ func NewDriverName(factumConfig *util.ConfigFactum, name string, username string
 		Username: username,
 		Password: password,
 	}
-	return NewDriver(p)
+	return NewDriver(WithActor(p, os.Getenv("USER")))
 }
 
 func NewDriver(deviceParam DriverParam) (DriverClient, error) {

@@ -513,6 +513,36 @@ func logSSHLegacyLocked(platform, reason string) {
 	slog.Info("ssh.legacy", "reason", reason, "platform", platform)
 }
 
+type actorKey struct{}
+
+func contextWithActor(ctx context.Context, actor string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if actor == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, actorKey{}, actor)
+}
+
+func actorFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	s, _ := ctx.Value(actorKey{}).(string)
+	return s
+}
+
+func requestActor(ctx context.Context, req sshRunRequest) string {
+	if req.Actor != "" {
+		return req.Actor
+	}
+	if req.Param.actor != "" {
+		return req.Param.actor
+	}
+	return actorFromContext(ctx)
+}
+
 func truncateCmd(s string) string {
 	if len(s) <= sshCmdLogMax {
 		return s
@@ -1138,6 +1168,8 @@ func (p *memoryPool) Run(ctx context.Context, req sshRunRequest) (*sshRunResult,
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	req.Actor = requestActor(ctx, req)
+	ctx = contextWithActor(ctx, req.Actor)
 	key := sessionKey(req.Param)
 	host, _, _ := sshDialHostPort(req.Param)
 	firstCmd := ""

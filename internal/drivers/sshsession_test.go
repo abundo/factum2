@@ -312,6 +312,38 @@ func countCmd(cmds []string, want string) int {
 	return n
 }
 
+func TestWithActor(t *testing.T) {
+	p := DriverParam{Name: "sw1"}
+	got := WithActor(p, "alice")
+	if got.actor != "alice" {
+		t.Fatalf("actor = %q, want alice", got.actor)
+	}
+	if p.actor != "" {
+		t.Fatalf("WithActor mutated original: %q", p.actor)
+	}
+	if WithActor(p, "").actor != "" {
+		t.Fatalf("empty actor should stay empty")
+	}
+}
+
+func TestSSHActorFromParam(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	ResetSSHPoolForTest()
+	p := WithActor(f.param("vrp"), "alice")
+	ctx := context.Background()
+	if _, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	if actorFromContext(ctx) != "" {
+		t.Fatalf("caller ctx should stay unmodified")
+	}
+	st := getPool().Stats()
+	if len(st) != 1 || st[0].LastActor != "alice" {
+		t.Fatalf("LastActor = %+v", st)
+	}
+}
+
 func TestSessionKey(t *testing.T) {
 	got := sessionKey(DriverParam{Name: "[2001:db8::1]", Username: "admin", Platform: "vrp"})
 	want := "vrp/admin@[2001:db8::1]:22"
