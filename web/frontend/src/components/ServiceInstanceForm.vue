@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import HomogeneousInterfaces from '@/components/HomogeneousInterfaces.vue'
 import SchemaFields from '@/components/SchemaFields.vue'
 
-defineOptions({ name: 'TechnicalServiceForm' })
+defineOptions({ name: 'ServiceInstanceForm' })
 
 const props = defineProps({
   definition: { type: Object, default: null },

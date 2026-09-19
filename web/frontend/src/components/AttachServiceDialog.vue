@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { createScope, listScopes, listServiceTypes } from '@/api/config'
 import { getService, getServices, putServiceEndpoints, updateServiceType } from '@/api/services'
 import SchemaFields from '@/components/SchemaFields.vue'
-import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import {
   applySchemaDefaults,
   endpointsReady,
@@ -31,7 +31,7 @@ const submitted = ref(false)
 const mode = ref('existing')
 const modeItems = [
   { label: 'Existing service', value: 'existing' },
-  { label: 'New technical service', value: 'new' },
+  { label: 'New service instance', value: 'new' },
 ]
 
 const serviceTypes = ref([])
@@ -404,7 +404,7 @@ function submit() {
               class="w-full"
             />
           </div>
-          <TechnicalServiceForm
+          <ServiceInstanceForm
             v-if="selectedType"
             v-model:fields="schemaValues"
             v-model:connection-type-id="connectionTypeId"

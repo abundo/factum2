@@ -42,7 +42,7 @@ import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
-import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import { useAuthStore } from '@/stores/auth'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 import {
@@ -2100,7 +2100,7 @@ onBeforeUnmount(() => {
   <FormModal
     :open="dialog === 'create-service'"
     :source="form"
-    title="Create technical service"
+    title="Create service instance"
     :ui="{ content: 'sm:max-w-2xl' }"
     @update:open="(v) => !v && (dialog = null)"
   >
@@ -2177,7 +2177,7 @@ onBeforeUnmount(() => {
         <p v-if="form.from_interface" class="text-muted-color text-sm m-0">
           The first interface is pre-filled from the selected tree node.
         </p>
-        <TechnicalServiceForm
+        <ServiceInstanceForm
           v-if="createDefinition"
           v-model:fields="createFields"
           v-model:connection-type-id="createConnectionTypeId"

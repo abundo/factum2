@@ -15,7 +15,7 @@ import {
 } from '@/api/services'
 import { getServicePath, putServicePath } from '@/api/optical'
 import DeviceInterfacePicker from '@/components/DeviceInterfacePicker.vue'
-import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import {
   findServiceScope,
   findServicesFolderId,
@@ -596,7 +596,7 @@ function realizeCommercial() {
       toast.add({
         color: 'success',
         title: 'Realized',
-        description: 'Technical service attached in the config tree.',
+        description: 'Service instance attached in the config tree.',
       })
       emit('saved')
     })
@@ -760,7 +760,7 @@ function confirmUnrealize() {
               class="w-full"
             />
           </div>
-          <TechnicalServiceForm
+          <ServiceInstanceForm
             v-if="selectedServiceType"
             v-model:fields="schemaValues"
             v-model:connection-type-id="connectionTypeId"

@@ -66,7 +66,7 @@ Four pieces, all in the Config GUI:
    per-platform CLI objects.
 3. **Parameter objects** and **resource objects** in the tree — inherited
    knobs (`.Vars`) and named CIDR lists for prefix fields.
-4. **Technical service** — a `models.Service` row with `service_type` =
+4. **Service instance** — a `models.Service` row with `service_type` =
    definition name, plus homogeneous `service_endpoints` (`role` is always
    `"interface"`).
 
@@ -551,7 +551,7 @@ attach-only; Detach never deletes the DCIM row.
 - [ ] Prefix lists use `items.resource`; resource nodes sit on site/device/
       interface (not under the service node).
 - [ ] Type created in Catalog → Service types (form builder). Confirm it
-      appears when creating a technical service from the Config tree.
+      appears when creating a service instance from the Config tree.
 - [ ] One CLI object per platform you will push, under
       `_catalog/cli/<Name>/`, `payload_kind=cli`, service type set.
 - [ ] Feature remove blob keyed by `.Name`, safe if the object is absent.

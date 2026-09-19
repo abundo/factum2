@@ -16,7 +16,7 @@ import {
   updateServiceType,
 } from '@/api/services'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
-import TechnicalServiceForm from '@/components/TechnicalServiceForm.vue'
+import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import { reshapeEndpoints } from '@/utils/serviceEndpoints'
 import {
   cfgmgmtBaselineSchema,
@@ -607,7 +607,7 @@ function toggleFeature(id) {
               class="w-full"
             />
           </div>
-          <TechnicalServiceForm
+          <ServiceInstanceForm
             v-if="selectedServiceType"
             v-model:fields="schemaValues"
             v-model:connection-type-id="connectionTypeId"

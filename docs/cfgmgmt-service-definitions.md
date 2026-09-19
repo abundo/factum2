@@ -136,7 +136,7 @@ Commercial `models.Service` (`models/organisation.go`) is one row for both Lime 
 flowchart TB
   subgraph gui [Config GUI]
     Cat[Catalog: definition form builder]
-    Create[Create technical service: definition list + form]
+    Create[Create service instance: definition list + form]
     Tree[Wunderbaum: canonical service + virtual refs]
     Res[Resource inspector: CIDR list]
   end
@@ -415,7 +415,7 @@ Wavelength/fiber never appear as definitions. The picker excludes them by sendin
 
 ### Instance GUI
 
-**Create technical service** (Config tree context menu on folder/site/location, and a primary “New service” on the Config page — **not** listing `_catalog` as customer services):
+**Create service instance** (Config tree context menu on folder/site/location, and a primary “New service” on the Config page — **not** listing `_catalog` as customer services):
 
 1. List definitions (`GET /api/config/service-types`) as cards: name, description, connection-type thumbnails if any.
 2. Selected definition renders `SchemaFields`-style controls from `schema` + connection-type radio (PNG/WebP + name) + interface block from `interfaces`.
@@ -968,7 +968,7 @@ Follow-ups already listed as non-goals: import/export package, L3VPN definition,
 | Operators lose lab services and Lime CNs until sync | High | Changelog; goose NOTICE; accepted. |
 | Future ELINE package templates written against `.Remote` | Medium | How-to documents `.Others` / `.Current.Fields`; keep example tmpl files updated in the package follow-up, not in Seed. |
 | Global occupancy by resource name double-counts sites | Medium | Document naming; last-write-wins; follow-up occupancy table. |
-| Same-row vs two-row confusion | Medium | GUI copy: “Realize this CN” vs “New technical service” vs “Unrealize”. |
+| Same-row vs two-row confusion | Medium | GUI copy: “Realize this CN” vs “New service instance” vs “Unrealize”. |
 | NetBox leftover EVPL after wipe | Medium | Match on next realize by name; optional operator cleanup in NetBox. |
 | Tests hard-code builtin ELINE / `endpoint_roles` / `PrepareELINEApply` on generic push | High | PR 1+4+5 grep and rewrite `cfgmgmt_test.go`, `handler_config_test.go`, `handler_service_eline_test.go`, frontend tests. Driver `ELINEApplier` tests may keep Prepare. |
 | Endpoint PUT replace-then-add if add fails | Medium | Inventory matches GUI; operator retries push; log. |
@@ -1049,7 +1049,7 @@ Each PR is independently reviewable and mergeable. Tests must pass without depen
 
 ### PR 7 — Instance GUI: definition list, homogeneous form, pickers
 
-- **Title:** gui: create/inspect technical services from definitions
+- **Title:** gui: create/inspect service instances from definitions
 - **Files/components:** `ConfigNodeInspector.vue`, `ServiceEditDialog.vue`, `ServiceCreateWizard.vue`, `DeviceInterfacePicker.vue`, `AttachServiceDialog.vue`, `SchemaFields.vue`, Config tree context menu, `web/handler_service.go` (`q`/`category`)
 - **Dependencies:** PR 3, **PR 5**, PR 6
 - **Changes:** Create flow lists definitions; ELINE 2 slots; ELAN/POLARIX add/remove; ServiceID search (`category=CN,CI,freetext` always; list omit category still all rows); resource allocate popup; connection-type radio with PNG/WebP. Realize = PUT type then attach pk then endpoints. Unrealize button. Picker: unique=device+iface only; no physical/platform allowlist. Services page stays commercial.
