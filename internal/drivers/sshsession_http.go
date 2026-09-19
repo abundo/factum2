@@ -472,26 +472,35 @@ func (m *sessionMux) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeSessionJSONError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	timeout := time.Duration(body.TimeoutMS) * time.Millisecond
-	req := sshRunRequest{
-		Param: DriverParam{
-			Name:     body.Host,
-			Port:     body.Port,
-			Username: body.Username,
-			Password: body.Password,
-			Platform: body.Platform,
-		},
-		Mode:    mode,
-		Cmds:    cmds,
-		Actor:   body.Actor,
-		Timeout: timeout,
+	p := DriverParam{
+		Name:     body.Host,
+		Port:     body.Port,
+		Username: body.Username,
+		Password: body.Password,
+		Platform: body.Platform,
 	}
 	slog.Info("ssh.http_run", "host", body.Host, "platform", body.Platform, "actor", body.Actor)
-	var res *sshRunResult
-	if sshUseMemoryPool(body.Platform) {
-		res, err = localRun(r.Context(), req)
+	// JSON port is the SSH port for pooled runs. Unpooled platforms still
+	// go through sshRunCLI* legacy, which always dials :22 (NETCONF p.Port
+	// must not be used for SSH CLI).
+	start := time.Now()
+	var outputs []string
+	if mode == sshRunPipeline {
+		lines := make([]string, len(cmds))
+		var marker *regexp.Regexp
+		for i, c := range cmds {
+			lines[i] = c.Cmd
+			if c.EndMarker != nil {
+				marker = c.EndMarker
+			}
+		}
+		var out string
+		out, err = sshRunCLIPipeline(r.Context(), p, lines, marker)
+		if err == nil {
+			outputs = []string{out}
+		}
 	} else {
-		res, err = oneShotRun(r.Context(), req)
+		outputs, err = sshRunCLIBatch(r.Context(), p, cmds)
 	}
 	if err != nil {
 		status, msg := mapPoolHTTPError(err)
@@ -499,7 +508,7 @@ func (m *sessionMux) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := 0
-	for _, o := range res.Outputs {
+	for _, o := range outputs {
 		n += len(o)
 	}
 	if n > sessionMaxBody {
@@ -508,49 +517,9 @@ func (m *sessionMux) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(cliRunResponseJSON{
-		Outputs:     res.Outputs,
-		Reused:      res.Reused,
-		LoginMS:     res.Login.Milliseconds(),
-		QueueWaitMS: res.QueueWait.Milliseconds(),
-		CommandMS:   res.Command.Milliseconds(),
+		Outputs:   outputs,
+		CommandMS: time.Since(start).Milliseconds(),
 	})
-}
-
-func oneShotRun(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
-	s, err := dialSSHShell(req.Param.Username, req.Param.Password, req.Param.Name, req.Param.Port)
-	if err != nil {
-		return nil, err
-	}
-	defer s.Close()
-	_ = s.waitIdle(ctx, nil)
-	start := time.Now()
-	if req.Mode == sshRunPipeline {
-		s.resetCapture()
-		cmds := make([]string, len(req.Cmds))
-		var marker *regexp.Regexp
-		for i, c := range req.Cmds {
-			cmds[i] = c.Cmd
-			if c.EndMarker != nil {
-				marker = c.EndMarker
-			}
-		}
-		if err := s.write(strings.Join(cmds, "\n")); err != nil {
-			return nil, err
-		}
-		_ = s.waitIdle(ctx, marker)
-		out := strings.ReplaceAll(s.capture(), "\r\n", "\n")
-		return &sshRunResult{Outputs: []string{out}, Command: time.Since(start)}, nil
-	}
-	results := make([]string, len(req.Cmds))
-	for i, cmd := range req.Cmds {
-		s.resetCapture()
-		if err := s.write(cmd.Cmd); err != nil {
-			return nil, err
-		}
-		_ = s.waitIdle(ctx, cmd.EndMarker)
-		results[i] = s.capture()
-	}
-	return &sshRunResult{Outputs: normalizeSSHOutputs(results), Command: time.Since(start)}, nil
 }
 
 func mapPoolHTTPError(err error) (int, string) {
@@ -700,7 +669,7 @@ func listenSessionUnix(socketPath string) (net.Listener, error) {
 }
 
 // ServeSSHSession binds unix and/or TCP listeners and serves until ctx is done.
-// Handlers call localRun only; InitSSHPool must already have client remote off.
+// InitSSHPool must already have client remote off so sshRunCLI* stay in-process.
 func ServeSSHSession(ctx context.Context, d util.ConfigDriver) error {
 	plan, err := parseSessionListen(d)
 	if err != nil {

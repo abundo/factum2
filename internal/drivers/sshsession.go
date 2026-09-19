@@ -413,10 +413,6 @@ func getPool() *memoryPool {
 	return sshGlobals.pool
 }
 
-func localRun(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
-	return getPool().Run(ctx, req)
-}
-
 func runPooled(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
 	if client, ok := takeRemote(); ok {
 		res, err := client.Run(ctx, req)
@@ -457,7 +453,7 @@ func takeRemote() (*sessionHTTPClient, bool) {
 	r.lastProbe = now
 	sshGlobals.mu.Unlock()
 
-	if !probeRemote(r) {
+	if r.client == nil || !r.client.probeHealth() {
 		return nil, false
 	}
 
@@ -484,13 +480,6 @@ func markRemoteDown() {
 		sshGlobals.remote.down = true
 		sshGlobals.remote.lastProbe = time.Now()
 	}
-}
-
-func probeRemote(r *sessionRemote) bool {
-	if r == nil || r.client == nil {
-		return false
-	}
-	return r.client.probeHealth()
 }
 
 func sshUseMemoryPool(platform string) bool {

@@ -355,21 +355,11 @@ func TestCLIRunDoesNotHTTPToOwnSocket(t *testing.T) {
 	f := startFakeSSH(t)
 	ResetSSHPoolForTest()
 	sshGlobals.mu.Lock()
-	sshGlobals.remote = &sessionRemote{
-		client: &sessionHTTPClient{
-			client: &http.Client{
-				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-					return nil, errors.New("outbound HTTP to own socket")
-				}),
-			},
-		},
-	}
+	remoteOn := sshGlobals.remote != nil
 	sshGlobals.mu.Unlock()
-	t.Cleanup(func() {
-		sshGlobals.mu.Lock()
-		sshGlobals.remote = nil
-		sshGlobals.mu.Unlock()
-	})
+	if remoteOn {
+		t.Fatal("start-style pool must not configure a session HTTP client")
+	}
 
 	mux := newSessionHandler(&sessionMux{})
 	srv := httptest.NewServer(mux)
@@ -390,10 +380,6 @@ func TestCLIRunDoesNotHTTPToOwnSocket(t *testing.T) {
 		t.Fatalf("status %d body %s", resp.StatusCode, b)
 	}
 }
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestMissingSocketFallsBackInProcess(t *testing.T) {
 	useFastSSHIdle(t)
@@ -718,20 +704,16 @@ func TestDaemonRespectsPlatformKillSwitch(t *testing.T) {
 		Cmds: []cliRunCmdJSON{{Cmd: "display version"}},
 	}
 	raw, _ := json.Marshal(body)
-	for i := 0; i < 2; i++ {
-		resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != 200 {
-			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("status %d body %s", resp.StatusCode, b)
-		}
-		resp.Body.Close()
+	resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if f.connections() != 2 {
-		t.Fatalf("connections = %d, want 2 one-shot with platforms kill switch", f.connections())
+	resp.Body.Close()
+	if len(getPool().Stats()) != 0 {
+		t.Fatalf("kill switch must not pool: %+v", getPool().Stats())
+	}
+	if f.connections() != 0 {
+		t.Fatalf("legacy SSH CLI dials :22, not JSON port; fake connections = %d", f.connections())
 	}
 }
 
@@ -748,20 +730,16 @@ func TestDaemonDoesNotPoolUnprofiledPlatform(t *testing.T) {
 		Cmds: []cliRunCmdJSON{{Cmd: "display version"}},
 	}
 	raw, _ := json.Marshal(body)
-	for i := 0; i < 2; i++ {
-		resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != 200 {
-			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("status %d body %s", resp.StatusCode, b)
-		}
-		resp.Body.Close()
+	resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if f.connections() != 2 {
-		t.Fatalf("connections = %d, want 2 one-shot for ios-xr", f.connections())
+	resp.Body.Close()
+	if len(getPool().Stats()) != 0 {
+		t.Fatalf("ios-xr must not be pooled: %+v", getPool().Stats())
+	}
+	if f.connections() != 0 {
+		t.Fatalf("legacy SSH CLI dials :22, not JSON port; fake connections = %d", f.connections())
 	}
 }
 
