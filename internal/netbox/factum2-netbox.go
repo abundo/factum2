@@ -30,6 +30,8 @@ import (
 // Interfaces, addresses and tags belonging to a synced device are always
 // reconciled against Netbox: anything no longer present there is removed
 // from factum, whether the sync is for a single device or all of them.
+// Cable, site, VRF, customer, contact, and L2VPN→service import only
+// run on a full sync.
 func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
@@ -199,15 +201,16 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
-	// Reverse-import Netbox L2VPNs (created by device-sync or the
-	// service GUI; type from cfgmgmt NetboxType, e.g. evpl/vpls) onto
-	// matching factum Service rows so the device interface table can
-	// show Service buttons. Runs on single-device syncs too: interfaces
-	// for the just-synced device are fresh, and peer ends resolve from
-	// whatever is already in factum.
-	if err := syncServiceEndpointsFromL2VPNs(db, nb, reporter); err != nil {
-		reporter.EmitErr(err)
-		return err
+	// Reverse-import Netbox L2VPNs onto matching factum Service rows so
+	// the device interface table can show Service buttons. GetL2VPNs plus
+	// a terminations fetch per VPN is a full-inventory walk, so this only
+	// runs on a full sync — a single-device sync (webhook, VLAN refresh)
+	// is device + interfaces + IP addresses only.
+	if fullSync {
+		if err := syncServiceEndpointsFromL2VPNs(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 	}
 
 	return nil

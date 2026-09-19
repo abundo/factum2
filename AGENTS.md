@@ -143,9 +143,9 @@ design:
 `factum2-device-sync` writes on-device services using cfgmgmt mappings
 (`sync_source` eline/elan/l3vpn → `netbox_type` evpl/vpls/vrf) plus
 terminations. Operators set those mapping fields on the definition they
-create. `factum2-netbox
-sync` then reverse-imports L2VPNs onto matching factum `Service` rows
-(`internal/netbox.syncServiceEndpointsFromL2VPNs`): match by
+create. A full `factum2-netbox
+sync` (no device name) then reverse-imports L2VPNs onto matching factum `Service` rows
+(`internal/netbox.syncServiceEndpointsFromL2VPNs`; skipped on single-device / webhook SyncDB): match by
 `Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`, resolve
 terminations to physical ports + VLAN/subinterface, set `ServiceType`
 from the mapping and `service_endpoints` (`role=interface`, count from
