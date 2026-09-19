@@ -23,7 +23,6 @@ import {
   updateInterface,
 } from '@/api/dcim'
 import { getSite, getSites } from '@/api/sites'
-import { interfaceTypeItems } from '@/utils/interfaceTypes'
 import {
   createXConnect,
   deleteOpticalPort,
@@ -31,6 +30,8 @@ import {
   listXConnects,
   putOpticalPort,
 } from '@/api/optical'
+import DcimDetailDialog from '@/components/DcimDetailDialog.vue'
+import InterfaceEditorDialog from '@/components/InterfaceEditorDialog.vue'
 import OxidizedNodePanel from '@/components/OxidizedNodePanel.vue'
 import AttachServiceDialog from '@/components/AttachServiceDialog.vue'
 import IpamAddressPicker from '@/components/IpamAddressPicker.vue'
@@ -1088,16 +1089,15 @@ onMounted(loadDevices)
     </UTable>
   </div>
 
-  <FormModal
+  <DcimDetailDialog
     v-model:open="detailDialog"
+    v-model:tab="detailTab"
+    :tabs="detailTabItems"
+    :loading="deviceLoading"
+    :error="deviceError"
+    :ready="!!device"
     :dirty="detailDirty"
     :title="device?.name ?? 'Device'"
-    :ui="{
-      content: 'w-[95vw] h-[90vh] sm:max-w-none flex flex-col',
-      header: 'min-w-0',
-      title: 'min-w-0 flex-1',
-      body: 'flex-1 min-h-0 overflow-hidden',
-    }"
   >
     <template #title>
       <div class="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 pr-2">
@@ -1116,562 +1116,508 @@ onMounted(loadDevices)
         >
       </div>
     </template>
-    <template #body>
-      <div v-if="deviceLoading" class="flex justify-center p-4">
-        <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
-      </div>
+    <template #overview>
+      <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
+        <span class="font-bold whitespace-nowrap">Status</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <UBadge
+            v-if="isLocalDevice ? createForm.status : device.status"
+            :label="isLocalDevice ? createForm.status : device.status"
+            :color="statusColor(isLocalDevice ? createForm.status : device.status)"
+            variant="subtle"
+          />
+          <UBadge
+            v-if="!(isLocalDevice ? createForm.enabled : device.enabled)"
+            label="Disabled"
+            color="neutral"
+            variant="subtle"
+          />
+          <UBadge
+            v-if="!isLocalDevice && device.optical_kind"
+            :label="device.optical_kind"
+            color="info"
+            variant="subtle"
+          />
+          <span
+            v-if="!isLocalDevice && !device.status && device.enabled && !device.optical_kind"
+            class="text-muted-color"
+            >—</span
+          >
+        </div>
 
-      <UAlert v-else-if="deviceError" color="error" variant="subtle" :title="deviceError" />
+        <template v-if="isLocalDevice">
+          <label for="device-enabled" class="font-bold whitespace-nowrap">Enabled</label>
+          <USwitch id="device-enabled" v-model="createForm.enabled" />
+        </template>
 
-      <div v-else-if="device" class="flex flex-col h-full min-h-0">
-        <UTabs
-          v-model="detailTab"
-          :items="detailTabItems"
-          class="min-h-0 flex-1"
-          :ui="{
-            list: 'w-full',
-            content: 'min-h-0 flex-1 overflow-auto rounded-md border border-default p-3 mt-2',
-          }"
+        <template v-if="deviceImpact">
+          <span class="font-bold whitespace-nowrap">Affected</span>
+          <span class="min-w-0">{{
+            `${deviceImpact.service_count} services / ${deviceImpact.customer_count} customers`
+          }}</span>
+        </template>
+
+        <label for="device-name" class="font-bold whitespace-nowrap">Name</label>
+        <UInput v-if="isLocalDevice" id="device-name" v-model="createForm.name" class="w-full" />
+        <UInput v-else id="device-name" :model-value="device.name || ''" disabled class="w-full" />
+
+        <label class="font-bold whitespace-nowrap">Site</label>
+        <div class="min-w-0 flex items-center gap-2">
+          <div class="min-w-0 flex-1 text-sm">
+            <template v-if="selectedSite">
+              <span class="font-medium">{{ selectedSite.name }}</span>
+              <span
+                v-if="formatCoord(selectedSite.latitude) || formatCoord(selectedSite.longitude)"
+                class="text-muted-color"
+              >
+                {{ formatCoord(selectedSite.latitude) || '—' }},
+                {{ formatCoord(selectedSite.longitude) || '—' }}
+              </span>
+            </template>
+            <span v-else class="text-muted-color">{{ device.site || 'No site' }}</span>
+          </div>
+          <template v-if="isLocalDevice && authStore.canWrite">
+            <UButton
+              icon="i-lucide-map-pin"
+              label="Browse"
+              variant="outline"
+              color="neutral"
+              @click="siteSelectorVisible = true"
+            />
+            <UButton
+              v-if="selectedSite || createForm.site"
+              label="Clear"
+              variant="ghost"
+              color="neutral"
+              @click="clearSite"
+            />
+          </template>
+        </div>
+
+        <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
+        <UInput v-if="isLocalDevice" id="device-role" v-model="createForm.role" class="w-full" />
+        <UInput v-else id="device-role" :model-value="device.role || ''" disabled class="w-full" />
+
+        <label for="device-type" class="font-bold whitespace-nowrap">Device type</label>
+        <USelect
+          v-if="isLocalDevice"
+          id="device-type"
+          v-model="createForm.device_type_id"
+          :items="deviceTypeItems"
+          class="w-full"
+        />
+        <UInput
+          v-else
+          id="device-type"
+          :model-value="[device.manufacturer, device.model_name].filter(Boolean).join(' ') || ''"
+          disabled
+          class="w-full"
+        />
+
+        <label for="device-platform" class="font-bold whitespace-nowrap">Platform</label>
+        <USelect
+          v-if="isLocalDevice"
+          id="device-platform"
+          v-model="createForm.platform_id"
+          :items="platformItems"
+          class="w-full"
+        />
+        <UInput
+          v-else
+          id="device-platform"
+          :model-value="device.platform || ''"
+          disabled
+          class="w-full"
+        />
+
+        <template v-if="isLocalDevice">
+          <label for="device-status" class="font-bold whitespace-nowrap">Status</label>
+          <USelect
+            id="device-status"
+            v-model="createForm.status"
+            :items="statusItems"
+            class="w-full"
+          />
+        </template>
+
+        <label for="device-ipv4" class="font-bold whitespace-nowrap">Primary IPv4</label>
+        <UInput
+          id="device-ipv4"
+          :model-value="device.primary_ipv4 || ''"
+          disabled
+          class="w-full font-mono"
+          title="Set from a management IP address on an interface"
+        />
+
+        <label for="device-ipv6" class="font-bold whitespace-nowrap">Primary IPv6</label>
+        <UInput
+          id="device-ipv6"
+          :model-value="device.primary_ipv6 || ''"
+          disabled
+          class="w-full font-mono"
+          title="Set from a management IP address on an interface"
+        />
+
+        <label for="device-location" class="font-bold whitespace-nowrap">Location</label>
+        <UInput
+          v-if="isLocalDevice"
+          id="device-location"
+          v-model="createForm.cf_location"
+          class="w-full"
+        />
+        <UInput
+          v-else
+          id="device-location"
+          :model-value="device.cf_location || ''"
+          disabled
+          class="w-full"
+        />
+
+        <template v-if="authStore.opticalEnabled">
+          <label for="device-optical-kind" class="font-bold whitespace-nowrap">Optical kind</label>
+          <USelect
+            v-if="isLocalDevice"
+            id="device-optical-kind"
+            v-model="createForm.optical_kind"
+            :items="opticalKindItems"
+            class="w-full"
+          />
+          <UInput
+            v-else
+            id="device-optical-kind"
+            :model-value="device.optical_kind || ''"
+            disabled
+            class="w-full"
+          />
+        </template>
+
+        <label for="device-comments" class="font-bold whitespace-nowrap self-start mt-2"
+          >Comments</label
         >
-          <template #overview>
-            <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
-              <span class="font-bold whitespace-nowrap">Status</span>
-              <div class="flex flex-wrap items-center gap-2">
-                <UBadge
-                  v-if="isLocalDevice ? createForm.status : device.status"
-                  :label="isLocalDevice ? createForm.status : device.status"
-                  :color="statusColor(isLocalDevice ? createForm.status : device.status)"
-                  variant="subtle"
-                />
-                <UBadge
-                  v-if="!(isLocalDevice ? createForm.enabled : device.enabled)"
-                  label="Disabled"
-                  color="neutral"
-                  variant="subtle"
-                />
-                <UBadge
-                  v-if="!isLocalDevice && device.optical_kind"
-                  :label="device.optical_kind"
-                  color="info"
-                  variant="subtle"
-                />
-                <span
-                  v-if="!isLocalDevice && !device.status && device.enabled && !device.optical_kind"
-                  class="text-muted-color"
-                  >—</span
-                >
-              </div>
+        <UTextarea
+          v-if="isLocalDevice"
+          id="device-comments"
+          v-model="createForm.comments"
+          :rows="2"
+          class="w-full"
+        />
+        <UTextarea
+          v-else
+          id="device-comments"
+          :model-value="device.comments || ''"
+          disabled
+          :rows="2"
+          class="w-full"
+        />
 
-              <template v-if="isLocalDevice">
-                <label for="device-enabled" class="font-bold whitespace-nowrap">Enabled</label>
-                <USwitch id="device-enabled" v-model="createForm.enabled" />
-              </template>
+        <span class="font-bold whitespace-nowrap self-start mt-1">Monitoring</span>
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2">
+            <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_icinga" />
+            <USwitch v-else :model-value="!!device.cf_monitor_icinga" disabled />
+            <span>Icinga</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_librenms" />
+            <USwitch v-else :model-value="!!device.cf_monitor_librenms" disabled />
+            <span>LibreNMS</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_grafana" />
+            <USwitch v-else :model-value="!!device.cf_monitor_grafana" disabled />
+            <span>Grafana</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <USwitch v-if="isLocalDevice" v-model="createForm.cf_backup_oxidized" />
+            <USwitch v-else :model-value="!!device.cf_backup_oxidized" disabled />
+            <span>Oxidized backup</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <USwitch v-if="isLocalDevice" v-model="createForm.cf_alarm_interfaces" />
+            <USwitch v-else :model-value="!!device.cf_alarm_interfaces" disabled />
+            <span>Interface alarms</span>
+          </label>
+        </div>
+      </div>
+    </template>
 
-              <template v-if="deviceImpact">
-                <span class="font-bold whitespace-nowrap">Affected</span>
-                <span class="min-w-0">{{
-                  `${deviceImpact.service_count} services / ${deviceImpact.customer_count} customers`
-                }}</span>
-              </template>
+    <template #interfaces>
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex flex-wrap items-end gap-2 mb-4 shrink-0">
+          <UButton
+            v-if="isLocalDevice && authStore.canWrite"
+            label="New"
+            icon="i-lucide-plus"
+            size="sm"
+            color="neutral"
+            @click="openNewIface"
+          />
+          <UButton
+            label="Refresh"
+            icon="i-lucide-refresh-cw"
+            size="sm"
+            variant="outline"
+            color="neutral"
+            :loading="refreshingInterfaces"
+            :disabled="!canUseDriver"
+            @click="refreshInterfaces"
+          />
+          <UButton
+            label="Save changes"
+            icon="i-lucide-save"
+            size="sm"
+            :loading="updatingInterfaces"
+            :disabled="!canUseDriver"
+            @click="updateInterfaces"
+          />
+          <span v-if="!isSupportedDriverPlatform" class="text-sm text-muted-color"
+            >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this device is
+            "{{ device?.platform || 'unknown' }}").</span
+          >
+        </div>
 
-              <label for="device-name" class="font-bold whitespace-nowrap">Name</label>
-              <UInput
-                v-if="isLocalDevice"
-                id="device-name"
-                v-model="createForm.name"
-                class="w-full"
+        <UTable
+          v-model:sorting="interfaceSorting"
+          :data="device?.interfaces ?? []"
+          :columns="interfaceColumns"
+          :empty="'No interfaces stored for this device.'"
+          sticky
+          class="flex-1 min-h-0 overflow-y-auto"
+        >
+          <template #name-header="{ column }">
+            <SortableColumnHeader :column="column" label="Name" />
+          </template>
+          <template #description-header="{ column }">
+            <SortableColumnHeader :column="column" label="Description" />
+          </template>
+          <template #vrf-header="{ column }">
+            <SortableColumnHeader :column="column" label="VRF" />
+          </template>
+          <template #vrf-cell="{ row }">
+            {{ row.original.vrf || '—' }}
+          </template>
+
+          <template #actions-cell="{ row }">
+            <div class="flex gap-1">
+              <UButton
+                icon="i-lucide-pencil"
+                variant="ghost"
+                color="neutral"
+                size="sm"
+                title="Edit interface"
+                @click="openEditIface(row.original)"
               />
-              <UInput
-                v-else
-                id="device-name"
-                :model-value="device.name || ''"
-                disabled
-                class="w-full"
+              <UButton
+                v-if="authStore.canWrite && isLocalDevice && !row.original.netbox_id"
+                icon="i-lucide-trash"
+                variant="ghost"
+                color="error"
+                size="sm"
+                :loading="ifaceDeleting"
+                @click="removeIface(row.original)"
               />
-
-              <label class="font-bold whitespace-nowrap">Site</label>
-              <div class="min-w-0 flex items-center gap-2">
-                <div class="min-w-0 flex-1 text-sm">
-                  <template v-if="selectedSite">
-                    <span class="font-medium">{{ selectedSite.name }}</span>
-                    <span
-                      v-if="formatCoord(selectedSite.latitude) || formatCoord(selectedSite.longitude)"
-                      class="text-muted-color"
-                    >
-                      {{ formatCoord(selectedSite.latitude) || '—' }},
-                      {{ formatCoord(selectedSite.longitude) || '—' }}
-                    </span>
-                  </template>
-                  <span v-else class="text-muted-color">{{ device.site || 'No site' }}</span>
-                </div>
-                <template v-if="isLocalDevice && authStore.canWrite">
-                  <UButton
-                    icon="i-lucide-map-pin"
-                    label="Browse"
-                    variant="outline"
-                    color="neutral"
-                    @click="siteSelectorVisible = true"
-                  />
-                  <UButton
-                    v-if="selectedSite || createForm.site"
-                    label="Clear"
-                    variant="ghost"
-                    color="neutral"
-                    @click="clearSite"
-                  />
-                </template>
-              </div>
-
-              <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
+            </div>
+          </template>
+          <template #name-cell="{ row }">
+            <span class="whitespace-nowrap">{{ row.original.name }}</span>
+          </template>
+          <template #description-cell="{ row }">
+            <div class="flex items-center gap-1">
               <UInput
-                v-if="isLocalDevice"
-                id="device-role"
-                v-model="createForm.role"
-                class="w-full"
+                v-model="row.original.description"
+                :disabled="!authStore.canWrite"
+                size="sm"
+                class="w-full min-w-lg"
               />
-              <UInput
-                v-else
-                id="device-role"
-                :model-value="device.role || ''"
-                disabled
-                class="w-full"
+              <span
+                v-if="isDescriptionChanged(row.original)"
+                title="Changed, not yet saved"
+                class="size-1.5 rounded-full bg-warning shrink-0"
               />
-
-              <label for="device-type" class="font-bold whitespace-nowrap">Device type</label>
+            </div>
+          </template>
+          <template #vlans-cell="{ row }">
+            <span
+              class="whitespace-nowrap text-sm"
+              :title="vlanSummary(row.original).title || undefined"
+              >{{ vlanSummary(row.original).text || '—' }}</span
+            >
+          </template>
+          <template #optical-cell="{ row }">
+            <div class="flex items-center gap-1">
               <USelect
-                v-if="isLocalDevice"
-                id="device-type"
-                v-model="createForm.device_type_id"
-                :items="deviceTypeItems"
-                class="w-full"
+                v-if="authStore.opticalEnabled && authStore.canWrite"
+                :model-value="row.original.optical?.role || ''"
+                :items="opticalRoles"
+                value-key="value"
+                label-key="label"
+                class="w-36"
+                @update:model-value="savePortRole(row.original, $event)"
               />
+              <span v-else>{{ row.original.optical?.role || '—' }}</span>
               <UInput
-                v-else
-                id="device-type"
-                :model-value="
-                  [device.manufacturer, device.model_name].filter(Boolean).join(' ') || ''
+                v-if="
+                  row.original.optical?.role === 'roadm_adddrop' ||
+                  row.original.optical?.role === 'txp_line'
                 "
-                disabled
-                class="w-full"
+                class="w-24"
+                placeholder="THz"
+                :model-value="
+                  row.original.optical?.freq_hz
+                    ? (row.original.optical.freq_hz / 1e12).toFixed(4)
+                    : ''
+                "
+                @change="
+                  (e) =>
+                    putOpticalPort(row.original.id, {
+                      role: row.original.optical.role,
+                      freq_thz: Number(e.target.value),
+                    }).then((p) => {
+                      row.original.optical = p
+                    })
+                "
               />
-
-              <label for="device-platform" class="font-bold whitespace-nowrap">Platform</label>
-              <USelect
-                v-if="isLocalDevice"
-                id="device-platform"
-                v-model="createForm.platform_id"
-                :items="platformItems"
-                class="w-full"
+            </div>
+          </template>
+          <template #services-cell="{ row }">
+            <div class="flex flex-wrap gap-1">
+              <UButton
+                v-for="svc in row.original.services ?? []"
+                :key="svc.id"
+                :label="svc.service_id || 'Service'"
+                icon="i-lucide-link"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                @click="openService(svc.id)"
               />
-              <UInput
-                v-else
-                id="device-platform"
-                :model-value="device.platform || ''"
-                disabled
-                class="w-full"
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                size="sm"
+                variant="ghost"
+                color="neutral"
+                title="Add service"
+                @click="openAttach(row.original)"
               />
-
-              <template v-if="isLocalDevice">
-                <label for="device-status" class="font-bold whitespace-nowrap">Status</label>
-                <USelect
-                  id="device-status"
-                  v-model="createForm.status"
-                  :items="statusItems"
-                  class="w-full"
-                />
-              </template>
-
-              <label for="device-ipv4" class="font-bold whitespace-nowrap">Primary IPv4</label>
-              <UInput
-                id="device-ipv4"
-                :model-value="device.primary_ipv4 || ''"
-                disabled
-                class="w-full font-mono"
-                title="Set from a management IP address on an interface"
-              />
-
-              <label for="device-ipv6" class="font-bold whitespace-nowrap">Primary IPv6</label>
-              <UInput
-                id="device-ipv6"
-                :model-value="device.primary_ipv6 || ''"
-                disabled
-                class="w-full font-mono"
-                title="Set from a management IP address on an interface"
-              />
-
-              <label for="device-location" class="font-bold whitespace-nowrap">Location</label>
-              <UInput
-                v-if="isLocalDevice"
-                id="device-location"
-                v-model="createForm.cf_location"
-                class="w-full"
-              />
-              <UInput
-                v-else
-                id="device-location"
-                :model-value="device.cf_location || ''"
-                disabled
-                class="w-full"
-              />
-
-              <template v-if="authStore.opticalEnabled">
-                <label for="device-optical-kind" class="font-bold whitespace-nowrap"
-                  >Optical kind</label
-                >
-                <USelect
-                  v-if="isLocalDevice"
-                  id="device-optical-kind"
-                  v-model="createForm.optical_kind"
-                  :items="opticalKindItems"
-                  class="w-full"
-                />
-                <UInput
-                  v-else
-                  id="device-optical-kind"
-                  :model-value="device.optical_kind || ''"
-                  disabled
-                  class="w-full"
-                />
-              </template>
-
-              <label for="device-comments" class="font-bold whitespace-nowrap self-start mt-2"
-                >Comments</label
+            </div>
+          </template>
+          <template #addresses-cell="{ row }">
+            <div class="flex flex-wrap items-center gap-1">
+              <span
+                v-for="addr in row.original.addresses ?? []"
+                :key="addr.id"
+                class="inline-flex items-center gap-0.5 whitespace-nowrap text-sm"
               >
-              <UTextarea
-                v-if="isLocalDevice"
-                id="device-comments"
-                v-model="createForm.comments"
-                :rows="2"
-                class="w-full"
-              />
-              <UTextarea
-                v-else
-                id="device-comments"
-                :model-value="device.comments || ''"
-                disabled
-                :rows="2"
-                class="w-full"
-              />
-
-              <span class="font-bold whitespace-nowrap self-start mt-1">Monitoring</span>
-              <div class="flex flex-col gap-2">
-                <label class="flex items-center gap-2">
-                  <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_icinga" />
-                  <USwitch v-else :model-value="!!device.cf_monitor_icinga" disabled />
-                  <span>Icinga</span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_librenms" />
-                  <USwitch v-else :model-value="!!device.cf_monitor_librenms" disabled />
-                  <span>LibreNMS</span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <USwitch v-if="isLocalDevice" v-model="createForm.cf_monitor_grafana" />
-                  <USwitch v-else :model-value="!!device.cf_monitor_grafana" disabled />
-                  <span>Grafana</span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <USwitch v-if="isLocalDevice" v-model="createForm.cf_backup_oxidized" />
-                  <USwitch v-else :model-value="!!device.cf_backup_oxidized" disabled />
-                  <span>Oxidized backup</span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <USwitch v-if="isLocalDevice" v-model="createForm.cf_alarm_interfaces" />
-                  <USwitch v-else :model-value="!!device.cf_alarm_interfaces" disabled />
-                  <span>Interface alarms</span>
-                </label>
-              </div>
-            </div>
-          </template>
-
-          <template #interfaces>
-            <div class="flex flex-col h-full min-h-0">
-              <div class="flex flex-wrap items-end gap-2 mb-4 shrink-0">
-                <UButton
-                  v-if="isLocalDevice && authStore.canWrite"
-                  label="New"
-                  icon="i-lucide-plus"
-                  size="sm"
-                  color="neutral"
-                  @click="openNewIface"
-                />
-                <UButton
-                  label="Refresh"
-                  icon="i-lucide-refresh-cw"
-                  size="sm"
-                  variant="outline"
-                  color="neutral"
-                  :loading="refreshingInterfaces"
-                  :disabled="!canUseDriver"
-                  @click="refreshInterfaces"
-                />
-                <UButton
-                  label="Save changes"
-                  icon="i-lucide-save"
-                  size="sm"
-                  :loading="updatingInterfaces"
-                  :disabled="!canUseDriver"
-                  @click="updateInterfaces"
-                />
-                <span v-if="!isSupportedDriverPlatform" class="text-sm text-muted-color"
-                  >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this
-                  device is "{{ device?.platform || 'unknown' }}").</span
+                <button
+                  type="button"
+                  class="hover:underline"
+                  :title="authStore.canWrite && !addr.netbox_id ? 'Edit address' : ''"
+                  @click="
+                    authStore.canWrite && !addr.netbox_id
+                      ? openEditAddr(row.original, addr)
+                      : undefined
+                  "
                 >
-              </div>
-
-              <UTable
-                v-model:sorting="interfaceSorting"
-                :data="device?.interfaces ?? []"
-                :columns="interfaceColumns"
-                :empty="'No interfaces stored for this device.'"
-                sticky
-                class="flex-1 min-h-0 overflow-y-auto"
-              >
-                <template #name-header="{ column }">
-                  <SortableColumnHeader :column="column" label="Name" />
-                </template>
-                <template #description-header="{ column }">
-                  <SortableColumnHeader :column="column" label="Description" />
-                </template>
-                <template #vrf-header="{ column }">
-                  <SortableColumnHeader :column="column" label="VRF" />
-                </template>
-                <template #vrf-cell="{ row }">
-                  {{ row.original.vrf || '—' }}
-                </template>
-
-                <template #actions-cell="{ row }">
-                  <div class="flex gap-1">
-                    <UButton
-                      icon="i-lucide-pencil"
-                      variant="ghost"
-                      color="neutral"
-                      size="sm"
-                      title="Edit interface"
-                      @click="openEditIface(row.original)"
-                    />
-                    <UButton
-                      v-if="authStore.canWrite && isLocalDevice && !row.original.netbox_id"
-                      icon="i-lucide-trash"
-                      variant="ghost"
-                      color="error"
-                      size="sm"
-                      :loading="ifaceDeleting"
-                      @click="removeIface(row.original)"
-                    />
-                  </div>
-                </template>
-                <template #name-cell="{ row }">
-                  <span class="whitespace-nowrap">{{ row.original.name }}</span>
-                </template>
-                <template #description-cell="{ row }">
-                  <div class="flex items-center gap-1">
-                    <UInput
-                      v-model="row.original.description"
-                      :disabled="!authStore.canWrite"
-                      size="sm"
-                      class="w-full min-w-lg"
-                    />
-                    <span
-                      v-if="isDescriptionChanged(row.original)"
-                      title="Changed, not yet saved"
-                      class="size-1.5 rounded-full bg-warning shrink-0"
-                    />
-                  </div>
-                </template>
-                <template #vlans-cell="{ row }">
-                  <span
-                    class="whitespace-nowrap text-sm"
-                    :title="vlanSummary(row.original).title || undefined"
-                    >{{ vlanSummary(row.original).text || '—' }}</span
-                  >
-                </template>
-                <template #optical-cell="{ row }">
-                  <div class="flex items-center gap-1">
-                    <USelect
-                      v-if="authStore.opticalEnabled && authStore.canWrite"
-                      :model-value="row.original.optical?.role || ''"
-                      :items="opticalRoles"
-                      value-key="value"
-                      label-key="label"
-                      class="w-36"
-                      @update:model-value="savePortRole(row.original, $event)"
-                    />
-                    <span v-else>{{ row.original.optical?.role || '—' }}</span>
-                    <UInput
-                      v-if="
-                        row.original.optical?.role === 'roadm_adddrop' ||
-                        row.original.optical?.role === 'txp_line'
-                      "
-                      class="w-24"
-                      placeholder="THz"
-                      :model-value="
-                        row.original.optical?.freq_hz
-                          ? (row.original.optical.freq_hz / 1e12).toFixed(4)
-                          : ''
-                      "
-                      @change="
-                        (e) =>
-                          putOpticalPort(row.original.id, {
-                            role: row.original.optical.role,
-                            freq_thz: Number(e.target.value),
-                          }).then((p) => {
-                            row.original.optical = p
-                          })
-                      "
-                    />
-                  </div>
-                </template>
-                <template #services-cell="{ row }">
-                  <div class="flex flex-wrap gap-1">
-                    <UButton
-                      v-for="svc in row.original.services ?? []"
-                      :key="svc.id"
-                      :label="svc.service_id || 'Service'"
-                      icon="i-lucide-link"
-                      size="sm"
-                      variant="outline"
-                      color="neutral"
-                      @click="openService(svc.id)"
-                    />
-                    <UButton
-                      v-if="authStore.canWrite"
-                      icon="i-lucide-plus"
-                      size="sm"
-                      variant="ghost"
-                      color="neutral"
-                      title="Add service"
-                      @click="openAttach(row.original)"
-                    />
-                  </div>
-                </template>
-                <template #addresses-cell="{ row }">
-                  <div class="flex flex-wrap items-center gap-1">
-                    <span
-                      v-for="addr in row.original.addresses ?? []"
-                      :key="addr.id"
-                      class="inline-flex items-center gap-0.5 whitespace-nowrap text-sm"
-                    >
-                      <button
-                        type="button"
-                        class="hover:underline"
-                        :title="authStore.canWrite && !addr.netbox_id ? 'Edit address' : ''"
-                        @click="
-                          authStore.canWrite && !addr.netbox_id
-                            ? openEditAddr(row.original, addr)
-                            : undefined
-                        "
-                      >
-                        {{ addr.address }}
-                      </button>
-                      <UBadge
-                        v-if="isManagementAddr(addr)"
-                        color="info"
-                        variant="subtle"
-                        size="xs"
-                      >
-                        mgmt
-                      </UBadge>
-                      <UButton
-                        v-if="authStore.canWrite && !addr.netbox_id"
-                        icon="i-lucide-x"
-                        size="xs"
-                        variant="ghost"
-                        color="error"
-                        :loading="addrDeleting"
-                        title="Remove address"
-                        @click="removeAddr(addr)"
-                      />
-                    </span>
-                    <UButton
-                      v-if="authStore.canWrite"
-                      icon="i-lucide-plus"
-                      size="xs"
-                      variant="ghost"
-                      color="neutral"
-                      title="Add IP address"
-                      @click="openAddAddr(row.original)"
-                    />
-                  </div>
-                </template>
-              </UTable>
-              <div v-if="authStore.opticalEnabled && isOpticalDevice" class="mt-4 shrink-0">
-                <div class="font-bold mb-2">Cross-connects</div>
-                <ul v-if="xconnects.length" class="mb-2">
-                  <li v-for="x in xconnects" :key="x.id" class="flex items-center gap-2">
-                    <span>
-                      {{ xcKindLabels[x.kind] || x.kind }} ·
-                      {{ interfaceNameById(x.interface_a_id) }} ↔
-                      {{ interfaceNameById(x.interface_b_id) }}
-                    </span>
-                    <UButton
-                      v-if="authStore.canWrite"
-                      icon="i-lucide-trash"
-                      size="xs"
-                      variant="ghost"
-                      color="error"
-                      @click="deleteXConnect(x.id).then(() => loadXConnects(device.id))"
-                    />
-                  </li>
-                </ul>
-                <p v-else class="text-sm text-muted-color mb-2">
-                  No cross-connects on this device.
-                </p>
-                <div v-if="authStore.canWrite" class="flex flex-wrap gap-2 mt-2 items-center">
-                  <USelectMenu
-                    v-model="xcKind"
-                    :items="xcKindItems"
-                    value-key="value"
-                    label-key="label"
-                    class="w-48"
-                  />
-                  <USelectMenu
-                    v-model="xcA"
-                    :items="xcInterfaceItems"
-                    value-key="value"
-                    label-key="label"
-                    placeholder="Port A"
-                    class="min-w-64 w-72"
-                  />
-                  <USelectMenu
-                    v-model="xcB"
-                    :items="xcInterfaceItems"
-                    value-key="value"
-                    label-key="label"
-                    placeholder="Port B"
-                    class="min-w-64 w-72"
-                  />
-                  <UButton label="Add" :disabled="!xcA || !xcB" @click="addXConnect" />
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <template #vlans>
-            <div class="flex flex-col h-full min-h-0">
-              <p v-if="!isGlobalVlanPlatform" class="text-sm text-muted-color mb-3 shrink-0">
-                VLAN assignment can be pushed on EOS, VRP and CISCOSMB devices (this device is "{{
-                  device?.platform || 'unknown'
-                }}").
-              </p>
-              <VlanEditDialog
-                ref="vlanEditor"
-                :interfaces="device?.interfaces ?? []"
-                :device-id="device?.id"
-                :device-name="device?.name"
-                :platform="device?.platform"
-                :can-save="authStore.canWrite && isGlobalVlanPlatform"
-                @saved="onVlanSaved"
+                  {{ addr.address }}
+                </button>
+                <UBadge v-if="isManagementAddr(addr)" color="info" variant="subtle" size="xs">
+                  mgmt
+                </UBadge>
+                <UButton
+                  v-if="authStore.canWrite && !addr.netbox_id"
+                  icon="i-lucide-x"
+                  size="xs"
+                  variant="ghost"
+                  color="error"
+                  :loading="addrDeleting"
+                  title="Remove address"
+                  @click="removeAddr(addr)"
+                />
+              </span>
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-plus"
+                size="xs"
+                variant="ghost"
+                color="neutral"
+                title="Add IP address"
+                @click="openAddAddr(row.original)"
               />
             </div>
           </template>
+        </UTable>
+        <div v-if="authStore.opticalEnabled && isOpticalDevice" class="mt-4 shrink-0">
+          <div class="font-bold mb-2">Cross-connects</div>
+          <ul v-if="xconnects.length" class="mb-2">
+            <li v-for="x in xconnects" :key="x.id" class="flex items-center gap-2">
+              <span>
+                {{ xcKindLabels[x.kind] || x.kind }} · {{ interfaceNameById(x.interface_a_id) }} ↔
+                {{ interfaceNameById(x.interface_b_id) }}
+              </span>
+              <UButton
+                v-if="authStore.canWrite"
+                icon="i-lucide-trash"
+                size="xs"
+                variant="ghost"
+                color="error"
+                @click="deleteXConnect(x.id).then(() => loadXConnects(device.id))"
+              />
+            </li>
+          </ul>
+          <p v-else class="text-sm text-muted-color mb-2">No cross-connects on this device.</p>
+          <div v-if="authStore.canWrite" class="flex flex-wrap gap-2 mt-2 items-center">
+            <USelectMenu
+              v-model="xcKind"
+              :items="xcKindItems"
+              value-key="value"
+              label-key="label"
+              class="w-48"
+            />
+            <USelectMenu
+              v-model="xcA"
+              :items="xcInterfaceItems"
+              value-key="value"
+              label-key="label"
+              placeholder="Port A"
+              class="min-w-64 w-72"
+            />
+            <USelectMenu
+              v-model="xcB"
+              :items="xcInterfaceItems"
+              value-key="value"
+              label-key="label"
+              placeholder="Port B"
+              class="min-w-64 w-72"
+            />
+            <UButton label="Add" :disabled="!xcA || !xcB" @click="addXConnect" />
+          </div>
+        </div>
+      </div>
+    </template>
 
-          <template #oxidized>
-            <div class="h-full min-h-0">
-              <OxidizedNodePanel v-if="detailTab === 'oxidized'" :node-name="device.name" />
-            </div>
-          </template>
-        </UTabs>
+    <template #vlans>
+      <div class="flex flex-col h-full min-h-0">
+        <p v-if="!isGlobalVlanPlatform" class="text-sm text-muted-color mb-3 shrink-0">
+          VLAN assignment can be pushed on EOS, VRP and CISCOSMB devices (this device is "{{
+            device?.platform || 'unknown'
+          }}").
+        </p>
+        <VlanEditDialog
+          ref="vlanEditor"
+          :interfaces="device?.interfaces ?? []"
+          :device-id="device?.id"
+          :device-name="device?.name"
+          :platform="device?.platform"
+          :can-save="authStore.canWrite && isGlobalVlanPlatform"
+          @saved="onVlanSaved"
+        />
+      </div>
+    </template>
+
+    <template #oxidized>
+      <div class="h-full min-h-0">
+        <OxidizedNodePanel v-if="detailTab === 'oxidized'" :node-name="device.name" />
       </div>
     </template>
 
@@ -1694,7 +1640,7 @@ onMounted(loadDevices)
       />
       <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
     </template>
-  </FormModal>
+  </DcimDetailDialog>
 
   <FormModal
     v-model:open="createDialog"
@@ -1758,59 +1704,17 @@ onMounted(loadDevices)
     </template>
   </FormModal>
 
-  <FormModal
+  <InterfaceEditorDialog
     v-model:open="ifaceFormOpen"
-    :source="ifaceForm"
+    v-model:form="ifaceForm"
     :title="ifaceDialogTitle"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
-    <template #body>
-      <div class="flex flex-col gap-4">
-        <UFormField label="Name">
-          <UInput
-            v-model="ifaceForm.name"
-            class="w-full font-mono"
-            autofocus
-            :disabled="!!ifaceEditingId && !ifaceFormWritable"
-          />
-        </UFormField>
-        <UFormField label="Type">
-          <USelect
-            v-model="ifaceForm.type"
-            :items="interfaceTypeItems"
-            class="w-full"
-            :disabled="!!ifaceEditingId && !ifaceFormWritable"
-          />
-        </UFormField>
-        <UFormField label="Label">
-          <UInput v-model="ifaceForm.label" class="w-full" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
-        </UFormField>
-        <UFormField label="Description">
-          <UInput
-            v-model="ifaceForm.description"
-            class="w-full"
-            :disabled="!!ifaceEditingId && !ifaceFormWritable"
-          />
-        </UFormField>
-        <UFormField label="VRF">
-          <UInput v-model="ifaceForm.vrf" class="w-full" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
-        </UFormField>
-        <UFormField label="Enabled">
-          <USwitch v-model="ifaceForm.enabled" :disabled="!!ifaceEditingId && !ifaceFormWritable" />
-        </UFormField>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="ifaceFormOpen = false" />
-      <UButton
-        v-if="authStore.canWrite && ifaceFormWritable"
-        :label="ifaceEditingId ? 'Save' : 'Create'"
-        icon="i-lucide-check"
-        :loading="ifaceSaving"
-        @click="saveIface"
-      />
-    </template>
-  </FormModal>
+    kind="device"
+    :writable="ifaceFormWritable"
+    :saving="ifaceSaving"
+    :editing="!!ifaceEditingId"
+    :can-write="authStore.canWrite"
+    @save="saveIface"
+  />
 
   <FormModal
     v-model:open="addrFormOpen"

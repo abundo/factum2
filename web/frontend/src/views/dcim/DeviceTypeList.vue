@@ -13,7 +13,8 @@ import {
   updateDeviceType,
   updateDeviceTypeInterface,
 } from '@/api/dcim'
-import { interfaceTypeItems } from '@/utils/interfaceTypes'
+import DcimDetailDialog from '@/components/DcimDetailDialog.vue'
+import InterfaceEditorDialog from '@/components/InterfaceEditorDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -40,14 +41,16 @@ const columns = [
   { accessorKey: 'source', header: 'Source' },
 ]
 
-const dialog = ref(false)
+const createDialog = ref(false)
 const form = ref({ manufacturer_id: undefined, model: '', slug: '', platform_id: 0 })
 const editingId = ref(null)
 const saving = ref(false)
 const deleting = ref(false)
 
-const templatesDialog = ref(false)
-const templatesDeviceType = ref(null)
+const detailDialog = ref(false)
+const detailTab = ref('overview')
+const detailType = ref(null)
+
 const templates = ref([])
 const templatesLoading = ref(false)
 const templateFormOpen = ref(false)
@@ -65,10 +68,20 @@ const templateEditingLocal = computed(() => {
 })
 
 const canWrite = computed(() => authStore.canWrite)
-const dialogTitle = computed(() => (editingId.value ? 'Edit device type' : 'New device type'))
 const editingLocal = computed(() => {
   if (!editingId.value) return true
   return items.value.find((i) => i.id === editingId.value)?.source !== 'netbox'
+})
+
+const detailTabItems = [
+  { label: 'Overview', value: 'overview', slot: 'overview' },
+  { label: 'Interfaces', value: 'interfaces', slot: 'interfaces' },
+]
+
+const detailTitle = computed(() => {
+  if (!detailType.value) return 'Device type'
+  const mfr = manufacturerById.value.get(detailType.value.manufacturer_id) || ''
+  return `${mfr} ${detailType.value.model}`.trim()
 })
 
 function isLocal(row) {
@@ -97,6 +110,19 @@ const platformById = computed(() => {
   return map
 })
 
+function emptyTypeForm() {
+  return { manufacturer_id: undefined, model: '', slug: '', platform_id: 0 }
+}
+
+function fillFormFromType(row) {
+  form.value = {
+    manufacturer_id: row.manufacturer_id,
+    model: row.model ?? '',
+    slug: row.slug ?? '',
+    platform_id: row.platform_id || 0,
+  }
+}
+
 function load() {
   loading.value = true
   error.value = null
@@ -105,6 +131,13 @@ function load() {
       items.value = types ?? []
       manufacturers.value = mfrs ?? []
       platforms.value = plats ?? []
+      if (editingId.value) {
+        const row = items.value.find((i) => i.id === editingId.value)
+        if (row) {
+          detailType.value = row
+          fillFormFromType(row)
+        }
+      }
     })
     .catch(() => {
       error.value = 'Failed to load device types.'
@@ -116,43 +149,47 @@ function load() {
 
 function openNew() {
   editingId.value = null
-  form.value = { manufacturer_id: undefined, model: '', slug: '', platform_id: 0 }
-  dialog.value = true
+  detailType.value = null
+  form.value = emptyTypeForm()
+  createDialog.value = true
 }
 
-function openEdit(row) {
+function openDetail(row) {
   editingId.value = row.id
-  form.value = {
-    manufacturer_id: row.manufacturer_id,
-    model: row.model ?? '',
-    slug: row.slug ?? '',
-    platform_id: row.platform_id || 0,
-  }
-  dialog.value = true
+  detailType.value = row
+  fillFormFromType(row)
+  detailTab.value = 'overview'
+  detailDialog.value = true
+  loadTemplates()
 }
 
-function save() {
-  if (!form.value.manufacturer_id) {
-    toast.add({ color: 'error', title: 'Manufacturer is required' })
-    return
-  }
-  if (!form.value.model.trim()) {
-    toast.add({ color: 'error', title: 'Model is required' })
-    return
-  }
-  saving.value = true
-  const payload = {
+function typePayload() {
+  return {
     manufacturer_id: form.value.manufacturer_id,
     model: form.value.model.trim(),
     slug: form.value.slug.trim(),
     platform_id: form.value.platform_id || 0,
   }
-  const req = editingId.value
-    ? updateDeviceType(editingId.value, payload)
-    : createDeviceType(payload)
-  req
+}
+
+function validateTypeForm() {
+  if (!form.value.manufacturer_id) {
+    toast.add({ color: 'error', title: 'Manufacturer is required' })
+    return false
+  }
+  if (!form.value.model.trim()) {
+    toast.add({ color: 'error', title: 'Model is required' })
+    return false
+  }
+  return true
+}
+
+function saveNew() {
+  if (!validateTypeForm()) return
+  saving.value = true
+  createDeviceType(typePayload())
     .then(() => {
-      dialog.value = false
+      createDialog.value = false
       load()
     })
     .catch((err) => {
@@ -167,10 +204,35 @@ function save() {
     })
 }
 
-function remove(row) {
+function saveDetail() {
+  if (!editingId.value) return
+  if (!validateTypeForm()) return
+  saving.value = true
+  updateDeviceType(editingId.value, typePayload())
+    .then(() => {
+      load()
+      toast.add({ color: 'success', title: 'Device type saved', duration: 3000 })
+    })
+    .catch((err) => {
+      toast.add({
+        color: 'error',
+        title: 'Save failed',
+        description: err?.response?.data?.error,
+      })
+    })
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+function removeDetail() {
+  if (!editingId.value) return
   deleting.value = true
-  deleteDeviceType(row.id)
-    .then(() => load())
+  deleteDeviceType(editingId.value)
+    .then(() => {
+      detailDialog.value = false
+      load()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -183,16 +245,10 @@ function remove(row) {
     })
 }
 
-function openTemplates(row) {
-  templatesDeviceType.value = row
-  templatesDialog.value = true
-  loadTemplates()
-}
-
 function loadTemplates() {
-  if (!templatesDeviceType.value) return
+  if (!detailType.value) return
   templatesLoading.value = true
-  getDeviceTypeInterfaces(templatesDeviceType.value.id)
+  getDeviceTypeInterfaces(detailType.value.id)
     .then((data) => {
       templates.value = data ?? []
     })
@@ -235,7 +291,7 @@ function saveTemplate() {
   }
   const req = templateEditingId.value
     ? updateDeviceTypeInterface(templateEditingId.value, payload)
-    : createDeviceTypeInterface(templatesDeviceType.value.id, payload)
+    : createDeviceTypeInterface(detailType.value.id, payload)
   req
     .then(() => {
       templateFormOpen.value = false
@@ -337,39 +393,21 @@ onMounted(load)
         }}
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2">
-          <UButton
-            icon="i-lucide-pencil"
-            variant="outline"
-            color="neutral"
-            size="sm"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            label="Interfaces"
-            size="sm"
-            color="neutral"
-            variant="outline"
-            @click="openTemplates(row.original)"
-          />
-          <UButton
-            v-if="canWrite && isLocal(row.original)"
-            icon="i-lucide-trash"
-            variant="ghost"
-            color="error"
-            size="sm"
-            :loading="deleting"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          icon="i-lucide-pencil"
+          variant="outline"
+          color="neutral"
+          size="sm"
+          @click="openDetail(row.original)"
+        />
       </template>
     </UTable>
   </div>
 
   <FormModal
-    v-model:open="dialog"
+    v-model:open="createDialog"
     :source="form"
-    :title="dialogTitle"
+    title="New device type"
     :ui="{ content: 'sm:max-w-sm' }"
   >
     <template #body>
@@ -389,35 +427,89 @@ onMounted(load)
       </div>
     </template>
     <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="dialog = false" />
+      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="createDialog = false" />
       <UButton
-        v-if="canWrite && editingLocal"
-        label="Save"
+        v-if="canWrite"
+        label="Create"
         icon="i-lucide-check"
         :loading="saving"
-        @click="save"
+        @click="saveNew"
       />
     </template>
   </FormModal>
 
-  <FormModal
-    v-model:open="templatesDialog"
-    :title="
-      templatesDeviceType
-        ? `${manufacturerById.get(templatesDeviceType.manufacturer_id) || ''} ${templatesDeviceType.model} — Interfaces`.trim()
-        : 'Interface templates'
-    "
-    :ui="{ content: 'w-[90vw] sm:max-w-4xl' }"
+  <DcimDetailDialog
+    v-model:open="detailDialog"
+    v-model:tab="detailTab"
+    :tabs="detailTabItems"
+    :ready="!!detailType"
+    :title="detailTitle"
   >
-    <template #body>
-      <div class="flex flex-col gap-3">
-        <div class="flex justify-end">
+    <template #title>
+      <div class="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 pr-2">
+        <span class="truncate">{{ detailTitle }}</span>
+        <UBadge
+          v-if="detailType?.source"
+          :label="detailType.source"
+          :color="sourceBadgeColor(detailType.source)"
+          variant="subtle"
+        />
+      </div>
+    </template>
+    <template #overview>
+      <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
+        <label class="font-bold whitespace-nowrap">Manufacturer</label>
+        <USelect
+          v-if="canWrite && editingLocal"
+          v-model="form.manufacturer_id"
+          :items="manufacturerItems"
+          class="w-full"
+        />
+        <UInput
+          v-else
+          :model-value="manufacturerById.get(form.manufacturer_id) || ''"
+          disabled
+          class="w-full"
+        />
+
+        <label class="font-bold whitespace-nowrap">Model</label>
+        <UInput v-model="form.model" class="w-full" :disabled="!(canWrite && editingLocal)" />
+
+        <label class="font-bold whitespace-nowrap">Platform</label>
+        <USelect
+          v-if="canWrite && editingLocal"
+          v-model="form.platform_id"
+          :items="platformItems"
+          class="w-full"
+        />
+        <UInput
+          v-else
+          :model-value="
+            platformById.get(form.platform_id)
+              ? `${platformById.get(form.platform_id).name} (${platformById.get(form.platform_id).slug})`
+              : '—'
+          "
+          disabled
+          class="w-full"
+        />
+
+        <label class="font-bold whitespace-nowrap">Slug</label>
+        <UInput
+          v-model="form.slug"
+          class="w-full font-mono"
+          :disabled="!(canWrite && editingLocal)"
+        />
+      </div>
+    </template>
+    <template #interfaces>
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex flex-wrap items-end gap-2 mb-4 shrink-0">
           <UButton
             v-if="canWrite"
             label="New"
             icon="i-lucide-plus"
-            color="neutral"
             size="sm"
+            color="neutral"
             @click="openNewTemplate"
           />
         </div>
@@ -428,6 +520,7 @@ onMounted(load)
           :loading="templatesLoading"
           :empty="'No interface templates on this device type.'"
           sticky
+          class="flex-1 min-h-0 overflow-y-auto"
         >
           <template #source-cell="{ row }">
             <UBadge
@@ -437,12 +530,13 @@ onMounted(load)
             />
           </template>
           <template #actions-cell="{ row }">
-            <div class="flex gap-2">
+            <div class="flex gap-1">
               <UButton
                 icon="i-lucide-pencil"
-                variant="outline"
+                variant="ghost"
                 color="neutral"
                 size="sm"
+                title="Edit interface"
                 @click="openEditTemplate(row.original)"
               />
               <UButton
@@ -460,41 +554,35 @@ onMounted(load)
       </div>
     </template>
     <template #footer>
-      <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="templatesDialog = false" />
-    </template>
-  </FormModal>
-
-  <FormModal
-    v-model:open="templateFormOpen"
-    :source="templateForm"
-    :title="templateDialogTitle"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
-    <template #body>
-      <div class="flex flex-col gap-4">
-        <UFormField label="Name">
-          <UInput v-model="templateForm.name" class="w-full font-mono" autofocus />
-        </UFormField>
-        <UFormField label="Type">
-          <USelect v-model="templateForm.type" :items="interfaceTypeItems" class="w-full" />
-        </UFormField>
-        <UFormField label="Label">
-          <UInput v-model="templateForm.label" class="w-full" />
-        </UFormField>
-        <UFormField label="Description">
-          <UInput v-model="templateForm.description" class="w-full" />
-        </UFormField>
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="templateFormOpen = false" />
       <UButton
-        v-if="canWrite && templateEditingLocal"
+        v-if="canWrite && editingLocal"
+        label="Delete"
+        icon="i-lucide-trash"
+        color="error"
+        variant="ghost"
+        :loading="deleting"
+        @click="removeDetail"
+      />
+      <UButton
+        v-if="canWrite && editingLocal"
         label="Save"
         icon="i-lucide-check"
-        :loading="templateSaving"
-        @click="saveTemplate"
+        :loading="saving"
+        @click="saveDetail"
       />
+      <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
     </template>
-  </FormModal>
+  </DcimDetailDialog>
+
+  <InterfaceEditorDialog
+    v-model:open="templateFormOpen"
+    v-model:form="templateForm"
+    :title="templateDialogTitle"
+    kind="template"
+    :writable="templateEditingLocal"
+    :saving="templateSaving"
+    :editing="!!templateEditingId"
+    :can-write="canWrite"
+    @save="saveTemplate"
+  />
 </template>

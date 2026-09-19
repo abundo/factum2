@@ -21,10 +21,12 @@ NetBox or was created in Factum. Add ports on a local device from that
 page or from the device's Interfaces dialog. NetBox-synced interfaces are
 read-only here.
 
-**DCIM → Device types → Interfaces** holds the port templates for a type
-(synced from NetBox, or created locally). Creating a local device copies
-those templates onto it. Adding a template also adds the port to existing
-local devices of that type that do not already have that name.
+**DCIM → Device types** opens the same tabbed detail dialog as a device
+(Overview and Interfaces). VLAN and Oxidized tabs are device-only. The
+Interfaces tab holds port templates for that type (synced from NetBox, or
+created locally). Creating a local device copies those templates onto it.
+Adding a template also adds the port to existing local devices of that type
+that do not already have that name.
 
 Local devices can be edited and deleted from the device detail dialog.
 Every field on that form is writable for a Factum-created device, including
