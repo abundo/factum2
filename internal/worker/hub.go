@@ -43,12 +43,14 @@ const HubPath = "/hub"
 type EnvelopeType string
 
 const (
-	EnvelopeHello    EnvelopeType = "hello"
-	EnvelopeCommand  EnvelopeType = "command"
-	EnvelopeLog      EnvelopeType = "log"
-	EnvelopeEvent    EnvelopeType = "event"
-	EnvelopeRequest  EnvelopeType = "request"  // agent → primary
-	EnvelopeResponse EnvelopeType = "response" // primary → agent
+	EnvelopeHello      EnvelopeType = "hello"
+	EnvelopeCommand    EnvelopeType = "command"
+	EnvelopeLog        EnvelopeType = "log"
+	EnvelopeEvent      EnvelopeType = "event"
+	EnvelopeRequest    EnvelopeType = "request"     // agent → primary
+	EnvelopeResponse   EnvelopeType = "response"    // primary → agent
+	EnvelopeCall       EnvelopeType = "call"        // primary → agent (unix HTTP proxy)
+	EnvelopeCallResult EnvelopeType = "call_result" // agent → primary
 )
 
 // Envelope wraps every message exchanged over a hub connection.
@@ -314,26 +316,28 @@ type RemoteManager struct {
 	// status is keyed by WorkerNode.Name, not by connection, so a node's
 	// last-known state survives a disconnect/reconnect or a disable/
 	// re-enable instead of just disappearing.
-	status   map[string]NodeStatus
-	active   map[string]context.CancelFunc // running dialLoop goroutines, keyed by WorkerNode.Name
-	nodes    map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token/TLS edits
-	conns    map[string]*nodeConn          // present only once hello is received, keyed by WorkerNode.Name
-	waiters  map[string]chan LogMsg        // temporary RunAndWait registrations, keyed by CommandMsg.ID
-	running  map[string]runningJob         // in-flight sync jobs, keyed by target - see runningJob
-	api      http.Handler                  // set by SetAPIHandler; snapshot under mu before ServeHTTP
-	inFlight map[string]int                // keyed by WorkerNode.Name; RPC goroutines in handleHubRequest
+	status      map[string]NodeStatus
+	active      map[string]context.CancelFunc // running dialLoop goroutines, keyed by WorkerNode.Name
+	nodes       map[string]models.WorkerNode  // last-applied snapshot, to detect Address/Token/TLS edits
+	conns       map[string]*nodeConn          // present only once hello is received, keyed by WorkerNode.Name
+	waiters     map[string]chan LogMsg        // temporary RunAndWait registrations, keyed by CommandMsg.ID
+	running     map[string]runningJob         // in-flight sync jobs, keyed by target - see runningJob
+	api         http.Handler                  // set by SetAPIHandler; snapshot under mu before ServeHTTP
+	inFlight    map[string]int                // keyed by WorkerNode.Name; RPC goroutines in handleHubRequest
+	callWaiters map[string]chan CallResultMsg // CallRole, keyed by CallMsg.ID
 }
 
 func NewRemoteManager(db *gorm.DB) *RemoteManager {
 	return &RemoteManager{
-		db:       db,
-		status:   make(map[string]NodeStatus),
-		active:   make(map[string]context.CancelFunc),
-		nodes:    make(map[string]models.WorkerNode),
-		conns:    make(map[string]*nodeConn),
-		waiters:  make(map[string]chan LogMsg),
-		running:  make(map[string]runningJob),
-		inFlight: make(map[string]int),
+		db:          db,
+		status:      make(map[string]NodeStatus),
+		active:      make(map[string]context.CancelFunc),
+		nodes:       make(map[string]models.WorkerNode),
+		conns:       make(map[string]*nodeConn),
+		waiters:     make(map[string]chan LogMsg),
+		running:     make(map[string]runningJob),
+		inFlight:    make(map[string]int),
+		callWaiters: make(map[string]chan CallResultMsg),
 	}
 }
 
@@ -1168,6 +1172,13 @@ func (m *RemoteManager) connectOnce(nodeCtx context.Context, node models.WorkerN
 				continue
 			}
 			go m.HandleHubRequest(nodeCtx, node.Name, nc.outbox, req)
+		case EnvelopeCallResult:
+			var res CallResultMsg
+			if unmarshalErr := json.Unmarshal(env.Payload, &res); unmarshalErr != nil {
+				slog.Error("worker hub: invalid call result envelope, discarding", "node", node.Name, "err", unmarshalErr)
+				continue
+			}
+			m.deliverCallResult(res)
 		default:
 			slog.Debug("worker hub: unhandled envelope type", "node", node.Name, "type", env.Type)
 		}

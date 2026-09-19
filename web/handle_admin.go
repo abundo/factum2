@@ -6,6 +6,7 @@ import (
 
 	"github.com/abundo/factum2/internal/certs"
 	"github.com/abundo/factum2/internal/mail"
+	"github.com/abundo/factum2/internal/storage"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -43,6 +44,9 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	settings.ID = id
 	if settings.CertsEnabled != nil && *settings.CertsEnabled {
 		certs.ApplySettingsDefaults(settings)
+	}
+	if settings.StorageEnabled != nil && *settings.StorageEnabled {
+		storage.ApplySettingsDefaults(settings)
 	}
 
 	if err := ctrl.DB.Save(settings).Error; err != nil {

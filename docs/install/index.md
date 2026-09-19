@@ -66,9 +66,10 @@ That copies binaries to `/opt/factum2`, stops `factum2-web` if it is
 running, applies schema migrations, then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
-  (also copies `factum2-driver.service` but does not enable it)
+  (also copies `factum2-driver.service` and `factum2-storage.service` but
+  does not enable them)
 - **each enabled worker node:** `factum2-worker.service` (and the same
-  opt-in `factum2-driver.service`)
+  opt-in `factum2-driver.service` / `factum2-storage.service`)
 
 ## 4. First admin user
 

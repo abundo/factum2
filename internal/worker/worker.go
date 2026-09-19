@@ -65,10 +65,18 @@ type Worker struct {
 
 	hubMu sync.Mutex
 	hub   *hubSession // latest connected /hub; nil if disconnected
+
+	// storageSocket is ConfigStorage.Socket (empty = default). Used to
+	// proxy EnvelopeCall onto factum2-storage's unix API.
+	storageSocket string
 }
 
 func New(cfg *util.ConfigWorker) *Worker {
 	return &Worker{cfg: cfg}
+}
+
+func (w *Worker) SetStorageSocket(socket string) {
+	w.storageSocket = socket
 }
 
 // Start validates this instance's command allowlist and runs the hub

@@ -107,6 +107,7 @@ READY = """
   snmp-exporter:  http://127.0.0.1:19116
   BIND:           127.0.0.1:18053          zone lab.example (factum2-dns)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
+  Software:       http://127.0.0.1:18088  (SFTP 127.0.0.1:12222 factum / lab)
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
 
@@ -466,7 +467,17 @@ UPDATE settings SET
   oxidized_dest_file = {_sql_lit("/home/oxidized/.config/oxidized/router.db")},
   prometheus_enabled = true,
   prometheus_dest_file = {_sql_lit("/etc/prometheus/targets.json")},
-  prometheus_reload_url = 'http://127.0.0.1:9090/-/reload'
+  prometheus_reload_url = 'http://127.0.0.1:9090/-/reload',
+  storage_enabled = true,
+  storage_root = {_sql_lit("/var/lib/factum2/storage")},
+  storage_http_listen = ':8088',
+  storage_http_url = {_sql_lit("http://factum-storage:8088")},
+  storage_tftp_listen = '',
+  storage_tftp_host = '',
+  storage_sftp_listen = ':2222',
+  storage_sftp_host = 'factum-storage:2222',
+  storage_sftp_user = 'factum',
+  storage_sftp_password = 'lab'
 WHERE id = 1;
 """
 

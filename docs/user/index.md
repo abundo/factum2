@@ -20,7 +20,7 @@ currently on GitHub.
 | --- | --- | --- |
 | Dashboard | Home | Welcome plus admin-configured shortcut links |
 | Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
-| Network map / Devices / Oxidized | Devices | Inventory, topology, config backups |
+| Network map / Devices / Oxidized / Software | Devices | Inventory, topology, config backups, NOS images |
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |
 | Certificates | Certificates | Only if **Certificates** is enabled (Destinations) |
@@ -29,8 +29,8 @@ currently on GitHub.
 | Settings, users, workers | Admin | Administrators only |
 
 Some entries appear only when the matching feature is on (Oxidized,
-optical, IPAM, organization, DNS zone editor, DHCP). Turning a feature
-off hides the UI; it does not delete stored data.
+Software, optical, IPAM, organization, DNS zone editor, DHCP). Turning a
+feature off hides the UI; it does not delete stored data.
 
 ## Roles
 
@@ -46,5 +46,6 @@ change settings, users, and workers.
 - [Jobs](jobs.md)
 - [DNS](dns.md)
 - [Certificates](certs.md)
+- [Software](software.md)
 - [Admin settings](settings.md)
 - [Software bill of materials](sbom.md)

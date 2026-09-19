@@ -1,7 +1,9 @@
 ---
-# Primary-side worker (NetBox / device-sync). Dest CLIs run on their own
-# dest containers as remote workers — see factum2-*-worker.yaml.
+# Primary-side worker (NetBox / device-sync / storage copy). Dest CLIs run
+# on their own dest containers as remote workers — see factum2-*-worker.yaml.
 # Primary-side CLIs talk to factum-web over REST, not the hub unix socket.
+# factum2-storage start is the factum-storage compose service, not a
+# worker.commands entry; this storage command is copy-to-device only.
 factum:
     url: http://factum-web:8091
     token: lab-factum-api-token-not-for-production
@@ -19,3 +21,6 @@ worker:
         device-sync:
             cmd: /opt/factum2/factum2-device-sync
             args: ["sync", "--job"]
+        storage:
+            cmd: /opt/factum2/factum2-storage
+            args: []

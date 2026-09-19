@@ -324,6 +324,25 @@ type Settings struct {
 	// CertsEnabled gates the Certificates GUI, /api/certs/*, and the
 	// dest "certs" sync (factum2-certs writes .lego.yaml/.env and runs lego).
 	CertsEnabled *bool `gorm:"column:certs_enabled" form:"certs_enabled" json:"certs_enabled"`
+	// StorageEnabled gates the Software GUI and /api/software/*. Off
+	// (nil/false) is the default. Turning it off only hides the UI — files
+	// on the storage host are not deleted.
+	StorageEnabled *bool `gorm:"column:storage_enabled" form:"storage_enabled" json:"storage_enabled"`
+	// StorageRoot is the repository directory on the storage host
+	// (factum2-storage start). Empty is /var/lib/factum2/storage.
+	StorageRoot string `gorm:"column:storage_root" form:"storage_root" json:"storage_root"`
+	// StorageHTTPListen is the device-facing HTTP bind (e.g. ":8088").
+	// Empty disables the HTTP server.
+	StorageHTTPListen string `gorm:"column:storage_http_listen" form:"storage_http_listen" json:"storage_http_listen"`
+	// StorageHTTPURL is the origin devices use in copy http://… commands
+	// (e.g. http://10.0.0.5:8088). Not the listen address.
+	StorageHTTPURL      string `gorm:"column:storage_http_url" form:"storage_http_url" json:"storage_http_url"`
+	StorageTFTPListen   string `gorm:"column:storage_tftp_listen" form:"storage_tftp_listen" json:"storage_tftp_listen"`
+	StorageTFTPHost     string `gorm:"column:storage_tftp_host" form:"storage_tftp_host" json:"storage_tftp_host"`
+	StorageSFTPListen   string `gorm:"column:storage_sftp_listen" form:"storage_sftp_listen" json:"storage_sftp_listen"`
+	StorageSFTPHost     string `gorm:"column:storage_sftp_host" form:"storage_sftp_host" json:"storage_sftp_host"`
+	StorageSFTPUser     string `gorm:"column:storage_sftp_user" form:"storage_sftp_user" json:"storage_sftp_user"`
+	StorageSFTPPassword string `gorm:"column:storage_sftp_password" form:"storage_sftp_password" json:"storage_sftp_password"`
 
 	// factum
 	FactumApiToken string `gorm:"column:factum_api_token" form:"factum_api_token" json:"factum_api_token"`

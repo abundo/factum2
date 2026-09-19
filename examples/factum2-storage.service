@@ -1,0 +1,33 @@
+# factum2-storage.service, optional software image repository
+#
+# Opt-in. install.py copies this unit on the primary and on worker hosts
+# but does not enable it. Enable on the host that should store NOS images:
+#   sudo systemctl enable --now factum2-storage
+#
+# Default unix API is /run/factum2-storage/api.sock (group factum, mode
+# 0660). Device HTTP/TFTP/SFTP binds come from Admin → Settings → Factum →
+# Software (GET /api/storage-config). TFTP :69 needs CAP_NET_BIND_SERVICE.
+# See docs/install/storage.md.
+
+[Unit]
+Description=Factum software image repository
+After=network.target network-online.target
+Requires=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/factum2
+RuntimeDirectory=factum2-storage
+RuntimeDirectoryMode=0750
+Group=factum
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/opt/factum2/factum2-storage -f /etc/factum2/factum2-worker.yaml start
+TimeoutStopSec=10s
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

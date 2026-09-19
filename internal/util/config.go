@@ -289,6 +289,13 @@ type ConfigLdapWriteback struct {
 // Every field is optional so existing configs keep loading. Omitted knobs and
 // explicit 0 / "" mean compiled defaults. platforms omitted → vrp,ciscosmb;
 // [] or [none] (or [none, ...]) turns pooling off.
+// ConfigStorage is optional YAML for factum2-storage start (unix API
+// socket). Listen addresses and the repository root come from Settings
+// (GET /api/storage-config), not this file.
+type ConfigStorage struct {
+	Socket string `boa:"configonly" yaml:"socket" optional:"true"`
+}
+
 type ConfigDriver struct {
 	Platforms      *[]string `boa:"configonly" yaml:"platforms" optional:"true"`
 	IdleTimeout    string    `boa:"configonly" yaml:"idle_timeout" optional:"true"`
@@ -315,6 +322,7 @@ type ConfigRoot struct {
 	Worker        ConfigWorker        `yaml:"worker"`
 	LdapWriteback ConfigLdapWriteback `yaml:"ldap_writeback"`
 	Driver        ConfigDriver        `yaml:"driver" optional:"true"`
+	Storage       ConfigStorage       `yaml:"storage" optional:"true"`
 }
 
 // Agents get most of their configuration from the Factum API - factum2-worker
@@ -322,9 +330,10 @@ type ConfigRoot struct {
 // .token/.roles/.commands - see the comment on ConfigWorker for why these
 // must stay local rather than fetched remotely).
 type ConfigAgentRoot struct {
-	Factum ConfigFactum `yaml:"factum"`
-	Worker ConfigWorker `yaml:"worker"`
-	Driver ConfigDriver `yaml:"driver" optional:"true"`
+	Factum  ConfigFactum  `yaml:"factum"`
+	Worker  ConfigWorker  `yaml:"worker"`
+	Driver  ConfigDriver  `yaml:"driver" optional:"true"`
+	Storage ConfigStorage `yaml:"storage" optional:"true"`
 }
 
 var Config *ConfigRoot

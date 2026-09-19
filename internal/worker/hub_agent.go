@@ -183,6 +183,13 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 			case ch <- resp:
 			default:
 			}
+		case EnvelopeCall:
+			var callMsg CallMsg
+			if err := json.Unmarshal(env.Payload, &callMsg); err != nil {
+				slog.Error("worker hub: invalid call envelope, discarding", "err", err)
+				continue
+			}
+			go w.handleCall(callMsg, outbox)
 		default:
 			slog.Debug("worker hub: unhandled envelope type", "type", env.Type)
 		}

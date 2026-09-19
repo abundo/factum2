@@ -36,7 +36,7 @@ $COMPOSE up -d --wait --wait-timeout 300 $LAB_APPS $LAB_ICINGA_WEB
 step seed
 ./seed.py "$@"
 step factum
-$COMPOSE up -d --wait --wait-timeout 120 factum-web factum-worker
+$COMPOSE up -d --wait --wait-timeout 120 factum-web factum-worker factum-storage
 step service-definitions
 ./service_definitions.py
 step done

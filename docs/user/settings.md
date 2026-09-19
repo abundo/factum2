@@ -20,6 +20,8 @@ Feature switches (all off by default except as noted):
 - **IP address management** — namespaces, VRFs, prefixes
 - **DNS zone editor** — zones, DNS templates, SOA templates, DNSSEC
   policies. Distinct from Destinations → DNS (device-record sync).
+- **Software repository** — NOS images for routers and switches
+  ([Software](software.md)). Files live on the `factum2-storage` host.
 
 Also set the **API token** (service-to-service, not a user password),
 **default domain** (used when matching short device names to FQDNs),

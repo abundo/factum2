@@ -399,6 +399,19 @@ That's what lets `factum2-driver-cli` (`cmd/driver`, which embeds
 with no Postgres access at all - same shape as the
 DNS/Icinga/LibreNMS/Oxidized tools above.
 
+**Software repository (`factum2-storage`):** NOS images live on disk on the
+storage host (primary or a worker), not in Postgres. `factum2-storage
+start` serves a unix control API (`/run/factum2-storage/api.sock`) plus
+optional device-facing HTTP/TFTP/SFTP from Settings (`GET
+/api/storage-config`, hub-allowlisted). The GUI (`/software`,
+`/api/software/*`) proxies file ops through that unix socket when local,
+else `RemoteManager.CallRole("storage", …)` over the hub. Copy-to-device
+is `SendCommand("storage", ["copy", …])` — HTTP/TFTP run a platform pull
+command on the device; SCP/SFTP push from the storage host using
+DeviceSyncAuth. `worker.commands.storage` advertises the role; the daemon
+is a separate systemd unit (`examples/factum2-storage.service`), not a
+`worker.commands` entry. Feature flag `Settings.StorageEnabled`.
+
 ### Web backend (`web/`)
 
 Echo (`labstack/echo/v4`) HTTP server, one big router built in `web/web.go`.

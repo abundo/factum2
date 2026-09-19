@@ -141,6 +141,7 @@ DATA_DIRS = (
     "data/prometheus",
     "data/grafana",
     "data/netbox",
+    "data/storage",
     "certs",
 )
 
@@ -350,6 +351,7 @@ def prepare(*, demo: bool = False) -> None:
         "data/lego",
         "data/prometheus",
         "data/grafana",
+        "data/storage",
     ):
         try:
             os.chmod(DIR / name, 0o777)

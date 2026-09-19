@@ -9,6 +9,7 @@ import (
 	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/optical"
+	"github.com/abundo/factum2/internal/storage"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -193,6 +194,7 @@ func mePayload(db *gorm.DB, u models.User) map[string]any {
 		"dns_zones_enabled":    dns.ZonesEnabled(db),
 		"dhcp_enabled":         ipam.DhcpEnabled(db),
 		"certs_enabled":        certs.Enabled(db),
+		"storage_enabled":      storage.Enabled(db),
 	}
 }
 

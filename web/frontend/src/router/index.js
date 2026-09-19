@@ -114,6 +114,12 @@ const router = createRouter({
           component: () => import('@/views/oxidized/OxidizedBrowserPage.vue'),
         },
         {
+          path: '/software',
+          name: 'software',
+          meta: { title: 'Software', requiresRead: true, requiresStorage: true },
+          component: () => import('@/views/software/SoftwarePage.vue'),
+        },
+        {
           path: '/ipam',
           name: 'ipam',
           meta: { requiresRead: true, requiresIpam: true },
@@ -342,6 +348,9 @@ router.beforeEach((to) => {
     return { path: '/' }
   }
   if (to.meta?.requiresCerts && !authStore.certsEnabled) {
+    return { path: '/' }
+  }
+  if (to.meta?.requiresStorage && !authStore.storageEnabled) {
     return { path: '/' }
   }
 })

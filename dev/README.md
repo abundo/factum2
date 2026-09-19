@@ -21,7 +21,8 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | Alertmanager | http://127.0.0.1:19093 |
 | Dest | snmp-exporter | http://127.0.0.1:19116 |
 | Dest | BIND (`lab.example`) + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
-| Worker hub | factum-worker (netbox, device-sync) | `127.0.0.1:18443` |
+| Worker hub | factum-worker (netbox, device-sync, storage copy) | `127.0.0.1:18443` |
+| Software | factum-storage (HTTP + SFTP) | http://127.0.0.1:18088, SFTP `127.0.0.1:12222` (`factum` / `lab`) |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
 | Shared Redis | netbox db0/db1, librenms db2 | `127.0.0.1:16379` |
@@ -42,8 +43,9 @@ make dev-up
 MariaDB DBs so Icinga Web can come up with NetBox/LibreNMS (instead of
 after them), waits for those apps, migrates factum, seeds
 Settings/admin/tokens (all lab features on, including the DNS zone
-editor), registers the NetBox webhook and custom fields
-(`factum2-netbox check --update`), then starts factum-web and factum-worker.
+editor and the Software repository), registers the NetBox webhook and
+custom fields (`factum2-netbox check --update`), then starts factum-web,
+factum-worker, and factum-storage.
 After web is up it posts **sample service definitions** (ELINE, ELAN,
 POLARIX) into Catalog → Service types — Factum itself ships none. ELINE
 CLI add/remove bodies come from `dev/templates/eline-*.tmpl` (written by
@@ -72,7 +74,7 @@ LibreNMS does (status, hostname, location, uptime, ports), fed by
 Prometheus via snmp-exporter.
 
 ```sh
-./install.py --compose              # make + migrate + restart factum-web / factum-worker
+./install.py --compose              # make + migrate + restart factum-web / factum-worker / factum-storage
 ./install.py --compose --worker     # also restart dest workers
 ./install.py --compose --skip-build # restart primary only, no rebuild
 ```

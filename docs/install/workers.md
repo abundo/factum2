@@ -73,6 +73,11 @@ CLI from a host that can reach the boxes, enable the opt-in
 [`factum2-driver` session daemon](ssh-session.md) on this node. Do not
 put `factum2-driver start` in `worker.commands`.
 
+To store NOS images on this host, enable
+[`factum2-storage`](storage.md) and add a `worker.commands.storage` entry
+that runs `/opt/factum2/factum2-storage` (no args). Do not put
+`factum2-storage start` in `worker.commands`.
+
 Full detail, including the unix-socket ACL and `FACTUM_WORKER_API_SOCKET`,
 is in the
 [repository README](https://github.com/abundo/factum2/blob/main/README.md#installing-a-worker-node).

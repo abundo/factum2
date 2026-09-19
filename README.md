@@ -166,7 +166,7 @@ Worker / hub transport](AGENTS.md#worker--hub-transport-internalworker)
 for why the dial direction is reversed.
 
 Co-located CLIs (`factum2-dns`, `factum2-icinga`, `factum2-librenms`,
-`factum2-oxidized`, `factum2-prometheus`, `factum2-certs`, `factum2-device-sync`, `factum2-driver`,
+`factum2-oxidized`, `factum2-prometheus`, `factum2-certs`, `factum2-storage`, `factum2-device-sync`, `factum2-driver`,
 `factum2-icinga-notifications`) reach the primary's REST handlers through
 that hub connection, via a localhost-only unix socket
 (`/run/factum2-worker/api.sock`). Worker networks then do **not** need a

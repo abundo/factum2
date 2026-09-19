@@ -146,6 +146,16 @@ builds:
       ldflags:
           - -s -w -X github.com/abundo/factum2/internal/buildinfo.Version={{.Version}} -X github.com/abundo/factum2/internal/buildinfo.Commit={{.Commit}} -X github.com/abundo/factum2/internal/buildinfo.Date={{.CommitDate}}
 
+    - id: factum2-storage
+      main: ./cmd/storage
+      binary: factum2-storage
+      env: [CGO_ENABLED=0]
+      goos: [linux]
+      goarch: [amd64, arm64]
+      flags: [-trimpath]
+      ldflags:
+          - -s -w -X github.com/abundo/factum2/internal/buildinfo.Version={{.Version}} -X github.com/abundo/factum2/internal/buildinfo.Commit={{.Commit}} -X github.com/abundo/factum2/internal/buildinfo.Date={{.CommitDate}}
+
     - id: factum2-web
       main: ./cmd/web
       binary: factum2-web

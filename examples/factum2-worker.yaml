@@ -57,6 +57,16 @@ worker:
     netbox:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync", "--job"]
+    # Software repository (factum2-storage start is a separate unit).
+    # storage:
+    #   cmd: /opt/factum2/factum2-storage
+    #   args: []
+
+# Optional unix API for factum2-storage start (default
+# /run/factum2-storage/api.sock). Device HTTP/TFTP/SFTP binds are in the
+# GUI, not here.
+# storage:
+#   socket: /run/factum2-storage/api.sock
 
 # SSH CLI session pool for factum2-device-sync and factum2-driver.
 # Default-on for vrp and ciscosmb. Kill switch (legacy dial-and-close):

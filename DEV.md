@@ -153,6 +153,7 @@ account, which any admin can already see via `GET /api/admin/settings`.
 | `factum2-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                          |
 | `factum2-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync`)                                                                           |
 | `factum2-prometheus`           | `cmd/prometheus`           | Sync Prometheus snmp_exporter targets with factum (`sync`)                                                   |
+| `factum2-storage`              | `cmd/storage`              | Software image repository (`start`, `ls`/`mkdir`/`mv`/`rm`, `copy` to devices over HTTP/TFTP/SCP/SFTP)      |
 | `factum2-web`                  | `cmd/web`                  | Web GUI + API server (`start`, `createadmin`, `migrate`)                                                     |
 | `factum2-worker`               | `cmd/worker`               | Hub-transport task runner/agent (`start`, `run`, `show-config`)                                              |
 
@@ -339,7 +340,7 @@ snmptrapd. Factum-web stays on the host. See [dev/README.md](dev/README.md).
 
 ```sh
 make dev-up            # docker or podman compose; first start pulls images (prints per-step elapsed time)
-./install.py --compose          # rebuild build/ and restart factum-web / factum-worker
+./install.py --compose          # rebuild build/ and restart factum-web / factum-worker / factum-storage
 ./install.py --compose --worker # also restart dest workers
 make dev-down          # keep volumes
 make dev-reset         # stop everything, wipe volumes and dest files (does not start again)

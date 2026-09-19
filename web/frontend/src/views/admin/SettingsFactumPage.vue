@@ -19,8 +19,22 @@ const smtpTlsModeOptions = [
 
 const factumTabItems = [
   { label: 'General', value: 'general', slot: 'general' },
+  { label: 'Software', value: 'software', slot: 'software' },
   { label: 'Email', value: 'email', slot: 'email' },
 ]
+
+function fillStorageDefaults() {
+  if (!settings.storage_root) settings.storage_root = '/var/lib/factum2/storage'
+  if (!settings.storage_http_listen) settings.storage_http_listen = ':8088'
+  if (!settings.storage_tftp_listen) settings.storage_tftp_listen = ':69'
+  if (!settings.storage_sftp_listen) settings.storage_sftp_listen = ':2222'
+  if (!settings.storage_sftp_user) settings.storage_sftp_user = 'factum'
+}
+
+function onStorageToggle(val) {
+  settings.storage_enabled = val
+  if (val) fillStorageDefaults()
+}
 
 function testEmail() {
   testingEmail.value = true
@@ -180,6 +194,106 @@ function testEmail() {
                 deleted. Housekeeping does not run on its own — schedule it on the Scheduler
                 page.</small
               >
+            </div>
+          </div>
+        </template>
+
+        <template #software>
+          <div class="flex flex-col gap-6 py-4">
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.storage_enabled"
+                id="storage_enabled"
+                @update:model-value="onStorageToggle"
+              />
+              <label for="storage_enabled" class="font-bold">Software repository</label>
+            </div>
+            <small class="text-muted-color -mt-4"
+              >Images for routers and switches. Off by default. Files live on the
+              <code>factum2-storage</code> host (this primary, or a worker). Turning this off hides
+              the UI; it does not delete files.</small
+            >
+            <div>
+              <label for="storage_root" class="block font-bold mb-3">Repository directory</label>
+              <UInput
+                id="storage_root"
+                v-model="settings.storage_root"
+                placeholder="/var/lib/factum2/storage"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Path on the storage host, not this GUI process.</small
+              >
+            </div>
+            <div>
+              <label for="storage_http_listen" class="block font-bold mb-3">HTTP listen</label>
+              <UInput
+                id="storage_http_listen"
+                v-model="settings.storage_http_listen"
+                placeholder=":8088"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Device-facing HTTP. Empty disables it. Devices must be able to reach this
+                address.</small
+              >
+            </div>
+            <div>
+              <label for="storage_http_url" class="block font-bold mb-3">HTTP URL (devices)</label>
+              <UInput
+                id="storage_http_url"
+                v-model="settings.storage_http_url"
+                placeholder="http://10.0.0.5:8088"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="storage_tftp_listen" class="block font-bold mb-3">TFTP listen</label>
+              <UInput
+                id="storage_tftp_listen"
+                v-model="settings.storage_tftp_listen"
+                placeholder=":69"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="storage_tftp_host" class="block font-bold mb-3"
+                >TFTP host (devices)</label
+              >
+              <UInput
+                id="storage_tftp_host"
+                v-model="settings.storage_tftp_host"
+                placeholder="10.0.0.5"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="storage_sftp_listen" class="block font-bold mb-3">SFTP/SCP listen</label>
+              <UInput
+                id="storage_sftp_listen"
+                v-model="settings.storage_sftp_listen"
+                placeholder=":2222"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="storage_sftp_host" class="block font-bold mb-3"
+                >SFTP host (devices)</label
+              >
+              <UInput
+                id="storage_sftp_host"
+                v-model="settings.storage_sftp_host"
+                placeholder="10.0.0.5:2222"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label for="storage_sftp_user" class="block font-bold mb-3">SFTP user</label>
+              <UInput id="storage_sftp_user" v-model="settings.storage_sftp_user" class="w-full" />
+            </div>
+            <div>
+              <label for="storage_sftp_password" class="block font-bold mb-3">SFTP password</label>
+              <PasswordInput id="storage_sftp_password" v-model="settings.storage_sftp_password" />
             </div>
           </div>
         </template>

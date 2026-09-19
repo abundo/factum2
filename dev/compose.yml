@@ -16,10 +16,10 @@ x-lab-restart: &lab-restart
   restart: unless-stopped
 
 # Host build/ is bind-mounted at /opt/factum2. install.py --compose rebuilds
-# those binaries and restarts factum-web / factum-worker (pass --worker to
-# also restart dests that run a co-located factum2-worker). APP_ENV=
-# development skips the hub version handshake so dests can stay on an older
-# stamp. The dns worker also handles certs.
+# those binaries and restarts factum-web / factum-worker / factum-storage
+# (pass --worker to also restart dests that run a co-located
+# factum2-worker). APP_ENV=development skips the hub version handshake so
+# dests can stay on an older stamp. The dns worker also handles certs.
 x-factum: &factum
   <<: *lab-restart
   image: factum-dev:local
@@ -33,6 +33,9 @@ x-factum: &factum
     - ./container/factum2.yaml:/etc/factum2/factum2.yaml:z,ro
     - ./container/factum2-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
     - ./certs:/etc/factum2/certs:z,ro
+    # Shared with factum-storage: GUI/worker unix API + image files.
+    - ./data/storage:/var/lib/factum2/storage:z
+    - storage-run:/run/factum2-storage
   environment:
     APP_ENV: development
     TZ: UTC
@@ -619,6 +622,33 @@ services:
       retries: 15
     mem_limit: 128m
 
+  # NOS image repository. Shares /run/factum2-storage and
+  # /var/lib/factum2/storage with factum-web / factum-worker. Fetches
+  # Settings from factum-web (HTTPS). Device HTTP :8088, SFTP :2222.
+  # TFTP is off in the lab (needs CAP_NET_BIND_SERVICE for :69).
+  factum-storage:
+    <<: *factum
+    hostname: factum-storage
+    command:
+      - /opt/factum2/factum2-storage
+      - -f
+      - /etc/factum2/factum2-worker.yaml
+      - start
+    ports:
+      - "18088:8088"
+      - "12222:2222"
+    depends_on:
+      factum-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/factum2-storage/api.sock"]
+      start_period: 15s
+      start_interval: 2s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 64m
+
   # Static index of published lab ports. Links rewrite to the hostname
   # used to open this page (so they work off-box, not only 127.0.0.1).
   portal:
@@ -644,3 +674,4 @@ volumes:
   prometheus-data:
   alertmanager-data:
   grafana-data:
+  storage-run:

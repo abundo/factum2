@@ -85,11 +85,12 @@ WORKER_UNIT = "factum2-worker.service"
 # Opt-in SSH session daemon. Copied on primary and worker hosts but not
 # enabled and not part of PRIMARY_UNITS (holds device passwords in RAM).
 DRIVER_UNIT = "factum2-driver.service"
+STORAGE_UNIT = "factum2-storage.service"
 ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 16
+INSTALLER_VERSION = 17
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -129,6 +130,7 @@ KNOWN_BINARIES = (
     "factum2-netbox",
     "factum2-oxidized",
     "factum2-prometheus",
+    "factum2-storage",
     "factum2-web",
     "factum2-worker",
 )
@@ -2173,10 +2175,18 @@ def install_primary(
         if action == "installed":
             newly.append(unit)
     # Copy but do not enable or restart — operators opt in with
-    # systemctl enable --now factum2-driver.
+    # systemctl enable --now factum2-driver / factum2-storage.
     install_unit(
         examples_dir / DRIVER_UNIT,
         DRIVER_UNIT,
+        target_host=target_host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        assume_yes=assume_yes,
+    )
+    install_unit(
+        examples_dir / STORAGE_UNIT,
+        STORAGE_UNIT,
         target_host=target_host,
         ssh_user=ssh_user,
         dry_run=dry_run,
@@ -2267,6 +2277,14 @@ def install_worker(
     install_unit(
         examples_dir / DRIVER_UNIT,
         DRIVER_UNIT,
+        target_host=host,
+        ssh_user=ssh_user,
+        dry_run=dry_run,
+        assume_yes=assume_yes,
+    )
+    install_unit(
+        examples_dir / STORAGE_UNIT,
+        STORAGE_UNIT,
         target_host=host,
         ssh_user=ssh_user,
         dry_run=dry_run,
@@ -2998,7 +3016,8 @@ Modes:
   --source    This source tree — development. make release, then install
               build/ (replaces install_prod.sh).
   --compose   Local compose lab. make build + make frontend, then restart
-              bind-mounted primary services (factum-web, factum-worker).
+              bind-mounted primary services (factum-web, factum-worker,
+              factum-storage).
   --worker    With --compose, also restart dest workers.
 
 Environment:
@@ -3278,6 +3297,14 @@ def install_compose_lab(
     )
     log(f"==> Starting {', '.join(services)}")
     run(argv + ["up", "-d", "--no-deps", *services], dry_run=False)
+    # Storage fetches Settings over HTTPS; start it after web is up.
+    # --no-deps would otherwise race a stopped factum-web. Recreate so a
+    # new factum2-storage inode is picked up the same way as the worker.
+    log("==> Recreating factum-storage (bind-mounted binary)")
+    run(
+        argv + ["up", "-d", "--no-deps", "--force-recreate", "factum-storage"],
+        dry_run=False,
+    )
     log("==> Done")
     log(f"    GUI at http://127.0.0.1:8091  (binaries from {build_dir})")
     return 0

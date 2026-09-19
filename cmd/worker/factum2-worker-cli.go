@@ -58,6 +58,7 @@ func main() {
 					defer stop()
 
 					w := worker.New(&p.Config.Worker)
+					w.SetStorageSocket(p.Config.Storage.Socket)
 					return w.Start(ctx)
 				},
 			},

@@ -51,6 +51,7 @@ nav:
       - Jobs: user/jobs.md
       - DNS: user/dns.md
       - Certificates: user/certs.md
+      - Software: user/software.md
       - Admin settings: user/settings.md
       - Software bill of materials: user/sbom.md
   - Install:
@@ -58,6 +59,7 @@ nav:
       - Reverse proxy: install/reverse-proxy.md
       - Worker nodes: install/workers.md
       - SSH session daemon: install/ssh-session.md
+      - Software storage: install/storage.md
 
 exclude_docs: |
   *.go

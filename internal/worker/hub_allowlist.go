@@ -24,6 +24,7 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/prometheus-config`},
 	{http.MethodGet, `/api/netbox-config`},
 	{http.MethodGet, `/api/device-sync-config`},
+	{http.MethodGet, `/api/storage-config`},
 	{http.MethodGet, `/api/device`},
 	{http.MethodGet, `/api/device/name/[^/]+`},
 	{http.MethodGet, `/api/librenms/pending-deletes`},

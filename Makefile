@@ -11,7 +11,7 @@ GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinf
 
 .PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs sbom
 
-build: factum2 factum2-becs factum2-certs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web factum2-worker
+build: factum2 factum2-becs factum2-certs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-storage factum2-web factum2-worker
 
 # JS deps can ship stray .go files (e.g. flatted); they are not this module.
 GO_PACKAGES := $(shell go list ./... | grep -v /node_modules/)
@@ -147,6 +147,9 @@ factum2-oxidized:
 factum2-prometheus:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-prometheus cmd/prometheus/factum2-prometheus-cli.go
+factum2-storage:
+	@mkdir -p $(BUILD_DIR)
+	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-storage cmd/storage/factum2-storage-cli.go
 factum2-web:
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go
@@ -178,7 +181,7 @@ factum2-web-release: frontend
 	git checkout -- docs/generated/sbom.md >/dev/null 2>&1 || true; \
 	exit $$status
 
-release: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-web-release factum2-worker
+release: factum2 factum2-becs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-storage factum2-web-release factum2-worker
 
 snapshot:
 	goreleaser release --snapshot --clean --skip=publish

@@ -20,6 +20,8 @@ func TestAllowHubAPI(t *testing.T) {
 		{http.MethodGet, "/api/prometheus-config", true},
 		{http.MethodGet, "/api/netbox-config", true},
 		{http.MethodGet, "/api/device-sync-config", true},
+		{http.MethodGet, "/api/storage-config", true},
+		{http.MethodPost, "/api/storage-config", false},
 		{http.MethodGet, "/api/device", true},
 		{http.MethodGet, "/api/device/name/core-sw1", true},
 		{http.MethodGet, "/api/librenms/pending-deletes", true},
