@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -52,25 +53,25 @@ func TestSessionSocketPath(t *testing.T) {
 	}
 }
 
-func TestValidateSessionListen(t *testing.T) {
+func TestParseSessionListen(t *testing.T) {
 	t.Setenv("FACTUM_DRIVER_SESSION_SOCKET", "")
-	if err := ValidateSessionListen(util.ConfigDriver{}); err != nil {
+	if _, err := parseSessionListen(util.ConfigDriver{}); err != nil {
 		t.Fatalf("unix-only default: %v", err)
 	}
-	if err := ValidateSessionListen(util.ConfigDriver{Socket: "none"}); err == nil {
+	if _, err := parseSessionListen(util.ConfigDriver{Socket: "none"}); err == nil {
 		t.Fatal("socket none and no listen should fail")
 	}
-	if err := ValidateSessionListen(util.ConfigDriver{Listen: "127.0.0.1:8092"}); err == nil {
+	if _, err := parseSessionListen(util.ConfigDriver{Listen: "127.0.0.1:8092"}); err == nil {
 		t.Fatal("TCP without token should fail")
 	}
-	if err := ValidateSessionListen(util.ConfigDriver{Listen: "127.0.0.1:8092", Token: "s"}); err != nil {
+	if _, err := parseSessionListen(util.ConfigDriver{Listen: "127.0.0.1:8092", Token: "s"}); err != nil {
 		t.Fatalf("loopback TCP with token: %v", err)
 	}
-	err := ValidateSessionListen(util.ConfigDriver{Listen: "0.0.0.0:8092", Token: "s"})
+	_, err := parseSessionListen(util.ConfigDriver{Listen: "0.0.0.0:8092", Token: "s"})
 	if err == nil || !strings.Contains(err.Error(), "tls_cert") {
 		t.Fatalf("non-loopback without TLS: %v", err)
 	}
-	err = ValidateSessionListen(util.ConfigDriver{
+	_, err = parseSessionListen(util.ConfigDriver{
 		Listen:  "192.0.2.1:8092",
 		Token:   "s",
 		TLSCert: "/nope.crt",
@@ -151,11 +152,9 @@ func TestUnixHTTPProxyIgnored(t *testing.T) {
 	t.Setenv("http_proxy", "http://127.0.0.1:1")
 
 	c := newSessionUnixClient(sock)
-	if tr, ok := c.client.Transport.(*trackingTransport); ok {
-		ht, _ := tr.base.(*http.Transport)
-		if ht == nil || ht.Proxy != nil {
-			t.Fatal("unix transport Proxy must be nil")
-		}
+	tr, ok := c.client.Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatal("unix transport Proxy must be nil")
 	}
 	req, err := http.NewRequest(http.MethodGet, sessionUnixBaseURL+"/health", nil)
 	if err != nil {
@@ -531,7 +530,7 @@ func TestServeSSHSessionUnixAndSIGTERM(t *testing.T) {
 
 func TestTLSRequiredFilesLoad(t *testing.T) {
 	cert, key := writeTestCert(t, "127.0.0.1")
-	err := ValidateSessionListen(util.ConfigDriver{
+	_, err := parseSessionListen(util.ConfigDriver{
 		Listen:     "192.0.2.10:8092",
 		Token:      "tok",
 		TLSCert:    cert,
@@ -543,6 +542,229 @@ func TestTLSRequiredFilesLoad(t *testing.T) {
 	}
 }
 
+func TestStalledTLSFallsBackAndStickyDown(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				time.Sleep(time.Minute)
+			}(c)
+		}
+	}()
+	oldHS := sessionTLSHandshakeTimeout
+	oldRetry := remoteRetry
+	sessionTLSHandshakeTimeout = 80 * time.Millisecond
+	remoteRetry = time.Hour
+	t.Cleanup(func() {
+		sessionTLSHandshakeTimeout = oldHS
+		remoteRetry = oldRetry
+	})
+	if err := initSSHPoolForTest(SSHPoolConfig{SessionURL: "https://" + ln.Addr().String()}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	out, err := sshRunCLI(context.Background(), f.param("vrp"), []sshCmd{{Cmd: "display version"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "VRP version") {
+		t.Fatalf("output = %q", out)
+	}
+	sshGlobals.mu.Lock()
+	down := sshGlobals.remote != nil && sshGlobals.remote.down
+	sshGlobals.mu.Unlock()
+	if !down {
+		t.Fatal("want sticky down after stalled TLS handshake")
+	}
+	if _, err := sshRunCLI(context.Background(), f.param("vrp"), []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.connections() != 1 {
+		t.Fatalf("connections = %d, want in-process reuse while down", f.connections())
+	}
+}
+
+func TestHealthReprobeRequiresHTTPResponse(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				time.Sleep(time.Minute)
+			}(c)
+		}
+	}()
+	oldHS := sessionTLSHandshakeTimeout
+	oldRetry := remoteRetry
+	oldProbe := sessionProbeTimeout
+	sessionTLSHandshakeTimeout = 80 * time.Millisecond
+	sessionProbeTimeout = 200 * time.Millisecond
+	remoteRetry = time.Hour
+	t.Cleanup(func() {
+		sessionTLSHandshakeTimeout = oldHS
+		sessionProbeTimeout = oldProbe
+		remoteRetry = oldRetry
+	})
+	if err := initSSHPoolForTest(SSHPoolConfig{SessionURL: "https://" + ln.Addr().String()}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	if _, err := sshRunCLI(context.Background(), f.param("vrp"), []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(getPool().Stats()) != 1 {
+		t.Fatal("want one in-process session after fallback")
+	}
+	remoteRetry = 0
+	if _, err := sshRunCLI(context.Background(), f.param("vrp"), []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(getPool().Stats()) != 1 {
+		t.Fatal("TCP-only re-probe must not replaceMemoryPool")
+	}
+	if f.connections() != 1 {
+		t.Fatalf("connections = %d, want reuse", f.connections())
+	}
+	sshGlobals.mu.Lock()
+	down := sshGlobals.remote != nil && sshGlobals.remote.down
+	sshGlobals.mu.Unlock()
+	if !down {
+		t.Fatal("want still down after failed health probe")
+	}
+}
+
+func TestTLSErrorAfterRequestNotReplayed(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	certPath, keyPath := writeTestCert(t, "127.0.0.1")
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		sc := tls.Server(c, tlsCfg)
+		if err := sc.Handshake(); err != nil {
+			return
+		}
+		buf := make([]byte, 256)
+		_, _ = sc.Read(buf)
+		_ = sc.Close()
+	}()
+	if err := initSSHPoolForTest(SSHPoolConfig{
+		SessionURL: "https://" + ln.Addr().String(),
+		TLSCA:      certPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	_, err = sshRunCLI(context.Background(), f.param("vrp"), []sshCmd{{Cmd: "display version"}})
+	if err == nil {
+		t.Fatal("expected error after peer close")
+	}
+	if errors.Is(err, errRemoteConnect) {
+		t.Fatalf("must not fallback after request written: %v", err)
+	}
+	if f.connections() != 0 {
+		t.Fatalf("local apply connections = %d, want 0", f.connections())
+	}
+}
+
+func TestDaemonRespectsPlatformKillSwitch(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	off := []string{}
+	if err := initSSHPoolForTest(SSHPoolConfig{Platforms: &off}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	mux := newSessionHandler(&sessionMux{})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := f.addr()
+	body := cliRunRequestJSON{
+		Host: host, Port: port, Username: f.user, Password: f.pass, Platform: "vrp",
+		Cmds: []cliRunCmdJSON{{Cmd: "display version"}},
+	}
+	raw, _ := json.Marshal(body)
+	for i := 0; i < 2; i++ {
+		resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("status %d body %s", resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+	if f.connections() != 2 {
+		t.Fatalf("connections = %d, want 2 one-shot with platforms kill switch", f.connections())
+	}
+}
+
+func TestDaemonDoesNotPoolUnprofiledPlatform(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	ResetSSHPoolForTest()
+	mux := newSessionHandler(&sessionMux{})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := f.addr()
+	body := cliRunRequestJSON{
+		Host: host, Port: port, Username: f.user, Password: f.pass, Platform: "ios-xr",
+		Cmds: []cliRunCmdJSON{{Cmd: "display version"}},
+	}
+	raw, _ := json.Marshal(body)
+	for i := 0; i < 2; i++ {
+		resp, err := http.Post(srv.URL+"/v1/cli/run", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("status %d body %s", resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+	if f.connections() != 2 {
+		t.Fatalf("connections = %d, want 2 one-shot for ios-xr", f.connections())
+	}
+}
+
 func writeTestCert(t *testing.T, ip string) (certPath, keyPath string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -550,13 +772,15 @@ func writeTestCert(t *testing.T, ip string) (certPath, keyPath string) {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP(ip)},
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IPAddresses:           []net.IP{net.ParseIP(ip)},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {

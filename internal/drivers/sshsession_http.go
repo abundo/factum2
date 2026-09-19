@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/abundo/factum2/internal/util"
@@ -26,11 +25,13 @@ const (
 	sessionUnixBaseURL = "http://factum2-driver"
 	sessionMaxBody     = 32 << 20 // 32 MiB, same as hubMaxMessageSize
 	sessionReadHeader  = 10 * time.Second
+	sessionDialTimeout = 10 * time.Second
 )
 
-// sessionClientDials counts DialContext calls from the session HTTP client
-// (unix or TCP). Tests assert factum2-driver start never dials its own socket.
-var sessionClientDials atomic.Int64
+var (
+	sessionTLSHandshakeTimeout = 10 * time.Second
+	sessionProbeTimeout        = 3 * time.Second
+)
 
 type sessionHTTPClient struct {
 	client *http.Client
@@ -42,35 +43,23 @@ type sessionHTTPClient struct {
 type rtFlagKey struct{}
 
 type rtFlag struct {
-	gotResp bool
-	dialed  bool
+	dialed bool
 }
 
-type trackingTransport struct {
-	base http.RoundTripper
-}
-
-func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req)
-	if resp != nil {
-		if f, ok := req.Context().Value(rtFlagKey{}).(*rtFlag); ok {
-			f.gotResp = true
-		}
+func markDialed(ctx context.Context) {
+	if f, ok := ctx.Value(rtFlagKey{}).(*rtFlag); ok {
+		f.dialed = true
 	}
-	return resp, err
 }
 
 func newSessionUnixClient(socket string) *sessionHTTPClient {
-	base := &http.Transport{
+	tr := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			sessionClientDials.Add(1)
-			var d net.Dialer
+			d := net.Dialer{Timeout: sessionDialTimeout}
 			c, err := d.DialContext(ctx, "unix", socket)
 			if err == nil {
-				if f, ok := ctx.Value(rtFlagKey{}).(*rtFlag); ok {
-					f.dialed = true
-				}
+				markDialed(ctx)
 			}
 			return c, err
 		},
@@ -78,7 +67,7 @@ func newSessionUnixClient(socket string) *sessionHTTPClient {
 	return &sessionHTTPClient{
 		client: &http.Client{
 			Timeout:   defaultHTTPTimeout,
-			Transport: &trackingTransport{base: base},
+			Transport: tr,
 		},
 		base:   sessionUnixBaseURL,
 		socket: socket,
@@ -98,25 +87,45 @@ func newSessionURLClient(rawURL, token, caPath string) (*sessionHTTPClient, erro
 		}
 		tlsCfg.RootCAs = pool
 	}
-	base := &http.Transport{
-		Proxy:           nil,
-		TLSClientConfig: tlsCfg,
+	tr := &http.Transport{
+		Proxy:               nil,
+		TLSClientConfig:     tlsCfg,
+		TLSHandshakeTimeout: sessionTLSHandshakeTimeout,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			sessionClientDials.Add(1)
-			var d net.Dialer
+			d := net.Dialer{Timeout: sessionDialTimeout}
 			c, err := d.DialContext(ctx, network, addr)
 			if err == nil {
-				if f, ok := ctx.Value(rtFlagKey{}).(*rtFlag); ok {
-					f.dialed = true
-				}
+				markDialed(ctx)
 			}
 			return c, err
+		},
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			d := net.Dialer{Timeout: sessionDialTimeout}
+			raw, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			cfg := tlsCfg.Clone()
+			if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+				cfg.ServerName = host
+			} else {
+				cfg.ServerName = addr
+			}
+			conn := tls.Client(raw, cfg)
+			hsCtx, cancel := context.WithTimeout(ctx, sessionTLSHandshakeTimeout)
+			defer cancel()
+			if err := conn.HandshakeContext(hsCtx); err != nil {
+				raw.Close()
+				return nil, err
+			}
+			markDialed(ctx)
+			return conn, nil
 		},
 	}
 	return &sessionHTTPClient{
 		client: &http.Client{
 			Timeout:   defaultHTTPTimeout,
-			Transport: &trackingTransport{base: base},
+			Transport: tr,
 		},
 		base:  strings.TrimRight(rawURL, "/"),
 		token: token,
@@ -237,6 +246,7 @@ func (c *sessionHTTPClient) Run(ctx context.Context, req sshRunRequest) (*sshRun
 	if err != nil {
 		return nil, classifyClientErr(err, flag)
 	}
+	// HTTP status received: never a connect-failure.
 	limited := io.LimitReader(resp.Body, sessionMaxBody+1)
 	respBody, err := io.ReadAll(limited)
 	if err != nil {
@@ -265,42 +275,32 @@ func classifyClientErr(err error, flag *rtFlag) error {
 	if err == nil {
 		return nil
 	}
-	if flag != nil && flag.gotResp {
-		return err
-	}
-	if isTLSErr(err) {
-		return fmt.Errorf("%w: %v", errRemoteConnect, err)
-	}
+	// dialed is set only after unix Dial or TLS handshake succeeds, i.e.
+	// after the HTTP request may already have been written. Handshake and
+	// certificate errors happen before that flag.
 	if flag != nil && flag.dialed {
-		// Request may already have been written; do not fallback.
 		return err
 	}
 	return fmt.Errorf("%w: %v", errRemoteConnect, err)
 }
 
-func isTLSErr(err error) bool {
-	var re tls.RecordHeaderError
-	if errors.As(err, &re) {
+func (c *sessionHTTPClient) probeHealth() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), sessionProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/health", nil)
+	if err != nil {
+		return false
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.client.Do(req)
+	if resp != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 		return true
 	}
-	var ua x509.UnknownAuthorityError
-	if errors.As(err, &ua) {
-		return true
-	}
-	var hn x509.HostnameError
-	if errors.As(err, &hn) {
-		return true
-	}
-	var ci x509.CertificateInvalidError
-	if errors.As(err, &ci) {
-		return true
-	}
-	var ve *tls.CertificateVerificationError
-	if errors.As(err, &ve) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:")
+	return err == nil
 }
 
 func parseRemoteStatus(status int, body []byte) error {
@@ -332,17 +332,7 @@ func bearerOK(header, want string) bool {
 	if presented == "" {
 		return false
 	}
-	if len(presented) != len(want) {
-		return false
-	}
-	return subtleConstantTimeCompare(presented, want)
-}
-
-func subtleConstantTimeCompare(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	return passwordEqual(a, b)
+	return passwordEqual(presented, want)
 }
 
 type sessionMux struct {
@@ -360,15 +350,7 @@ func lookupHostIPs(ctx context.Context, host string) ([]net.IP, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IP{ip}, nil
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]net.IP, 0, len(addrs))
-	for _, a := range addrs {
-		out = append(out, a.IP)
-	}
-	return out, nil
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
 func (m *sessionMux) checkHost(ctx context.Context, host string) error {
@@ -384,20 +366,18 @@ func (m *sessionMux) checkHost(ctx context.Context, host string) error {
 		return fmt.Errorf("host not allowed")
 	}
 	for _, ip := range ips {
-		if !cidrContains(m.cidrs, ip) {
+		allowed := false
+		for _, n := range m.cidrs {
+			if n.Contains(ip) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
 			return fmt.Errorf("host not allowed")
 		}
 	}
 	return nil
-}
-
-func cidrContains(cidrs []*net.IPNet, ip net.IP) bool {
-	for _, n := range cidrs {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *sessionMux) wrap(h http.HandlerFunc, isHealth bool) http.HandlerFunc {
@@ -507,7 +487,12 @@ func (m *sessionMux) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		Timeout: timeout,
 	}
 	slog.Info("ssh.http_run", "host", body.Host, "platform", body.Platform, "actor", body.Actor)
-	res, err := localRun(r.Context(), req)
+	var res *sshRunResult
+	if sshUseMemoryPool(body.Platform) {
+		res, err = localRun(r.Context(), req)
+	} else {
+		res, err = oneShotRun(r.Context(), req)
+	}
 	if err != nil {
 		status, msg := mapPoolHTTPError(err)
 		writeSessionJSONError(w, status, msg)
@@ -529,6 +514,43 @@ func (m *sessionMux) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		QueueWaitMS: res.QueueWait.Milliseconds(),
 		CommandMS:   res.Command.Milliseconds(),
 	})
+}
+
+func oneShotRun(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
+	s, err := dialSSHShell(req.Param.Username, req.Param.Password, req.Param.Name, req.Param.Port)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	_ = s.waitIdle(ctx, nil)
+	start := time.Now()
+	if req.Mode == sshRunPipeline {
+		s.resetCapture()
+		cmds := make([]string, len(req.Cmds))
+		var marker *regexp.Regexp
+		for i, c := range req.Cmds {
+			cmds[i] = c.Cmd
+			if c.EndMarker != nil {
+				marker = c.EndMarker
+			}
+		}
+		if err := s.write(strings.Join(cmds, "\n")); err != nil {
+			return nil, err
+		}
+		_ = s.waitIdle(ctx, marker)
+		out := strings.ReplaceAll(s.capture(), "\r\n", "\n")
+		return &sshRunResult{Outputs: []string{out}, Command: time.Since(start)}, nil
+	}
+	results := make([]string, len(req.Cmds))
+	for i, cmd := range req.Cmds {
+		s.resetCapture()
+		if err := s.write(cmd.Cmd); err != nil {
+			return nil, err
+		}
+		_ = s.waitIdle(ctx, cmd.EndMarker)
+		results[i] = s.capture()
+	}
+	return &sshRunResult{Outputs: normalizeSSHOutputs(results), Command: time.Since(start)}, nil
 }
 
 func mapPoolHTTPError(err error) (int, string) {
@@ -557,11 +579,6 @@ type sessionListenPlan struct {
 	tlsCfg      *tls.Config
 	nonLoopback bool
 	cidrs       []*net.IPNet
-}
-
-func listenDisabled(s string) bool {
-	s = strings.TrimSpace(s)
-	return s == "" || s == "none"
 }
 
 func isLoopbackListen(addr string) bool {
@@ -604,16 +621,10 @@ func parseAllowCIDRs(vals []string) ([]*net.IPNet, error) {
 	return out, nil
 }
 
-// ValidateSessionListen checks bind policy without opening sockets.
-func ValidateSessionListen(d util.ConfigDriver) error {
-	_, err := parseSessionListen(d)
-	return err
-}
-
 func parseSessionListen(d util.ConfigDriver) (*sessionListenPlan, error) {
 	unixPath := SessionSocketPath(d.Socket)
 	tcpAddr := strings.TrimSpace(d.Listen)
-	if listenDisabled(tcpAddr) {
+	if tcpAddr == "" || tcpAddr == "none" {
 		tcpAddr = ""
 	}
 	if unixPath == "" && tcpAddr == "" {

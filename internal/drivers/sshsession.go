@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -436,23 +435,38 @@ func runPooled(ctx context.Context, req sshRunRequest) (*sshRunResult, error) {
 
 func takeRemote() (*sessionHTTPClient, bool) {
 	sshGlobals.mu.Lock()
-	defer sshGlobals.mu.Unlock()
 	if !sshGlobals.inited {
+		sshGlobals.mu.Unlock()
 		panic("drivers: InitSSHPool was not called; call initDriverSSHPool / web.GUI")
 	}
 	r := sshGlobals.remote
 	if r == nil {
+		sshGlobals.mu.Unlock()
+		return nil, false
+	}
+	if !r.down {
+		c := r.client
+		sshGlobals.mu.Unlock()
+		return c, true
+	}
+	now := time.Now()
+	if now.Sub(r.lastProbe) < remoteRetry {
+		sshGlobals.mu.Unlock()
+		return nil, false
+	}
+	r.lastProbe = now
+	sshGlobals.mu.Unlock()
+
+	if !probeRemote(r) {
+		return nil, false
+	}
+
+	sshGlobals.mu.Lock()
+	defer sshGlobals.mu.Unlock()
+	if sshGlobals.remote != r {
 		return nil, false
 	}
 	if r.down {
-		now := time.Now()
-		if now.Sub(r.lastProbe) < remoteRetry {
-			return nil, false
-		}
-		r.lastProbe = now
-		if !probeRemote(r) {
-			return nil, false
-		}
 		r.down = false
 		slog.Warn("ssh.remote_up", "socket", r.socket, "url", r.baseURL)
 		replaceMemoryPoolLocked()
@@ -473,23 +487,10 @@ func markRemoteDown() {
 }
 
 func probeRemote(r *sessionRemote) bool {
-	if r.socket != "" {
-		_, err := os.Stat(r.socket)
-		return err == nil
-	}
-	if r.baseURL == "" {
+	if r == nil || r.client == nil {
 		return false
 	}
-	u, err := url.Parse(r.baseURL)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	c, err := net.DialTimeout("tcp", u.Host, time.Second)
-	if err != nil {
-		return false
-	}
-	_ = c.Close()
-	return true
+	return r.client.probeHealth()
 }
 
 func sshUseMemoryPool(platform string) bool {
