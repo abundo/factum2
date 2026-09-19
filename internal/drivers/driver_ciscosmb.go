@@ -4,6 +4,7 @@ package drivers
 // (SSH CLI only, no NETCONF/eAPI). Supports Cisco SG300, SG350, C1200, C1300.
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -91,12 +92,12 @@ func smbPreamble() []sshCmd {
 
 func (driver *CiscoSMBDriver) runCLI(cmds ...sshCmd) (string, error) {
 	full := append(smbPreamble(), cmds...)
-	return sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", full)
+	return sshRunCLI(context.Background(), driver.p, full)
 }
 
 func (driver *CiscoSMBDriver) runCLIBatch(cmds ...sshCmd) ([]string, error) {
 	full := append(smbPreamble(), cmds...)
-	return sshRunCLIBatch(driver.p.Username, driver.p.Password, driver.p.Name, "", full)
+	return sshRunCLIBatch(context.Background(), driver.p, full)
 }
 
 // ----------------------------------------------------------------------
@@ -156,7 +157,7 @@ func (driver *CiscoSMBDriver) RunningConfigGet(jsonformat bool) (*RunningConfigM
 // RunningConfigSave answers the "Overwrite file [startup-config].... (Y/N)"
 // prompt with "y".
 func (driver *CiscoSMBDriver) RunningConfigSave() error {
-	_, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{
+	_, err := sshRunCLI(context.Background(), driver.p, []sshCmd{
 		{Cmd: "copy running-config startup-config"},
 		{Cmd: "y"},
 	})
@@ -381,7 +382,7 @@ func (driver *CiscoSMBDriver) SetInterfaceDescriptions(name []string, intf []*ne
 	if err != nil {
 		return err
 	}
-	_, err = sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", cmds)
+	_, err = sshRunCLI(context.Background(), driver.p, cmds)
 	return err
 }
 
@@ -480,7 +481,7 @@ func (driver *CiscoSMBDriver) SetInterfaceVLANs(name []string, params []*VLANCon
 	if err != nil {
 		return err
 	}
-	_, err = sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", cmds)
+	_, err = sshRunCLI(context.Background(), driver.p, cmds)
 	return err
 }
 
@@ -507,7 +508,7 @@ func smbCLISessionCommands(cmds []string) []string {
 }
 
 func (driver *CiscoSMBDriver) smbCLISession(cmds []string) error {
-	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", smbCLISessionCommands(cmds), nil)
+	output, err := sshRunCLIPipeline(context.Background(), driver.p, smbCLISessionCommands(cmds), nil)
 	if err != nil {
 		return err
 	}

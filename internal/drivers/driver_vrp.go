@@ -4,6 +4,7 @@ package drivers
 // (SSH CLI only, no NETCONF/eAPI) and how it compares to the others.
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -47,7 +48,7 @@ var vrpConfigEndMarker = regexp.MustCompile(`^return$`)
 // ----------------------------------------------------------------------
 
 func (driver *VrpDriver) Exec(cmd string) (*ExecModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: cmd}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: cmd}})
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +66,7 @@ var (
 // BootupTimestap/Architecture/InternalBuildId/SystemMacAddress/
 // SerialNumber/HardwareRevision) are left zero-valued rather than guessed.
 func (driver *VrpDriver) Version() (*VersionModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display version"}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display version"}})
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (driver *VrpDriver) Version() (*VersionModel, error) {
 }
 
 func (driver *VrpDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func (driver *VrpDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel,
 
 // RunningConfigSave answers VRP's "save" confirmation prompt with "y".
 func (driver *VrpDriver) RunningConfigSave() error {
-	_, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "save"}, {Cmd: "y"}})
+	_, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "save"}, {Cmd: "y"}})
 	return err
 }
 
@@ -142,7 +143,7 @@ func vrpParseInterfaceDescriptions(output string) []*netboxtool.NBInterface {
 }
 
 func (driver *VrpDriver) GetInterfacesStatus() ([]*netboxtool.NBInterface, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display interface description"}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display interface description"}})
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +173,7 @@ func (driver *VrpDriver) SetInterfaceDescriptions(name []string, intf []*netboxt
 		cmds = append(cmds, sshCmd{Cmd: "quit"})
 	}
 	cmds = append(cmds, sshCmd{Cmd: "quit"})
-	_, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", cmds)
+	_, err := sshRunCLI(context.Background(), driver.p, cmds)
 	return err
 }
 
@@ -262,7 +263,7 @@ func (driver *VrpDriver) SetInterfaceVLANs(name []string, params []*VLANConfig) 
 	if err != nil {
 		return err
 	}
-	_, err = sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", cmds)
+	_, err = sshRunCLI(context.Background(), driver.p, cmds)
 	return err
 }
 
@@ -308,7 +309,7 @@ func vrpCLISessionCommands(cmds []string) []string {
 // matching SetInterfaceDescriptions. Does not "save"; persistence is a
 // separate RunningConfigSave.
 func (driver *VrpDriver) vrpCLISession(cmds []string) error {
-	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", vrpCLISessionCommands(cmds), nil)
+	output, err := sshRunCLIPipeline(context.Background(), driver.p, vrpCLISessionCommands(cmds), nil)
 	if err != nil {
 		return err
 	}
@@ -491,7 +492,7 @@ func vrpParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 }
 
 func (driver *VrpDriver) GetDeviceConfig() (*DeviceConfig, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +513,7 @@ var (
 // GetNeighbors runs "display lldp neighbor" and parses it: each "<ifname>
 // has N neighbor(s):" line starts a new neighbor block.
 func (driver *VrpDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display lldp neighbor"}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display lldp neighbor"}})
 	if err != nil {
 		return nil, err
 	}

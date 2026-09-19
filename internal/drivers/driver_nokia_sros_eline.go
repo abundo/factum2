@@ -5,6 +5,7 @@ package drivers
 // and what is/isn't confirmed against real hardware.
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"net/netip"
@@ -146,7 +147,7 @@ func (driver *NokiaDriver) srosELINESession(cmds []string, comment string) error
 	full := append([]string{"//environment no more", "edit-config exclusive"}, cmds...)
 	full = append(full, CommitCLI(comment, true), "discard", "exit all", "quit-config")
 
-	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", full, nil)
+	output, err := sshRunCLIPipeline(context.Background(), driver.p, full, nil)
 	if err != nil {
 		return err
 	}

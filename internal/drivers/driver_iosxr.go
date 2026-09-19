@@ -5,6 +5,7 @@ package drivers
 // others.
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -48,7 +49,7 @@ var iosxrConfigEndMarker = regexp.MustCompile(`^end$`)
 
 // run command on device over classic CLI, return output.
 func (driver *IOSXRDriver) Exec(cmd string) (*ExecModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "terminal length 0"}, {Cmd: cmd}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "terminal length 0"}, {Cmd: cmd}})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func (driver *IOSXRDriver) Version() (*VersionModel, error) {
 // has no RPC that returns config the way an operator would read it (as CLI
 // script), only the YANG tree as XML, so this goes over SSH CLI instead.
 func (driver *IOSXRDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show running-config", EndMarker: iosxrConfigEndMarker}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show running-config", EndMarker: iosxrConfigEndMarker}})
 	if err != nil {
 		return nil, err
 	}
@@ -258,8 +259,8 @@ type iosxrRouterBGPCfg struct {
 
 // iosxrRunningConfig runs "show running-config" over classic SSH CLI (same
 // transport as Exec/RunningConfigGet) and parses it into a ConfigNode tree.
-func iosxrRunningConfig(username, password, host string) ([]*ConfigNode, error) {
-	output, err := sshRunCLI(username, password, host, "", []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show running-config", EndMarker: iosxrConfigEndMarker}})
+func iosxrRunningConfig(ctx context.Context, p DriverParam) ([]*ConfigNode, error) {
+	output, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show running-config", EndMarker: iosxrConfigEndMarker}})
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +465,7 @@ func iosxrParseL3VPN(dc *DeviceConfig, nodes []*ConfigNode) {
 
 // GetDeviceConfig fetches and parses the device's running config.
 func (driver *IOSXRDriver) GetDeviceConfig() (*DeviceConfig, error) {
-	nodes, err := iosxrRunningConfig(driver.p.Username, driver.p.Password, driver.p.Name)
+	nodes, err := iosxrRunningConfig(context.Background(), driver.p)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +489,7 @@ var (
 // separated blocks. Local interfaces that are subinterfaces (name contains
 // ".") are skipped.
 func (driver *IOSXRDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show lldp neighbors detail"}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show lldp neighbors detail"}})
 	if err != nil {
 		return nil, err
 	}

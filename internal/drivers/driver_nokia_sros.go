@@ -5,6 +5,7 @@ package drivers
 // candidate+lock+commit) and how it compares to the others.
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -55,7 +56,7 @@ func NewNokiaDriver(p DriverParam) (*NokiaDriver, error) {
 // CLI engine via "//" - cmd itself is sent as-is, since it's the caller's
 // choice of command/engine, not ours to override.
 func (driver *NokiaDriver) Exec(cmd string) (*ExecModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "//environment no more"}, {Cmd: cmd}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "//environment no more"}, {Cmd: cmd}})
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func (driver *NokiaDriver) Version() (*VersionModel, error) {
 }
 
 func (driver *NokiaDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{{Cmd: "//environment no more"}, {Cmd: "//admin display-config", EndMarker: srosConfigEndMarker}})
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "//environment no more"}, {Cmd: "//admin display-config", EndMarker: srosConfigEndMarker}})
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +225,7 @@ func srosInt(m map[string]any, key string) int {
 // srosConfig fetches the MD-CLI JSON running config and returns the
 // "nokia-conf:configure" subtree.
 func (driver *NokiaDriver) srosConfig() (map[string]any, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{
 		{Cmd: "//environment no more"},
 		{Cmd: "/admin show configuration json | no-more", EndMarker: srosConfigEndMarker},
 	})
@@ -537,7 +538,7 @@ func srosNextNonBlankLine(lines []string, idx *int) (string, bool) {
 // real value (unlike every other field) is on the line *after* its header,
 // quoted.
 func (driver *NokiaDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(driver.p.Username, driver.p.Password, driver.p.Name, "", []sshCmd{
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{
 		{Cmd: "//environment no more"},
 		{Cmd: "show port * ethernet lldp remote-info"},
 	})

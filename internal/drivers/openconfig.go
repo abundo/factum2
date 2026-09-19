@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"regexp"
 	"strings"
@@ -218,12 +219,12 @@ type sshCmd struct {
 	EndMarker *regexp.Regexp
 }
 
-// sshRunCLI opens an interactive SSH shell against host:port, runs cmds in
-// order and returns the output produced by the last command - see
+// sshRunCLI opens an interactive SSH shell against p.Name:p.Port, runs cmds
+// in order and returns the output produced by the last command - see
 // sshRunCLIBatch for the underlying implementation and the per-command
 // variant config-apply callers need.
-func sshRunCLI(username, password, host, port string, cmds []sshCmd) (string, error) {
-	outputs, err := sshRunCLIBatch(username, password, host, port, cmds)
+func sshRunCLI(ctx context.Context, p DriverParam, cmds []sshCmd) (string, error) {
+	outputs, err := sshRunCLIBatch(ctx, p, cmds)
 	if err != nil {
 		return "", err
 	}
@@ -251,6 +252,10 @@ const idleWindow = 5 * time.Second
 const configEndMarkerIdle = 200 * time.Millisecond
 
 const overallTimeout = 30 * time.Second
+
+// errWaitTimeout is returned by waitIdle when ctx is done or overallTimeout
+// elapses before output goes idle.
+var errWaitTimeout = errors.New("ssh CLI wait idle timeout")
 
 // markerTailBytes only needs to cover one short marker line (plus whatever
 // partial line precedes it) - bounding the check to this tail avoids
@@ -349,7 +354,10 @@ func (s *sshShellSession) write(line string) error {
 // waitIdle blocks until output has gone quiet for idleWindow, or until a
 // line matching endMarker has appeared (in which case it only waits out
 // the much shorter configEndMarkerIdle) - see hasConfigEndMarker.
-func (s *sshShellSession) waitIdle(endMarker *regexp.Regexp) {
+// Returns errWaitTimeout if ctx is cancelled/expired or overallTimeout
+// elapses first. The 100ms poll selects on ctx.Done() so a cancel does
+// not wait out overallTimeout.
+func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp) error {
 	deadline := time.Now().Add(overallTimeout)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
@@ -365,10 +373,17 @@ func (s *sshShellSession) waitIdle(endMarker *regexp.Regexp) {
 			want = configEndMarkerIdle
 		}
 		if idle >= want {
-			return
+			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errWaitTimeout
+		case <-timer.C:
+		}
 	}
+	return errWaitTimeout
 }
 
 // resetCapture clears buf and, crucially, lastActivity - without the
@@ -406,15 +421,16 @@ func (s *sshShellSession) capture() string {
 // driver_vrp.go). A batch of independent config-mode lines that don't need
 // that back-and-forth should use sshRunCLIPipeline instead, which pays the
 // idle wait once for the whole batch rather than once per line.
-func sshRunCLIBatch(username, password, host, port string, cmds []sshCmd) ([]string, error) {
-	s, err := dialSSHShell(username, password, host, port)
+func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, p.Port)
 	if err != nil {
 		return nil, err
 	}
 	defer s.Close()
 
-	// drain the login banner/MOTD before sending any command
-	s.waitIdle(nil)
+	// drain the login banner/MOTD before sending any command.
+	// Ignore timeout so a 30s drip still returns the buffer.
+	_ = s.waitIdle(ctx, nil)
 
 	results := make([]string, len(cmds))
 	for i, cmd := range cmds {
@@ -422,7 +438,7 @@ func sshRunCLIBatch(username, password, host, port string, cmds []sshCmd) ([]str
 		if err := s.write(cmd.Cmd); err != nil {
 			return nil, err
 		}
-		s.waitIdle(cmd.EndMarker)
+		_ = s.waitIdle(ctx, cmd.EndMarker)
 		results[i] = s.capture()
 	}
 	// The PTY session emits CRLF line endings, but every caller splits
@@ -448,21 +464,22 @@ func sshRunCLIBatch(username, password, host, port string, cmds []sshCmd) ([]str
 // the full idleWindow once output goes quiet, a marker matching the last
 // line of expected output lets that single wait finish as soon as the
 // device is actually done instead of always waiting out idleWindow.
-func sshRunCLIPipeline(username, password, host, port string, cmds []string, endMarker *regexp.Regexp) (string, error) {
-	s, err := dialSSHShell(username, password, host, port)
+func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, p.Port)
 	if err != nil {
 		return "", err
 	}
 	defer s.Close()
 
-	// drain the login banner/MOTD before sending anything
-	s.waitIdle(nil)
+	// drain the login banner/MOTD before sending anything.
+	// Ignore timeout so a 30s drip still returns the buffer.
+	_ = s.waitIdle(ctx, nil)
 
 	s.resetCapture()
 	if err := s.write(strings.Join(cmds, "\n")); err != nil {
 		return "", err
 	}
-	s.waitIdle(endMarker)
+	_ = s.waitIdle(ctx, endMarker)
 	return strings.ReplaceAll(s.capture(), "\r\n", "\n"), nil
 }
 

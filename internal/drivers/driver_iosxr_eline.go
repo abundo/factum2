@@ -6,6 +6,7 @@ package drivers
 // templates/iosxr_eline.tmpl (the "cleanup" define plus the root apply body).
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"regexp"
@@ -55,7 +56,7 @@ func (driver *IOSXRDriver) iosxrELINESession(cmds []string, comment string) erro
 	// XR's `commit comment` takes the rest of the line unquoted.
 	full = append(full, CommitCLI(comment, false), "abort")
 
-	output, err := sshRunCLIPipeline(driver.p.Username, driver.p.Password, driver.p.Name, "", full, nil)
+	output, err := sshRunCLIPipeline(context.Background(), driver.p, full, nil)
 	if err != nil {
 		return err
 	}
