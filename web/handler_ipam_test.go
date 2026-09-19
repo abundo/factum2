@@ -234,6 +234,53 @@ func TestIpamDeleteRules(t *testing.T) {
 	}
 }
 
+func TestIpamVRFNameIsGloballyUnique(t *testing.T) {
+	ctrl := setupIPAM(t)
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "ns-a"}, nil, nil)
+	if err := ctrl.ApiIpamNamespaceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var nsA ipam.NamespaceView
+	if err := json.Unmarshal(rec.Body.Bytes(), &nsA); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces", ipamNamespaceBody{Name: "ns-b"}, nil, nil)
+	if err := ctrl.ApiIpamNamespaceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var nsB ipam.NamespaceView
+	if err := json.Unmarshal(rec.Body.Bytes(), &nsB); err != nil {
+		t.Fatal(err)
+	}
+
+	idA := strconv.FormatUint(uint64(nsA.ID), 10)
+	idB := strconv.FormatUint(uint64(nsB.ID), 10)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{Name: "cust-a"}, []string{"id"}, []string{idA})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{Name: "cust-a"}, []string{"id"}, []string{idB})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("dup across namespaces status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/ipam/namespaces/x/vrfs", ipamVRFBody{Name: "default"}, []string{"id"}, []string{idA})
+	if err := ctrl.ApiIpamVRFCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reserved name status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestIpamVRFRouteTargetsAndNetboxReadonly(t *testing.T) {
 	ctrl := setupIPAM(t)
 

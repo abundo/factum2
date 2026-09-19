@@ -334,8 +334,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     </div>
     <p class="text-muted-color text-sm mb-3 shrink-0">
       Right-click empty space to add a prefix or VRF at the root (no namespace needed). Right-click a
-      namespace for prefixes and extra VRFs in that space. Prefixes under a VRF cannot overlap the
-      root or any other VRF. VRFs synced from NetBox appear at the root (default VRF) and are
+      namespace for prefixes and extra VRFs in that space. VRF names are unique across all
+      namespaces. Right-click a VRF to delete it (once it has no prefixes). Prefixes under a VRF
+      cannot overlap the root or any other VRF. VRFs synced from NetBox appear at the root and are
       read-only. Click a row to see details. Click [+] / [−] to expand or collapse.
     </p>
     <IpamPrefixTree ref="treeRef" class="min-h-0 flex-1" @contextmenu="onContextMenu" />
@@ -432,8 +433,14 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
   <UModal :open="!!confirm" title="Delete" @update:open="(v) => !v && (confirm = null)">
     <template #body>
-      Delete <strong>{{ confirm?.label }}</strong
-      >?
+      <span v-if="confirm?.kind === 'vrf'">
+        Delete VRF <strong>{{ confirm.label }}</strong
+        >? This cannot be undone.
+      </span>
+      <span v-else-if="confirm">
+        Delete <strong>{{ confirm.label }}</strong
+        >?
+      </span>
     </template>
     <template #footer>
       <UButton label="Cancel" variant="ghost" @click="confirm = null" />

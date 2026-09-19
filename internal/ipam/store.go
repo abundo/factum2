@@ -333,6 +333,10 @@ func (w VRFWrite) normalized() VRFWrite {
 	}
 }
 
+func reservedVRFName(name string) bool {
+	return strings.EqualFold(name, defaultVRFName)
+}
+
 func CreateVRF(db *gorm.DB, nsID uint, w VRFWrite) (*models.IpamVRF, error) {
 	nsID, err := resolveNamespaceID(db, nsID)
 	if err != nil {
@@ -341,6 +345,9 @@ func CreateVRF(db *gorm.DB, nsID uint, w VRFWrite) (*models.IpamVRF, error) {
 	w = w.normalized()
 	if w.Name == "" {
 		return nil, statusErr(400, "name is required")
+	}
+	if reservedVRFName(w.Name) {
+		return nil, statusErr(400, "default is reserved for the namespace default VRF")
 	}
 	row := models.IpamVRF{
 		NamespaceID: nsID,
@@ -353,7 +360,7 @@ func CreateVRF(db *gorm.DB, nsID uint, w VRFWrite) (*models.IpamVRF, error) {
 	}
 	if err := db.Create(&row).Error; err != nil {
 		if isUniqueViolation(err) {
-			return nil, statusErr(409, "a VRF with that name already exists in this namespace")
+			return nil, statusErr(409, "a VRF with that name already exists")
 		}
 		return nil, err
 	}
@@ -375,6 +382,9 @@ func UpdateVRF(db *gorm.DB, nsID, vrfID uint, w VRFWrite) (*models.IpamVRF, erro
 	if w.Name == "" {
 		return nil, statusErr(400, "name is required")
 	}
+	if !row.IsDefault && reservedVRFName(w.Name) {
+		return nil, statusErr(400, "default is reserved for the namespace default VRF")
+	}
 	row.Name = w.Name
 	row.Description = w.Description
 	row.RD = w.RD
@@ -382,7 +392,7 @@ func UpdateVRF(db *gorm.DB, nsID, vrfID uint, w VRFWrite) (*models.IpamVRF, erro
 	row.ExportRT = w.ExportRT
 	if err := db.Save(&row).Error; err != nil {
 		if isUniqueViolation(err) {
-			return nil, statusErr(409, "a VRF with that name already exists in this namespace")
+			return nil, statusErr(409, "a VRF with that name already exists")
 		}
 		return nil, err
 	}

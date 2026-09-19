@@ -179,3 +179,27 @@ func TestSyncVRFs_DeletesMissingAndKeepsPrefixed(t *testing.T) {
 		t.Fatalf("netbox vrfs after empty fetch = %d, want 2", n)
 	}
 }
+
+func TestSyncVRFs_SkipsNameUsedInAnotherNamespace(t *testing.T) {
+	db := newImportTestDB(t)
+	ns, err := ipam.CreateNamespace(db, "core", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ipam.CreateVRF(db, ns.ID, ipam.VRFWrite{Name: "CUST-A"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeVRFAPI{vrfs: []nbVRFREST{{ID: 10, Name: "CUST-A"}}}
+	if err := syncVRFs(db, fake.client(t), jobevent.NewSlogReporter("test", "vrfs")); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int64
+	if err := db.Model(&models.IpamVRF{}).Where("netbox_id = ?", 10).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("imported colliding NetBox VRF, count=%d", n)
+	}
+}

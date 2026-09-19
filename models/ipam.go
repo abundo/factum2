@@ -52,12 +52,13 @@ type IpamNamespacePrefixDTO struct {
 // IpamVRF is a routing domain inside a namespace. Address space is unique
 // across VRFs of the same namespace (not classic overlapping-VRF
 // semantics): once a prefix is allocated to one VRF, no other VRF may
-// take it or anything that overlaps it. The default VRF is created with
-// the namespace and cannot be deleted.
+// take it or anything that overlaps it. Extra VRF names are unique across
+// all namespaces; each namespace still has its own default VRF (named
+// "default"), which is created with the namespace and cannot be deleted.
 type IpamVRF struct {
 	FactumModel
-	NamespaceID uint   `json:"namespace_id" gorm:"uniqueIndex:idx_ipam_vrf_ns_name;not null"`
-	Name        string `json:"name" gorm:"uniqueIndex:idx_ipam_vrf_ns_name;not null;type:varchar(255)"`
+	NamespaceID uint   `json:"namespace_id" gorm:"index;not null"`
+	Name        string `json:"name" gorm:"not null;type:varchar(255)"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	IsDefault   bool   `json:"is_default"`
 	// RD is the BGP route distinguisher (e.g. "65000:1").

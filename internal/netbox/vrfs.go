@@ -118,7 +118,7 @@ func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Re
 	if lookupErr == nil {
 		if existing.Name != name {
 			var clash models.IpamVRF
-			clashErr := db.Where("namespace_id = ? AND name = ? AND id <> ?", existing.NamespaceID, name, existing.ID).First(&clash).Error
+			clashErr := db.Where("name = ? AND NOT is_default AND id <> ?", name, existing.ID).First(&clash).Error
 			if clashErr == nil {
 				reporter.Emit(jobevent.Warning, "Netbox VRF sync: skipping rename of %q → %q (netbox_id=%d); name already used", existing.Name, name, row.ID)
 				return 0, 0, 1, nil
@@ -145,7 +145,7 @@ func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Re
 	}
 
 	var clash models.IpamVRF
-	clashErr := db.Where("namespace_id = ? AND name = ?", nsID, name).First(&clash).Error
+	clashErr := db.Where("name = ? AND NOT is_default", name).First(&clash).Error
 	if clashErr == nil {
 		reporter.Emit(jobevent.Warning, "Netbox VRF sync: skipping %q (netbox_id=%d); a Factum VRF already has that name", name, row.ID)
 		return 0, 0, 1, nil

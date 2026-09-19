@@ -94,6 +94,8 @@ func AutoMigrateAll(db *gorm.DB) error {
 		`DROP INDEX IF EXISTS idx_sites_netbox_id`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_netbox_kind_id ON sites (netbox_kind, netbox_id) WHERE netbox_id != 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ipam_vrfs_netbox_id ON ipam_vrfs (netbox_id) WHERE netbox_id != 0`,
+		`DROP INDEX IF EXISTS idx_ipam_vrf_ns_name`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ipam_vrfs_name ON ipam_vrfs (name) WHERE NOT is_default`,
 	} {
 		if err := db.Exec(s).Error; err != nil {
 			return err
