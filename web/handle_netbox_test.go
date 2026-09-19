@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -269,6 +271,131 @@ func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	}
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestNetboxWebhookDebouncer_CoalescesPerDevice(t *testing.T) {
+	d := netboxWebhookDebouncer{delay: 40 * time.Millisecond}
+	t.Cleanup(d.stopAll)
+
+	var a, b atomic.Int32
+	d.schedule("sw1", func() { a.Add(1) })
+	d.schedule("sw1", func() { a.Add(1) })
+	d.schedule("sw2", func() { b.Add(1) })
+	time.Sleep(20 * time.Millisecond)
+	d.schedule("sw1", func() { a.Add(1) })
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if a.Load() == 1 && b.Load() == 1 {
+			time.Sleep(60 * time.Millisecond)
+			if a.Load() != 1 || b.Load() != 1 {
+				t.Fatalf("extra fires: sw1=%d sw2=%d", a.Load(), b.Load())
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out: sw1=%d sw2=%d, want 1 each", a.Load(), b.Load())
+}
+
+func TestNetboxWebhookDebouncer_Cancel(t *testing.T) {
+	d := netboxWebhookDebouncer{delay: 30 * time.Millisecond}
+	t.Cleanup(d.stopAll)
+
+	var fired atomic.Int32
+	d.schedule("sw1", func() { fired.Add(1) })
+	d.cancel("sw1")
+	time.Sleep(80 * time.Millisecond)
+	if got := fired.Load(); got != 0 {
+		t.Fatalf("fired %d times after cancel, want 0", got)
+	}
+}
+
+func TestApiNetboxWebhook_QueuesPerDevice(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = time.Hour
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	post := func(name string) {
+		t.Helper()
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.interface",
+			"data": map[string]any{
+				"id":     1,
+				"name":   "eth0",
+				"device": map[string]any{"id": 1, "name": name},
+			},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook %s: %v", name, err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook %s status = %d, want %d, body=%s", name, rec.Code, http.StatusAccepted, rec.Body.String())
+		}
+	}
+	post("sw1")
+	post("sw1")
+	post("sw2")
+
+	ctrl.netboxDeviceSyncDebounce.mu.Lock()
+	n := len(ctrl.netboxDeviceSyncDebounce.pending)
+	_, sw1 := ctrl.netboxDeviceSyncDebounce.pending["sw1"]
+	_, sw2 := ctrl.netboxDeviceSyncDebounce.pending["sw2"]
+	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
+	if n != 2 || !sw1 || !sw2 {
+		t.Fatalf("pending=%d sw1=%v sw2=%v, want one timer each", n, sw1, sw2)
+	}
+}
+
+func TestApiNetboxWebhook_DeleteDevice_CancelsPendingSync(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	seedNetboxDevice(t, db, "rtr1", 42)
+
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = time.Hour
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+		"event":       "updated",
+		"object_type": "dcim.device",
+		"data":        map[string]any{"id": 42, "name": "rtr1"},
+	})
+	if err := ctrl.ApiNetboxWebhook(c); err != nil {
+		t.Fatalf("update webhook: %v", err)
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("update status = %d, want %d, body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	ctrl.netboxDeviceSyncDebounce.mu.Lock()
+	_, pending := ctrl.netboxDeviceSyncDebounce.pending["rtr1"]
+	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
+	if !pending {
+		t.Fatal("expected a pending debounce after the update webhook")
+	}
+
+	c, rec = signedWebhookRequest(t, webhookTestSecret, map[string]any{
+		"event":       "deleted",
+		"object_type": "dcim.device",
+		"data":        map[string]any{"id": 42, "name": "rtr1"},
+	})
+	if err := ctrl.ApiNetboxWebhook(c); err != nil {
+		t.Fatalf("delete webhook: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	ctrl.netboxDeviceSyncDebounce.mu.Lock()
+	_, pending = ctrl.netboxDeviceSyncDebounce.pending["rtr1"]
+	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
+	if pending {
+		t.Fatal("delete left a pending debounce")
 	}
 }
 

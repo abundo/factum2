@@ -49,6 +49,10 @@ type Controller struct {
 	driverFn          func(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error)
 	netboxFn          func(settings *models.Settings) (serviceNetboxAPI, error)
 	interfaceNetboxFn func(settings *models.Settings) (interfaceRefreshNetbox, error)
+	// netboxDeviceSyncDebounce coalesces NetBox device/interface/IP webhooks
+	// into one SyncDB per device after a quiet period. Zero value uses the
+	// default 3s delay.
+	netboxDeviceSyncDebounce netboxWebhookDebouncer
 }
 
 // ----- GUI -----

@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
@@ -16,6 +18,76 @@ import (
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
 )
+
+// netboxWebhookDebounce is how long a device must go without another
+// Device / Interface / IP webhook before the queued single-device SyncDB
+// runs. NetBox typically fires a burst of those events for one edit.
+const netboxWebhookDebounce = 3 * time.Second
+
+// netboxWebhookDebouncer delays a callback until no further schedule()
+// for the same key has arrived for delay. Keys are independent so two
+// devices can be waiting at once. Zero delay uses netboxWebhookDebounce.
+type netboxWebhookDebouncer struct {
+	delay   time.Duration
+	mu      sync.Mutex
+	pending map[string]*netboxWebhookDebounceWait
+}
+
+type netboxWebhookDebounceWait struct {
+	timer *time.Timer
+}
+
+func (d *netboxWebhookDebouncer) wait() time.Duration {
+	if d.delay == 0 {
+		return netboxWebhookDebounce
+	}
+	return d.delay
+}
+
+func (d *netboxWebhookDebouncer) schedule(deviceName string, run func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pending == nil {
+		d.pending = make(map[string]*netboxWebhookDebounceWait)
+	}
+	delay := d.wait()
+	if e, ok := d.pending[deviceName]; ok {
+		e.timer.Stop()
+	}
+	e := &netboxWebhookDebounceWait{}
+	e.timer = time.AfterFunc(delay, func() {
+		d.mu.Lock()
+		if d.pending[deviceName] != e {
+			d.mu.Unlock()
+			return
+		}
+		delete(d.pending, deviceName)
+		d.mu.Unlock()
+		run()
+	})
+	d.pending[deviceName] = e
+}
+
+func (d *netboxWebhookDebouncer) cancel(deviceName string) {
+	if deviceName == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if e, ok := d.pending[deviceName]; ok {
+		e.timer.Stop()
+		delete(d.pending, deviceName)
+	}
+}
+
+func (d *netboxWebhookDebouncer) stopAll() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for name, e := range d.pending {
+		e.timer.Stop()
+		delete(d.pending, name)
+	}
+}
 
 // NetboxConfigResponse is what internal/netbox's FetchRemoteConfig parses -
 // keep the JSON tags in sync with that type.
@@ -132,14 +204,16 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 	}
 
 	// Netbox's webhook delivery only waits on the HTTP response, not on the
-	// sync itself - run it after responding so a slow Netbox API round-trip
-	// can't make the delivery time out and retry.
-	go func() {
+	// sync itself. A single Netbox edit often posts several Device /
+	// Interface / IP events for the same device; wait until that device has
+	// been quiet for netboxWebhookDebounce, then SyncDB once.
+	objectType := payload.ObjectType
+	ctrl.netboxDeviceSyncDebounce.schedule(deviceName, func() {
 		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
 		if err := netbox.SyncDB(ctrl.DB, deviceName, reporter); err != nil {
-			slog.Error("netbox webhook sync", "device", deviceName, "object_type", payload.ObjectType, "err", err)
+			slog.Error("netbox webhook sync", "device", deviceName, "object_type", objectType, "err", err)
 		}
-	}()
+	})
 
 	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "device": deviceName})
 }
@@ -156,6 +230,7 @@ func (ctrl *Controller) netboxWebhookDeleteDevice(c *echo.Context, payload Netbo
 	}
 
 	deviceName := netboxWebhookDeviceName(payload.ObjectType, payload.Data)
+	ctrl.netboxDeviceSyncDebounce.cancel(deviceName)
 	deleted, err := netbox.DeleteDeviceByNetboxID(ctrl.DB, netboxID, false)
 	if err != nil {
 		slog.Error("netbox webhook delete", "device", deviceName, "netbox_id", netboxID, "err", err)
