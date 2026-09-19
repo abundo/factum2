@@ -759,6 +759,138 @@ func (nb *NetboxClient) RestPatch(endpoint string, payload, out any) error {
 	return nb.restPatchOut(endpoint, payload, out)
 }
 
+func (nb *NetboxClient) restOptions(endpoint string, out any) error {
+	url := nb.P.URL + endpoint
+
+	req, err := http.NewRequest(http.MethodOptions, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Token "+nb.P.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := nb.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("netbox OPTIONS %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	respData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("netbox OPTIONS %s failed: %s: %s", endpoint, resp.Status, string(respData))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(respData, out)
+}
+
+// InterfaceTypeChoice is one dcim.Interface.type value from NetBox's
+// OPTIONS metadata (not a first-class API object).
+type InterfaceTypeChoice struct {
+	Value string
+	Label string
+}
+
+type restOptionsField struct {
+	Choices json.RawMessage `json:"choices"`
+}
+
+type restOptionsBody struct {
+	Actions struct {
+		POST map[string]restOptionsField `json:"POST"`
+		PUT  map[string]restOptionsField `json:"PUT"`
+	} `json:"actions"`
+}
+
+type restChoiceRow struct {
+	Value       string `json:"value"`
+	DisplayName string `json:"display_name"`
+	Label       string `json:"label"`
+}
+
+// GetInterfaceTypeChoices returns the Interface.type choice list from
+// OPTIONS /api/dcim/interfaces/. NetBox has no /dcim/interface-types/
+// resource; types are a ChoiceSet.
+func (nb *NetboxClient) GetInterfaceTypeChoices() ([]InterfaceTypeChoice, error) {
+	var body restOptionsBody
+	if err := nb.restOptions("/api/dcim/interfaces/", &body); err != nil {
+		return nil, err
+	}
+	raw := fieldChoices(body.Actions.POST, "type")
+	if len(raw) == 0 {
+		raw = fieldChoices(body.Actions.PUT, "type")
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("netbox OPTIONS /api/dcim/interfaces/: no type choices (token needs write permission)")
+	}
+	return parseInterfaceTypeChoices(raw)
+}
+
+func fieldChoices(fields map[string]restOptionsField, name string) json.RawMessage {
+	if fields == nil {
+		return nil
+	}
+	return fields[name].Choices
+}
+
+func parseInterfaceTypeChoices(raw json.RawMessage) ([]InterfaceTypeChoice, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var rows []restChoiceRow
+	if err := json.Unmarshal(raw, &rows); err == nil && (len(rows) == 0 || rows[0].Value != "") {
+		return choicesFromRows(rows), nil
+	}
+	var pairs [][]string
+	if err := json.Unmarshal(raw, &pairs); err == nil {
+		out := make([]InterfaceTypeChoice, 0, len(pairs))
+		for _, p := range pairs {
+			if len(p) == 0 || strings.TrimSpace(p[0]) == "" {
+				continue
+			}
+			label := p[0]
+			if len(p) > 1 && strings.TrimSpace(p[1]) != "" {
+				label = p[1]
+			}
+			out = append(out, InterfaceTypeChoice{Value: strings.TrimSpace(p[0]), Label: strings.TrimSpace(label)})
+		}
+		return out, nil
+	}
+	var grouped map[string][]restChoiceRow
+	if err := json.Unmarshal(raw, &grouped); err == nil {
+		var rows []restChoiceRow
+		for _, g := range grouped {
+			rows = append(rows, g...)
+		}
+		return choicesFromRows(rows), nil
+	}
+	return nil, fmt.Errorf("netbox OPTIONS type.choices: unrecognized shape")
+}
+
+func choicesFromRows(rows []restChoiceRow) []InterfaceTypeChoice {
+	out := make([]InterfaceTypeChoice, 0, len(rows))
+	for _, r := range rows {
+		value := strings.TrimSpace(r.Value)
+		if value == "" {
+			continue
+		}
+		label := strings.TrimSpace(r.DisplayName)
+		if label == "" {
+			label = strings.TrimSpace(r.Label)
+		}
+		if label == "" {
+			label = value
+		}
+		out = append(out, InterfaceTypeChoice{Value: value, Label: label})
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 //  Manufacturer
 // ---------------------------------------------------------------------------

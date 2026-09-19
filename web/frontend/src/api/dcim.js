@@ -97,3 +97,19 @@ export function updatePlatform(id, payload) {
 export function deletePlatform(id) {
   return http.delete(`/dcim/platforms/${id}`).then((res) => res.data)
 }
+
+export function getInterfaceTypes() {
+  return http.get('/dcim/interface-types').then((res) => res.data)
+}
+
+export function createInterfaceType(payload) {
+  return http.post('/dcim/interface-types', payload).then((res) => res.data)
+}
+
+export function updateInterfaceType(id, payload) {
+  return http.put(`/dcim/interface-types/${id}`, payload).then((res) => res.data)
+}
+
+export function deleteInterfaceType(id) {
+  return http.delete(`/dcim/interface-types/${id}`).then((res) => res.data)
+}

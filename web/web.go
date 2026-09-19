@@ -314,6 +314,12 @@ func GUI(p *GuiParams) error {
 	api.POST("/dcim/platforms", platforms_.Create, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/dcim/platforms/:id", ctrl.guardFactumCatalog("platform", platforms_.Update), ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/dcim/platforms/:id", ctrl.guardFactumCatalog("platform", platforms_.Delete), ctrl.RequireAPIAuth, ctrl.RequireWrite)
+
+	api.GET("/dcim/interface-types", ctrl.ApiGetInterfaceTypes, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/dcim/interface-types/:id", ctrl.ApiGetInterfaceType, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/dcim/interface-types", ctrl.ApiCreateInterfaceType, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.PUT("/dcim/interface-types/:id", ctrl.guardFactumCatalog("interface type", ctrl.ApiUpdateInterfaceType), ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	api.DELETE("/dcim/interface-types/:id", ctrl.guardFactumCatalog("interface type", ctrl.ApiDeleteInterfaceType), ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/dcim/racks", ctrl.ApiDCIMRacksList, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/dcim/racks", ctrl.ApiDCIMRackCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/dcim/racks/:id", ctrl.ApiDCIMRackUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)

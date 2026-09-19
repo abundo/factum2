@@ -460,6 +460,44 @@ func (p *Platform) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+// InterfaceType is a DCIM catalog row for NetBox interface.type choices
+// (e.g. "1000base-t"). NetBox has no interface-types resource; full sync
+// fills this from OPTIONS /api/dcim/interfaces/. Factum-local rows can be
+// added in the GUI. Value is what interfaces and templates store.
+type InterfaceType struct {
+	FactumModel
+	Value     string `json:"value" gorm:"type:varchar(255);uniqueIndex;not null"`
+	Label     string `json:"label" gorm:"type:varchar(255);not null"`
+	Source    string `json:"source" gorm:"type:varchar(32)"`
+	SortOrder int    `json:"sort_order"`
+}
+
+type InterfaceTypeDTO struct {
+	ID        uint   `json:"id"`
+	Value     string `json:"value"`
+	Label     string `json:"label"`
+	SortOrder int    `json:"sort_order"`
+}
+
+func (t *InterfaceType) BeforeCreate(tx *gorm.DB) error {
+	t.Value = strings.TrimSpace(t.Value)
+	if strings.TrimSpace(t.Label) == "" {
+		t.Label = t.Value
+	}
+	if t.Source == "" {
+		t.Source = "factum"
+	}
+	return nil
+}
+
+func (t *InterfaceType) BeforeUpdate(tx *gorm.DB) error {
+	t.Value = strings.TrimSpace(t.Value)
+	if strings.TrimSpace(t.Label) == "" {
+		t.Label = t.Value
+	}
+	return nil
+}
+
 var slugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
 // Slugify turns a catalog name into a URL/NetBox-style slug.

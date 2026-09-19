@@ -10,11 +10,18 @@ created locally in Factum. Local devices are independent of NetBox: they
 are not pushed there, and a NetBox sync will not overwrite or delete them.
 
 Create a local device from **DCIM → Devices → New**. Manufacturers, device
-types, and platforms are a shared catalog: NetBox sync fills the same
-tables (source `netbox`) that you can also create locally (source
-`factum`). Pick an existing type from either source. Platform is optional;
-its slug should match a driver such as `eos` or `sros` if you want
-interface refresh.
+types, platforms, and interface types are a shared catalog: NetBox sync
+fills the same tables (source `netbox`) that you can also create locally
+(source `factum`). Pick an existing type from either source. Platform is
+optional; its slug should match a driver such as `eos` or `sros` if you
+want interface refresh.
+
+**DCIM → Interface types** is the list used by the Type picker on
+interfaces and device-type templates. A full NetBox sync loads NetBox's
+port types (1000BASE-T, SFP+, virtual, …). You can add Factum-only types
+here; NetBox-synced rows are read-only. Deleting a type that is still
+used on a port is refused. Renaming a Factum type's value updates
+existing ports and templates.
 
 **DCIM → Interfaces** lists every device interface, whether it came from
 NetBox or was created in Factum. Add ports on a local device from that

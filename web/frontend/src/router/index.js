@@ -90,6 +90,12 @@ const router = createRouter({
           component: () => import('@/views/dcim/InterfaceList.vue'),
         },
         {
+          path: '/dcim/interface-types',
+          name: 'dcim-interface-types',
+          meta: { title: 'Interface types', requiresRead: true },
+          component: () => import('@/views/dcim/InterfaceTypeList.vue'),
+        },
+        {
           path: '/dcim/manufacturers',
           name: 'dcim-manufacturers',
           meta: { title: 'Manufacturers', requiresRead: true },

@@ -28,6 +28,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&FloorPlanAnnotation{},
 		&ConnectionViewLayout{},
 		&Platform{},
+		&InterfaceType{},
 		&OpticalKindMap{},
 		&OpticalPort{},
 		&OpticalXConnect{},

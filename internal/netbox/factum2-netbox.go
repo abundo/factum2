@@ -11,10 +11,10 @@ import (
 
 	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -30,8 +30,8 @@ import (
 // Interfaces, addresses and tags belonging to a synced device are always
 // reconciled against Netbox: anything no longer present there is removed
 // from factum, whether the sync is for a single device or all of them.
-// Cable, site, VRF, customer, contact, and L2VPN→service import only
-// run on a full sync.
+// Cable, site, VRF, interface type, customer, contact, and L2VPN→service
+// import only run on a full sync.
 func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
@@ -168,6 +168,10 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	// "removed" apart from "just not in this device's slice", so - like
 	// customer-to-tenant sync below - it only runs on a full sync.
 	if fullSync {
+		if err := syncInterfaceTypes(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 		if err := syncCables(db, nb, reporter); err != nil {
 			reporter.EmitErr(err)
 			return err

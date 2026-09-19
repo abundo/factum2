@@ -578,6 +578,10 @@ func (ctrl *Controller) guardFactumCatalog(kind string, next echo.HandlerFunc) e
 			var row models.Platform
 			loadErr = ctrl.DB.Select("source").First(&row, id).Error
 			source = row.Source
+		case "interface type":
+			var row models.InterfaceType
+			loadErr = ctrl.DB.Select("source").First(&row, id).Error
+			source = row.Source
 		default:
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "unknown catalog kind"})
 		}

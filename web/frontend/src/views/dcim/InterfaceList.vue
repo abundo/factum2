@@ -6,12 +6,13 @@ import { createInterface, deleteInterface, getInterfaces, updateInterface } from
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
-import { interfaceTypeItems } from '@/utils/interfaceTypes'
+import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 
 defineOptions({ name: 'InterfaceList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { defaultType, load: loadTypes, typeItems } = useInterfaceTypes()
 
 const items = ref([])
 const devices = ref([])
@@ -52,6 +53,7 @@ const form = ref({
 const editingId = ref(null)
 const saving = ref(false)
 const deleting = ref(false)
+const interfaceTypeItems = computed(() => typeItems(form.value?.type))
 
 const canWrite = computed(() => authStore.canWrite)
 const dialogTitle = computed(() => (editingId.value ? 'Edit interface' : 'New interface'))
@@ -109,7 +111,7 @@ function openNew() {
   form.value = {
     device_id: undefined,
     name: '',
-    type: '1000base-t',
+    type: defaultType.value,
     label: '',
     description: '',
     vrf: '',
@@ -200,6 +202,7 @@ watch(globalFilter, () => {
 
 onMounted(() => {
   loadDevices()
+  loadTypes()
   load()
 })
 </script>
@@ -320,7 +323,13 @@ onMounted(() => {
           <UInput v-model="form.name" class="w-full font-mono" autofocus />
         </UFormField>
         <UFormField label="Type">
-          <USelect v-model="form.type" :items="interfaceTypeItems" class="w-full" />
+          <USelectMenu
+            v-model="form.type"
+            :items="interfaceTypeItems"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
         </UFormField>
         <UFormField label="Label">
           <UInput v-model="form.label" class="w-full" />

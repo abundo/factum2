@@ -35,7 +35,8 @@ notes below still apply to `GetDevices`/`GetVMs`.
 Netbox exposes both a GraphQL endpoint (read-only) and a REST API
 (read/write). Reads (`Get*`) go through GraphQL; writes (`Update*`,
 `*Create`, `*Delete`) go through REST, since Netbox's GraphQL API doesn't
-support mutations.
+support mutations. Interface type choices (not a NetBox object) are read
+with REST `OPTIONS /api/dcim/interfaces/` (`GetInterfaceTypeChoices`).
 
 There are two different query shapes in use, for two different call
 patterns:

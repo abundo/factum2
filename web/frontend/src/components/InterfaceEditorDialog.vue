@@ -1,12 +1,15 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { parseInterfaceNamePattern } from '@/utils/interfaceNames'
-import { interfaceTypeItems } from '@/utils/interfaceTypes'
+import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 
 defineOptions({ name: 'InterfaceEditorDialog' })
 
 const open = defineModel('open', { type: Boolean })
 const form = defineModel('form', { type: Object })
+
+const { defaultType, load: loadTypes, typeItems } = useInterfaceTypes()
+const interfaceTypeItems = computed(() => typeItems(form.value?.type))
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -45,6 +48,18 @@ const createLabel = computed(() => {
   const n = parsedName.value.names.length
   return n > 1 ? `Create ${n}` : 'Create'
 })
+
+watch(open, (isOpen) => {
+  if (!isOpen) return
+  loadTypes().then(() => {
+    if (props.editing || !form.value) return
+    const current = form.value.type
+    const known = interfaceTypeItems.value.some((i) => i.value === current)
+    if (!known && defaultType.value) {
+      form.value.type = defaultType.value
+    }
+  })
+})
 </script>
 
 <template>
@@ -55,9 +70,11 @@ const createLabel = computed(() => {
           <UInput v-model="form.name" class="w-full font-mono" autofocus :disabled="fieldsLocked" />
         </UFormField>
         <UFormField label="Type">
-          <USelect
+          <USelectMenu
             v-model="form.type"
             :items="interfaceTypeItems"
+            value-key="value"
+            label-key="label"
             class="w-full"
             :disabled="fieldsLocked"
           />
