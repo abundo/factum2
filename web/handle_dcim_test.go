@@ -152,6 +152,9 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	if created.PrimaryIPv4 != "" || created.PrimaryIPv4ID != 0 {
 		t.Fatalf("primary ipv4 must not be set from device DTO = %+v", created)
 	}
+	if err := db.Create(&models.Interface{DeviceID: created.ID, Name: "Ethernet1", Type: "1000base-t"}).Error; err != nil {
+		t.Fatalf("interface: %v", err)
+	}
 
 	site := models.Site{Name: "STO", Source: models.SiteSourceFactum, Latitude: 59.3, Longitude: 18.0}
 	if err := db.Create(&site).Error; err != nil {
@@ -256,6 +259,9 @@ func TestApiDeviceCreateLocal(t *testing.T) {
 	}
 	if updated.OpticalKind != "roadm" {
 		t.Fatalf("optical_kind = %q", updated.OpticalKind)
+	}
+	if len(updated.Interfaces) != 1 || updated.Interfaces[0].Name != "Ethernet1" {
+		t.Fatalf("update dropped interfaces: %+v", updated.Interfaces)
 	}
 
 	c, rec = jsonRequest(t, http.MethodPut, "/api/device/x", models.DeviceCreateDTO{

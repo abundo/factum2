@@ -328,6 +328,7 @@ function saveLocalDevice() {
   updateDevice(device.value.id, deviceWritePayload(createForm.value))
     .then((data) => {
       device.value = data
+      snapshotDescriptions()
       loadDevices()
       toast.add({ color: 'success', title: 'Device saved', duration: 3000 })
     })
@@ -606,17 +607,23 @@ function loadXConnects(id) {
 }
 
 function loadDevice(row) {
-  device.value = null
-  deviceImpact.value = null
+  const id = row?.id
+  if (!id) return
+  const same = device.value?.id === id
+  if (!same) {
+    device.value = null
+    deviceImpact.value = null
+    xconnects.value = []
+  }
   deviceError.value = null
-  deviceLoading.value = true
-  getDeviceImpact(row.id)
+  deviceLoading.value = !same
+  getDeviceImpact(id)
     .then((imp) => {
       deviceImpact.value = imp
     })
     .catch(() => {})
-  loadXConnects(row.id)
-  getDevice(row.id)
+  loadXConnects(id)
+  getDevice(id)
     .then((data) => {
       device.value = data
       snapshotDescriptions()
@@ -641,7 +648,7 @@ function loadDevice(row) {
         })
     })
     .catch(() => {
-      deviceError.value = 'Failed to load device.'
+      if (!same) deviceError.value = 'Failed to load device.'
     })
     .finally(() => {
       deviceLoading.value = false

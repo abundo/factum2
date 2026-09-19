@@ -514,7 +514,11 @@ func (ctrl *Controller) ApiDeviceUpdate(c *echo.Context) error {
 	if err := instantiateDeviceTypeInterfaces(ctrl.DB, existing.ID, existing.DeviceTypeID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, existing)
+	items, err := fetchDevices(c.Request().Context(), ctrl.DB, []uint{existing.ID})
+	if err != nil || len(items) == 0 {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "device not found"})
+	}
+	return c.JSON(http.StatusOK, items[0])
 }
 
 // ApiDeviceDelete removes a Factum-local device. NetBox-synced rows are
