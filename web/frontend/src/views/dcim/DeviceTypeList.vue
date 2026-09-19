@@ -112,7 +112,14 @@ const platformById = computed(() => {
 })
 
 function emptyTypeForm() {
-  return { manufacturer_id: undefined, model: '', slug: '', platform_id: 0 }
+  return {
+    manufacturer_id: undefined,
+    model: '',
+    slug: '',
+    platform_id: 0,
+    height_u: '',
+    full_depth: false,
+  }
 }
 
 function fillFormFromType(row) {
@@ -121,6 +128,8 @@ function fillFormFromType(row) {
     model: row.model ?? '',
     slug: row.slug ?? '',
     platform_id: row.platform_id || 0,
+    height_u: row.height_ticks != null ? String(row.height_ticks / 2) : '',
+    full_depth: !!row.full_depth,
   }
 }
 
@@ -165,11 +174,19 @@ function openDetail(row) {
 }
 
 function typePayload() {
+  const heightRaw = String(form.value.height_u ?? '').trim()
+  let height_ticks = null
+  if (heightRaw !== '') {
+    const u = Number(heightRaw)
+    if (Number.isFinite(u) && u >= 0) height_ticks = Math.round(u * 2)
+  }
   return {
     manufacturer_id: form.value.manufacturer_id,
     model: form.value.model.trim(),
     slug: form.value.slug.trim(),
     platform_id: form.value.platform_id || 0,
+    height_ticks,
+    full_depth: !!form.value.full_depth,
   }
 }
 
@@ -447,6 +464,10 @@ onMounted(load)
         <UFormField label="Slug" hint="Leave blank to generate from the model">
           <UInput v-model="form.slug" class="w-full font-mono" />
         </UFormField>
+        <UFormField label="Height (U)" hint="Leave blank if unknown">
+          <UInput v-model="form.height_u" class="w-full" />
+        </UFormField>
+        <UCheckbox v-model="form.full_depth" label="Full depth (blocks front and rear)" />
       </div>
     </template>
     <template #footer>
@@ -520,6 +541,21 @@ onMounted(load)
         <UInput
           v-model="form.slug"
           class="w-full font-mono"
+          :disabled="!(canWrite && editingLocal)"
+        />
+
+        <label class="font-bold whitespace-nowrap">Height (U)</label>
+        <UInput
+          v-model="form.height_u"
+          class="w-full"
+          :disabled="!(canWrite && editingLocal)"
+          placeholder="unknown"
+        />
+
+        <label class="font-bold whitespace-nowrap">Full depth</label>
+        <UCheckbox
+          v-model="form.full_depth"
+          label="Blocks both faces"
           :disabled="!(canWrite && editingLocal)"
         />
       </div>

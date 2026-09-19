@@ -341,6 +341,12 @@ type DeviceType struct {
 	PlatformID     uint   `json:"platform_id" gorm:"index"`
 	Source         string `json:"source" gorm:"type:varchar(32)"`
 	NetboxID       uint   `json:"netbox_id"`
+	// HeightTicks is physical height in half-U ticks (2 ticks = 1U).
+	// nil means unknown — never treat as 1U.
+	HeightTicks *int   `json:"height_ticks"`
+	FullDepth   *bool  `json:"full_depth"`
+	FrontImage  string `json:"front_image" gorm:"type:varchar(512)"`
+	RearImage   string `json:"rear_image" gorm:"type:varchar(512)"`
 }
 
 type DeviceTypeDTO struct {
@@ -349,6 +355,10 @@ type DeviceTypeDTO struct {
 	Model          string `json:"model"`
 	Slug           string `json:"slug"`
 	PlatformID     uint   `json:"platform_id"`
+	HeightTicks    *int   `json:"height_ticks"`
+	FullDepth      *bool  `json:"full_depth"`
+	FrontImage     string `json:"front_image"`
+	RearImage      string `json:"rear_image"`
 }
 
 func (d *DeviceType) BeforeCreate(tx *gorm.DB) error {

@@ -176,6 +176,10 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 			reporter.EmitErr(err)
 			return err
 		}
+		if err := syncRacksAndPlacements(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 		if err := syncVRFs(db, nb, reporter); err != nil {
 			reporter.EmitErr(err)
 			return err

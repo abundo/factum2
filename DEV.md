@@ -484,8 +484,17 @@ web/frontend/src/
   router/     vue-router routes
   stores/     pinia stores (auth.js)
   views/      route-level pages, grouped by domain (admin/, auth/, customer/,
-              device/, service/, sync/)
+              dcim/, device/, service/, sync/)
 ```
+
+Rack occupancy, floor-plan geometry and the connection graph live in
+`internal/dcim`. Handlers in `web/handle_dcim_racks.go` stay thin. Floor
+plans lazy-load Konva; the connection view lazy-loads Vue Flow. Schema is
+goose `00016_dcim_racks.sql`. NetBox racks/placements are imported over
+REST in `internal/netbox/racks.go` (netboxtool has no rack types).
+`Device.SiteID` is a local `sites.id` for Factum devices and a NetBox site
+id for imported devices — join through `sites.netbox_kind`/`netbox_id`,
+not by treating the two sequences as interchangeable.
 
 ## Worker hub transport
 

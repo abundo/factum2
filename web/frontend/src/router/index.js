@@ -108,6 +108,36 @@ const router = createRouter({
           component: () => import('@/views/dcim/PlatformList.vue'),
         },
         {
+          path: '/dcim/racks',
+          name: 'dcim-racks',
+          meta: { title: 'Racks', requiresRead: true },
+          component: () => import('@/views/dcim/RackListPage.vue'),
+        },
+        {
+          path: '/dcim/racks/:id',
+          name: 'dcim-rack',
+          meta: { title: 'Rack', requiresRead: true },
+          component: () => import('@/views/dcim/RackPage.vue'),
+        },
+        {
+          path: '/dcim/floor-plans',
+          name: 'dcim-floor-plans',
+          meta: { title: 'Floor plans', requiresRead: true },
+          component: () => import('@/views/dcim/FloorPlanListPage.vue'),
+        },
+        {
+          path: '/dcim/floor-plans/:id',
+          name: 'dcim-floor-plan',
+          meta: { title: 'Floor plan', requiresRead: true },
+          component: () => import('@/views/dcim/FloorPlanPage.vue'),
+        },
+        {
+          path: '/dcim/connections',
+          name: 'dcim-connections',
+          meta: { title: 'Connections', requiresRead: true },
+          component: () => import('@/views/dcim/ConnectionsPage.vue'),
+        },
+        {
           path: '/oxidized',
           name: 'oxidized',
           meta: { title: 'Oxidized', requiresRead: true, requiresOxidized: true },

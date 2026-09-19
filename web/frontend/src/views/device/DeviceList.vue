@@ -1,6 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   createDevice,
   deleteDevice,
@@ -44,6 +45,7 @@ import { useAuthStore } from '@/stores/auth'
 import { expandInterfaceNames } from '@/utils/interfaceNames'
 
 const toast = useToast()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const devices = ref([])
@@ -392,6 +394,7 @@ function loadDevices() {
     })
     .finally(() => {
       loading.value = false
+      openFromQuery()
     })
 }
 
@@ -662,6 +665,22 @@ function showDetail(row) {
   detailDialog.value = true
   loadDevice(row)
 }
+
+function openFromQuery() {
+  const id = Number(route.query.id)
+  if (!id) return
+  const row = devices.value.find((d) => d.id === id)
+  if (row) showDetail(row)
+  else
+    getDevice(id)
+      .then((d) => showDetail(d))
+      .catch(() => {})
+}
+
+watch(
+  () => route.query.id,
+  () => openFromQuery(),
+)
 
 const refreshingInterfaces = ref(false)
 const updatingInterfaces = ref(false)

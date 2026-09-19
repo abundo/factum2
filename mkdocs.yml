@@ -46,6 +46,7 @@ nav:
   - Using Factum:
       - Overview: user/index.md
       - Devices: user/devices.md
+      - Datacenter: user/datacenter.md
       - Services: user/services.md
       - Config: user/config.md
       - Jobs: user/jobs.md

@@ -63,6 +63,9 @@ push and device-sync. `factum2-driver-cli` still takes `--username` /
 synced from NetBox). Use it to see how devices connect, not to edit
 cabling — change cables in NetBox and sync. Sites without GPS are omitted.
 
+**DCIM → Racks**, **Floor plans**, and **Connections** are the room and
+rack drawings. See [Datacenter](datacenter.md).
+
 **Organization → Sites** (when Organization is enabled) is the hierarchical
 site tree. NetBox regions, sites, and locations all import as sites, nested
 the same way they nest in NetBox. You can add Factum sites under any node;

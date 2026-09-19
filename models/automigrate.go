@@ -21,6 +21,12 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&Site{},
 		&Manufacturer{},
 		&DeviceType{},
+		&Rack{},
+		&DevicePlacement{},
+		&FloorPlan{},
+		&FloorPlanRack{},
+		&FloorPlanAnnotation{},
+		&ConnectionViewLayout{},
 		&Platform{},
 		&OpticalKindMap{},
 		&OpticalPort{},
@@ -96,6 +102,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ipam_vrfs_netbox_id ON ipam_vrfs (netbox_id) WHERE netbox_id != 0`,
 		`DROP INDEX IF EXISTS idx_ipam_vrf_ns_name`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ipam_vrfs_name ON ipam_vrfs (name) WHERE NOT is_default`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_netbox_id ON racks (netbox_id) WHERE netbox_id != 0`,
 	} {
 		if err := db.Exec(s).Error; err != nil {
 			return err

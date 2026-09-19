@@ -20,7 +20,7 @@ currently on GitHub.
 | --- | --- | --- |
 | Dashboard | Home | Welcome plus admin-configured shortcut links |
 | Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
-| Network map / Devices / Oxidized / Software | Devices | Inventory, topology, config backups, NOS images |
+| Network map / Devices / Racks / Floor plans / Connections / Oxidized / Software | DCIM | Inventory, racks, rooms, direct cables, topology, config backups, NOS images |
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | DNS | Only if **DNS zone editor** is enabled |
 | Certificates | Certificates | Only if **Certificates** is enabled (Destinations) |
@@ -41,6 +41,7 @@ change settings, users, and workers.
 ## Related pages
 
 - [Devices](devices.md)
+- [Datacenter](datacenter.md)
 - [Services](services.md)
 - [Config](config.md)
 - [Jobs](jobs.md)

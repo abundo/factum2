@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { createSite, deleteSite, getSites, updateSite } from '@/api/sites'
 import FormModal from '@/components/FormModal.vue'
@@ -10,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 defineOptions({ name: 'SitePage' })
 
 const toast = useToast()
+const router = useRouter()
 const authStore = useAuthStore()
 const treeRef = ref(null)
 const filter = ref('')
@@ -303,6 +305,29 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
             <UFormField label="Longitude">
               <UInput v-model="form.longitude" :disabled="!canSave" class="w-full" />
             </UFormField>
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                label="Floor plans"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                @click="router.push({ path: '/dcim/floor-plans', query: { site_id: selected.id } })"
+              />
+              <UButton
+                label="Racks"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                @click="router.push('/dcim/racks')"
+              />
+              <UButton
+                label="Connections"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                @click="router.push({ path: '/dcim/connections', query: { site_id: selected.id } })"
+              />
+            </div>
             <div v-if="canSave" class="flex justify-end">
               <UButton label="Save" :loading="saving" @click="saveSelected" />
             </div>
