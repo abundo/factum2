@@ -1160,6 +1160,15 @@ onMounted(loadDevices)
     </template>
     <template #overview>
       <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
+        <span class="font-bold whitespace-nowrap">Kind</span>
+        <div>
+          <UBadge
+            :label="device.vm ? 'VM' : 'Device'"
+            :color="device.vm ? 'warning' : 'neutral'"
+            variant="subtle"
+          />
+        </div>
+
         <span class="font-bold whitespace-nowrap">Status</span>
         <div class="flex flex-wrap items-center gap-2">
           <UBadge
