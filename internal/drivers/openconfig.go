@@ -219,10 +219,11 @@ type sshCmd struct {
 	EndMarker *regexp.Regexp
 }
 
-// sshRunCLI opens an interactive SSH shell against p.Name:p.Port, runs cmds
-// in order and returns the output produced by the last command - see
+// sshRunCLI opens an interactive SSH shell against p.Name on port 22, runs
+// cmds in order and returns the output produced by the last command - see
 // sshRunCLIBatch for the underlying implementation and the per-command
-// variant config-apply callers need.
+// variant config-apply callers need. p.Port is the NETCONF port on mixed-
+// transport drivers and is not used here.
 func sshRunCLI(ctx context.Context, p DriverParam, cmds []sshCmd) (string, error) {
 	outputs, err := sshRunCLIBatch(ctx, p, cmds)
 	if err != nil {
@@ -422,7 +423,7 @@ func (s *sshShellSession) capture() string {
 // that back-and-forth should use sshRunCLIPipeline instead, which pays the
 // idle wait once for the whole batch rather than once per line.
 func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
-	s, err := dialSSHShell(p.Username, p.Password, p.Name, p.Port)
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +466,7 @@ func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string
 // line of expected output lets that single wait finish as soon as the
 // device is actually done instead of always waiting out idleWindow.
 func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
-	s, err := dialSSHShell(p.Username, p.Password, p.Name, p.Port)
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
 	if err != nil {
 		return "", err
 	}

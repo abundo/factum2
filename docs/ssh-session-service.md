@@ -14,7 +14,7 @@ Every SSH CLI operation in Factum today opens a fresh interactive PTY, drains th
 
 This design keeps platform drivers as they are (command construction, paging preambles, output parsing, `CLISessionApplier`) and moves **session ownership** behind a process-lifetime pool. Phase 1 is an in-process pool inside `internal/drivers`, which is enough for the web GUI and for `GetDeviceConfig`+`GetNeighbors` inside one `factum2-device-sync` run. Phase 2 exposes that same pool from a long-lived `factum2-driver start` daemon over loopback HTTP (REST JSON wrapping the SSH run primitives, not gNMI and not a second `DriverClient`). Web, device-sync, and the driver CLI then share one owner when a socket or URL is configured, which is the only way to honor the AGENTS.md policy **across processes** and the only way to keep a warm session for one-shot CLI invocations.
 
-**Verified 2026-09-19:** none of this is implemented. There is no `sshsession.go`, no `InitSSHPool`, no `util.ConfigDriver`, no `factum2-driver start`, and no `examples/factum2-driver.service`. `sshRunCLI*` still take loose `username, password, host, port` and `dialSSHShell` still `ssh.Dial` + `defer Close()`. The architecture below is still the intended end state (alternative C daemon wrapping alternative A in-process pool). Call-site facts that have drifted (GUI now uses `DeviceSyncAuth`, not per-request JSON passwords) are corrected in this revision.
+**Verified after PR 1:** there is still no `sshsession.go`, no `InitSSHPool`, no `util.ConfigDriver`, no `factum2-driver start`, and no `examples/factum2-driver.service`. `sshRunCLI*` take `(ctx context.Context, p DriverParam, ...)` — call sites pass `context.Background()` and `driver.p`. `dialSSHShell` still `ssh.Dial` + `defer Close()` on every call; SSH CLI always dials port 22 (`p.Port` is not passed — it is the NETCONF port on mixed-transport drivers). `waitIdle(ctx, endMarker) error` returns `errWaitTimeout` on `ctx` cancel/`overallTimeout`; the 100ms poll `select`s on `ctx.Done()`. Legacy `sshRunCLI*` ignore that error and return the buffer (silent partial capture). The architecture below is still the intended end state (alternative C daemon wrapping alternative A in-process pool). Call-site facts that have drifted (GUI now uses `DeviceSyncAuth`, not per-request JSON passwords) are corrected in this revision.
 
 ## Background & Motivation
 
@@ -25,14 +25,14 @@ This design keeps platform drivers as they are (command construction, paging pre
 - `idleWindow = 5s` when the command has no end marker (`openconfig.go:246`).
 - `configEndMarkerIdle = 200ms` after a platform-supplied marker (`^return$` on VRP `display current-config`, `^end$` on XR, `^}$` on SR OS).
 - `overallTimeout = 30s` hard cap.
-- Login banner/MOTD is drained with `waitIdle(nil)` — always a full 5s after the last banner byte.
-- `waitIdle` itself **never returns an error** (`func (s *sshShellSession) waitIdle(endMarker *regexp.Regexp)` at line 352). If output dribbles until `overallTimeout`, it returns the buffer and callers treat it as success (silent partial capture). A `--More--` prompt that then goes silent looks like a finished command after `idleWindow`. The 100ms poll is `time.Sleep` with no `ctx`.
+- Login banner/MOTD is drained with `waitIdle(ctx, nil)` — always a full 5s after the last banner byte.
+- `waitIdle(ctx, endMarker) error` returns `errWaitTimeout` if `ctx` is cancelled/expired or `overallTimeout` elapses. The 100ms poll `select`s on `ctx.Done()`. **Legacy `sshRunCLI*` ignore `errWaitTimeout` and return the buffer** (silent partial capture, same as the pre-PR-1 error-less wait). A `--More--` prompt that then goes silent looks like a finished command after `idleWindow`.
 
 Auth is password + keyboard-interactive (`sshPasswordAuthMethods`). `HostKeyCallback` is `ssh.InsecureIgnoreHostKey()`. Legacy KEX (`ssh.InsecureKeyExchangeDHGEXSHA1`, `ssh.InsecureKeyExchangeDH1SHA1` — `diffie-hellman-group-exchange-sha1` / `group1-sha1`) is already appended for old gear. Interactive PTY, not `ssh.Session.Run`.
 
 A typical VRP `Exec` (`driver_vrp.go:50`) therefore does **three** idle waits on a cold connection:
 
-1. Banner drain (`waitIdle(nil)`).
+1. Banner drain (`waitIdle(ctx, nil)`).
 2. `screen-length 0 temporary` (no marker → 5s).
 3. The actual command (no marker → 5s).
 
@@ -192,7 +192,7 @@ Do **not** add a `factum2-driver` entry to `worker.commands` as a way to "start 
 
 New file `internal/drivers/sshsession.go` (same package, to keep `sshCmd` / `sshShellSession` unexported). Tests in `sshsession_test.go` against a fake SSH server built with `golang.org/x/crypto/ssh` (already in `go.mod`; no new module).
 
-Signature change in **PR 1** — fold `context.Context` and `DriverParam` in one sweep so PR 2 does not invent a third:
+Signature change in **PR 1** (landed) — fold `context.Context` and `DriverParam` in one sweep so PR 2 does not invent a third:
 
 ```go
 // before (openconfig.go:225, 409, 451 — verified 2026-09-19)
@@ -210,7 +210,7 @@ PR 1 call sites pass `context.Background()` and `driver.p`:
 
 - `driver_vrp.go` (Exec, Version, RunningConfigGet, RunningConfigSave, GetInterfacesStatus, SetInterfaceDescriptions, SetInterfaceVLANs, `vrpCLISession` / `ApplyCLISession`, GetDeviceConfig, GetNeighbors)
 - `driver_ciscosmb.go` (`runCLI` / `runCLIBatch` helpers **and** `RunningConfigSave`, which calls `sshRunCLI` directly at line 159)
-- `driver_iosxr.go` (Exec, RunningConfigGet, **`iosxrRunningConfig`** which today takes loose `username, password, host` at line 261 and is used by `GetDeviceConfig` at line 467 — change it to `iosxrRunningConfig(ctx, p DriverParam)`, GetNeighbors)
+- `driver_iosxr.go` (Exec, RunningConfigGet, **`iosxrRunningConfig(ctx, p DriverParam)`**, GetNeighbors)
 - `driver_iosxr_eline.go` (`iosxrELINESession`)
 - `driver_nokia_sros.go` (four `sshRunCLI` sites including `srosConfig`)
 - `driver_nokia_sros_eline.go` (`srosELINESession`)
@@ -881,11 +881,11 @@ Do not add `ios-xr` / `sros` to `platforms` until a hygiene follow-up copies the
 
 ## References
 
-- `internal/drivers/openconfig.go` — `dialSSHShell` (`ssh.Dial`, no Dialer keepalive), `sshRunCLI*` (`username, password, host, port`), `waitIdle` (no error, `idleWindow=5s` / `configEndMarkerIdle=200ms` / `overallTimeout=30s`, 100ms poll), `sshClientConfig` (`Timeout: 10s`, `InsecureIgnoreHostKey`, legacy KEX)
+- `internal/drivers/openconfig.go` — `dialSSHShell` (`ssh.Dial`, no Dialer keepalive; SSH CLI always port 22, not `p.Port`), `sshRunCLI*(ctx, p DriverParam, ...)`, `waitIdle(ctx, endMarker) error` (`errWaitTimeout`; legacy `sshRunCLI*` ignore it; `idleWindow=5s` / `configEndMarkerIdle=200ms` / `overallTimeout=30s`, 100ms poll selects on `ctx.Done()`), `sshClientConfig` (`Timeout: 10s`, `InsecureIgnoreHostKey`, legacy KEX)
 - `internal/drivers/driver.go` — `DriverClient` (no `context`), `DriverParam` `{Name,Port,Username,Password,Platform}`, `NewDriver`, `NewDriverName`, `DeviceFQDN`
 - `internal/drivers/driver_vrp.go` — `Exec`/`ApplyCLISession`/`vrpCLISessionCommands` (ends `return`), `SetInterfaceDescriptions` (ends `quit`), `vrpCLIErrorMarkers`, `vrpConfigEndMarker`
 - `internal/drivers/driver_ciscosmb.go` — `smbPreamble`, `GetInterfacesStatus` (3× `show`), `runCLIBatch`, `RunningConfigSave` calls `sshRunCLI` directly, `smbCLISessionCommands` ends `end`
-- `internal/drivers/driver_iosxr.go` — `iosxrRunningConfig(username, password, host)`
+- `internal/drivers/driver_iosxr.go` — `iosxrRunningConfig(ctx, p DriverParam)`
 - `internal/drivers/driver_iosxr_eline.go` — `commit`/`abort` trailer
 - `internal/drivers/driver_nokia_sros.go` — `registerDriver("sros")` + `registerDriver("sros-md")`, `srosConfigEndMarker`
 - `internal/drivers/driver_nokia_sros_eline.go` — `commit`/`discard`/`exit all`/`quit-config` trailer
@@ -914,7 +914,7 @@ Do not add `ios-xr` / `sros` to `platforms` until a hygiene follow-up copies the
 
 ## PR Plan
 
-Incremental, each PR independently reviewable and mergeable. No schema migrations. **None of this is in tree yet** (verified 2026-09-19).
+Incremental, each PR independently reviewable and mergeable. No schema migrations. **PR 1 is in tree;** pool / daemon / `InitSSHPool` are not.
 
 ### PR 1 — Refactor `sshRunCLI*` onto `ctx` + `DriverParam`; make `waitIdle` cancelable
 
