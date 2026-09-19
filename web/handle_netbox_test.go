@@ -6,12 +6,16 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
@@ -272,6 +276,138 @@ func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
+}
+
+type captureReporter struct {
+	lines []string
+}
+
+func (r *captureReporter) Emit(_ jobevent.Level, format string, args ...any) {
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+
+func (r *captureReporter) EmitErr(err error) {
+	if err != nil {
+		r.lines = append(r.lines, err.Error())
+	}
+}
+
+func TestWebhookReporter_IncludesDeviceNameOnStartAndSummary(t *testing.T) {
+	var got captureReporter
+	r := webhookReporter{next: &got, deviceName: "sw1"}
+	r.Emit(jobevent.Info, "Netbox sync started")
+	r.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
+	if len(got.lines) != 2 {
+		t.Fatalf("lines = %#v, want 2", got.lines)
+	}
+	if got.lines[0] != "Netbox sync: device sw1 started" {
+		t.Errorf("started = %q", got.lines[0])
+	}
+	if got.lines[1] != "Netbox sync: device sw1: 0 new, 1 updated, 0 deleted" {
+		t.Errorf("summary = %q", got.lines[1])
+	}
+}
+
+func TestApiNetboxWebhook_LogsQueuedToHub(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	hub := NewLogHub()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(newHubHandler(slog.NewTextHandler(io.Discard, nil), hub)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctrl := &Controller{DB: db, LogHub: hub}
+	ctrl.netboxDeviceSyncDebounce.delay = time.Hour
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	post := func() {
+		t.Helper()
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.device",
+			"data":        map[string]any{"id": 1, "name": "sw1"},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook: %v", err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	post()
+	post()
+
+	_, history, unsub := hub.Subscribe()
+	t.Cleanup(unsub)
+	var queued int
+	for _, e := range history {
+		if e.Message == "Netbox webhook sync: device sw1 queued" && e.Source == "netbox" {
+			queued++
+		}
+	}
+	if queued != 1 {
+		t.Fatalf("queued log count = %d, want 1 (one line per burst), history=%v", queued, history)
+	}
+}
+
+func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	hub := NewLogHub()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(newHubHandler(slog.NewTextHandler(io.Discard, nil), hub)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	orig := netboxSyncDB
+	netboxSyncDB = func(_ *gorm.DB, name string, reporter jobevent.Reporter) error {
+		reporter.Emit(jobevent.Info, "Netbox sync started")
+		reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
+		if name != "sw1" {
+			t.Errorf("synced %q, want sw1", name)
+		}
+		return nil
+	}
+	t.Cleanup(func() { netboxSyncDB = orig })
+
+	ctrl := &Controller{DB: db, LogHub: hub}
+	ctrl.netboxDeviceSyncDebounce.delay = 20 * time.Millisecond
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+		"event":       "updated",
+		"object_type": "dcim.device",
+		"data":        map[string]any{"id": 1, "name": "sw1"},
+	})
+	if err := ctrl.ApiNetboxWebhook(c); err != nil {
+		t.Fatalf("webhook: %v", err)
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	var started, summary bool
+	for time.Now().Before(deadline) {
+		_, history, unsub := hub.Subscribe()
+		unsub()
+		started, summary = false, false
+		for _, e := range history {
+			if e.Source != "netbox" {
+				continue
+			}
+			if e.Message == "Netbox sync: device sw1 started" {
+				started = true
+			}
+			if e.Message == "Netbox sync: device sw1: 0 new, 1 updated, 0 deleted" {
+				summary = true
+			}
+		}
+		if started && summary {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("missing GUI logs: started=%v summary=%v", started, summary)
 }
 
 func TestNetboxWebhookDebouncer_CoalescesPerDevice(t *testing.T) {

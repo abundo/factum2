@@ -24,6 +24,10 @@ import (
 // runs. NetBox typically fires a burst of those events for one edit.
 const netboxWebhookDebounce = 3 * time.Second
 
+// netboxSyncDB is the single-device sync the webhook debounce calls. Tests
+// replace it so they can assert GUI log lines without a live NetBox.
+var netboxSyncDB = netbox.SyncDB
+
 // netboxWebhookDebouncer delays a callback until no further schedule()
 // for the same key has arrived for delay. Keys are independent so two
 // devices can be waiting at once. Zero delay uses netboxWebhookDebounce.
@@ -44,15 +48,18 @@ func (d *netboxWebhookDebouncer) wait() time.Duration {
 	return d.delay
 }
 
-func (d *netboxWebhookDebouncer) schedule(deviceName string, run func()) {
+// schedule arms or resets the quiet timer for deviceName. It returns true
+// if a wait was already in progress (this event only postponed the sync).
+func (d *netboxWebhookDebouncer) schedule(deviceName string, run func()) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.pending == nil {
 		d.pending = make(map[string]*netboxWebhookDebounceWait)
 	}
 	delay := d.wait()
-	if e, ok := d.pending[deviceName]; ok {
-		e.timer.Stop()
+	_, existed := d.pending[deviceName]
+	if existed {
+		d.pending[deviceName].timer.Stop()
 	}
 	e := &netboxWebhookDebounceWait{}
 	e.timer = time.AfterFunc(delay, func() {
@@ -66,6 +73,7 @@ func (d *netboxWebhookDebouncer) schedule(deviceName string, run func()) {
 		run()
 	})
 	d.pending[deviceName] = e
+	return existed
 }
 
 func (d *netboxWebhookDebouncer) cancel(deviceName string) {
@@ -208,12 +216,19 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 	// Interface / IP events for the same device; wait until that device has
 	// been quiet for netboxWebhookDebounce, then SyncDB once.
 	objectType := payload.ObjectType
-	ctrl.netboxDeviceSyncDebounce.schedule(deviceName, func() {
+	alreadyQueued := ctrl.netboxDeviceSyncDebounce.schedule(deviceName, func() {
 		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
-		if err := netbox.SyncDB(ctrl.DB, deviceName, reporter); err != nil {
+		if err := netboxSyncDB(ctrl.DB, deviceName, reporter); err != nil {
 			slog.Error("netbox webhook sync", "device", deviceName, "object_type", objectType, "err", err)
 		}
 	})
+	if !alreadyQueued {
+		// One line at the start of a burst so the GUI log window shows
+		// activity immediately; further events for this device only reset
+		// the timer. webhookReporter emits started + summary when SyncDB
+		// actually runs after the quiet period.
+		slog.Info("Netbox webhook sync: device "+deviceName+" queued", "source", "netbox", "device", deviceName)
+	}
 
 	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "device": deviceName})
 }
@@ -306,11 +321,10 @@ func (ctrl *Controller) netboxWebhookTreeItem(c *echo.Context, payload NetboxWeb
 
 // webhookReporter wraps the reporter given to netbox.SyncDB for the webhook
 // path, which always syncs exactly one device. SyncDB is shared with the
-// CLI tools' console/JSON reporters, which still want the separate
-// "started" progress line, so rather than changing SyncDB itself this
-// drops that line and folds the device name into the final summary -
-// producing exactly one line, emitted once the sync is done, in the web
-// GUI's log window (fed by slog, see web/logstream.go) per webhook call.
+// CLI tools' console/JSON reporters, which still want the unadorned
+// "started" / summary lines, so rather than changing SyncDB itself this
+// folds the device name into both lines for the web GUI's log window
+// (fed by slog, see web/logstream.go).
 type webhookReporter struct {
 	next       jobevent.Reporter
 	deviceName string
@@ -319,6 +333,7 @@ type webhookReporter struct {
 func (r webhookReporter) Emit(level jobevent.Level, format string, args ...any) {
 	switch format {
 	case "Netbox sync started":
+		r.next.Emit(level, "Netbox sync: device %s started", r.deviceName)
 		return
 	case "Netbox sync: %d new, %d updated, %d deleted":
 		r.next.Emit(level, "Netbox sync: device %s: %d new, %d updated, %d deleted", append([]any{r.deviceName}, args...)...)
