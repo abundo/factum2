@@ -1,6 +1,6 @@
 package netbox
 
-import "github.com/abundo/netboxtool"
+import "github.com/abundo/factum2/internal/netboxtool"
 
 // CableLabelLLDP is the dcim.Cable.label written on cables created from
 // LLDP neighbors. device-sync only creates, retargets, or deletes cables

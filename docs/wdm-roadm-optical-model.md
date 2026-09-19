@@ -6,7 +6,7 @@
 | **Date**     | 2026-08-13                                                                         |
 | **Status**   | Draft (revised; LLDP cable ownership)                                              |
 | **Codebase** | `/home/anders/code/factum2`                                                        |
-| **Related**  | `itnportal` (CN customer portal — out of impact set), `netboxtool` (NetBox client) |
+| **Related**  | `itnportal` (CN customer portal — out of impact set), `internal/netboxtool` (NetBox client) |
 
 ---
 
@@ -1327,8 +1327,8 @@ Out of scope even as questions: CDC ROADMs, regeneration, OTN, CN-on-VL stacking
 - `web/auth.go` — `RequireRead` / `RequireWrite` / `RequireAdmin`.
 - `internal/mail/mail.go` — SMTP send.
 - `web/frontend/src/views/service/ServiceCreateWizard.vue` — Wavelength / Fiber products already offered.
-- `netboxtool/models.go` — `NBDevice.CustomFields`; `NBCable` two-ended cables.
-- `netboxtool/netboxtool.go` — `GetCables` / `isInterfaceToInterface` (skips front/rear/console/circuit).
+- `internal/netboxtool/models.go` — `NBDevice.CustomFields`; `NBCable` two-ended cables.
+- `internal/netboxtool/netboxtool.go` — `GetCables` / `isInterfaceToInterface` (skips front/rear/console/circuit).
 - `web/frontend/src/components/DeviceInterfacePicker.vue` — ELINE platform filter (`eos`/`sros`/`ios-xr`); must not be reused unmodeled.
 - `internal/device-sync/device-sync.go` `syncConnection` — LLDP auto-cabling; PR 1b restricts it to owned `label=lldp` cables.
 - `itnportal` — CN delivery portal. NOC mail is `limetool/models.LimeCompany.NOC_email`, exposed as `itnportal/web.DTO_Company.NOC_email`; not in Factum.
@@ -1356,7 +1356,7 @@ Incremental, independently reviewable, each mergeable without enabling the next.
 ### PR 1b — device-sync LLDP cable ownership
 
 - **Title:** `device-sync: do not retarget or delete non-LLDP cables`
-- **Files:** `netboxtool/netboxtool.go` (`CreateCable` sets `label: "lldp"`; `GetCable` already returns `Label`), `internal/device-sync/device-sync.go` (`syncConnection` ownership + `shouldSkipLLDPCabling`), `internal/device-sync/netbox_mgr.go`, `internal/device-sync/device_sync_test.go` (manual cable left alone when LLDP disagrees; owned cable still repaired; skip when far-end `OpticalKind` is optical; skip when local device is optical; still create labeled cable between two packet ports with no cable).
+- **Files:** `internal/netboxtool/netboxtool.go` (`CreateCable` sets `label: "lldp"`; `GetCable` already returns `Label`), `internal/device-sync/device-sync.go` (`syncConnection` ownership + `shouldSkipLLDPCabling`), `internal/device-sync/netbox_mgr.go`, `internal/device-sync/device_sync_test.go` (manual cable left alone when LLDP disagrees; owned cable still repaired; skip when far-end `OpticalKind` is optical; skip when local device is optical; still create labeled cable between two packet ports with no cable).
 - **Depends on:** PR 1 (`OpticalKind` on the factum device snapshot). OpticalPort skip is added in PR 2.
 - **Changes:** LLDP may only mutate cables with `label == "lldp"`. Existing unlabeled/manual cables are never retargeted or deleted. Skip cabling entirely when either device is `roadm`/`wdm_shelf`/`ila`/`passive`, or either port’s existing cable already lands on such a device. Warn when LLDP disagrees with a manual cable. Ship this **before** operators start drawing PE→txp / PE→ODF cables.
 

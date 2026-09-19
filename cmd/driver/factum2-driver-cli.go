@@ -25,7 +25,7 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/util"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // Params embeds cmdbase.ParamsAgent, not cmdbase.Params - this binary only

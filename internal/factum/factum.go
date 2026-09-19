@@ -14,7 +14,7 @@ import (
 	neturl "net/url"
 	"time"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 func smbCmdStrings(cmds []sshCmd) []string {

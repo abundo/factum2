@@ -12,7 +12,7 @@ import (
 
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/util"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // validateDriverParam checks the credentials every driver constructor

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 func newContactTestClient(t *testing.T, handler http.HandlerFunc) *contactClient {

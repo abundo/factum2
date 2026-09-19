@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // Custom field type slugs as accepted by POST/PATCH /api/extras/custom-fields/.

@@ -9,7 +9,7 @@ package netbox
 
 import (
 	"github.com/abundo/factum2/internal/util"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // remoteConfigResponse mirrors web.NetboxConfigResponse.

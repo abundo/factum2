@@ -16,15 +16,16 @@ Operator Markdown lives in `docs/user/` (GUI `/doc`, via `docs.List` /
 - Node.js `^22.18.0` or `>=24.12.0` (see `web/frontend/package.json`)
 - PostgreSQL (app data, via GORM)
 
-[limetool](https://github.com/abundo/limetool),
-[netboxtool](https://github.com/abundo/netboxtool), and
+[limetool](https://github.com/abundo/limetool) and
 [dnsmgr2](https://github.com/abundo/dnsmgr2) are ordinary tagged
 modules (`go.mod` / `go.sum`). A clone builds without sibling checkouts.
+The NetBox GraphQL/REST client lives in-tree at
+[`internal/netboxtool`](internal/netboxtool/).
 
 To edit a library and factum together, use a Go workspace (gitignored):
 
 ```sh
-go work init . ../limetool ../netboxtool ../dnsmgr2
+go work init . ../limetool ../dnsmgr2
 ```
 
 That overrides module resolution on your machine only. CI and releases
@@ -37,7 +38,7 @@ GOWORK=off go get github.com/abundo/dnsmgr2@v1.2.0
 GOWORK=off go mod tidy
 ```
 
-Same pattern for limetool / netboxtool. `factum2-dns` imports
+Same pattern for limetool. `factum2-dns` imports
 `github.com/abundo/dnsmgr2/dnsmgr`.
 
 ## Database setup
@@ -366,7 +367,7 @@ network. Do not point this stack at the real `factum2` database.
 ### NetBox and LibreNMS tests
 
 Both are REST-ish clients configured with a plain base URL
-(`netboxtool.ConfigNetbox.URL`, `util.ConfigLibrenms.URL`) - the same shape
+(`internal/netboxtool.ConfigNetbox.URL`, `util.ConfigLibrenms.URL`) - the same shape
 as the Arista eAPI client above - so the same two-tier pattern applies, and
 is the intended next step for **tests** (the `dev/` stack is for running the
 GUI against real apps, not a substitute for these tiers):
@@ -374,7 +375,7 @@ GUI against real apps, not a substitute for these tiers):
 - **Default tier**: an `httptest` fake server per package (`internal/netbox`,
   `internal/librenms`), mirroring `fakeEOS` in
   `internal/drivers/driver_arista_eos_test.go` - fast, no containers, covers
-  request/response shape. NetBox talks GraphQL (`netboxtool`'s
+  request/response shape. NetBox talks GraphQL (`internal/netboxtool`'s
   `graphqlPageSize`-driven paging), not plain REST, so its fake needs to
   decode a GraphQL POST body rather than match REST paths/verbs the way
   LibreNMS's or eAPI's fake can.
@@ -491,7 +492,7 @@ Rack occupancy, floor-plan geometry and the connection graph live in
 `internal/dcim`. Handlers in `web/handle_dcim_racks.go` stay thin. Floor
 plans lazy-load Konva; the connection view lazy-loads Vue Flow. Schema is
 goose `00016_dcim_racks.sql`. NetBox racks/placements are imported over
-REST in `internal/netbox/racks.go` (netboxtool has no rack types).
+REST in `internal/netbox/racks.go` (`internal/netboxtool` has no rack types).
 `Device.SiteID` is a local `sites.id` for Factum devices and a NetBox site
 id for imported devices — join through `sites.netbox_kind`/`netbox_id`,
 not by treating the two sequences as interchangeable.

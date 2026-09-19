@@ -15,7 +15,7 @@ import (
 	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
 )

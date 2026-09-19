@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 const dryRunFakeIDBase uint = 1_000_000_000

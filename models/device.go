@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// import "github.com/abundo/netboxtool"
+// import "github.com/abundo/factum2/internal/netboxtool"
 
 // --------------------------------------------------------------------------
 //	Netbox

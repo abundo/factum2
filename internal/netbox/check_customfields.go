@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // cfSpec is the desired extras.CustomField shape. Check creates the field

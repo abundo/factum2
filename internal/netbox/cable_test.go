@@ -3,7 +3,7 @@ package netbox
 import (
 	"testing"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 type stubCableWriter struct {

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // extrasPageSize is the page size used for paginated extras REST lists

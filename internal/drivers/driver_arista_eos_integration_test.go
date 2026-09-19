@@ -29,7 +29,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 func integrationDriver(t *testing.T) *AristaDriver {

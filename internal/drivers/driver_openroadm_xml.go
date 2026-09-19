@@ -7,7 +7,7 @@ import (
 
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // orDeviceFilter is a NETCONF subtree filter selecting the whole

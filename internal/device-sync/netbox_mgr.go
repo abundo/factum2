@@ -10,7 +10,7 @@ import (
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // NetboxAPI narrows *netboxtool.NetboxClient to what NetboxMgr needs, so

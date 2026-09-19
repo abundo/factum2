@@ -110,7 +110,9 @@ constructors (`cmd/netbox`'s `newNetbox`, `internal/netbox.FactumSyncNetbox`;
 construction time) connect directly to the DB and call
 `util.GetOrCreateSettings` — this is safe for them because, unlike
 DNS/Icinga/LibreNMS/Oxidized below, nothing about Netbox or Lime sync is
-meant to run off the primary host.
+meant to run off the primary host. The NetBox HTTP client is in-tree
+(`internal/netboxtool`); `internal/netbox` is the Factum sync/reconcile
+layer on top of it.
 
 **DHCP:** `Settings.DhcpEnabled` (Factum tab, off by default) gates
 per-prefix DHCP on `models.IpamPrefix` (`DhcpEnabled` / range / gateway /

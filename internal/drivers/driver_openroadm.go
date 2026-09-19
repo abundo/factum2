@@ -11,7 +11,7 @@ import (
 
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // OpenROADMDriver talks NETCONF (RFC 6241 over SSH 830) to an Open ROADM

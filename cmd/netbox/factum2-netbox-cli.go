@@ -12,7 +12,7 @@ import (
 	"os"
 
 	cmdbase "github.com/abundo/factum2/cmd"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/abundo/factum2/internal/buildinfo"

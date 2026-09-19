@@ -5,7 +5,7 @@ import (
 
 	"github.com/abundo/factum2/internal/dns"
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 type restIPAddressPage struct {

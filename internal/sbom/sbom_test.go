@@ -164,8 +164,8 @@ func TestGenerateFromThisRepo(t *testing.T) {
 	if !strings.Contains(md, "github.com/abundo/limetool") {
 		t.Fatal("missing limetool")
 	}
-	if !strings.Contains(md, "github.com/abundo/netboxtool") {
-		t.Fatal("missing netboxtool")
+	if strings.Contains(md, "github.com/abundo/netboxtool") {
+		t.Fatal("netboxtool should be in-tree, not a Go module")
 	}
 	if strings.Contains(md, "replaced by") {
 		t.Fatal("unexpected replace annotation")

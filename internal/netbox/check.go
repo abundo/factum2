@@ -9,7 +9,7 @@ import (
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // factumWebhookPath is the path Netbox must POST to (see web.ApiNetboxWebhook).

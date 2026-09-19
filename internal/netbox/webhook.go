@@ -7,7 +7,7 @@ import (
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

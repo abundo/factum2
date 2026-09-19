@@ -91,7 +91,7 @@ Floor-plan saves validate finite coordinates, object limits, rotated footprints,
 
 ## 5. NetBox import extension
 
-Inspect `internal/netbox` and the pinned `netboxtool` API before extending them. If required fields are absent, add a tagged netboxtool change and update the ordinary module dependency using the repository's DEV.md workflow.
+Inspect `internal/netbox` and `internal/netboxtool` before extending them. If required fields are absent, add them to the in-tree NetBox client in `internal/netboxtool`.
 
 Import order: site hierarchy, device types and physical properties, racks, devices/placements, then existing connections. Use existing source IDs and idempotent upserts. Ensure device upserts do not erase new local-only fields or layout records.
 

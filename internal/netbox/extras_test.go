@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abundo/netboxtool"
+	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 func newExtrasTestClient(t *testing.T, handler http.HandlerFunc) *extrasClient {
