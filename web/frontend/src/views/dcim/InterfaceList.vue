@@ -282,7 +282,12 @@ onMounted(() => {
     <div class="flex flex-wrap items-center justify-between gap-3 mt-3 shrink-0">
       <div class="flex items-center gap-2 text-sm text-muted">
         <span>{{ pageFrom }}–{{ pageTo }} of {{ total }}</span>
-        <USelect v-model="pageSize" :items="pageSizeItems" class="w-24" @update:model-value="page = 1" />
+        <USelect
+          v-model="pageSize"
+          :items="pageSizeItems"
+          class="w-24"
+          @update:model-value="page = 1"
+        />
       </div>
       <UPagination
         v-model:page="page"

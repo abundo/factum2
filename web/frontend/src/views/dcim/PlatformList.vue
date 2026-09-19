@@ -213,13 +213,21 @@ onMounted(load)
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form" :title="dialogTitle" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="dialogTitle"
+    :ui="{ content: 'sm:max-w-sm' }"
+  >
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name">
           <UInput v-model="form.name" class="w-full" autofocus />
         </UFormField>
-        <UFormField label="Slug" hint="Driver match key (eos, sros, vrp, …). Blank generates from name.">
+        <UFormField
+          label="Slug"
+          hint="Driver match key (eos, sros, vrp, …). Blank generates from name."
+        >
           <UInput v-model="form.slug" class="w-full font-mono" />
         </UFormField>
         <UFormField label="Manufacturer">

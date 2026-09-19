@@ -192,7 +192,12 @@ onMounted(load)
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form" :title="dialogTitle" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="dialogTitle"
+    :ui="{ content: 'sm:max-w-sm' }"
+  >
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name">
