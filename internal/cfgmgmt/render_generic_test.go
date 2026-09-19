@@ -386,7 +386,7 @@ func TestResolveCommercialSameRowVsUnset(t *testing.T) {
 
 func TestRenderFuncMapSDPIDAndMAC(t *testing.T) {
 	db := newTestDB(t)
-	out, err := Render(db, `{{ sdpid (index .Others 0).NeighborIP }} {{ macColon "aabb.ccdd.eeff" }} {{ macHyphen "AA:BB:CC:DD:EE:FF" }} {{ macCisco "aa-bb-cc-dd-ee-ff" }}`, "", GenericRenderData{
+	out, err := Render(db, `{{ sdpid(.Others[0].NeighborIP) }} {{ macColon("aabb.ccdd.eeff") }} {{ macHyphen("AA:BB:CC:DD:EE:FF") }} {{ macCisco("aa-bb-cc-dd-ee-ff") }}`, "", GenericRenderData{
 		Others: []RenderEndpoint{{NeighborIP: "172.27.250.28"}},
 	})
 	if err != nil {
@@ -396,13 +396,13 @@ func TestRenderFuncMapSDPIDAndMAC(t *testing.T) {
 	if !strings.Contains(got, "28") || !strings.Contains(got, "aa:bb:cc:dd:ee:ff") || !strings.Contains(got, "aa-bb-cc-dd-ee-ff") || !strings.Contains(got, "aabb.ccdd.eeff") {
 		t.Errorf("funcmap output = %q", got)
 	}
-	if _, err := Render(db, `{{ sdpid (index .Others 0).NeighborIP }}`, "", GenericRenderData{
+	if _, err := Render(db, `{{ sdpid(.Others[0].NeighborIP) }}`, "", GenericRenderData{
 		Others: []RenderEndpoint{{NeighborIP: ""}},
 	}); err == nil {
 		t.Fatal("sdpid on empty NeighborIP should error")
 	}
-	if _, err := Render(db, `{{ .Fields.nope }}`, "", GenericRenderData{Fields: map[string]any{}}); err == nil {
-		t.Fatal("missingkey=error should still fail")
+	if _, err := Render(db, `{{ .Nope }}`, "", GenericRenderData{Fields: map[string]any{}}); err == nil {
+		t.Fatal("missing struct field should fail")
 	}
 }
 
@@ -411,13 +411,26 @@ func TestRenderIndexOthersNotOthers0(t *testing.T) {
 	data := GenericRenderData{
 		Others: []RenderEndpoint{{NeighborIP: "10.1.1.1", Fields: map[string]any{"vlan": 9}}},
 	}
-	out, err := Render(db, `{{ (index .Others 0).NeighborIP }} {{ index (index .Others 0).Fields "vlan" }}`, "", data)
+	out, err := Render(db, `{{ .Others[0].NeighborIP }} {{ .Others[0].Fields.vlan }}`, "", data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(out, " ")
 	if !strings.Contains(joined, "10.1.1.1") || !strings.Contains(joined, "9") {
 		t.Errorf("got %q", joined)
+	}
+}
+
+func TestRenderIncludeMacro(t *testing.T) {
+	db := newTestDB(t)
+	mustCreate(t, db, &models.ConfigMacro{Name: "eline-defaults", Body: "mtu {{ .Vars.mtu }}"})
+	out, err := Render(db, `before {{ include "eline-defaults" }} after`, "", BaselineRenderData{Vars: map[string]any{"mtu": 9100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(out, " ")
+	if !strings.Contains(got, "before") || !strings.Contains(got, "mtu 9100") || !strings.Contains(got, "after") {
+		t.Fatalf("got %q", got)
 	}
 }
 

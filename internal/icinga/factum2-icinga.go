@@ -10,10 +10,10 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/template"
 
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/tmpl"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
@@ -101,24 +101,32 @@ func isIgnoredDevice(name, ignoreDevices string) bool {
 // Settings.IcingaHostTemplate and Settings.IcingaDefaultNotification.
 // defaultDomain is Settings.DefaultDomain, used by "fqdn" to qualify
 // bare device names.
-func hostTemplateFuncs(defaultDomain string) template.FuncMap {
-	return template.FuncMap{
+func hostTemplateFuncs(defaultDomain string) map[string]any {
+	return map[string]any{
 		// ip strips the "/prefixlen" suffix from a CIDR address (e.g.
 		// models.Device.PrimaryIPv4, which is stored as "10.0.0.1/24"),
 		// returning just the address.
-		"ip": func(cidr string) string {
+		"ip": tmpl.StringFunc("ip", func(cidr string) string {
 			return strings.Split(cidr, "/")[0]
-		},
+		}),
 		// fqdn appends defaultDomain to name if it has no "." in it
 		// already - icinga2 host object names must be FQDNs, but
 		// factum device names aren't always stored fully qualified.
-		"fqdn": func(name string) string {
+		"fqdn": tmpl.StringFunc("fqdn", func(name string) string {
 			if strings.Contains(name, ".") || defaultDomain == "" {
 				return name
 			}
 			return name + "." + defaultDomain
-		},
+		}),
 	}
+}
+
+func icingaTemplateOpts(name, defaultDomain string) tmpl.Options {
+	return tmpl.Options{Name: name, Funcs: hostTemplateFuncs(defaultDomain)}
+}
+
+func executeIcingaTemplate(name, src string, data any, defaultDomain string) (string, error) {
+	return tmpl.Execute(src, data, icingaTemplateOpts(name, defaultDomain))
 }
 
 // hostTemplateData is what Settings.IcingaHostTemplate is executed with, one
@@ -137,15 +145,13 @@ type hostTemplateData struct {
 // internal/librenms hit the same gap and skipped parent sync for the same
 // reason, see factum2-librenms.go.
 func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter jobevent.Reporter) (bool, error) {
-	funcs := hostTemplateFuncs(fic.IcingaConfig.DefaultDomain)
-	hostTmpl, err := template.New("host").Funcs(funcs).Parse(fic.IcingaConfig.HostTemplate)
-	if err != nil {
+	hostSrc := fic.IcingaConfig.HostTemplate
+	if err := tmpl.Parse(hostSrc, icingaTemplateOpts("host", fic.IcingaConfig.DefaultDomain)); err != nil {
 		return false, fmt.Errorf("parsing icinga host template: %w", err)
 	}
-	var notifyTmpl *template.Template
-	if fic.IcingaConfig.DefaultNotification != "" {
-		notifyTmpl, err = template.New("notify").Funcs(funcs).Parse(fic.IcingaConfig.DefaultNotification)
-		if err != nil {
+	notifySrc := fic.IcingaConfig.DefaultNotification
+	if notifySrc != "" {
+		if err := tmpl.Parse(notifySrc, icingaTemplateOpts("notify", fic.IcingaConfig.DefaultDomain)); err != nil {
 			return false, fmt.Errorf("parsing icinga default notification template: %w", err)
 		}
 	}
@@ -176,13 +182,13 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 		if device.CfAlarmDestination != "" {
 			options = append(options, fmt.Sprintf("  vars.factum_alarm_destination = [ \"%s\" ]", quote(device.CfAlarmDestination)))
 			fic.Users[device.CfAlarmDestination] = true
-		} else if notifyTmpl != nil {
-			var buf bytes.Buffer
-			if err := notifyTmpl.Execute(&buf, hostTemplateData{Device: device}); err != nil {
+		} else if notifySrc != "" {
+			rendered, err := executeIcingaTemplate("notify", notifySrc, hostTemplateData{Device: device}, fic.IcingaConfig.DefaultDomain)
+			if err != nil {
 				f.Close()
 				return false, fmt.Errorf("rendering icinga default notification for %q: %w", device.Name, err)
 			}
-			if line := strings.TrimRight(buf.String(), "\n"); line != "" {
+			if line := strings.TrimRight(rendered, "\n"); line != "" {
 				options = append(options, line)
 			}
 		}
@@ -197,7 +203,12 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 			Device:  device,
 			Options: strings.Join(options, "\n"),
 		}
-		if err := hostTmpl.Execute(f, data); err != nil {
+		rendered, err := executeIcingaTemplate("host", hostSrc, data, fic.IcingaConfig.DefaultDomain)
+		if err != nil {
+			f.Close()
+			return false, fmt.Errorf("rendering icinga host template for %q: %w", device.Name, err)
+		}
+		if _, err := f.WriteString(rendered); err != nil {
 			f.Close()
 			return false, fmt.Errorf("rendering icinga host template for %q: %w", device.Name, err)
 		}
@@ -222,8 +233,8 @@ type userTemplateData struct {
 // writeUsers renders one Icinga User object per email destination collected
 // by writeDevices into IcingaConfig.UsersFile (Settings.IcingaUserTemplate).
 func (fic *FactumIcingaClient) writeUsers(reporter jobevent.Reporter) (bool, error) {
-	userTmpl, err := template.New("user").Parse(fic.IcingaConfig.UserTemplate)
-	if err != nil {
+	userSrc := fic.IcingaConfig.UserTemplate
+	if err := tmpl.Parse(userSrc, icingaTemplateOpts("user", "")); err != nil {
 		return false, fmt.Errorf("parsing icinga user template: %w", err)
 	}
 
@@ -248,7 +259,12 @@ func (fic *FactumIcingaClient) writeUsers(reporter jobevent.Reporter) (bool, err
 			DisplayName: destination,
 			Email:       destination,
 		}
-		if err := userTmpl.Execute(f, data); err != nil {
+		rendered, err := executeIcingaTemplate("user", userSrc, data, "")
+		if err != nil {
+			f.Close()
+			return false, fmt.Errorf("rendering icinga user template for %q: %w", destination, err)
+		}
+		if _, err := f.WriteString(rendered); err != nil {
 			f.Close()
 			return false, fmt.Errorf("rendering icinga user template for %q: %w", destination, err)
 		}

@@ -720,7 +720,7 @@ function toggleFeature(id) {
           />
         </div>
         <p class="text-muted-color text-sm m-0">
-          Each blob is one Go text/template. Update commands are stored but hidden.
+          Each blob is one Jet template. Update commands are stored but hidden.
         </p>
         <div
           v-for="feat in features"
@@ -774,7 +774,7 @@ function toggleFeature(id) {
                 :line-wrapping="false"
                 :autofocus="false"
                 :schema="cliSchema"
-                placeholder="Go text/template. One CLI command per output line."
+                placeholder="Jet template. One CLI command per output line."
                 @update:model-value="(v) => patchFeatureDraft(feat.id, 'add_commands', v)"
                 @apply="saveFeature(feat.id)"
               />
@@ -787,7 +787,7 @@ function toggleFeature(id) {
                 :line-wrapping="false"
                 :autofocus="false"
                 :schema="cliSchema"
-                placeholder="Go text/template. Idempotent teardown."
+                placeholder="Jet template. Idempotent teardown."
                 @update:model-value="(v) => patchFeatureDraft(feat.id, 'remove_commands', v)"
                 @apply="saveFeature(feat.id)"
               />

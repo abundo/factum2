@@ -1,41 +1,41 @@
 interface {{.LocalIface}}
  no switchport
-interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
  description {{.Name}}
  encapsulation vlan
-  client dot1q {{index .Current.Fields "vlan"}}
+  client dot1q {{ .Current.Fields.vlan }}
   exit
 exit
-{{if .Others}}{{$peer := index .Others 0}}{{if $peer.NeighborIP}}
+{{ if len(.Others) }}{{ peer := .Others[0] }}{{ if peer.NeighborIP }}
 mpls ldp
  pseudowires
   pseudowire {{.Name}}
-   neighbor {{$peer.NeighborIP}}
+   neighbor {{ peer.NeighborIP }}
    pseudowire-id {{.ServiceNumericID}}
-   mtu {{with index .Vars "mtu"}}{{.}}{{else}}{{with index .Fields "mtu"}}{{.}}{{else}}9100{{end}}{{end}}
+   mtu {{ .Vars.mtu ? .Vars.mtu : (.Fields.mtu ? .Fields.mtu : 9100) }}
    control-word
   exit
  exit
 exit
 patch panel
  patch {{.Name}}
-  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 1 interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
   connector 2 pseudowire ldp {{.Name}}
  exit
 exit
-{{else}}
-interface {{$peer.LocalIface}}
+{{ else }}
+interface {{ peer.LocalIface }}
  no switchport
-interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+interface {{ peer.LocalIface }}.{{ peer.Fields.vlan }}
  description {{.Name}}
  encapsulation vlan
-  client dot1q {{index $peer.Fields "vlan"}}
+  client dot1q {{ peer.Fields.vlan }}
   exit
 exit
 patch panel
  patch {{.Name}}
-  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
-  connector 2 interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+  connector 1 interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
+  connector 2 interface {{ peer.LocalIface }}.{{ peer.Fields.vlan }}
  exit
 exit
-{{end}}{{end}}
+{{ end }}{{ end }}

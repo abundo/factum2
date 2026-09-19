@@ -471,9 +471,9 @@ There is no containerlab image.
   VRP, needs no stub method).
 - **`eline_template.go`** - `renderELINETemplate` /
   `renderELINETemplateDefine`, shared by every platform's ELINE file to
-  turn a `text/template` (e.g. `templates/eos_eline.tmpl`) plus intent
+  turn a Jet template (e.g. `templates/eos_eline.tmpl`) plus intent
   data into a one-command-per-line slice. Platform templates own both
-  cleanup (`{{define "cleanup"}}`) and desired-state CLI so re-provision
+  cleanup (`{{block cleanup()}}`) and desired-state CLI so re-provision
   tear-down and full remove stay in one editable place.
 - **`models.go`** - `DeviceConfig` and friends (`Interface`, `VLAN`, `VRF`,
   `ELINE`, `ELAN`, `L3VPN`, `Neighbor`), the shape every driver's

@@ -114,7 +114,7 @@ of the type.
    objects** (`.Vars`). Prefix pools belong on **resource** nodes.
 6. **Connection types.** Optional named choices with images. One pick per
    instance (`.ConnectionType` is the name string). Same CLI object for every
-   choice; branch with `{{if eq .ConnectionType "nni-vlan"}}`.
+   choice; branch with `{{ if .ConnectionType == "nni-vlan" }}`.
 7. **Platforms.** Each NOS needs its own CLI object. `sros-md` falls back to
    `sros`. Huawei `vrp` applies CLI sessions like EOS / IOS-XR / SR OS.
 
@@ -190,7 +190,7 @@ stays on config-variable constraints). Nesting depth ≤ 8.
 | `required` | Enforced on write (`ValidateServiceFields` / `ValidateEndpoints`). Empty interface fields still inherit a same-name service value at **render/push** |
 | `description` | Operator hint |
 | `min` / `max` | Inclusive. **int**: no bound if nil. **vlan**: default 1–4094. **list**: length bounds |
-| `unit` | int only; templates see `(index .FieldMeta "bandwidth_mbps").Unit` — not stored in the value |
+| `unit` | int only; templates see `.FieldMeta.bandwidth_mbps.Unit` — not stored in the value |
 | `bool_true_label` / `bool_false_label` | Display; empty → Yes / No |
 | `enum` | `{label, value}[]`; required and unique `value`s when `type=enum` |
 | `items` | List element schema (`type=list` only; `items.type` must not be `list`) |
@@ -337,7 +337,7 @@ path:
 
 **GUI:** Config tree → `_catalog` → `cli` → type folder → **Add CLI object**.
 Set **Service type** (empty = baseline, not translation). Add features; each
-**add** / **remove** blob is one Go `text/template`. The update editor is
+**add** / **remove** blob is one Jet template. The update editor is
 hidden in v1 (missing update ⇒ remove then add).
 
 **API:** `POST /api/config/scopes` then `POST /api/config/scopes/:id/features`
@@ -368,15 +368,18 @@ Missing translator → preview/push error `no CLI object for <Name>/<platform>`.
 
 ### Template language
 
-Each feature blob is parsed with `missingkey=error`. Guard optional data with
-`{{if}}`. Output is split on newlines; blank lines are dropped.
+Each feature blob is a [Jet](https://github.com/CloudyKit/jet) template
+(`internal/tmpl`, HTML escaping off). Missing struct fields error; missing
+map keys render empty — guard with `{{ if }}` or `isset`. Output is split on
+newlines; blank lines are dropped. C-like expressions: `.Others[0].NeighborIP`,
+`.Current.Fields.vlan`, `.X == .Y`, ternary `.Vars.mtu ? .Vars.mtu : 9100`.
 
 | Func | Use |
 | ---- | --- |
-| `join` | `strings.Join` |
-| `include` | `{{include "macro-name"}}` — `ConfigMacro`, nested at most 8 |
-| `eq` / `ne` | Equality via `fmt.Sprint` |
-| `sdpid` | `{{ sdpid (index .Others 0).NeighborIP }}` — SR OS SDP from neighbor last octet. Errors on empty/non-IPv4 |
+| `join` | `{{ join(",", list) }}` |
+| `include` | `{{ include "macro-name" }}` — `ConfigMacro`, nested at most 8 |
+| `eq` / `ne` | `eq(a, b)` via `fmt.Sprint`; prefer `==` / `!=` |
+| `sdpid` | `{{ sdpid(.Others[0].NeighborIP) }}` — SR OS SDP from neighbor last octet. Errors on empty/non-IPv4 |
 | `macColon` / `macHyphen` / `macCisco` | MAC display forms |
 
 **Cleanup contract** (generic push, several endpoints on one device):
@@ -412,25 +415,25 @@ There is no `.Remote`, `.LocalVLAN`, `.PeerLocal*`, `.SDPID` field, or
 
 `NeighborIP` is the peer device loopback **only when that peer’s device ≠
 current device**. Same-device peers leave it empty — use
-`(index .Others 0).LocalIface` and `index (index .Others 0).Fields "vlan"`.
+`.Others[0].LocalIface` and `.Others[0].Fields.vlan`.
 Do not call `sdpid` on an empty NeighborIP.
 
-**Peer access** (`.Others0` is not valid `text/template`):
+**Peer access:**
 
 ```
-{{ (index .Others 0).NeighborIP }}
-{{ index .Current.Fields "vlan" }}
+{{ .Others[0].NeighborIP }}
+{{ .Current.Fields.vlan }}
 {{ range .Interfaces }}{{ .LocalIface }}{{ end }}
-{{ (index .FieldMeta "bandwidth_mbps").Unit }}
+{{ .FieldMeta.bandwidth_mbps.Unit }}
 ```
 
-`.Vars` is a map: `{{index .Vars "mtu"}}` (not `.Vars.mtu`).
+`.Vars` is a map: `{{ .Vars.mtu }}` or `{{ .Vars["mtu"] }}`.
 
 Baseline CLI objects see `.Name`, `.Device`, `.Vars` (and `.Interface` /
 `.LocalIface` when parented under an interface). They do **not** see
 service endpoints.
 
-VLAN is **not** promoted to `.LocalVLAN`. Use `index .Current.Fields "vlan"`.
+VLAN is **not** promoted to `.LocalVLAN`. Use `.Current.Fields.vlan`.
 
 ### Example: EOS add blob (sketch)
 
@@ -445,10 +448,10 @@ Add:
 ```
 interface {{.LocalIface}}
 no switchport
-interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
 description {{.Description}}
 encapsulation vlan
-client dot1q {{index .Current.Fields "vlan"}}
+client dot1q {{ .Current.Fields.vlan }}
 exit
 exit
 ```
@@ -456,7 +459,7 @@ exit
 Point-to-point neighbor:
 
 ```
-neighbor {{ (index .Others 0).NeighborIP }}
+neighbor {{ .Others[0].NeighborIP }}
 ```
 
 ---
@@ -535,9 +538,9 @@ attach-only; Detach never deletes the DCIM row.
 
 | Data | Lives on | Template | When to use |
 | ---- | -------- | -------- | ----------- |
-| Config variable | Parameter object | `index .Vars "name"` | Inherited (global → site → device → interface) |
+| Config variable | Parameter object | `.Vars.name` | Inherited (global → site → device → interface) |
 | Service field | `Service.Fields` / definition `schema` | `.Fields.name` | One value for the instance |
-| Interface field | `ServiceEndpoint.Fields` / `interfaces.fields` | `index .Current.Fields "vlan"` (filled from same-name service field if empty) | Varies per UNI |
+| Interface field | `ServiceEndpoint.Fields` / `interfaces.fields` | `.Current.Fields.vlan` (filled from same-name service field if empty) | Varies per UNI |
 | Connection type | `services.connection_type_id` | `.ConnectionType` | One choice per instance |
 | Prefix pool | `kind=resource` CIDR list | value already in `.Fields` / `.Current.Fields` after Allocate | Named pool on the UNI’s ancestor chain |
 | Inventory | Device / interface row | `.Device` / `.Interface` / `.LocalIface` | Already in DCIM |

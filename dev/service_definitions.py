@@ -262,7 +262,11 @@ def _ensure_eline_cli(client: FactumClient, type_id: int) -> None:
             body = (apply_feat or {}).get("add_commands") or ""
             stub = plat == "eos" and "pseudowire ldp" not in body
             empty = not body.strip()
-            if apply_feat and (empty or stub):
+            stale = any(
+                token in body
+                for token in ('index .Current.Fields', 'index .Others', '$peer', '{{if .Others}}')
+            )
+            if apply_feat and (empty or stub or stale):
                 client.put(f"/api/config/features/{apply_feat['id']}", _feature_body(add, remove))
                 log(f"Updated ELINE CLI features for {plat}")
                 continue

@@ -36,13 +36,13 @@ const icingaDeviceFunctions = [
   {
     name: 'ip',
     args: 'cidr',
-    insert: '{{ ip .Device.PrimaryIPv4 }}',
+    insert: '{{ ip(.Device.PrimaryIPv4) }}',
     description: 'Strip /prefixlen from a CIDR address (PrimaryIPv4 / PrimaryIPv6)',
   },
   {
     name: 'fqdn',
     args: 'name',
-    insert: '{{ fqdn .Device.Name }}',
+    insert: '{{ fqdn(.Device.Name) }}',
     description:
       'Append Settings.DefaultDomain if name has no dot; Icinga host objects must be FQDNs',
   },
@@ -50,7 +50,7 @@ const icingaDeviceFunctions = [
 
 export const icingaHostTemplateSchema = {
   notes:
-    'Rendered once per Icinga-monitored device that is enabled, has a primary IPv4, and is not on the ignore list. Output is Icinga 2 DSL. Names are Go struct fields (PascalCase), not JSON keys.',
+    'Rendered once per Icinga-monitored device that is enabled, has a primary IPv4, and is not on the ignore list. Output is Icinga 2 DSL (Jet template, no HTML escaping). Names are Go struct fields (PascalCase), not JSON keys.',
   variables: [
     {
       name: '.Device',
@@ -70,7 +70,7 @@ export const icingaHostTemplateSchema = {
 
 export const icingaDefaultNotificationSchema = {
   notes:
-    'Rendered for each Icinga-monitored device that has no alarm destination. Output is Icinga 2 DSL lines inserted into the host object via .Options (typically vars.pe_*). Literal lines with no {{ }} still work. Names are Go struct fields (PascalCase), not JSON keys.',
+    'Rendered for each Icinga-monitored device that has no alarm destination. Output is Icinga 2 DSL lines inserted into the host object via .Options (typically vars.pe_*). Literal lines with no {{ }} still work. Jet template. Names are Go struct fields (PascalCase), not JSON keys.',
   variables: [
     {
       name: '.Device',
@@ -99,7 +99,7 @@ export const icingaUserTemplateSchema = {
 
 export const icingaDependencyTemplateSchema = {
   notes:
-    'Stored as a Go text/template, but Icinga sync does not currently render it (devices have no parent list to build dependencies from).',
+    'Stored as a Jet template, but Icinga sync does not currently render it (devices have no parent list to build dependencies from).',
   variables: [],
   functions: [],
 }
@@ -123,9 +123,9 @@ const cfgmgmtDeviceVars = [
 const cfgmgmtFunctions = [
   {
     name: 'join',
-    args: 'sep list',
-    insert: '{{ join "," .Interface.Addresses }}',
-    description: 'Join strings (strings.Join)',
+    args: 'sep, list',
+    insert: '{{ join(",", .Interface.Addresses) }}',
+    description: 'Join strings with a separator',
   },
   {
     name: 'include',
@@ -135,38 +135,38 @@ const cfgmgmtFunctions = [
   },
   {
     name: 'eq',
-    args: 'a b',
-    insert: '{{ if eq .X .Y }}{{ end }}',
-    description: 'Equality via fmt.Sprint, so 1 and "1" compare equal',
+    args: 'a, b',
+    insert: '{{ if eq(.X, .Y) }}{{ end }}',
+    description: 'Equality via fmt.Sprint, so 1 and "1" compare equal. Prefer .X == .Y.',
   },
   {
     name: 'ne',
-    args: 'a b',
-    insert: '{{ if ne .X .Y }}{{ end }}',
-    description: 'Inequality via fmt.Sprint',
+    args: 'a, b',
+    insert: '{{ if ne(.X, .Y) }}{{ end }}',
+    description: 'Inequality via fmt.Sprint. Prefer .X != .Y.',
   },
   {
     name: 'sdpid',
     args: 'neighborIP',
-    insert: '{{ sdpid (index .Others 0).NeighborIP }}',
+    insert: '{{ sdpid(.Others[0].NeighborIP) }}',
     description: 'SR OS SDP id from a neighbor IPv4 last octet. Errors on empty/non-IPv4.',
   },
   {
     name: 'macColon',
     args: 'mac',
-    insert: '{{ macColon . }}',
+    insert: '{{ macColon(.) }}',
     description: 'Format a MAC as aa:bb:cc:dd:ee:ff',
   },
   {
     name: 'macHyphen',
     args: 'mac',
-    insert: '{{ macHyphen . }}',
+    insert: '{{ macHyphen(.) }}',
     description: 'Format a MAC as aa-bb-cc-dd-ee-ff',
   },
   {
     name: 'macCisco',
     args: 'mac',
-    insert: '{{ macCisco . }}',
+    insert: '{{ macCisco(.) }}',
     description: 'Format a MAC as aabb.ccdd.eeff',
   },
 ]
@@ -174,13 +174,13 @@ const cfgmgmtFunctions = [
 const cfgmgmtVarsNote = {
   name: '.Vars',
   type: 'map',
-  insert: '{{ index .Vars "name" }}',
-  description: 'Resolved config variables. Use {{index .Vars "name"}}, not .Vars.name.',
+  insert: '{{ .Vars.name }}',
+  description: 'Resolved config variables. Use .Vars.name or .Vars["name"].',
 }
 
 export const cfgmgmtPackSchema = {
   notes:
-    'CLI object feature blob, rendered per endpoint. One CLI command per line (blank lines dropped). missingkey=error — guard optional fields with {{if}}. .Vars is a map: {{index .Vars "mtu"}}. Peers are .Others (use {{index .Others 0}}, not .Others0). Same-device peers have empty NeighborIP. Teardown goes in the feature remove blob (or {{define "cleanup"}} inside add).',
+    'CLI object feature blob, rendered per endpoint. One CLI command per line (blank lines dropped). Missing struct fields error; missing map keys are empty — guard with {{ if }} or isset. Peers are .Others[0]. Same-device peers have empty NeighborIP. Teardown goes in the feature remove blob (or {{ block cleanup() }} inside add).',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Service.ServiceID (e.g. CN00012)' },
@@ -207,7 +207,7 @@ export const cfgmgmtPackSchema = {
     {
       name: '.FieldMeta',
       type: 'map',
-      insert: '{{ (index .FieldMeta "bandwidth_mbps").Unit }}',
+      insert: '{{ .FieldMeta.bandwidth_mbps.Unit }}',
       description: 'Definition metadata by field name (Name, Type, Unit, Description).',
     },
     cfgmgmtVarsNote,
@@ -222,12 +222,13 @@ export const cfgmgmtPackSchema = {
     {
       name: '.Current',
       type: 'RenderEndpoint',
-      description: 'This termination (Device, Interface, LocalIface, Fields, Commercial, NeighborIP)',
+      description:
+        'This termination (Device, Interface, LocalIface, Fields, Commercial, NeighborIP)',
     },
     {
       name: '.Current.Fields',
       type: 'map',
-      insert: '{{ index .Current.Fields "vlan" }}',
+      insert: '{{ .Current.Fields.vlan }}',
       description: "This termination's fields after same-name service defaults are filled",
     },
     {
@@ -239,7 +240,7 @@ export const cfgmgmtPackSchema = {
     {
       name: '.Others',
       type: '[]RenderEndpoint',
-      insert: '{{ (index .Others 0).NeighborIP }}',
+      insert: '{{ .Others[0].NeighborIP }}',
       description:
         'Interfaces without Current. NeighborIP is the peer loopback when the peer device differs; empty for same-device peers.',
     },
@@ -248,14 +249,14 @@ export const cfgmgmtPackSchema = {
 
 export const cfgmgmtMacroSchema = {
   notes:
-    'Inserted with {{include "name"}} from a CLI feature. Same data as the caller (service-translation CLI objects pass GenericRenderData; baseline CLI objects pass .Name / .Device / .Vars). Nested at most 8 deep.',
+    'Inserted with {{ include "name" }} from a CLI feature. Same data as the caller (service-translation CLI objects pass GenericRenderData; baseline CLI objects pass .Name / .Device / .Vars). Nested at most 8 deep.',
   functions: cfgmgmtFunctions,
   variables: cfgmgmtPackSchema.variables,
 }
 
 export const cfgmgmtBaselineSchema = {
   notes:
-    'Golden/baseline CLI object for a device. Rendered with .Name, .Device, and .Vars. Interface-parented objects also see .Interface and .LocalIface. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{index .Vars "mtu"}}, not .Vars.mtu.',
+    'Golden/baseline CLI object for a device. Rendered with .Name, .Device, and .Vars. Interface-parented objects also see .Interface and .LocalIface. Does not see service endpoints. One CLI command per line (blank lines dropped). .Vars is a map: {{ .Vars.mtu }}.',
   functions: cfgmgmtFunctions,
   variables: [
     { name: '.Name', type: 'string', description: 'Device name' },
@@ -271,7 +272,11 @@ export const cfgmgmtBaselineSchema = {
       type: 'string',
       description: 'Interface name (empty at device/folder)',
     },
-    { name: '.LocalIface', type: 'string', description: 'Interface.Name when parent is an interface' },
+    {
+      name: '.LocalIface',
+      type: 'string',
+      description: 'Interface.Name when parent is an interface',
+    },
     cfgmgmtVarsNote,
   ],
 }
@@ -297,9 +302,9 @@ export function withCfgmgmtContext(
   for (const variable of variables) {
     if (!variable?.name) continue
     vars.push({
-      name: `index .Vars ${JSON.stringify(variable.name)}`,
+      name: `.Vars.${variable.name}`,
       type: variable.type || '',
-      insert: `{{ index .Vars ${JSON.stringify(variable.name)} }}`,
+      insert: `{{ .Vars[${JSON.stringify(variable.name)}] }}`,
       description: variable.description || `Config variable ${variable.name}`,
     })
   }
@@ -318,18 +323,21 @@ export function withCfgmgmtContext(
     vars.push({
       name: `.Current.Fields.${field.name}`,
       type: field.type || '',
-      insert: `{{ index .Current.Fields ${JSON.stringify(field.name)} }}`,
+      insert: `{{ .Current.Fields[${JSON.stringify(field.name)}] }}`,
       description: field.description || field.name,
     })
   }
   const seenMeta = new Set()
-  for (const field of [...(serviceType?.schema ?? []), ...(serviceType?.interfaces?.fields ?? [])]) {
+  for (const field of [
+    ...(serviceType?.schema ?? []),
+    ...(serviceType?.interfaces?.fields ?? []),
+  ]) {
     if (!field?.name || seenMeta.has(field.name)) continue
     seenMeta.add(field.name)
     vars.push({
       name: `.FieldMeta.${field.name}`,
       type: 'FieldMeta',
-      insert: `{{ (index .FieldMeta ${JSON.stringify(field.name)}).Unit }}`,
+      insert: `{{ .FieldMeta[${JSON.stringify(field.name)}].Unit }}`,
       description: field.unit
         ? `Definition metadata for ${field.name} (unit ${field.unit})`
         : `Definition metadata for ${field.name}`,

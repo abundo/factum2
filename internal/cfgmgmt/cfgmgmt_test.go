@@ -91,9 +91,9 @@ func mustELANType(t *testing.T, db *gorm.DB) *models.ServiceType {
 	return &st
 }
 
-const genericELINEAdd = `interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
-{{range .Others}}{{if .NeighborIP}}neighbor {{.NeighborIP}}
-{{end}}{{end}}`
+const genericELINEAdd = `interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
+{{ range .Others }}{{ if .NeighborIP }}neighbor {{.NeighborIP}}
+{{ end }}{{ end }}`
 
 const genericELINERemove = `no interface {{.LocalIface}}`
 
@@ -792,7 +792,7 @@ func TestRenderDeviceIncludesGlobalCLI(t *testing.T) {
 	}
 	mustCreate(t, db, &models.ConfigCLIFeature{
 		ScopeID: cli.ID, Name: "body",
-		AddCommands: "banner motd {{.Name}} {{index .Vars \"color\"}}",
+		AddCommands: "banner motd {{.Name}} {{ .Vars.color }}",
 	})
 
 	out, err := RenderDevice(db, dev.ID)
@@ -1871,7 +1871,7 @@ func TestWrapEmptyContext(t *testing.T) {
 	db := newTestDB(t)
 	feat := models.ConfigCLIFeature{
 		RemoveCommands: "no mtu",
-		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+		AddCommands:    `mtu {{ .Vars.mtu }}`,
 	}
 	data := BaselineRenderData{Vars: map[string]any{"mtu": 9100}}
 	got, err := RenderCLIFeature(db, nil, &feat, data)
@@ -1901,7 +1901,7 @@ func TestWrapEnterRemoveAtRootFalse(t *testing.T) {
 	}
 	feat := models.ConfigCLIFeature{
 		RemoveCommands: "no mtu",
-		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+		AddCommands:    `mtu {{ .Vars.mtu }}`,
 	}
 	data := BaselineRenderData{LocalIface: "Ethernet1", Vars: map[string]any{"mtu": 9100}}
 	got, err := RenderCLIFeature(db, ctx, &feat, data)
@@ -1923,7 +1923,7 @@ func TestWrapEnterRemoveAtRootTrue(t *testing.T) {
 	}
 	feat := models.ConfigCLIFeature{
 		RemoveCommands: "no mtu",
-		AddCommands:    `mtu {{index .Vars "mtu"}}`,
+		AddCommands:    `mtu {{ .Vars.mtu }}`,
 		RemoveAtRoot:   true,
 	}
 	data := BaselineRenderData{LocalIface: "Ethernet1", Vars: map[string]any{"mtu": 9100}}
@@ -2233,6 +2233,11 @@ func TestExtractDefineBodyNestedRange(t *testing.T) {
 	want := "\nbefore\n{{range .StaleSubinterfaces}}\nno interface {{.Iface}}.{{.VLAN}}\n{{end}}\nafter\n"
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
+	}
+	jet := "{{block cleanup()}}\nbefore\n{{range .StaleSubinterfaces}}\nno interface {{.Iface}}.{{.VLAN}}\n{{end}}\nafter\n{{end}}\nbody"
+	got = extractDefineBody(jet, "cleanup")
+	if got != want {
+		t.Errorf("jet block got %q want %q", got, want)
 	}
 }
 

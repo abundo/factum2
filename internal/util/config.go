@@ -52,14 +52,14 @@ type ConfigIcinga struct {
 	// IgnoreDevices is a newline-separated list of device names to skip
 	// entirely (Settings.IcingaIgnoreDevices).
 	IgnoreDevices string
-	// DefaultNotification is Go text/template source executed with
+	// DefaultNotification is Jet template source executed with
 	// .Device for a host that has no CfAlarmDestination
 	// (Settings.IcingaDefaultNotification). Literal Icinga lines with no
 	// {{ }} still render unchanged. The result is inserted into the host
 	// object via hostTemplateData.Options.
 	DefaultNotification string
 
-	// HostTemplate/DependencyTemplate/UserTemplate are Go text/template
+	// HostTemplate/DependencyTemplate/UserTemplate are Jet templates
 	// source, executed by internal/icinga.FactumIcingaClient - see that
 	// package for the data each is executed with.
 	HostTemplate       string

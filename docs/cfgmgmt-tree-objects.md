@@ -13,7 +13,7 @@
 
 This document is the **tree architecture**: polymorphic `config_scopes`, parameter / CLI / service objects, canonical node + virtual `service_ref`, move/detach, feature wrap policy. It is not the product how-to.
 
-**Superseded (do not implement from the historical sections below):** `cfgmgmt.Seed` does **not** insert service types or translation CLI. Definitions are Catalog `ServiceType` rows with a form-built `Schema`, homogeneous `Interfaces` (min/max, no named roles), optional connection types, and optional NetBox mapping — see [cfgmgmt-service-design.md](cfgmgmt-service-design.md). Templates use `.Interfaces` / `.Others` / `.Current.Fields` / `.ConnectionType` / `.FieldMeta` (`index .Others 0`, not `.Remote`). Goose `00004_service_definitions.sql` wiped types, translation CLI, and all `services` rows once; Seed never repeats that wipe.
+**Superseded (do not implement from the historical sections below):** `cfgmgmt.Seed` does **not** insert service types or translation CLI. Definitions are Catalog `ServiceType` rows with a form-built `Schema`, homogeneous `Interfaces` (min/max, no named roles), optional connection types, and optional NetBox mapping — see [cfgmgmt-service-design.md](cfgmgmt-service-design.md). Templates use `.Interfaces` / `.Others` / `.Current.Fields` / `.ConnectionType` / `.FieldMeta` (`.Others[0]`, not `.Remote`). Goose `00004_service_definitions.sql` wiped types, translation CLI, and all `services` rows once; Seed never repeats that wipe.
 
 The tree is folders, attached devices (and auto-managed interfaces), **parameter objects**, **resource objects** (named CIDR lists), **CLI objects**, and **service objects**. Vendor-agnostic instance data lives on `models.Service` + `service_endpoints`; per-platform CLI objects translate it for `CLISessionApplier.ApplyCLISession` (`payload_kind=cli` only).
 
@@ -82,7 +82,7 @@ The Config page tabs are Tree / Matrix / Variables / Service types / Platform pa
 
 2. **Parameter objects replace assignments-on-arbitrary-scopes — after a dual-read/write release.** `config_variable_defs` stay as the type catalog. Inheritance: a parameter object applies to its **parent and the parent's descendants** (closest ancestor wins; at one parent, higher `sort_order` wins). Until the MOVE PR, Resolve **prefers** parameter-child assignments, then falls back to an assignment on the walked scope itself (today’s `resolveDefAt`). PUT and DELETE on the folder **or** the reserved `parameters` child dual-write/dual-delete **both** rows. Rationale: COPY-only (child write, original stale) would lose edits on binary rollback; child-only delete would resurrect the original on GET.
 
-3. **CLI objects replace PlatformPack and ConfigTemplate.** One object per platform (and, for service translation, per service type). Features are rows with add / update / remove **command blobs**. Each blob is **one** Go `text/template`, then `splitCLI` on the output — same as `cfgmgmt.Render` today. `{{if}}` / `{{range}}` / `{{define}}` are legal inside a blob. Whole-file packs as the operator’s composition unit go away; `text/template` **stays**, same FuncMap (`join`, `include`, `eq`, `ne`) and `missingkey=error`. Rationale: seeded ELINE files are not line-independent; per-line execute would break golden CLI.
+3. **CLI objects replace PlatformPack and ConfigTemplate.** One object per platform (and, for service translation, per service type). Features are rows with add / update / remove **command blobs**. Each blob is **one** Jet template, then `splitCLI` on the output — same as `cfgmgmt.Render` today. `{{ if }}` / `{{ range }}` / `{{ block }}` are legal inside a blob. Whole-file packs as the operator’s composition unit go away. Funcs: `join`, `include`, `eq`/`ne`, plus C-like expressions (`.Others[0]`, `==`). Rationale: seeded ELINE files are not line-independent; per-line execute would break golden CLI.
 
 4. **Service objects are views onto `models.Service` + `service_endpoints`, not a second inventory.** `ServiceType` remains the catalog (schema, homogeneous interfaces, `sync_source`, `netbox_type`) — **not** a tree node and **not** a built-in product. A tree service node has `service_id` → `services.id`. Lime rows can be attached and have type/endpoints edited; company/delivery points/product/comment stay Lime-owned. Rationale: constraint 6 — do not fork two "service" concepts.
 
@@ -311,7 +311,7 @@ Same variable twice:
 
 This is today's closest-wins rule, with "assignment on scope S" becoming "assignment on a parameter child of S" after MOVE. During dual-read Resolve and GET both **prefer the child**; originals exist so a rolled-back binary still works.
 
-Required vars with no value: `ResolveAll` still returns `Err`; `ResolveMap` / render still **skip** that key rather than aborting the whole device. Preview shows the error on that var. A **service push** that templates `{{index .Vars "foo"}}` fails that device if `foo` is missing (`missingkey=error` does not apply to map index — same as today). If a command line uses a required field from `.Fields` that is absent, render of that feature fails.
+Required vars with no value: `ResolveAll` still returns `Err`; `ResolveMap` / render still **skip** that key rather than aborting the whole device. Preview shows the error on that var. A **service push** that templates `{{ .Vars.foo }}` prints empty if `foo` is missing (Jet map keys do not error). If a command line uses a required field from a **struct** that is absent, render of that feature fails.
 
 Parameter children of a **service** node are merged into `.Vars` for that service's translation only (service object overlays device-resolved vars; service wins on key conflict). They do not leak to other services on the same device.
 
@@ -352,7 +352,7 @@ type ConfigCLIFeature struct {
 }
 ```
 
-**Execution unit:** each of `AddCommands` / `UpdateCommands` / `RemoveCommands` is **one** Go `text/template` parsed and executed as a whole (same as `cfgmgmt.Render` today: parse body, execute, then `splitCLI`). “One command per line” is an **output** convention after render, not a parse boundary. `{{if}}`, `{{range}}`, `{{define}}`, and `{{template}}` are legal inside a blob. Migrated ELINE is a **single** feature whose add blob is the current apply file (cleanup invoke stripped) and whose remove blob is the cleanup define — that is how golden output stays byte-equivalent.
+**Execution unit:** each of `AddCommands` / `UpdateCommands` / `RemoveCommands` is **one** Jet template parsed and executed as a whole (same as `cfgmgmt.Render` today: parse body, execute, then `splitCLI`). “One command per line” is an **output** convention after render, not a parse boundary. `{{ if }}`, `{{ range }}`, and `{{ block }}` are legal inside a blob. Migrated ELINE is a **single** feature whose add blob is the current apply file (cleanup invoke stripped) and whose remove blob is the cleanup block — that is how golden output stays byte-equivalent.
 
 v1 GUI **hides** the update editor (column stored, not shown). A visible field that is ignored would be treated as live. v2 running-config reconcile can show it.
 
@@ -402,7 +402,7 @@ Wrap policy (PR 4 fixtures for both cases):
 <context exit>
 ```
 
-  Example — interface MTU (`pattern` = `interface <name>`, `enter` = `interface {{.LocalIface}}`, remove = `no mtu`, add = `mtu {{index .Vars "mtu"}}`):
+  Example — interface MTU (`pattern` = `interface <name>`, `enter` = `interface {{.LocalIface}}`, remove = `no mtu`, add = `mtu {{ .Vars.mtu }}`):
 
 ```
 interface Ethernet1
@@ -426,12 +426,14 @@ Remove commands must be idempotent if the object is absent (same as today's clea
 
 **v2 (not in this rollout):** parse running-config (or Oxidized) with the compiled context regex; if the feature block is absent → add; if present and differs → update if non-empty else remove+add; if equal → skip.
 
-#### Go `text/template` — stay, shrink, do not replace
+#### Jet templates (CloudyKit)
+
+Operator-facing CLI and Icinga templates use Jet, not Go `text/template`. HTML emails stay on `html/template`.
 
 | Stays | Goes |
 | ----- | ---- |
-| One template execute per command **blob**, then `splitCLI`; `missingkey=error` | Whole-file `ApplyTemplate` as the unit operators edit (replaced by features) |
-| FuncMap: `join`, `include` (macros, max depth 8), `eq`, `ne` | `{{define "cleanup"}}` + `cleanupInvokeRe` strip as the *engine* teardown protocol (cleanup becomes `RemoveCommands`) |
+| One template execute per command **blob**, then `splitCLI` | Whole-file `ApplyTemplate` as the unit operators edit (replaced by features) |
+| Funcs: `join`, `include` (macros, max depth 8), `eq`, `ne`, plus `.Others[0]` / `==` | `{{define "cleanup"}}` + `cleanupInvokeRe` strip as the *engine* teardown protocol (cleanup becomes `RemoveCommands`) |
 | `GenericRenderData` for service translation; `BaselineRenderData` for baseline CLI | Packs tab as a separate editor |
 | `GoTemplateEditor.vue` + `cfgmgmtPackSchema` | — schema notes change from "cleanup define" to "feature remove blob" |
 
@@ -875,7 +877,7 @@ Rollback: column adds are additive (old binary ignores them). **COPY + dual-writ
 
 **Cons:** Cannot express current ELINE packs (conditionals on `.Remote`, ranges over `.StaleSubinterfaces`, macros) without inventing a new language and rewriting seed files. Operators already have `GoTemplateEditor`. NETCONF apply is explicitly out of scope.
 
-**Decision:** Rejected for v1. Shrink composition to **feature blobs**, not a new language. Each blob is still one `text/template`.
+**Decision:** Rejected for v1. Shrink composition to **feature blobs**, not a JSON command language. Each blob is one Jet template.
 
 ### 4. Canonical service stored under one endpoint, shadows on the others
 

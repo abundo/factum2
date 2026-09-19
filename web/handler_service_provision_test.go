@@ -809,7 +809,7 @@ func TestApiServiceDeleteTeardownRendersOthers(t *testing.T) {
 	}
 	feat := models.ConfigCLIFeature{
 		ScopeID: cli.ID, Name: "apply", AddCommands: "add {{.Name}}",
-		RemoveCommands: "remove {{.Name}} {{ (index .Others 0).LocalIface }}",
+		RemoveCommands: "remove {{.Name}} {{ .Others[0].LocalIface }}",
 	}
 	if err := db.Create(&feat).Error; err != nil {
 		t.Fatal(err)

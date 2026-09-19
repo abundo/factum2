@@ -57,7 +57,7 @@ function apply() {
       v-model:open="open"
       :source="draft"
       :title="`Edit ${label}`"
-      description="Go text/template"
+      description="Jet template"
       :ui="{
         content: 'w-[95vw] h-[90vh] sm:max-w-none flex flex-col bg-default',
         body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',

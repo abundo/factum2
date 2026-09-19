@@ -433,14 +433,14 @@ type Settings struct {
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
 	// per line) that factum2-icinga's Update() skips entirely.
 	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`
-	// IcingaDefaultNotification is Go text/template executed with .Device
+	// IcingaDefaultNotification is a Jet template executed with .Device
 	// for a host that has no cf_alarm_destination, e.g.
 	// `  vars.pe_notify_default = true`. Literal Icinga with no {{ }} is
 	// fine. The rendered lines are inserted into the host object (see
 	// internal/icinga/factum2-icinga.go).
 	IcingaDefaultNotification string `gorm:"column:icinga_default_notification;type:text" form:"icinga_default_notification" json:"icinga_default_notification"`
 	// IcingaHostTemplate/IcingaDependencyTemplate/IcingaUserTemplate are
-	// Go text/template (see internal/icinga/factum2-icinga.go for the data
+	// Jet templates (see internal/icinga/factum2-icinga.go for the data
 	// each is executed with).
 	IcingaHostTemplate       string `gorm:"column:icinga_host_template;type:text" form:"icinga_host_template" json:"icinga_host_template"`
 	IcingaDependencyTemplate string `gorm:"column:icinga_dependency_template;type:text" form:"icinga_dependency_template" json:"icinga_dependency_template"`

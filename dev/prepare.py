@@ -55,50 +55,50 @@ HUB_CERT_DNS = (
 SENTINEL = DIR / "data" / "netbox" / "load-demo"
 
 # GenericRenderData bodies for Catalog CLI under _catalog/cli/ELINE/<platform>.
-# Rendered per UNI. No .Remote / .LocalVLAN — VLAN is Current.Fields "vlan",
-# far-end loopback is (index .Others 0).NeighborIP (empty on same-device).
+# Rendered per UNI. No .Remote / .LocalVLAN — VLAN is Current.Fields.vlan,
+# far-end loopback is .Others[0].NeighborIP (empty on same-device).
 ELINE_EOS_ADD = """\
 interface {{.LocalIface}}
  no switchport
-interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
  description {{.Name}}
  encapsulation vlan
-  client dot1q {{index .Current.Fields "vlan"}}
+  client dot1q {{ .Current.Fields.vlan }}
   exit
 exit
-{{if .Others}}{{$peer := index .Others 0}}{{if $peer.NeighborIP}}
+{{ if len(.Others) }}{{ peer := .Others[0] }}{{ if peer.NeighborIP }}
 mpls ldp
  pseudowires
   pseudowire {{.Name}}
-   neighbor {{$peer.NeighborIP}}
+   neighbor {{ peer.NeighborIP }}
    pseudowire-id {{.ServiceNumericID}}
-   mtu {{with index .Vars "mtu"}}{{.}}{{else}}{{with index .Fields "mtu"}}{{.}}{{else}}9100{{end}}{{end}}
+   mtu {{ .Vars.mtu ? .Vars.mtu : (.Fields.mtu ? .Fields.mtu : 9100) }}
    control-word
   exit
  exit
 exit
 patch panel
  patch {{.Name}}
-  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+  connector 1 interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
   connector 2 pseudowire ldp {{.Name}}
  exit
 exit
-{{else}}
-interface {{$peer.LocalIface}}
+{{ else }}
+interface {{ peer.LocalIface }}
  no switchport
-interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+interface {{ peer.LocalIface }}.{{ peer.Fields.vlan }}
  description {{.Name}}
  encapsulation vlan
-  client dot1q {{index $peer.Fields "vlan"}}
+  client dot1q {{ peer.Fields.vlan }}
   exit
 exit
 patch panel
  patch {{.Name}}
-  connector 1 interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
-  connector 2 interface {{$peer.LocalIface}}.{{index $peer.Fields "vlan"}}
+  connector 1 interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
+  connector 2 interface {{ peer.LocalIface }}.{{ peer.Fields.vlan }}
  exit
 exit
-{{end}}{{end}}
+{{ end }}{{ end }}
 """
 
 ELINE_EOS_REMOVE = """\
@@ -110,19 +110,19 @@ exit
 patch panel
  no patch {{.Name}}
  exit
-no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+no interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
 """
 
 # Fallback for ios-xr / sros until those packs are filled in.
 ELINE_ADD = """\
-interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
  description {{.Name}}
-{{range .Others}}{{if .NeighborIP}} neighbor {{.NeighborIP}}
-{{end}}{{end}}
+{{ range .Others }}{{ if .NeighborIP }} neighbor {{.NeighborIP}}
+{{ end }}{{ end }}
 """
 
 ELINE_REMOVE = """\
-no interface {{.LocalIface}}.{{index .Current.Fields "vlan"}}
+no interface {{.LocalIface}}.{{ .Current.Fields.vlan }}
 """
 
 ELINE_ADD_PATH = DIR / "templates" / "eline-add.tmpl"

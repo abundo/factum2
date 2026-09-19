@@ -1,9 +1,7 @@
 package drivers
 
 import (
-	"bytes"
-	"strings"
-	"text/template"
+	"github.com/abundo/factum2/internal/tmpl"
 )
 
 // renderELINETemplate renders the root of an ELINE config template (e.g.
@@ -16,9 +14,10 @@ import (
 // instead, hence the loose type rather than *ELINEIntent specifically.
 //
 // Platform templates own both cleanup and desired-state CLI: the root
-// template typically {{template "cleanup" .}} then the apply body, so a
-// full ApplyELINE is one render. RemoveELINE uses renderELINETemplateDefine
-// with name "cleanup" so tear-down shares the same source of truth.
+// template typically {{block cleanup()}}…{{end}} (Jet invokes the block at
+// the definition site) then the apply body, so a full ApplyELINE is one
+// render. RemoveELINE uses renderELINETemplateDefine with name "cleanup"
+// so tear-down shares the same source of truth.
 func renderELINETemplate(tmplText string, data any) ([]string, error) {
 	return renderELINETemplateDefine(tmplText, "", data)
 }
@@ -29,28 +28,12 @@ func RenderCLITemplate(tmplText string, data any) ([]string, error) {
 }
 
 // renderELINETemplateDefine is like renderELINETemplate but executes the
-// named define (e.g. "cleanup") instead of the root template. An empty
+// named block (e.g. "cleanup") instead of the root template. An empty
 // name executes the root, matching renderELINETemplate.
 func renderELINETemplateDefine(tmplText string, name string, data any) ([]string, error) {
-	tmpl, err := template.New("eline").Parse(tmplText)
+	text, err := tmpl.Execute(tmplText, data, tmpl.Options{Name: "eline", Block: name})
 	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if name == "" {
-		err = tmpl.Execute(&buf, data)
-	} else {
-		err = tmpl.ExecuteTemplate(&buf, name, data)
-	}
-	if err != nil {
-		return nil, err
-	}
-	var cmds []string
-	for _, line := range strings.Split(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			cmds = append(cmds, line)
-		}
-	}
-	return cmds, nil
+	return tmpl.SplitCLI(text), nil
 }

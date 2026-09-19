@@ -29,9 +29,11 @@ const issue = computed(() => findTemplateIssues(model.value))
 const syntaxHelp = `{{ .Field }}
 {{ if .X }} … {{ else }} … {{ end }}
 {{ range .Items }} … {{ end }}
-{{ func arg }}  {{ .X | func }}
+{{ .Others[0].NeighborIP }}
+{{ func(arg) }}  {{ arg | func }}
+{{ .A == .B }}  {{ .Vars.mtu ? .Vars.mtu : 9100 }}
 {{- -}}  trims whitespace
-{{/* comment */}}`
+{* comment *}`
 
 onMounted(async () => {
   const { createGoTemplateEditor } = await import('@/utils/goTemplateEditor')
@@ -81,7 +83,7 @@ function insertItem(item) {
 }
 
 function insertBuiltin(name) {
-  editor?.insert(`{{ ${name} }}`)
+  editor?.insert(`{{ ${name}() }}`)
 }
 </script>
 
@@ -95,7 +97,7 @@ function insertBuiltin(name) {
         :aria-busy="!ready"
       />
       <p v-if="issue" class="mt-2 text-sm text-red-500">{{ issue }}</p>
-      <p v-else class="mt-2 text-xs text-muted">Go text/template. Ctrl+Enter applies.</p>
+      <p v-else class="mt-2 text-xs text-muted">Jet template. Ctrl+Enter applies.</p>
     </div>
 
     <aside

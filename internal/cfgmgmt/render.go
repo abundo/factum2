@@ -1,19 +1,18 @@
 package cfgmgmt
 
 import (
-	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
-	"text/template"
 
+	"github.com/abundo/factum2/internal/tmpl"
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
-var cleanupInvokeRe = regexp.MustCompile(`\{\{-?\s*template\s+"cleanup"\s+[^}]*\}\}`)
+var cleanupInvokeRe = regexp.MustCompile(`\{\{-?\s*(?:template\s+"cleanup"\s+[^}]*|yield\s+cleanup\s*\([^)]*\))\s*-?\}\}`)
 
-var defineStartRe = regexp.MustCompile(`\{\{-?\s*define\s+(?:"([^"]+)"|` + "`([^`]+)`" + `)\s*-?\}\}`)
+var defineStartRe = regexp.MustCompile(`\{\{-?\s*(?:define\s+(?:"([^"]+)"|` + "`([^`]+)`" + `)|block\s+([A-Za-z_][\w]*)\s*\([^)]*\))\s*-?\}\}`)
 
 // extractDefineBody returns the inner source of {{define "name"}}…{{end}},
 // counting nested if/range/with/block/define so a cleanup that contains
@@ -30,6 +29,8 @@ func extractDefineBody(src, name string) string {
 			got = src[loc[2]:loc[3]]
 		} else if loc[4] >= 0 {
 			got = src[loc[4]:loc[5]]
+		} else if loc[6] >= 0 {
+			got = src[loc[6]:loc[7]]
 		}
 		if got == name {
 			start = loc[1]
@@ -94,57 +95,47 @@ func packToCLIBlobs(apply, cleanup string) (add, remove string) {
 	return add, remove
 }
 
-const maxIncludeDepth = 8
-
-// Render executes Go text/template body (or a named define) against data.
-// FuncMap is limited: include, join, eq/ne, sdpid, macColon/macHyphen/macCisco.
-// No file/HTTP/shell. missingkey=error.
+// Render executes a Jet template body (or a named block) against data.
+// Funcs: include, join, eq/ne, sdpid, macColon/macHyphen/macCisco.
+// No file/HTTP/shell. Missing struct fields error; missing map keys are empty.
 func Render(db *gorm.DB, body, define string, data any) ([]string, error) {
-	text, err := executeTemplate(db, body, define, data, 0)
+	text, err := executeTemplate(db, body, define, data)
 	if err != nil {
 		return nil, err
 	}
 	return splitCLI(text), nil
 }
 
-func executeTemplate(db *gorm.DB, body, define string, data any, depth int) (string, error) {
-	if depth > maxIncludeDepth {
-		return "", fmt.Errorf("macro include nested too deeply")
+func executeTemplate(db *gorm.DB, body, define string, data any) (string, error) {
+	macros := map[string]string{}
+	if db != nil {
+		var rows []models.ConfigMacro
+		if err := db.Find(&rows).Error; err != nil {
+			return "", err
+		}
+		for _, m := range rows {
+			macros[m.Name] = m.Body
+		}
 	}
-	funcs := template.FuncMap{
-		"join": strings.Join,
-		"include": func(name string) (string, error) {
-			var m models.ConfigMacro
-			if err := db.Where("name = ?", name).First(&m).Error; err != nil {
-				return "", fmt.Errorf("unknown macro %q", name)
-			}
-			return executeTemplate(db, m.Body, "", data, depth+1)
+	return tmpl.Execute(body, data, tmpl.Options{
+		Name:   "cfg",
+		Block:  define,
+		Macros: macros,
+		Funcs: map[string]any{
+			"sdpid":     tmpl.StringErrFunc("sdpid", sdpidString),
+			"macColon":  tmpl.StringErrFunc("macColon", macColon),
+			"macHyphen": tmpl.StringErrFunc("macHyphen", macHyphen),
+			"macCisco":  tmpl.StringErrFunc("macCisco", macCisco),
 		},
-		"eq":        eqAny,
-		"ne":        func(a, b any) bool { return !eqAny(a, b) },
-		"sdpid":     SDPIDFromNeighbor,
-		"macColon":  macColon,
-		"macHyphen": macHyphen,
-		"macCisco":  macCisco,
-	}
-	tmpl, err := template.New("cfg").Funcs(funcs).Option("missingkey=error").Parse(body)
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	if define == "" {
-		err = tmpl.Execute(&buf, data)
-	} else {
-		err = tmpl.ExecuteTemplate(&buf, define, data)
-	}
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	})
 }
 
-func eqAny(a, b any) bool {
-	return fmt.Sprint(a) == fmt.Sprint(b)
+func sdpidString(neighborIP string) (string, error) {
+	n, err := SDPIDFromNeighbor(neighborIP)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d", n), nil
 }
 
 func macHex(s string) (string, error) {
@@ -176,12 +167,5 @@ func macCisco(s string) (string, error) {
 }
 
 func splitCLI(text string) []string {
-	var cmds []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			cmds = append(cmds, line)
-		}
-	}
-	return cmds
+	return tmpl.SplitCLI(text)
 }

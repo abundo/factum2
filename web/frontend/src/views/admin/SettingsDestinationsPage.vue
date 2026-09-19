@@ -383,7 +383,7 @@ const certKeyTypeItems = [
               v-model="settings.icinga_default_notification"
               label="Default notification"
               :rows="4"
-              placeholder="Go template; inserted into the host object when a device has no alarm destination"
+              placeholder="Jet template; inserted into the host object when a device has no alarm destination"
               :schema="icingaDefaultNotificationSchema"
             />
             <GoTemplateField
@@ -391,7 +391,7 @@ const certKeyTypeItems = [
               v-model="settings.icinga_host_template"
               label="Host template"
               :rows="6"
-              placeholder="Go template, executed with .Device and .Options"
+              placeholder="Jet template, executed with .Device and .Options"
               :schema="icingaHostTemplateSchema"
             />
             <GoTemplateField
@@ -406,7 +406,7 @@ const certKeyTypeItems = [
               v-model="settings.icinga_user_template"
               label="User template"
               :rows="6"
-              placeholder="Go template, executed with .Username, .DisplayName and .Email"
+              placeholder="Jet template, executed with .Username, .DisplayName and .Email"
               :schema="icingaUserTemplateSchema"
             />
           </div>

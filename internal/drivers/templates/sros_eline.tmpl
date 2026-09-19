@@ -1,4 +1,4 @@
-{{/* SR OS MD-CLI commands for this device's local half of an ELINE, in
+{* SR OS MD-CLI commands for this device's local half of an ELINE, in
 MD-CLI's native block-paste form - the same shape "info"/"info inheritance"
 prints and accepts back as input, sent one line at a time over a scripted,
 non-interactive SSH session exactly the way a human pasting it would. See
@@ -23,11 +23,11 @@ would just needlessly duplicate what the group already guarantees.
 here is shared with another service, so a stale line left over from a
 previous apply is always fully handled by that upfront delete - unlike
 .SDPID's tunnel below, which every ELINE service toward the same neighbor
-shares. This template only ever creates/merges it, never deletes it. */}}
-{{define "cleanup"}}
+shares. This template only ever creates/merges it, never deletes it. *}
+{{block cleanup()}}
 delete /configure service epipe "{{.Name}}"
 {{end}}
-{{template "cleanup" .}}
+
 /configure service epipe "{{.Name}}" {
     apply-groups ["eline-defaults"]
     description "{{.Description}}"

@@ -39,7 +39,7 @@ selected folder or device (or the nearest such ancestor).
 ## CLI objects
 
 A CLI object is one platform’s command templates. Each **feature** has an
-add blob and a remove blob (Go `text/template`). v1 always remove-then-add;
+add blob and a remove blob (Jet template). v1 always remove-then-add;
 the update field is hidden.
 
 **Context** (inspector) is optional wrapping, not a free-form regex:

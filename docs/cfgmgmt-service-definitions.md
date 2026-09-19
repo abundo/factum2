@@ -380,7 +380,7 @@ ConnectionTypeID *uint `json:"connection_type_id"`
 
 Must belong to the instance’s definition (`ValidateServiceFields` / `PUT .../type`). Templates: `.ConnectionType` = that row’s `Name` (empty string if none). Images are GUI-only.
 
-Same CLI object for every connection type; operators write `{{if eq .ConnectionType "nni-vlan"}}` in add/remove blobs.
+Same CLI object for every connection type; operators write `{{ if .ConnectionType == "nni-vlan" }}` in add/remove blobs.
 
 ### Commercial vs technical `models.Service`
 
@@ -538,12 +538,12 @@ type RenderCommercial struct {
 **Peer access:** `range .Others` or `range .Interfaces` and skip `.Current`. No `.Remote`. Neighbor IP for a **remote** PE:
 
 ```
-{{ (index .Others 0).NeighborIP }}
+{{ .Others[0].NeighborIP }}
 ```
 
-(`.Others0.NeighborIP` is not valid `text/template`.) Same-device two UNIs (today `fillELINEPeer` set `PeerLocalIface` / `PeerLocalVLAN` and skipped `Remote`): `.Others[0].NeighborIP` is **empty**; use `(index .Others 0).LocalIface` and `index (index .Others 0).Fields "vlan"`. Do not call `sdpid` on an empty NeighborIP (render error) — same-PE ELINE templates should not.
+Same-device two UNIs (today `fillELINEPeer` set `PeerLocalIface` / `PeerLocalVLAN` and skipped `Remote`): `.Others[0].NeighborIP` is **empty**; use `.Others[0].LocalIface` and `.Others[0].Fields.vlan`. Do not call `sdpid` on an empty NeighborIP (render error) — same-PE ELINE templates should not.
 
-**SDPID:** drop `.SDPID`. FuncMap `sdpid` = today’s `SDPIDFromNeighbor`. Template: `{{ sdpid (index .Others 0).NeighborIP }}`.
+**SDPID:** drop `.SDPID`. FuncMap `sdpid` = today’s `SDPIDFromNeighbor`. Template: `{{ sdpid(.Others[0].NeighborIP) }}`.
 
 **MAC helpers** (FuncMap, in addition to `join`, `include`, `eq`, `ne`):
 
@@ -553,9 +553,9 @@ type RenderCommercial struct {
 | `macHyphen` | | `aa-bb-cc-dd-ee-ff` |
 | `macCisco` | | `aabb.ccdd.eeff` |
 
-Keep `missingkey=error`. Do **not** promote `vlan` → `.LocalVLAN`. Templates use `index .Current.Fields "vlan"`.
+Do **not** promote `vlan` → `.LocalVLAN`. Templates use `.Current.Fields.vlan`. Missing struct fields error; missing map keys render empty.
 
-**Unit:** `{{ (index .FieldMeta "bandwidth_mbps").Unit }}` — not interpolated into the stored value.
+**Unit:** `{{ .FieldMeta.bandwidth_mbps.Unit }}` — not interpolated into the stored value.
 
 **Well-known Service columns (list views only):**
 
@@ -1059,7 +1059,7 @@ Each PR is independently reviewable and mergeable. Tests must pass without depen
 - **Title:** docs: service definitions how-to; no built-in products
 - **Files/components:** `docs/cfgmgmt-service-design.md` (rewrite), `docs/cfgmgmt-tree-objects.md` (supersede seed/roles/ELINE GenericData; keep tree/refs), `docs/user/config.md`, `docs/user/services.md`, `AGENTS.md` capacity paragraph
 - **Dependencies:** PRs 1–7 conceptually; can draft after PR 1 and land last
-- **Changes:** Operator how-to with FieldSchema table, same-name defaults, `.Interfaces`/`.Others`/`index .Others 0`, goose wipe warning, resource walk, connection types, unrealize. State import/export and L3VPN as follow-ups.
+- **Changes:** Operator how-to with FieldSchema table, same-name defaults, `.Interfaces`/`.Others`/`.Others[0]`, goose wipe warning, resource walk, connection types, unrealize. State import/export and L3VPN as follow-ups.
 
 ```
 PR1 goose wipe + homogeneous PUT + 410 /eline + rename cascade + stop seed

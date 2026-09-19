@@ -1,9 +1,9 @@
-{{/* Cleanup first: drop this service's p2p xconnect (keyed by .Name ==
+{* Cleanup first: drop this service's p2p xconnect (keyed by .Name ==
 ServiceID) plus any stale subinterfaces a previous apply left behind.
 Assumed benign no-op when name doesn't exist yet. Shared by ApplyELINE
-(root template includes this define) and RemoveELINE (renders "cleanup"
-alone). */}}
-{{define "cleanup"}}
+(root template invokes this block at the definition site) and RemoveELINE
+(renders the cleanup block alone). *}
+{{block cleanup()}}
 l2vpn
   xconnect group default
   no p2p {{.Name}}
@@ -12,7 +12,7 @@ root
 no interface {{.Iface}}.{{.VLAN}}
 {{end}}
 {{end}}
-{{template "cleanup" .}}
+
 interface {{.LocalIface}}.{{.LocalVLAN}} l2transport
   description {{.Description}}
   mtu 9118

@@ -106,7 +106,7 @@ function loadTreeWidth() {
 }
 const treeWidth = ref(loadTreeWidth())
 const treeResizing = ref(false)
-const macroBodyPlaceholder = 'Go text/template. Inserted with {{include "name"}}.'
+const macroBodyPlaceholder = 'Jet template. Inserted with {{ include "name" }}.'
 
 const tabItems = [
   {

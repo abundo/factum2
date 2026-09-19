@@ -6,34 +6,34 @@ export const TEMPLATE_KEYWORDS = [
   'else',
   'end',
   'range',
-  'with',
-  'define',
-  'template',
   'block',
-  'break',
-  'continue',
+  'yield',
+  'include',
+  'import',
+  'extends',
+  'try',
+  'catch',
+  'return',
+  'content',
 ]
 
 export const TEMPLATE_BUILTINS = [
-  'and',
-  'or',
-  'not',
+  'len',
+  'isset',
+  'lower',
+  'upper',
+  'hasPrefix',
+  'hasSuffix',
+  'repeat',
+  'replace',
+  'split',
+  'trimSpace',
+  'dump',
+  'ints',
+  'exec',
   'eq',
   'ne',
-  'lt',
-  'le',
-  'gt',
-  'ge',
-  'index',
-  'slice',
-  'len',
-  'print',
-  'printf',
-  'println',
-  'html',
-  'js',
-  'urlquery',
-  'call',
+  'join',
 ]
 
 const KEYWORD_SET = new Set(TEMPLATE_KEYWORDS)
@@ -61,11 +61,12 @@ function atActionClose(stream) {
 }
 
 export const goTemplateLanguage = StreamLanguage.define({
-  name: 'go-template',
+  name: 'jet-template',
   startState() {
     return {
       inAction: false,
       inComment: false,
+      inJetComment: false,
       actionString: null,
       hostString: false,
     }
@@ -80,7 +81,7 @@ export const goTemplateLanguage = StreamLanguage.define({
     return tokenAction(stream, state)
   },
   languageData: {
-    commentTokens: { block: { open: '{{/*', close: '*/}}' } },
+    commentTokens: { block: { open: '{*', close: '*}' } },
     closeBrackets: { brackets: ['(', '[', '{', "'", '"', '`'] },
   },
   tokenTable: {
@@ -99,6 +100,20 @@ export const goTemplateLanguage = StreamLanguage.define({
 })
 
 function tokenHost(stream, state) {
+  if (state.inJetComment) {
+    if (stream.match('*}')) {
+      state.inJetComment = false
+      return 'action-comment'
+    }
+    stream.next()
+    return 'action-comment'
+  }
+
+  if (stream.match('{*')) {
+    state.inJetComment = true
+    return 'action-comment'
+  }
+
   if (stream.match('{{')) {
     stream.match('-')
     state.inAction = true
@@ -211,7 +226,10 @@ function tokenAction(stream, state) {
     }
     return 'action-func'
   }
-  if (stream.match(/^[|()[\]:=,]/)) {
+  if (stream.match(/^(==|!=|<=|>=|&&|\|\|)/)) {
+    return 'action-operator'
+  }
+  if (stream.match(/^[|+\-*/%<>!?:()[\]=,]/)) {
     return 'action-operator'
   }
 
@@ -224,9 +242,24 @@ export function isInAction(text, pos = text.length) {
   let i = 0
   let inAction = false
   let inComment = false
+  let inJetComment = false
   let actionString = null
   while (i < end) {
+    if (inJetComment) {
+      if (text.startsWith('*}', i)) {
+        inJetComment = false
+        i += 2
+        continue
+      }
+      i += 1
+      continue
+    }
     if (!inAction) {
+      if (text.startsWith('{*', i)) {
+        inJetComment = true
+        i += 2
+        continue
+      }
       if (text.startsWith('{{', i)) {
         inAction = true
         inComment = false
@@ -287,10 +320,27 @@ export function findTemplateIssues(text) {
   let i = 0
   let inAction = false
   let inComment = false
+  let inJetComment = false
   let actionString = null
   let actionStart = -1
+  let jetCommentStart = -1
   while (i < value.length) {
+    if (inJetComment) {
+      if (value.startsWith('*}', i)) {
+        inJetComment = false
+        i += 2
+        continue
+      }
+      i += 1
+      continue
+    }
     if (!inAction) {
+      if (value.startsWith('{*', i)) {
+        inJetComment = true
+        jetCommentStart = i
+        i += 2
+        continue
+      }
       if (value.startsWith('{{', i)) {
         inAction = true
         inComment = false
@@ -344,8 +394,11 @@ export function findTemplateIssues(text) {
     }
     i += 1
   }
+  if (inJetComment) {
+    return `Unclosed {* comment starting at character ${jetCommentStart + 1}`
+  }
   if (inComment) {
-    return 'Unclosed {{/* comment'
+    return 'Unclosed /* comment in {{ ... }}'
   }
   if (actionString) {
     return `Unclosed ${actionString} string in {{ ... }}`
