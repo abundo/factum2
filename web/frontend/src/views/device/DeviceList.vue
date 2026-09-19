@@ -42,11 +42,13 @@ import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 import { expandInterfaceNames } from '@/utils/interfaceNames'
 
 const toast = useToast()
 const route = useRoute()
 const authStore = useAuthStore()
+const { load: loadInterfaceTypes, typeLabel } = useInterfaceTypes()
 
 const devices = ref([])
 const loading = ref(true)
@@ -1066,7 +1068,10 @@ function updateInterfaces() {
     })
 }
 
-onMounted(loadDevices)
+onMounted(() => {
+  loadDevices()
+  loadInterfaceTypes()
+})
 </script>
 
 <template>
@@ -1471,6 +1476,9 @@ onMounted(loadDevices)
           </template>
           <template #name-cell="{ row }">
             <span class="whitespace-nowrap">{{ row.original.name }}</span>
+          </template>
+          <template #type-cell="{ row }">
+            <span class="whitespace-nowrap">{{ typeLabel(row.original.type) }}</span>
           </template>
           <template #description-cell="{ row }">
             <div class="flex items-center gap-1">

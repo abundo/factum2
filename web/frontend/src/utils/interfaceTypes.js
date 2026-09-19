@@ -31,3 +31,8 @@ export function itemsWithCurrent(rows, current) {
   }
   return items
 }
+
+export function labelForType(rows, value) {
+  if (!value) return '—'
+  return toSelectItems(rows).find((i) => i.value === value)?.label ?? value
+}

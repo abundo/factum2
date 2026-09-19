@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue'
 import { getInterfaceTypes } from '@/api/dcim'
-import { defaultInterfaceType, itemsWithCurrent, toSelectItems } from '@/utils/interfaceTypes'
+import {
+  defaultInterfaceType,
+  itemsWithCurrent,
+  labelForType,
+  toSelectItems,
+} from '@/utils/interfaceTypes'
 
 export function useInterfaceTypes() {
   const rows = ref([])
@@ -11,6 +16,10 @@ export function useInterfaceTypes() {
 
   function typeItems(current) {
     return itemsWithCurrent(rows.value, current)
+  }
+
+  function typeLabel(value) {
+    return labelForType(rows.value, value)
   }
 
   function load() {
@@ -27,5 +36,5 @@ export function useInterfaceTypes() {
       })
   }
 
-  return { rows, items, defaultType, loading, load, typeItems }
+  return { rows, items, defaultType, loading, load, typeItems, typeLabel }
 }

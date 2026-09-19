@@ -18,12 +18,14 @@ import InterfaceEditorDialog from '@/components/InterfaceEditorDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 import { expandInterfaceNames } from '@/utils/interfaceNames'
 
 defineOptions({ name: 'DeviceTypeList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { load: loadInterfaceTypes, typeLabel } = useInterfaceTypes()
 
 const items = ref([])
 const manufacturers = ref([])
@@ -375,7 +377,10 @@ const templateColumns = [
 ]
 const templateSorting = ref([{ id: 'name', desc: false }])
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadInterfaceTypes()
+})
 </script>
 
 <template>
@@ -587,6 +592,9 @@ onMounted(load)
               :color="sourceBadgeColor(row.original.source)"
               variant="subtle"
             />
+          </template>
+          <template #type-cell="{ row }">
+            <span class="whitespace-nowrap">{{ typeLabel(row.original.type) }}</span>
           </template>
           <template #actions-cell="{ row }">
             <div class="flex gap-1">
