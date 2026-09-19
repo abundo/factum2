@@ -6,6 +6,13 @@ import SearchInput from '@/components/SearchInput.vue'
 
 defineOptions({ name: 'IpamAddressPicker' })
 
+const props = defineProps({
+  // Interface VRF name. When passed (including ''), only matching IPAM
+  // VRFs are listed: empty means the default VRF, otherwise exact name.
+  // Omitted on the IPAM address page so the full VRF list is shown.
+  vrf: { type: String, default: undefined },
+})
+
 const open = defineModel('open', { type: Boolean })
 const emit = defineEmits(['select'])
 
@@ -24,16 +31,33 @@ const hostsLoading = ref(false)
 const hostPage = ref(0)
 const selectedCIDR = ref('')
 
+function vrfConstraintActive() {
+  return props.vrf !== undefined && props.vrf !== null
+}
+
+function vrfMatchesInterface(v) {
+  if (!vrfConstraintActive()) return true
+  const name = props.vrf.trim()
+  if (!name) return !!v.is_default
+  return v.name === name
+}
+
+const constrainedVrfs = computed(() => vrfs.value.filter(vrfMatchesInterface))
+
 const filteredVrfs = computed(() => {
   const q = vrfQuery.value.trim().toLowerCase()
-  if (!q) return vrfs.value
-  return vrfs.value.filter((v) => {
+  if (!q) return constrainedVrfs.value
+  return constrainedVrfs.value.filter((v) => {
     const name = (v.name || '').toLowerCase()
     const ns = (v.namespace_name || '').toLowerCase()
     const desc = (v.description || '').toLowerCase()
     return name.includes(q) || ns.includes(q) || desc.includes(q)
   })
 })
+
+const vrfEmptyLabel = computed(() =>
+  vrfConstraintActive() ? 'No VRFs match this interface.' : 'No VRFs.',
+)
 
 function vrfLabel(v) {
   if (!v) return ''
@@ -46,6 +70,8 @@ function loadVrfs() {
   listVrfs()
     .then((rows) => {
       vrfs.value = rows ?? []
+      const matches = constrainedVrfs.value
+      if (vrfConstraintActive() && matches.length === 1) selectVrf(matches[0])
     })
     .catch(() => {
       vrfs.value = []
@@ -194,7 +220,9 @@ watch(open, (isOpen) => {
           <SearchInput v-model="vrfQuery" placeholder="Search VRFs…" />
           <div class="min-h-0 flex-1 overflow-auto">
             <div v-if="vrfsLoading" class="text-sm text-muted-color">Loading…</div>
-            <div v-else-if="!filteredVrfs.length" class="text-sm text-muted-color">No VRFs.</div>
+            <div v-else-if="!filteredVrfs.length" class="text-sm text-muted-color">
+              {{ vrfEmptyLabel }}
+            </div>
             <button
               v-for="v in filteredVrfs"
               :key="v.id"

@@ -732,6 +732,7 @@ function saveIface() {
 
 const addrFormOpen = ref(false)
 const addrPickerOpen = ref(false)
+const addrPickerVrf = ref('')
 const addrSaving = ref(false)
 const addrDeleting = ref(false)
 const addrEditingId = ref(null)
@@ -762,6 +763,7 @@ function isManagementAddr(addr) {
 
 function openAddAddr(iface) {
   addrEditingId.value = null
+  addrPickerVrf.value = iface.vrf ?? ''
   addrForm.value = {
     interface_id: iface.id,
     interface_name: iface.name,
@@ -777,6 +779,7 @@ function openAddAddr(iface) {
 
 function openEditAddr(iface, addr) {
   addrEditingId.value = addr.id
+  addrPickerVrf.value = iface.vrf ?? ''
   addrForm.value = {
     interface_id: iface.id,
     interface_name: iface.name,
@@ -1851,7 +1854,7 @@ onMounted(loadDevices)
     </template>
   </FormModal>
 
-  <IpamAddressPicker v-model:open="addrPickerOpen" @select="onPickAddr" />
+  <IpamAddressPicker v-model:open="addrPickerOpen" :vrf="addrPickerVrf" @select="onPickAddr" />
 
   <ServiceEditDialog
     v-model:open="serviceDialogOpen"
