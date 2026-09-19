@@ -285,6 +285,28 @@ type ConfigLdapWriteback struct {
 	Password string `boa:"configonly" yaml:"bind_password" optional:"true"`
 }
 
+// ConfigDriver is optional YAML for the SSH CLI session pool (internal/drivers).
+// Every field is optional so existing configs keep loading. Omitted knobs and
+// explicit 0 / "" mean compiled defaults. platforms omitted → vrp,ciscosmb;
+// [] or [none] (or [none, ...]) turns pooling off.
+type ConfigDriver struct {
+	Platforms      *[]string `boa:"configonly" yaml:"platforms" optional:"true"`
+	IdleTimeout    string    `boa:"configonly" yaml:"idle_timeout" optional:"true"`
+	MaxSessions    int       `boa:"configonly" yaml:"max_sessions" optional:"true"`
+	QueueDepth     int       `boa:"configonly" yaml:"queue_depth" optional:"true"`
+	AcquireTimeout string    `boa:"configonly" yaml:"acquire_timeout" optional:"true"`
+	Keepalive      string    `boa:"configonly" yaml:"keepalive" optional:"true"`
+	SessionURL     string    `boa:"configonly" yaml:"session_url" optional:"true"`
+	SessionToken   string    `boa:"configonly" yaml:"session_token" optional:"true"`
+	Socket         string    `boa:"configonly" yaml:"socket" optional:"true"`
+	Listen         string    `boa:"configonly" yaml:"listen" optional:"true"`
+	Token          string    `boa:"configonly" yaml:"token" optional:"true"`
+	TLSCert        string    `boa:"configonly" yaml:"tls_cert" optional:"true"`
+	TLSKey         string    `boa:"configonly" yaml:"tls_key" optional:"true"`
+	TLSCA          string    `boa:"configonly" yaml:"tls_ca" optional:"true"`
+	AllowCIDRs     []string  `boa:"configonly" yaml:"allow_cidrs" optional:"true"`
+}
+
 // Primary configuation, enough to get it up and running. most coinfig is in database
 type ConfigRoot struct {
 	DB            ConfigDB            `yaml:"db"`
@@ -292,6 +314,7 @@ type ConfigRoot struct {
 	Web           ConfigWeb           `yaml:"web"`
 	Worker        ConfigWorker        `yaml:"worker"`
 	LdapWriteback ConfigLdapWriteback `yaml:"ldap_writeback"`
+	Driver        ConfigDriver        `yaml:"driver" optional:"true"`
 }
 
 // Agents get most of their configuration from the Factum API - factum2-worker
@@ -301,6 +324,7 @@ type ConfigRoot struct {
 type ConfigAgentRoot struct {
 	Factum ConfigFactum `yaml:"factum"`
 	Worker ConfigWorker `yaml:"worker"`
+	Driver ConfigDriver `yaml:"driver" optional:"true"`
 }
 
 var Config *ConfigRoot

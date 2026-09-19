@@ -46,12 +46,19 @@ type deviceExecParams struct {
 	Cmd string
 }
 
+func initDriverSSHPool(p *cmdbase.ParamsAgent) error {
+	return drivers.InitSSHPoolFromDriver(p.Config.Driver)
+}
+
 func deviceExec() boa.CmdIfc {
 	return boa.CmdT[deviceExecParams]{
 		Use:   "exec",
 		Short: "Exec command on device",
 		RunFuncE: func(p *deviceExecParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -74,6 +81,9 @@ func deviceVersion() boa.CmdIfc {
 		Short: "Show device version",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -100,6 +110,9 @@ func deviceGetRunningConfig() boa.CmdIfc {
 		Short: "Get device running-config",
 		RunFuncE: func(p *deviceRunningConfigParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -120,6 +133,9 @@ func deviceSaveRunningConfig() boa.CmdIfc {
 		Short: "Save running-config",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -141,6 +157,9 @@ func deviceInterfaceGetDescription() boa.CmdIfc {
 		Short: "Get interfaces status",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -167,6 +186,9 @@ func deviceSetInterfaceDescription() boa.CmdIfc {
 		Short: "Set interface descriptions",
 		RunFuncE: func(p *deviceSetInterfaceDescriptionParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -190,6 +212,9 @@ func deviceGetConfig() boa.CmdIfc {
 		Short: "Get all device config, parsed",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -211,6 +236,9 @@ func deviceOpticalInventory() boa.CmdIfc {
 		Short: "Get Open ROADM optical inventory (ports, xconnects)",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			dm, err := drivers.NewDriverName(&p.Config.Factum, p.Name, p.Username, p.Password)
 			if err != nil {
 				return err
@@ -235,6 +263,9 @@ func deviceOpticalInventoryApply() boa.CmdIfc {
 		Short: "Read Open ROADM inventory and persist it in Factum",
 		RunFuncE: func(p *DeviceNameParams, cmd *cobra.Command, args []string) error {
 			cmdbase.SetupLog(p.CommonParams)
+			if err := initDriverSSHPool(&p.ParamsAgent); err != nil {
+				return err
+			}
 			fc := factum.NewFactumClient(&p.Config.Factum)
 			device, err := fc.GetDeviceByName(p.Name)
 			if err != nil {

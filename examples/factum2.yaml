@@ -20,6 +20,17 @@ web:
     bind: 127.0.0.1:8091
     jwtsecret: <change-me>
 
+# SSH CLI session pool (in-process). Default-on for vrp and ciscosmb.
+# Omitted platforms → [vrp, ciscosmb]. Kill switch (legacy dial-and-close):
+#   platforms: []
+#   platforms: [none]
+# [none, vrp] is also off. ios-xr / sros listed here stay on the legacy path
+# until a dedicated hygiene profile exists. 0 / "" knobs use compiled defaults.
+# driver:
+#   platforms: [vrp, ciscosmb]
+#   idle_timeout: 8m
+#   max_sessions: 64
+
 # optional, used to change passwords in LDAP server
 ldap_writeback:
     bind_dn: CN=password-ssp,OU=People,DC=example,DC=com

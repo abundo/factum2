@@ -553,6 +553,10 @@ func GUI(p *GuiParams) error {
 	} else {
 		bind = util.Config.Web.Bind
 	}
+	if err := drivers.InitSSHPoolFromDriver(p.Config.Driver); err != nil {
+		return err
+	}
+
 	slog.Info("Server started", "bind-listen", bind)
 	err = e.Start(bind)
 	if err != http.ErrServerClosed {

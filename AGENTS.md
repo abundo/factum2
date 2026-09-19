@@ -48,7 +48,10 @@ section before adding tests there.
   `run-factum2-web` drives host `/usr/bin/google-chrome-stable` with
   `--no-sandbox`.
 - **Device SSH:** reuse one SSH connection per device for the process
-  lifetime; do not reconnect per command.
+  lifetime via `internal/drivers` `memoryPool` (`InitSSHPool`; default-on
+  for `vrp`/`ciscosmb`). Do not reconnect per command. Kill switch:
+  `driver.platforms: []` or `[none]` in `factum2.yaml` /
+  `factum2-worker.yaml`.
 - **NetBox L2VPN on SROS/SROS-MD:** the termination interface label is
   `SAP`, not a subinterface name.
 - Frontend stack is Vue 3 + Vite + Vue Router + Pinia + **Nuxt UI** +

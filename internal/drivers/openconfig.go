@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/abundo/netboxtool"
@@ -235,6 +236,27 @@ func sshRunCLI(ctx context.Context, p DriverParam, cmds []sshCmd) (string, error
 	return outputs[len(outputs)-1], nil
 }
 
+// sshTestIdleWindow / sshTestOverallTimeout override idleWindow and
+// overallTimeout in tests. Zero means use the production constants.
+var (
+	sshTestIdleWindow     time.Duration
+	sshTestOverallTimeout time.Duration
+)
+
+func sshIdleWindow() time.Duration {
+	if sshTestIdleWindow > 0 {
+		return sshTestIdleWindow
+	}
+	return idleWindow
+}
+
+func sshOverallTimeout() time.Duration {
+	if sshTestOverallTimeout > 0 {
+		return sshTestOverallTimeout
+	}
+	return overallTimeout
+}
+
 // idleWindow is the fallback safety margin for a wait with no recognizable
 // end-of-output marker (e.g. VRP's config-mode commands while running
 // SetInterfaceDescriptions, or Nokia's MD-CLI JSON dumps). It used to be 1
@@ -276,6 +298,9 @@ type sshShellSession struct {
 	mu           sync.Mutex
 	buf          bytes.Buffer
 	lastActivity time.Time
+	exited       bool
+	exitOnce     sync.Once
+	done         chan struct{}
 }
 
 func dialSSHShell(username, password, host, port string) (*sshShellSession, error) {
@@ -323,31 +348,79 @@ func dialSSHShell(username, password, host, port string) (*sshShellSession, erro
 		return nil, err
 	}
 
-	s := &sshShellSession{client: client, session: session, stdin: stdin, lastActivity: time.Now()}
-	go func() {
-		chunk := make([]byte, 4096)
-		for {
-			n, err := stdout.Read(chunk)
-			if n > 0 {
-				s.mu.Lock()
-				s.buf.Write(chunk[:n])
-				s.lastActivity = time.Now()
-				s.mu.Unlock()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
+	s := newSSHShellSession(client, session, stdin, stdout)
 	return s, nil
 }
 
-func (s *sshShellSession) Close() {
-	s.session.Close()
-	s.client.Close()
+func newSSHShellSession(client *ssh.Client, session *ssh.Session, stdin io.WriteCloser, stdout io.Reader) *sshShellSession {
+	s := &sshShellSession{
+		client:       client,
+		session:      session,
+		stdin:        stdin,
+		lastActivity: time.Now(),
+		done:         make(chan struct{}),
+	}
+	go s.readStdout(stdout)
+	go func() {
+		_ = client.Wait()
+		s.markExited()
+	}()
+	return s
 }
 
+func (s *sshShellSession) readStdout(stdout io.Reader) {
+	defer s.markExited()
+	chunk := make([]byte, 4096)
+	for {
+		n, err := stdout.Read(chunk)
+		if n > 0 {
+			s.mu.Lock()
+			s.buf.Write(chunk[:n])
+			s.lastActivity = time.Now()
+			s.mu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (s *sshShellSession) markExited() {
+	s.mu.Lock()
+	s.exited = true
+	s.mu.Unlock()
+	s.exitOnce.Do(func() {
+		if s.done != nil {
+			close(s.done)
+		}
+	})
+}
+
+func (s *sshShellSession) stdoutExited() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.exited
+}
+
+func (s *sshShellSession) Close() {
+	if s == nil {
+		return
+	}
+	if s.session != nil {
+		s.session.Close()
+	}
+	if s.client != nil {
+		s.client.Close()
+	}
+}
+
+// sshTestFailWrite makes the next stdin write fail (stale-Idle replay tests).
+var sshTestFailWrite atomic.Bool
+
 func (s *sshShellSession) write(line string) error {
+	if sshTestFailWrite.CompareAndSwap(true, false) {
+		return errors.New("broken pipe")
+	}
 	_, err := s.stdin.Write([]byte(line + "\n"))
 	return err
 }
@@ -359,28 +432,39 @@ func (s *sshShellSession) write(line string) error {
 // elapses first. The 100ms poll selects on ctx.Done() so a cancel does
 // not wait out overallTimeout.
 func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp) error {
-	deadline := time.Now().Add(overallTimeout)
+	idleWant := sshIdleWindow()
+	deadline := time.Now().Add(sshOverallTimeout())
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
 		idle := time.Since(s.lastActivity)
+		exited := s.exited
+		nbuf := s.buf.Len()
 		tail := s.buf.Bytes()
 		if len(tail) > markerTailBytes {
 			tail = tail[len(tail)-markerTailBytes:]
 		}
 		tailStr := string(tail)
 		s.mu.Unlock()
-		want := idleWindow
+		want := idleWant
 		if hasConfigEndMarker(tailStr, endMarker) {
 			want = configEndMarkerIdle
 		}
 		if idle >= want {
 			return nil
 		}
+		if exited {
+			if nbuf > 0 {
+				return nil
+			}
+			return io.EOF
+		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return errWaitTimeout
+		case <-s.done:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -423,6 +507,21 @@ func (s *sshShellSession) capture() string {
 // that back-and-forth should use sshRunCLIPipeline instead, which pays the
 // idle wait once for the whole batch rather than once per line.
 func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
+	if sshUseMemoryPool(p.Platform) {
+		res, err := getPool().Run(ctx, sshRunRequest{
+			Param: p,
+			Mode:  sshRunBatch,
+			Cmds:  cmds,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return normalizeSSHOutputs(res.Outputs), nil
+	}
+	return sshRunCLIBatchLegacy(ctx, p, cmds)
+}
+
+func sshRunCLIBatchLegacy(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
 	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
 	if err != nil {
 		return nil, err
@@ -447,10 +546,14 @@ func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string
 	// the last regex-captured group of whatever line it's on (e.g. an
 	// interface description), silently mismatching the same clean value
 	// stored in Netbox on every single sync run.
+	return normalizeSSHOutputs(results), nil
+}
+
+func normalizeSSHOutputs(results []string) []string {
 	for i, r := range results {
 		results[i] = strings.ReplaceAll(r, "\r\n", "\n")
 	}
-	return results, nil
+	return results
 }
 
 // sshRunCLIPipeline writes every line in cmds to the shell in a single
@@ -466,6 +569,31 @@ func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string
 // line of expected output lets that single wait finish as soon as the
 // device is actually done instead of always waiting out idleWindow.
 func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
+	if sshUseMemoryPool(p.Platform) {
+		sshCmds := make([]sshCmd, len(cmds))
+		for i, c := range cmds {
+			sshCmds[i] = sshCmd{Cmd: c}
+		}
+		if len(sshCmds) > 0 {
+			sshCmds[len(sshCmds)-1].EndMarker = endMarker
+		}
+		res, err := getPool().Run(ctx, sshRunRequest{
+			Param: p,
+			Mode:  sshRunPipeline,
+			Cmds:  sshCmds,
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(res.Outputs) == 0 {
+			return "", nil
+		}
+		return strings.ReplaceAll(res.Outputs[0], "\r\n", "\n"), nil
+	}
+	return sshRunCLIPipelineLegacy(ctx, p, cmds, endMarker)
+}
+
+func sshRunCLIPipelineLegacy(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
 	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
 	if err != nil {
 		return "", err

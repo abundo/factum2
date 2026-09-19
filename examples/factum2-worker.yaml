@@ -57,3 +57,13 @@ worker:
     netbox:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync", "--job"]
+
+# SSH CLI session pool for factum2-device-sync and factum2-driver (in-process).
+# Default-on for vrp and ciscosmb. Kill switch (legacy dial-and-close):
+#   platforms: []
+#   platforms: [none]
+# [none, vrp] is also off. 0 / "" knobs use compiled defaults.
+# driver:
+#   platforms: [vrp, ciscosmb]
+#   idle_timeout: 8m
+#   max_sessions: 64

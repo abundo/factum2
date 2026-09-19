@@ -16,6 +16,7 @@ import (
 	cmdbase "github.com/abundo/factum2/cmd"
 	"github.com/abundo/factum2/internal/buildinfo"
 	devicesync "github.com/abundo/factum2/internal/device-sync"
+	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
@@ -50,6 +51,9 @@ func main() {
 				Short: "Sync devices with Netbox",
 				RunFuncE: func(p *SyncParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
+					if err := drivers.InitSSHPoolFromDriver(p.Config.Driver); err != nil {
+						return err
+					}
 
 					// REST to factum2-web, not the co-located worker socket.
 					factumCfg := util.WithoutHubSocket(p.Config.Factum)
