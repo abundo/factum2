@@ -2,7 +2,7 @@
 
 | Field | Value |
 | ----- | ----- |
-| Status | Draft |
+| Status | Implemented (PRs 1–4 on main; PR 5–7 follow-ups remain) |
 | Author | Factum |
 | Date | 2026-09-19 |
 | Audience | Factum maintainers (drivers, web, device-sync, factum2-driver) |
@@ -14,7 +14,7 @@ Every SSH CLI operation in Factum today opens a fresh interactive PTY, drains th
 
 This design keeps platform drivers as they are (command construction, paging preambles, output parsing, `CLISessionApplier`) and moves **session ownership** behind a process-lifetime pool. Phase 1 is an in-process pool inside `internal/drivers`, which is enough for the web GUI and for `GetDeviceConfig`+`GetNeighbors` inside one `factum2-device-sync` run. Phase 2 exposes that same pool from a long-lived `factum2-driver start` daemon over loopback HTTP (REST JSON wrapping the SSH run primitives, not gNMI and not a second `DriverClient`). Web, device-sync, and the driver CLI then share one owner when a socket or URL is configured, which is the only way to honor the AGENTS.md policy **across processes** and the only way to keep a warm session for one-shot CLI invocations.
 
-**Verified after PR 1:** there is still no `sshsession.go`, no `InitSSHPool`, no `util.ConfigDriver`, no `factum2-driver start`, and no `examples/factum2-driver.service`. `sshRunCLI*` take `(ctx context.Context, p DriverParam, ...)` — call sites pass `context.Background()` and `driver.p`. `dialSSHShell` still `ssh.Dial` + `defer Close()` on every call; SSH CLI always dials port 22 (`p.Port` is not passed — it is the NETCONF port on mixed-transport drivers). `waitIdle(ctx, endMarker) error` returns `errWaitTimeout` on `ctx` cancel/`overallTimeout`; the 100ms poll `select`s on `ctx.Done()`. Legacy `sshRunCLI*` ignore that error and return the buffer (silent partial capture). The architecture below is still the intended end state (alternative C daemon wrapping alternative A in-process pool). Call-site facts that have drifted (GUI now uses `DeviceSyncAuth`, not per-request JSON passwords) are corrected in this revision.
+**Landed 2026-09-19 (PRs 1–4):** in-process pool (`sshsession.go`, `InitSSHPool`, `ConfigDriver`) default-on for `vrp`/`ciscosmb`; `factum2-driver start` + unix session socket; actor from GUI/`device-sync`/`$USER`. `sshRunCLI*` take `(ctx, p DriverParam, ...)`. Legacy SSH CLI still dials port 22 (`p.Port` is NETCONF on mixed-transport drivers). Follow-ups still open: prompt parser (PR 5), XR/SR OS hygiene (PR 6), NETCONF reuse (PR 7).
 
 ## Background & Motivation
 
@@ -914,7 +914,7 @@ Do not add `ios-xr` / `sros` to `platforms` until a hygiene follow-up copies the
 
 ## PR Plan
 
-Incremental, each PR independently reviewable and mergeable. No schema migrations. **PR 1 is in tree;** pool / daemon / `InitSSHPool` are not.
+Incremental, each PR independently reviewable and mergeable. No schema migrations. **PRs 1–4 are in tree.** Prompt parser / XR-SR OS hygiene / NETCONF reuse remain follow-ups.
 
 ### PR 1 — Refactor `sshRunCLI*` onto `ctx` + `DriverParam`; make `waitIdle` cancelable
 
