@@ -18,13 +18,16 @@ interface refresh.
 
 **DCIM → Interfaces** lists every device interface, whether it came from
 NetBox or was created in Factum. Add ports on a local device from that
-page or from the device's Interfaces dialog. NetBox-synced interfaces are
-read-only here.
+page or from the device's Interfaces dialog. When creating, a name like
+`Ethernet[1-48]` adds Ethernet1 through Ethernet48 in one step
+(`Ethernet1/[1-4]` and `Ethernet[1,3,5]` work the same way). NetBox-synced
+interfaces are read-only here.
 
 **DCIM → Device types** opens the same tabbed detail dialog as a device
 (Overview and Interfaces). VLAN and Oxidized tabs are device-only. The
 Interfaces tab holds port templates for that type (synced from NetBox, or
-created locally). Creating a local device copies those templates onto it.
+created locally). Range names such as `Ethernet[1-48]` create one template
+per expanded name. Creating a local device copies those templates onto it.
 Adding a template also adds the port to existing local devices of that type
 that do not already have that name.
 

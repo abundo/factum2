@@ -18,6 +18,7 @@ import InterfaceEditorDialog from '@/components/InterfaceEditorDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
+import { expandInterfaceNames } from '@/utils/interfaceNames'
 
 defineOptions({ name: 'DeviceTypeList' })
 
@@ -277,36 +278,58 @@ function openEditTemplate(row) {
   templateFormOpen.value = true
 }
 
-function saveTemplate() {
-  if (!templateForm.value.name.trim()) {
+async function saveTemplate() {
+  let names
+  try {
+    names = templateEditingId.value
+      ? [templateForm.value.name.trim()].filter(Boolean)
+      : expandInterfaceNames(templateForm.value.name)
+  } catch (err) {
+    toast.add({ color: 'error', title: 'Invalid name', description: err.message })
+    return
+  }
+  if (!names.length) {
     toast.add({ color: 'error', title: 'Name is required' })
     return
   }
+  if (!templateEditingId.value) {
+    const existing = new Set(templates.value.map((i) => i.name))
+    const clash = names.filter((n) => existing.has(n))
+    if (clash.length) {
+      toast.add({
+        color: 'error',
+        title: 'Interface name already exists',
+        description: clash.slice(0, 8).join(', ') + (clash.length > 8 ? '…' : ''),
+      })
+      return
+    }
+  }
   templateSaving.value = true
   const payload = {
-    name: templateForm.value.name.trim(),
     type: templateForm.value.type,
     label: templateForm.value.label.trim(),
     description: templateForm.value.description.trim(),
   }
-  const req = templateEditingId.value
-    ? updateDeviceTypeInterface(templateEditingId.value, payload)
-    : createDeviceTypeInterface(detailType.value.id, payload)
-  req
-    .then(() => {
-      templateFormOpen.value = false
-      loadTemplates()
+  try {
+    if (templateEditingId.value) {
+      await updateDeviceTypeInterface(templateEditingId.value, { ...payload, name: names[0] })
+    } else {
+      for (const name of names) {
+        await createDeviceTypeInterface(detailType.value.id, { ...payload, name })
+      }
+    }
+    templateFormOpen.value = false
+    loadTemplates()
+  } catch (err) {
+    toast.add({
+      color: 'error',
+      title: 'Save failed',
+      description: err?.response?.data?.error ?? err.message,
     })
-    .catch((err) => {
-      toast.add({
-        color: 'error',
-        title: 'Save failed',
-        description: err?.response?.data?.error,
-      })
-    })
-    .finally(() => {
-      templateSaving.value = false
-    })
+    if (!templateEditingId.value) loadTemplates()
+  } finally {
+    templateSaving.value = false
+  }
 }
 
 function removeTemplate(row) {

@@ -41,6 +41,7 @@ import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { expandInterfaceNames } from '@/utils/interfaceNames'
 
 const toast = useToast()
 const authStore = useAuthStore()
@@ -701,41 +702,63 @@ function openEditIface(iface) {
   ifaceFormOpen.value = true
 }
 
-function saveIface() {
+async function saveIface() {
   if (!device.value) return
   if (!ifaceFormWritable.value) return
-  if (!ifaceForm.value.name.trim()) {
+  let names
+  try {
+    names = ifaceEditingId.value
+      ? [ifaceForm.value.name.trim()].filter(Boolean)
+      : expandInterfaceNames(ifaceForm.value.name)
+  } catch (err) {
+    toast.add({ color: 'error', title: 'Invalid name', description: err.message })
+    return
+  }
+  if (!names.length) {
     toast.add({ color: 'error', title: 'Name is required' })
     return
+  }
+  if (!ifaceEditingId.value) {
+    const existing = new Set((device.value.interfaces ?? []).map((i) => i.name))
+    const clash = names.filter((n) => existing.has(n))
+    if (clash.length) {
+      toast.add({
+        color: 'error',
+        title: 'Interface name already exists',
+        description: clash.slice(0, 8).join(', ') + (clash.length > 8 ? '…' : ''),
+      })
+      return
+    }
   }
   ifaceSaving.value = true
   const payload = {
     device_id: device.value.id,
-    name: ifaceForm.value.name.trim(),
     type: ifaceForm.value.type,
     label: ifaceForm.value.label.trim(),
     description: ifaceForm.value.description.trim(),
     vrf: ifaceForm.value.vrf.trim(),
     enabled: ifaceForm.value.enabled,
   }
-  const req = ifaceEditingId.value
-    ? updateInterface(ifaceEditingId.value, payload)
-    : createInterface(payload)
-  req
-    .then(() => {
-      ifaceFormOpen.value = false
-      reloadDeviceInterfaces()
+  try {
+    if (ifaceEditingId.value) {
+      await updateInterface(ifaceEditingId.value, { ...payload, name: names[0] })
+    } else {
+      for (const name of names) {
+        await createInterface({ ...payload, name })
+      }
+    }
+    ifaceFormOpen.value = false
+    reloadDeviceInterfaces()
+  } catch (err) {
+    toast.add({
+      color: 'error',
+      title: ifaceEditingId.value ? 'Update failed' : 'Create failed',
+      description: err.response?.data?.error ?? err.message,
     })
-    .catch((err) => {
-      toast.add({
-        color: 'error',
-        title: ifaceEditingId.value ? 'Update failed' : 'Create failed',
-        description: err?.response?.data?.error,
-      })
-    })
-    .finally(() => {
-      ifaceSaving.value = false
-    })
+    if (!ifaceEditingId.value) reloadDeviceInterfaces()
+  } finally {
+    ifaceSaving.value = false
+  }
 }
 
 const addrFormOpen = ref(false)
