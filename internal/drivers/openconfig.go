@@ -492,7 +492,6 @@ func (s *sshShellSession) capture() string {
 // that back-and-forth should use sshRunCLIPipeline instead, which pays the
 // idle wait once for the whole batch rather than once per line.
 func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
-	ctx = contextWithActor(ctx, p.actor)
 	if sshUseMemoryPool(p.Platform) {
 		res, err := runPooled(ctx, sshRunRequest{
 			Param: p,
@@ -556,7 +555,6 @@ func normalizeSSHOutputs(results []string) []string {
 // line of expected output lets that single wait finish as soon as the
 // device is actually done instead of always waiting out idleWindow.
 func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
-	ctx = contextWithActor(ctx, p.actor)
 	if sshUseMemoryPool(p.Platform) {
 		sshCmds := make([]sshCmd, len(cmds))
 		for i, c := range cmds {

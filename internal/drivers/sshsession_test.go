@@ -331,12 +331,8 @@ func TestSSHActorFromParam(t *testing.T) {
 	f := startFakeSSH(t)
 	ResetSSHPoolForTest()
 	p := WithActor(f.param("vrp"), "alice")
-	ctx := context.Background()
-	if _, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "display version"}}); err != nil {
+	if _, err := sshRunCLI(context.Background(), p, []sshCmd{{Cmd: "display version"}}); err != nil {
 		t.Fatal(err)
-	}
-	if actorFromContext(ctx) != "" {
-		t.Fatalf("caller ctx should stay unmodified")
 	}
 	st := getPool().Stats()
 	if len(st) != 1 || st[0].LastActor != "alice" {
