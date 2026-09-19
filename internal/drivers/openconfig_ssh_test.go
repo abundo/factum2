@@ -3,6 +3,7 @@ package drivers
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 )
@@ -25,5 +26,15 @@ func TestWaitIdleCancel(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Fatalf("waitIdle on cancelled ctx took %v, want immediate return", time.Since(start))
+	}
+}
+
+func TestWaitIdleExitedWithPayloadReturnsEOF(t *testing.T) {
+	s := &sshShellSession{lastActivity: time.Now(), done: make(chan struct{})}
+	s.buf.WriteString("partial dump")
+	s.markExited()
+	err := s.waitIdle(context.Background(), nil)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("waitIdle: got %v, want io.EOF", err)
 	}
 }

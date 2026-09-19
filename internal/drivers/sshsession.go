@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,7 +25,6 @@ const (
 	defaultMaxSessions    = 64
 	defaultIdleTimeout    = 8 * time.Minute
 	defaultKeepalive      = 30 * time.Second
-	defaultSessionSocket  = "/run/factum2-driver/session.sock"
 	sshCmdLogMax          = 80
 )
 
@@ -66,12 +64,6 @@ type sshRunResult struct {
 	Command   time.Duration
 }
 
-type sshPool interface {
-	Run(ctx context.Context, req sshRunRequest) (*sshRunResult, error)
-	Stats() []sshSessionStat
-	Close()
-}
-
 type sshSessionStat struct {
 	Key           string  `json:"key"`
 	Platform      string  `json:"platform"`
@@ -98,10 +90,6 @@ type SSHPoolConfig struct {
 	QueueDepth     int
 	AcquireTimeout time.Duration
 	Keepalive      time.Duration
-	SessionURL     string
-	SessionToken   string
-	TLSCA          string
-	Socket         string
 }
 
 type hygieneProfile struct {
@@ -136,26 +124,18 @@ var hygieneProfiles = map[string]*hygieneProfile{
 }
 
 type sshPoolGlobals struct {
-	mu      sync.Mutex
-	inited  bool
-	enabled map[string]struct{}
-	pool    *memoryPool
+	mu           sync.Mutex
+	inited       bool
+	enabled      map[string]struct{}
+	legacyLogged map[string]struct{}
+	pool         *memoryPool
 }
 
 var sshGlobals sshPoolGlobals
 
 func sessionKey(p DriverParam) string {
-	host := p.Name
-	port := p.Port
-	if port == "" {
-		port = sshDefaultPort
-	}
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = host[1 : len(host)-1]
-	}
-	hostPort := net.JoinHostPort(host, port)
-	platform := canonicalPlatform(p.Platform)
-	return platform + "/" + p.Username + "@" + hostPort
+	_, _, addr := sshDialHostPort(p)
+	return canonicalPlatform(p.Platform) + "/" + p.Username + "@" + addr
 }
 
 func canonicalPlatform(platform string) string {
@@ -234,13 +214,9 @@ func applySSHPoolDefaults(cfg SSHPoolConfig) (SSHPoolConfig, error) {
 // Empty duration strings stay zero (compiled defaults at InitSSHPool).
 func PoolConfigFromDriver(d util.ConfigDriver) (SSHPoolConfig, error) {
 	cfg := SSHPoolConfig{
-		Platforms:    d.Platforms,
-		MaxSessions:  d.MaxSessions,
-		QueueDepth:   d.QueueDepth,
-		SessionURL:   d.SessionURL,
-		SessionToken: d.SessionToken,
-		TLSCA:        d.TLSCA,
-		Socket:       d.Socket,
+		Platforms:   d.Platforms,
+		MaxSessions: d.MaxSessions,
+		QueueDepth:  d.QueueDepth,
 	}
 	var err error
 	if d.IdleTimeout != "" {
@@ -286,6 +262,7 @@ func InitSSHPool(cfg SSHPoolConfig) error {
 		return err
 	}
 	sshGlobals.enabled = enabledPlatformSet(cfg.Platforms)
+	sshGlobals.legacyLogged = map[string]struct{}{}
 	sshGlobals.pool = newMemoryPool(cfg)
 	sshGlobals.inited = true
 	return nil
@@ -340,34 +317,27 @@ func sshUseMemoryPool(platform string) bool {
 	}
 	plat := strings.ToLower(platform)
 	if _, ok := sshGlobals.enabled[plat]; !ok {
-		slog.Info("ssh.legacy", "reason", "not_enabled", "platform", platform)
+		logSSHLegacyLocked(platform, "not_enabled")
 		return false
 	}
 	canon := canonicalPlatform(plat)
 	if _, ok := hygieneProfiles[canon]; !ok {
-		slog.Info("ssh.legacy", "reason", "no_profile", "platform", platform)
+		logSSHLegacyLocked(platform, "no_profile")
 		return false
 	}
 	return true
 }
 
-// SessionSocketPath resolves the unix listen/probe path for the session
-// daemon. PR 2 does not probe it. "none"/"0" disables unix.
-func SessionSocketPath(yamlOverride string) string {
-	if yamlOverride == "none" || yamlOverride == "0" {
-		return ""
+func logSSHLegacyLocked(platform, reason string) {
+	if sshGlobals.legacyLogged == nil {
+		sshGlobals.legacyLogged = map[string]struct{}{}
 	}
-	if yamlOverride != "" {
-		return yamlOverride
+	key := platform + ":" + reason
+	if _, ok := sshGlobals.legacyLogged[key]; ok {
+		return
 	}
-	switch v := os.Getenv("FACTUM_DRIVER_SESSION_SOCKET"); v {
-	case "none", "0":
-		return ""
-	case "":
-		return defaultSessionSocket
-	default:
-		return v
-	}
+	sshGlobals.legacyLogged[key] = struct{}{}
+	slog.Info("ssh.legacy", "reason", reason, "platform", platform)
 }
 
 func truncateCmd(s string) string {
@@ -480,7 +450,6 @@ type pooledSession struct {
 	password string
 	kaStop   chan struct{}
 	kaOff    bool
-	kaOnce   sync.Once
 	created  time.Time
 	lastUsed time.Time
 
@@ -585,6 +554,10 @@ func (p *memoryPool) evictLRUIdleLocked() bool {
 		return false
 	}
 	oldest.mu.Lock()
+	if oldest.busy || len(oldest.waiters) > 0 {
+		oldest.mu.Unlock()
+		return false
+	}
 	oldest.closeLocked("max_sessions")
 	oldest.mu.Unlock()
 	delete(p.sessions, oldestKey)
@@ -592,30 +565,71 @@ func (p *memoryPool) evictLRUIdleLocked() bool {
 	return true
 }
 
-func (p *memoryPool) getOrCreate(key string, platform string) (*pooledSession, error) {
+// holdSession looks up or creates the session and marks it busy before
+// returning, so idle/LRU eviction cannot close a session another Run holds.
+func (p *memoryPool) holdSession(ctx context.Context, key, platform string) (*pooledSession, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return nil, errSSHPoolClosed
 	}
-	if s, ok := p.sessions[key]; ok {
+	s, ok := p.sessions[key]
+	if !ok {
+		if len(p.sessions) >= p.maxSessions {
+			if !p.evictLRUIdleLocked() {
+				p.mu.Unlock()
+				return nil, errPoolFull
+			}
+		}
+		s = &pooledSession{
+			pool:     p,
+			key:      key,
+			platform: canonicalPlatform(platform),
+			profile:  hygieneProfiles[canonicalPlatform(platform)],
+			state:    stateBusy,
+			created:  time.Now(),
+			busy:     true,
+		}
+		p.sessions[key] = s
+		p.mu.Unlock()
 		return s, nil
 	}
-	if len(p.sessions) >= p.maxSessions {
-		if !p.evictLRUIdleLocked() {
-			return nil, errPoolFull
+	s.mu.Lock()
+	if !s.busy && len(s.waiters) == 0 {
+		s.busy = true
+		s.state = stateBusy
+		s.mu.Unlock()
+		p.mu.Unlock()
+		return s, nil
+	}
+	if len(s.waiters) >= p.queueDepth {
+		s.mu.Unlock()
+		p.mu.Unlock()
+		return nil, errQueueFull
+	}
+	w := acquireWaiter{ch: make(chan struct{})}
+	s.waiters = append(s.waiters, w)
+	s.mu.Unlock()
+	p.mu.Unlock()
+
+	timer := time.NewTimer(p.acquireTimeout)
+	defer timer.Stop()
+	select {
+	case <-w.ch:
+		return s, nil
+	case <-ctx.Done():
+		if s.removeWaiter(w.ch) {
+			return nil, errAcquireTimeout
 		}
+		<-w.ch
+		return s, nil
+	case <-timer.C:
+		if s.removeWaiter(w.ch) {
+			return nil, errAcquireTimeout
+		}
+		<-w.ch
+		return s, nil
 	}
-	s := &pooledSession{
-		pool:     p,
-		key:      key,
-		platform: canonicalPlatform(platform),
-		profile:  hygieneProfiles[canonicalPlatform(platform)],
-		state:    stateDead,
-		created:  time.Now(),
-	}
-	p.sessions[key] = s
-	return s, nil
 }
 
 func (p *memoryPool) Close() {
@@ -663,42 +677,6 @@ func (p *memoryPool) Stats() []sshSessionStat {
 		out = append(out, st)
 	}
 	return out
-}
-
-func (s *pooledSession) acquire(ctx context.Context, timeout time.Duration) error {
-	s.mu.Lock()
-	if !s.busy && len(s.waiters) == 0 {
-		s.busy = true
-		s.state = stateBusy
-		s.mu.Unlock()
-		return nil
-	}
-	if len(s.waiters) >= s.pool.queueDepth {
-		s.mu.Unlock()
-		return errQueueFull
-	}
-	w := acquireWaiter{ch: make(chan struct{})}
-	s.waiters = append(s.waiters, w)
-	s.mu.Unlock()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-w.ch:
-		return nil
-	case <-ctx.Done():
-		if s.removeWaiter(w.ch) {
-			return errAcquireTimeout
-		}
-		<-w.ch
-		return nil
-	case <-timer.C:
-		if s.removeWaiter(w.ch) {
-			return errAcquireTimeout
-		}
-		<-w.ch
-		return nil
-	}
 }
 
 func (s *pooledSession) removeWaiter(ch chan struct{}) bool {
@@ -785,6 +763,17 @@ func (s *pooledSession) keepaliveLoop(stop chan struct{}) {
 				continue
 			}
 			ok, _, err := shell.client.SendRequest("keepalive@openssh.com", true, nil)
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			s.mu.Lock()
+			stillMine := s.shell == shell && s.kaStop == stop
+			s.mu.Unlock()
+			if !stillMine {
+				return
+			}
 			if err != nil {
 				slog.Info("ssh.reconnect", "key", s.key, "reason", "keepalive")
 				s.markDead("keepalive")
@@ -793,7 +782,9 @@ func (s *pooledSession) keepaliveLoop(stop chan struct{}) {
 			if !ok {
 				slog.Info("ssh.keepalive_unimplemented", "key", s.key)
 				s.mu.Lock()
-				s.kaOff = true
+				if s.shell == shell && s.kaStop == stop {
+					s.kaOff = true
+				}
 				s.mu.Unlock()
 				return
 			}
@@ -876,7 +867,7 @@ func (s *pooledSession) ensureDialed(ctx context.Context, req sshRunRequest) (lo
 		return 0, err
 	}
 
-	if err := shell.waitIdle(ctx, nil); err != nil && !errors.Is(err, io.EOF) {
+	if err := shell.waitIdle(ctx, nil); err != nil {
 		shell.Close()
 		s.markDead("banner")
 		slog.Info("ssh.dial", "key", s.key, "login_ms", time.Since(start).Milliseconds(), "err", err.Error())
@@ -958,11 +949,8 @@ func (p *memoryPool) Run(ctx context.Context, req sshRunRequest) (*sshRunResult,
 	}
 
 	acquireStart := time.Now()
-	sess, err := p.getOrCreate(key, req.Param.Platform)
+	sess, err := p.holdSession(ctx, key, req.Param.Platform)
 	if err != nil {
-		return nil, err
-	}
-	if err := sess.acquire(ctx, p.acquireTimeout); err != nil {
 		return nil, err
 	}
 	defer sess.release()
@@ -1171,6 +1159,7 @@ func (s *pooledSession) runJob(ctx context.Context, req sshRunRequest, allowStal
 
 	if shell.stdoutExited() {
 		s.markDead("eof")
+		return &sshRunResult{Outputs: outputs}, io.EOF
 	}
 	return &sshRunResult{Outputs: outputs}, nil
 }

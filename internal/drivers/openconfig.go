@@ -236,25 +236,14 @@ func sshRunCLI(ctx context.Context, p DriverParam, cmds []sshCmd) (string, error
 	return outputs[len(outputs)-1], nil
 }
 
-// sshTestIdleWindow / sshTestOverallTimeout override idleWindow and
-// overallTimeout in tests. Zero means use the production constants.
-var (
-	sshTestIdleWindow     time.Duration
-	sshTestOverallTimeout time.Duration
-)
+// sshTestIdleWindow overrides idleWindow in tests. Zero means the production constant.
+var sshTestIdleWindow time.Duration
 
 func sshIdleWindow() time.Duration {
 	if sshTestIdleWindow > 0 {
 		return sshTestIdleWindow
 	}
 	return idleWindow
-}
-
-func sshOverallTimeout() time.Duration {
-	if sshTestOverallTimeout > 0 {
-		return sshTestOverallTimeout
-	}
-	return overallTimeout
 }
 
 // idleWindow is the fallback safety margin for a wait with no recognizable
@@ -433,12 +422,11 @@ func (s *sshShellSession) write(line string) error {
 // not wait out overallTimeout.
 func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp) error {
 	idleWant := sshIdleWindow()
-	deadline := time.Now().Add(sshOverallTimeout())
+	deadline := time.Now().Add(overallTimeout)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
 		idle := time.Since(s.lastActivity)
 		exited := s.exited
-		nbuf := s.buf.Len()
 		tail := s.buf.Bytes()
 		if len(tail) > markerTailBytes {
 			tail = tail[len(tail)-markerTailBytes:]
@@ -453,9 +441,6 @@ func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp
 			return nil
 		}
 		if exited {
-			if nbuf > 0 {
-				return nil
-			}
 			return io.EOF
 		}
 		timer := time.NewTimer(100 * time.Millisecond)

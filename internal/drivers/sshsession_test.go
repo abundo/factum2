@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -38,6 +39,8 @@ type fakeSSH struct {
 	bannerDribble     time.Duration
 	unrecognizedWidth bool
 	dropOn            string
+	dropAfter         string
+	blockKeepalive    bool
 	pagerOn           string
 	moreInDump        bool
 	hangOn            string
@@ -130,11 +133,25 @@ func (f *fakeSSH) serve(conn net.Conn, cfg *ssh.ServerConfig) {
 	f.mu.Lock()
 	f.nConn++
 	f.mu.Unlock()
-	go ssh.DiscardRequests(reqs)
+	go f.handleGlobalReqs(reqs)
 	for newCh := range chans {
 		go f.handleChannel(newCh)
 	}
 	_ = sconn.Close()
+}
+
+func (f *fakeSSH) handleGlobalReqs(reqs <-chan *ssh.Request) {
+	for req := range reqs {
+		f.mu.Lock()
+		block := f.blockKeepalive && req.Type == "keepalive@openssh.com"
+		f.mu.Unlock()
+		if block {
+			continue
+		}
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+	}
 }
 
 func (f *fakeSSH) handleChannel(newCh ssh.NewChannel) {
@@ -236,6 +253,9 @@ func (f *fakeSSH) handleCmd(ch ssh.Channel, cmd string) {
 			out = strings.ReplaceAll(out, "\n", "\r\n")
 		}
 		_, _ = ch.Write([]byte(out))
+	}
+	if f.dropAfter != "" && cmd == f.dropAfter {
+		_ = ch.Close()
 	}
 }
 
@@ -785,6 +805,82 @@ func TestPooledJobTimeoutHardError(t *testing.T) {
 	}
 	if elapsed > 36*time.Second {
 		t.Fatalf("job timeout should fire around 30s, took %s", elapsed)
+	}
+}
+
+func TestKeepaliveAfterReplayDoesNotKillNewSession(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	f.blockKeepalive = true
+	if err := initSSHPoolForTest(SSHPoolConfig{Keepalive: 20 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	p := f.param("vrp")
+	ctx := context.Background()
+	if _, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	sshTestFailWrite.Store(true)
+	if _, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	if _, err := sshRunCLI(ctx, p, []sshCmd{{Cmd: "display version"}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.connections() != 2 {
+		t.Fatalf("stale keepalive must not kill the redialed session, conns=%d", f.connections())
+	}
+	st := getPool().Stats()
+	if len(st) != 1 || st[0].Reused < 1 {
+		t.Fatalf("third run should reuse the new session: %+v", st)
+	}
+}
+
+func TestEvictSkipsAcquiredSession(t *testing.T) {
+	useFastSSHIdle(t)
+	f1 := startFakeSSH(t)
+	f1.hangOn = "hang"
+	f2 := startFakeSSH(t)
+	if err := initSSHPoolForTest(SSHPoolConfig{MaxSessions: 1, QueueDepth: 1}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetSSHPoolForTest)
+	ctx := context.Background()
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, _ = sshRunCLI(ctx, f1.param("vrp"), []sshCmd{{Cmd: "hang"}})
+	}()
+	<-started
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if countCmd(f1.commands(), "hang") > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if countCmd(f1.commands(), "hang") == 0 {
+		t.Fatal("hang never started")
+	}
+	_, err := sshRunCLI(ctx, f2.param("vrp"), []sshCmd{{Cmd: "display version"}})
+	if !errors.Is(err, errPoolFull) {
+		t.Fatalf("err = %v, want pool full (must not evict the acquired session)", err)
+	}
+	close(f1.hangRelease)
+}
+
+func TestPooledEOFWithPayloadIsError(t *testing.T) {
+	useFastSSHIdle(t)
+	f := startFakeSSH(t)
+	f.dropAfter = "display version"
+	ResetSSHPoolForTest()
+	p := f.param("vrp")
+	_, err := sshRunCLI(context.Background(), p, []sshCmd{{Cmd: "display version"}})
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("err = %v, want io.EOF for truncated dump", err)
 	}
 }
 
