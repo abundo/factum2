@@ -130,6 +130,56 @@ func TestCheckHubVersionGitDescribeStillChecked(t *testing.T) {
 	}
 }
 
+func TestCheckHubVersionSkipsWhenAppEnvDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.1.0-25-g9d32398-dirty", "9d32398c"
+
+	if err := checkHubVersion("v1.1.0-10-g431d1ff-dirty", "431d1ff4"); err != nil {
+		t.Fatalf("APP_ENV=development should skip: %v", err)
+	}
+}
+
+func TestHubHandshakeHeadersDevWhenAppEnvDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.1.0-25-g9d32398-dirty", "9d32398c"
+
+	h := hubHandshakeHeaders("secret")
+	if got := h.Get(hubVersionHeader); got != "dev" {
+		t.Fatalf("version header %q, want dev so dest agents skip", got)
+	}
+	if got := h.Get(hubCommitHeader); got != "none" {
+		t.Fatalf("commit header %q, want none so dest agents skip", got)
+	}
+	if got := h.Get("Authorization"); got != "Bearer secret" {
+		t.Fatalf("Authorization %q", got)
+	}
+}
+
+func TestHubHandshakeHeadersStampedWhenNotDev(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.2.3", "abc123"
+
+	h := hubHandshakeHeaders("secret")
+	if got := h.Get(hubVersionHeader); got != "v1.2.3" {
+		t.Fatalf("version header %q, want v1.2.3", got)
+	}
+	if got := h.Get(hubCommitHeader); got != "abc123" {
+		t.Fatalf("commit header %q, want abc123", got)
+	}
+}
+
 func TestHandleHubConnRejectsVersionMismatch(t *testing.T) {
 	origV, origC := buildinfo.Version, buildinfo.Commit
 	t.Cleanup(func() {
@@ -176,6 +226,31 @@ func TestHandleHubConnRejectsMissingVersion(t *testing.T) {
 	w.handleHubConn(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleHubConnAllowsMismatchWhenAppEnvDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	origV, origC := buildinfo.Version, buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit = origV, origC
+	})
+	buildinfo.Version, buildinfo.Commit = "v1.1.0-10-g431d1ff-dirty", "431d1ff4"
+
+	w := New(&util.ConfigWorker{
+		Token: "secret",
+		Commands: map[string]util.ConfigWorkerCommand{
+			"dns": {Cmd: "/bin/true"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, HubPath, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set(hubVersionHeader, "v1.1.0-25-g9d32398-dirty")
+	req.Header.Set(hubCommitHeader, "9d32398c")
+	rec := httptest.NewRecorder()
+	w.handleHubConn(rec, req)
+	if rec.Code == http.StatusConflict {
+		t.Fatalf("APP_ENV=development rejected stamped mismatch: %s", rec.Body.String())
 	}
 }
 

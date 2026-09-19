@@ -15,10 +15,11 @@ name: factum-dev
 x-lab-restart: &lab-restart
   restart: unless-stopped
 
-# Host build/ is bind-mounted at /opt/factum2. install.py --source --compose
-# rebuilds those binaries and restarts factum-web / factum-worker and every
-# dest that runs a co-located factum2-worker (dns, icinga, librenms,
-# oxidized, prometheus). The dns worker also handles certs.
+# Host build/ is bind-mounted at /opt/factum2. install.py --compose rebuilds
+# those binaries and restarts factum-web / factum-worker (pass --worker to
+# also restart dests that run a co-located factum2-worker). APP_ENV=
+# development skips the hub version handshake so dests can stay on an older
+# stamp. The dns worker also handles certs.
 x-factum: &factum
   <<: *lab-restart
   image: factum-dev:local

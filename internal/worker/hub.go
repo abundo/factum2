@@ -66,7 +66,7 @@ type Envelope struct {
 // hostname/roles, regardless of which side dialed. Version/Commit are
 // buildinfo identity; the primary refuses to register the node unless they
 // match its own process (see checkHubVersion). Unstamped `go run` builds
-// skip that check.
+// and APP_ENV=development skip that check.
 type HelloMsg struct {
 	Hostname string   `json:"hostname"`
 	Roles    []string `json:"roles"`

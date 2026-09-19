@@ -42,9 +42,10 @@ var hubUpgrader = websocket.Upgrader{
 }
 
 // runHubListener runs the agent-side half of the hub transport: accepts the
-// primary's connection, validates its bearer token and build identity, and
-// reports this instance's hostname/roles/version. Started unconditionally
-// by Start (worker.go) - worker.listen is required post-cutover.
+// primary's connection, validates its bearer token and (in production)
+// build identity, and reports this instance's hostname/roles/version.
+// Started unconditionally by Start (worker.go) - worker.listen is required
+// post-cutover.
 func (w *Worker) runHubListener(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(HubPath, w.handleHubConn)

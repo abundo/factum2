@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/abundo/factum2/internal/buildinfo"
@@ -19,22 +20,41 @@ const (
 	hubCommitHeader  = "X-Factum-Commit"
 )
 
+// hubDevHandshake is the compose-lab signal (factum-web sets APP_ENV=
+// development). --compose restarts only the primary; dest agents keep
+// whatever binary they last exec'd. Matching versions is then the
+// developer's job, not a 409.
+func hubDevHandshake() bool {
+	return os.Getenv("APP_ENV") == "development"
+}
+
 func hubHandshakeHeaders(token string) http.Header {
+	version, commit := buildinfo.Version, buildinfo.Commit
+	if hubDevHandshake() {
+		// Agents built before this skip still 409 stamped mismatches.
+		// Unstamped identity hits their existing IsDev skip.
+		version, commit = "dev", "none"
+	}
 	return http.Header{
 		"Authorization":  {"Bearer " + token},
-		hubVersionHeader: {buildinfo.Version},
-		hubCommitHeader:  {buildinfo.Commit},
+		hubVersionHeader: {version},
+		hubCommitHeader:  {commit},
 	}
 }
 
 func checkHubVersion(remoteVersion, remoteCommit string) error {
 	// Unstamped `go run` / `go test` (dev/none) skip the check on either
-	// side so a developer GUI can dial installed workers. Stamped
-	// Makefile/GoReleaser builds still require the same version and commit
-	// (a leading v on the version is ignored).
-	if buildinfo.IsDev(buildinfo.Version, buildinfo.Commit) || buildinfo.IsDev(remoteVersion, remoteCommit) {
+	// side so a developer GUI can dial installed workers. APP_ENV=
+	// development does the same for Makefile-stamped compose binaries.
+	// Production (GoReleaser) builds still require the same version and
+	// commit (a leading v on the version is ignored).
+	if hubDevHandshake() || buildinfo.IsDev(buildinfo.Version, buildinfo.Commit) || buildinfo.IsDev(remoteVersion, remoteCommit) {
 		if remoteVersion != buildinfo.Version || remoteCommit != buildinfo.Commit {
-			slog.Warn("worker hub: skipping version check (unstamped/dev build)",
+			reason := "unstamped/dev build"
+			if hubDevHandshake() {
+				reason = "APP_ENV=development"
+			}
+			slog.Warn("worker hub: skipping version check ("+reason+")",
 				"peer", hubIdent(remoteVersion),
 				"peer_commit", hubIdent(remoteCommit),
 				"local", hubIdent(buildinfo.Version),

@@ -3249,14 +3249,14 @@ def install_compose_lab(
     )
     # `up -d` is a no-op for already-running containers when compose config
     # did not change. Bind-mounted binaries are replaced on disk, but a
-    # running factum2-worker keeps the previous inode (and stamped version)
-    # until it re-execs — the hub handshake then 409s with version mismatch.
+    # running factum2-worker keeps the previous inode until it re-execs.
     # factum-web was stopped for migrate; dest workers and factum-worker
-    # were not. With --worker, restart dests first so they pick up the new
-    # stamp before the hub comes back. factum-worker's PID 1 *is* the
-    # bind-mounted binary: a mixed `compose restart` with the dests has
-    # left that container running the deleted inode, so recreate it on
-    # its own.
+    # were not. Dest version matching is the developer's job (the hub
+    # skips the handshake under APP_ENV=development). With --worker,
+    # restart dests first so they pick up the new binary. factum-worker's
+    # PID 1 *is* the bind-mounted binary: a mixed `compose restart` with
+    # the dests has left that container running the deleted inode, so
+    # recreate it on its own.
     if update_workers:
         running_dest = [
             s
