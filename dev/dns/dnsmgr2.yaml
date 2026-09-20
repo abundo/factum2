@@ -43,9 +43,37 @@ dns:
             ns:
                 - { name: "@", type: "NS", value: "ns1.lab.example." }
 
+dhcp:
+    domain_name: lab.example
+    dns_servers:
+        - 192.0.2.1
+    host_templates:
+        isc_kea:
+            type: isc_kea
+            ipv4:
+                enable: true
+                configdir: /etc/kea
+                includefile: kea-dhcp4.dnsmgr2.json
+                tmpdir: /var/lib/dnsmgr2
+                cmd_restart: /usr/local/sbin/kea-dhcp4-reload
+                cmd_status: /usr/local/sbin/kea-dhcp4-reload status
+            ipv6:
+                enable: false
+                configdir: /etc/kea
+                includefile: kea-dhcp6.dnsmgr2.json
+                tmpdir: /var/lib/dnsmgr2
+                cmd_restart: /usr/local/sbin/kea-dhcp4-reload
+                cmd_status: /usr/local/sbin/kea-dhcp4-reload status
+
 dnsmgr2:
     - host_dns_template: isc_bind
     - include: /etc/dnsmgr2/zones.yaml
-    # Enable DHCP in Destinations, then uncomment:
-    # - host_dhcp_template: isc_kea
-    # - include: /etc/dnsmgr2/prefixes.yaml
+    # Lab clients use 192.0.2.0/24 on br-lab-dhcp. Do not also enable that
+    # prefix in IPAM (dnsmgr2 rejects duplicate DHCP prefixes). Extra IPAM
+    # prefixes are merged from prefixes.yaml.
+    - host_dhcp_template: isc_kea
+      prefixes:
+          - name: 192.0.2.0/24
+            range: 192.0.2.100-192.0.2.199
+            gateway: 192.0.2.1
+    - include: /etc/dnsmgr2/prefixes.yaml

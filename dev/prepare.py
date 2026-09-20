@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create dest-file dirs, hub TLS, Oxidized/Grafana config, BIND layout,
+"""Create dest-file dirs, hub TLS, Oxidized/Grafana config, BIND/Kea layout,
 and lab ELINE CLI templates.
 
 With --demo, fetch the NetBox demo dump so postgres/init/02-netbox-demo.sh
@@ -29,6 +29,8 @@ EXECUTABLES = (
     "up.sh",
     "netbox-seed.sh",
     "dns/entrypoint.sh",
+    "dns/kea-dhcp4-reload.sh",
+    "dns/lab-dhcp-clients.sh",
     "icinga/entrypoint.sh",
     "librenms/98-lab-tune.sh",
     "librenms/99-factum-worker.sh",
@@ -137,6 +139,7 @@ DATA_DIRS = (
     "data/bind",
     "data/bind-zones",
     "data/dnsmgr2",
+    "data/kea",
     "data/lego",
     "data/prometheus",
     "data/grafana",
@@ -292,6 +295,11 @@ def prepare(*, demo: bool = False) -> None:
 
     shutil.copyfile(DIR / "dns" / "named.conf", DIR / "data" / "bind" / "named.conf")
     shutil.copyfile(DIR / "dns" / "dnsmgr2.yaml", DIR / "data" / "dns" / "dnsmgr2.yaml")
+    shutil.copyfile(DIR / "dns" / "kea-dhcp4.conf", DIR / "data" / "kea" / "kea-dhcp4.conf")
+    _write_if_empty(
+        DIR / "data" / "kea" / "kea-dhcp4.dnsmgr2.json",
+        (DIR / "dns" / "kea-dhcp4.dnsmgr2.json").read_text(),
+    )
     _write_if_empty(
         DIR / "data" / "dns" / "zones.yaml",
         "# Written by factum2-dns. Empty until the first DNS sync.\n",
@@ -346,6 +354,8 @@ def prepare(*, demo: bool = False) -> None:
         DIR / "data" / "dns" / "prefixes.yaml",
         DIR / "data" / "bind" / "named.conf",
         DIR / "data" / "bind" / "named.conf.dnsmgr2",
+        DIR / "data" / "kea" / "kea-dhcp4.conf",
+        DIR / "data" / "kea" / "kea-dhcp4.dnsmgr2.json",
         DIR / "data" / "prometheus" / "targets.json",
         DIR / "data" / "grafana" / "grafana.ini",
     )
@@ -361,6 +371,7 @@ def prepare(*, demo: bool = False) -> None:
         "data/bind",
         "data/bind-zones",
         "data/dnsmgr2",
+        "data/kea",
         "data/lego",
         "data/prometheus",
         "data/grafana",

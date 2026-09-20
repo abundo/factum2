@@ -20,7 +20,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | Grafana (devices + VMs) | http://127.0.0.1:18003 |
 | Dest | Alertmanager | http://127.0.0.1:19093 |
 | Dest | snmp-exporter | http://127.0.0.1:19116 |
-| Dest | BIND (`lab.example`) + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
+| Dest | BIND (`lab.example`) + Kea DHCPv4 + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker (netbox, device-sync, storage copy) | `127.0.0.1:18443` |
 | Software | factum-storage (HTTP + SFTP) | http://127.0.0.1:18088, SFTP `127.0.0.1:12222` (`factum` / `lab`) |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
@@ -55,7 +55,10 @@ already-running lab to refresh a stub EOS pack.
 Each step prints elapsed seconds (`==> wait-apps +45s`). Each dest container (dns, icinga,
 librenms, oxidized, prometheus) runs its own factum2-worker with that
 dest's command, matching production. The dns worker also runs **certs**
-(lego). factum-worker handles netbox and
+(lego) and applies **Kea DHCPv4** (`192.0.2.0/24` on `br-lab-dhcp`, plus
+IPAM prefixes from Destinations → DHCP). Two veth dhclients
+(`veth-dhcp1` / `veth-dhcp2`) run inside the dns container. factum-worker
+handles netbox and
 device-sync.
 NetBox starts empty. To load the upstream
 [netbox-demo-data](https://github.com/netbox-community/netbox-demo-data) SQL
@@ -115,12 +118,17 @@ container. Manual CLIs:
 ./dev/compose.sh exec prometheus /opt/factum2/factum2-prometheus sync
 ./dev/compose.sh exec dns /opt/factum2/factum2-dns sync
 ./dev/compose.sh exec dns /opt/factum2/factum2-certs sync
+./dev/compose.sh exec dns /usr/local/sbin/lab-dhcp-clients
+./dev/compose.sh exec dns ip -4 addr show veth-dhcp1
 ```
 
 Dest files are local to each dest container (still bind-mounted from
 `dev/data/` so `make dev-reset` can wipe them): Icinga `/factum`, Oxidized
 `~/.config/oxidized`, Prometheus `/etc/prometheus/targets.json`, DNS
-`/etc/dnsmgr2` and `/var/lib/bind`. Certificates: `/var/lib/lego`.
+`/etc/dnsmgr2`, `/var/lib/bind`, and `/etc/kea`. Certificates: `/var/lib/lego`.
+The lab DHCP subnet `192.0.2.0/24` is listed in administrator-managed
+`dnsmgr2.yaml` for the in-container clients; do not also enable that same
+prefix in IPAM (duplicate DHCP prefixes fail the DNS job).
 
 Oxidized 0.37 exits if `router.db` has no usable nodes, which takes down
 oxidized-web. `prepare.py` (and the oxidized entrypoint) write a dummy

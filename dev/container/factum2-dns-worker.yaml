@@ -1,6 +1,6 @@
 ---
-# Worker co-located with BIND in the dns container.
-# dns: factum2-dns writes records + zones.yaml, then applies BIND/Kea.
+# Worker co-located with BIND and Kea in the dns container.
+# dns: factum2-dns writes records + zones.yaml + prefixes.yaml, then applies BIND/Kea.
 # certs: factum2-certs writes .lego.yaml/.env and runs lego (RFC2136 against this named).
 factum:
     url: http://factum-web:8091

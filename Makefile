@@ -76,7 +76,7 @@ DEV_DIR := dev
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 # Core lab apps. Schema is applied before factum-web starts. Each dest
 # (dns, icinga, librenms, oxidized, prometheus) runs its own factum2-worker.
-# The dns worker also handles certs (lego).
+# The dns worker also handles certs (lego) and Kea DHCPv4.
 # icingadb / icingaweb need the extra MariaDB DBs (existing mysql volumes
 # skip docker-entrypoint-initdb.d), so dev-up creates those then starts
 # Icinga Web in parallel with NetBox/LibreNMS instead of after --wait.

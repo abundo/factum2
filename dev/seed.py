@@ -106,6 +106,7 @@ READY = """
   Alertmanager:   http://127.0.0.1:19093
   snmp-exporter:  http://127.0.0.1:19116
   BIND:           127.0.0.1:18053          zone lab.example (factum2-dns)
+  Kea DHCPv4:     dns container            192.0.2.0/24 on br-lab-dhcp (lab clients)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Software:       http://127.0.0.1:18088  (SFTP 127.0.0.1:12222 factum / lab)
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
@@ -314,14 +315,21 @@ def _librenms_user_exists(text: str) -> bool:
 
 def _check_dns_tools() -> None:
     check = run(
-        compose("exec", "-T", "dns", "sh", "-c", "command -v named-checkzone && command -v rndc"),
+        compose(
+            "exec",
+            "-T",
+            "dns",
+            "sh",
+            "-c",
+            "command -v named-checkzone && command -v rndc && command -v kea-dhcp4",
+        ),
         check=False,
         capture_output=True,
         text=True,
     )
     if check.returncode != 0:
         raise SystemExit(
-            "dns container is missing named-checkzone or rndc: "
+            "dns container is missing named-checkzone, rndc, or kea-dhcp4: "
             + ((check.stdout or "") + (check.stderr or "")).strip()
         )
 
@@ -429,6 +437,8 @@ UPDATE settings SET
   dns_enabled = true,
   dns_dest_file = {_sql_lit("/etc/dnsmgr2/records")},
   dns_zones_file = {_sql_lit("/etc/dnsmgr2/zones.yaml")},
+  dhcp_enabled = true,
+  dhcp_dns_servers = {_sql_lit("192.0.2.1")},
   dhcp_prefixes_file = {_sql_lit("/etc/dnsmgr2/prefixes.yaml")},
   icinga_enabled = true,
   icinga_api_url = 'https://127.0.0.1:5665',

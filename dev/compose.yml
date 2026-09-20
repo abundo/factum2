@@ -540,8 +540,8 @@ services:
       retries: 20
     mem_limit: 384m
 
-  # BIND + factum2-worker (dns + certs). factum2-dns writes
-  # /etc/dnsmgr2 then applies BIND/Kea in-process, which reloads named via rndc.
+  # BIND + Kea DHCPv4 + factum2-worker (dns + certs). factum2-dns writes
+  # /etc/dnsmgr2 then applies BIND/Kea in-process (rndc + kea SIGHUP).
   # factum2-certs writes /var/lib/lego and runs lego against this named.
   dns:
     <<: *lab-restart
@@ -550,6 +550,9 @@ services:
       context: .
       dockerfile: Dockerfile.dns
     hostname: dns
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     ports:
       - "18053:53/udp"
       - "18053:53/tcp"
@@ -559,10 +562,13 @@ services:
       - ./container/factum2-dns-worker.yaml:/etc/factum2/factum2-worker.yaml:z,ro
       - ./certs:/etc/factum2/certs:z,ro
       - ./dns/entrypoint.sh:/entrypoint.sh:z,ro
+      - ./dns/kea-dhcp4-reload.sh:/usr/local/sbin/kea-dhcp4-reload:z,ro
+      - ./dns/lab-dhcp-clients.sh:/usr/local/sbin/lab-dhcp-clients:z,ro
       - ./data/dns:/etc/dnsmgr2:z
       - ./data/bind:/etc/bind:z
       - ./data/bind-zones:/var/lib/bind:z
       - ./data/dnsmgr2:/var/lib/dnsmgr2:z
+      - ./data/kea:/etc/kea:z
       - ./data/lego:/var/lib/lego:z
     environment:
       TZ: UTC
@@ -570,14 +576,14 @@ services:
       test:
         [
           "CMD-SHELL",
-          "rndc -k /etc/bind/rndc.key status >/dev/null && test -S /run/factum2-worker/api.sock",
+          "rndc -k /etc/bind/rndc.key status >/dev/null && test -S /run/factum2-worker/api.sock && test -S /run/kea/kea4-ctrl-socket",
         ]
       start_period: 25s
       start_interval: 2s
       interval: 5s
       timeout: 5s
       retries: 20
-    mem_limit: 192m
+    mem_limit: 256m
 
   factum-web:
     <<: *factum

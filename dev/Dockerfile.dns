@@ -1,6 +1,7 @@
-# BIND + factum2-worker (dns + certs) for the lab dns service.
+# BIND + Kea DHCPv4 + factum2-worker (dns + certs) for the lab dns service.
 # Factum binaries are bind-mounted from the host build/ directory.
 # named-checkzone (bind9-utils) is required when factum2-dns applies zones.
+# kea-dhcp4 is required when DHCP is on (factum2-dns validates and reloads Kea).
 # lego is baked in so factum2-certs can issue via DNS-01/RFC2136 against named.
 FROM docker.io/debian:bookworm-slim
 ARG TARGETARCH
@@ -11,15 +12,20 @@ RUN apt-get update \
 		bind9-utils \
 		ca-certificates \
 		curl \
+		iproute2 \
+		isc-dhcp-client \
+		kea-dhcp4-server \
 		tzdata \
 	&& rm -rf /var/lib/apt/lists/*
 RUN arch="${TARGETARCH:-amd64}" \
 	&& curl -fsSL "https://github.com/go-acme/lego/releases/download/${LEGO_VERSION}/lego_${LEGO_VERSION}_linux_${arch}.tar.gz" \
 		| tar -xz -C /usr/local/bin lego \
 	&& chmod 755 /usr/local/bin/lego
-RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /var/lib/lego /run/named \
-		/run/factum2-worker /etc/dnsmgr2 /etc/kea \
+RUN mkdir -p /var/cache/bind /var/lib/bind /var/lib/dnsmgr2 /var/lib/lego /var/lib/kea \
+		/var/lib/dhcp /run/named /run/kea /run/factum2-worker /etc/dnsmgr2 /etc/kea \
 	&& chown bind:bind /var/cache/bind /var/lib/bind /run/named
 COPY dns/entrypoint.sh /entrypoint.sh
-RUN chmod 755 /entrypoint.sh
+COPY dns/kea-dhcp4-reload.sh /usr/local/sbin/kea-dhcp4-reload
+COPY dns/lab-dhcp-clients.sh /usr/local/sbin/lab-dhcp-clients
+RUN chmod 755 /entrypoint.sh /usr/local/sbin/kea-dhcp4-reload /usr/local/sbin/lab-dhcp-clients
 ENTRYPOINT ["/entrypoint.sh"]
