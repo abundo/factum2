@@ -3,8 +3,8 @@ package netbox
 import (
 	"testing"
 
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 func TestApplyCable_UpsertAndDelete(t *testing.T) {
@@ -62,6 +62,50 @@ func TestApplyCable_UpsertAndDelete(t *testing.T) {
 	}
 	if err := db.Where("netbox_id = ?", 9).First(&conn).Error; err == nil {
 		t.Fatal("connection still present after delete")
+	}
+}
+
+func TestApplyCable_ReplacesLocalCableOnPort(t *testing.T) {
+	db := newImportTestDB(t)
+	devA := models.Device{Name: "a", NetboxID: 1, CfSource: "netbox"}
+	devB := models.Device{Name: "b", NetboxID: 2, CfSource: "netbox"}
+	if err := db.Create(&devA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&devB).Error; err != nil {
+		t.Fatal(err)
+	}
+	ifa := models.Interface{DeviceID: devA.ID, NetboxID: 11, Name: "eth0"}
+	ifb := models.Interface{DeviceID: devB.ID, NetboxID: 22, Name: "eth0"}
+	if err := db.Create(&ifa).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ifb).Error; err != nil {
+		t.Fatal(err)
+	}
+	local := models.Connection{DeviceAID: devA.ID, InterfaceAID: ifa.ID, DeviceBID: devB.ID, InterfaceBID: ifb.ID, Label: "lab"}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	created, updated, deleted, skipped, err := ApplyCable(db, 9, &netboxtool.NBCable{
+		NetboxID: 9, AInterface: 11, BInterface: 22, Label: "from-nb",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != 1 || updated != 0 || deleted != 0 || skipped != 0 {
+		t.Fatalf("counts = %d/%d/%d/%d, want 1/0/0/0", created, updated, deleted, skipped)
+	}
+	if err := db.First(&models.Connection{}, local.ID).Error; err == nil {
+		t.Fatal("local cable should have been replaced")
+	}
+	var n int64
+	if err := db.Model(&models.Connection{}).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("connections = %d, want 1", n)
 	}
 }
 

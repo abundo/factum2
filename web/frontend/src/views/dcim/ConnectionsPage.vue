@@ -8,9 +8,11 @@ import { Controls } from '@vue-flow/controls'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { getConnectionGraph, getConnectionLayout, saveConnectionLayout } from '@/api/connections'
+import { getDevices } from '@/api/devices'
 import { getRacks } from '@/api/racks'
 import { getSites } from '@/api/sites'
 import ConnectionDeviceNode from '@/components/dcim/ConnectionDeviceNode.vue'
+import DevicePairCables from '@/components/dcim/DevicePairCables.vue'
 import { useAuthStore } from '@/stores/auth'
 
 defineOptions({ name: 'ConnectionsPage' })
@@ -32,12 +34,34 @@ const edges = ref([])
 const selectedEdge = ref(null)
 const sites = ref([])
 const racks = ref([])
+const devices = ref([])
 const filters = ref({
   site_id: route.query.site_id ? Number(route.query.site_id) : undefined,
   rack_id: route.query.rack_id ? Number(route.query.rack_id) : undefined,
   device_id: route.query.device_id ? Number(route.query.device_id) : undefined,
   depth: 1,
 })
+
+function defaultView() {
+  if (route.query.view === 'graph' || route.query.site_id || route.query.rack_id) return 'graph'
+  return 'pair'
+}
+
+const view = ref(defaultView())
+const deviceAId = ref(route.query.a ? Number(route.query.a) : undefined)
+const deviceBId = ref(route.query.b ? Number(route.query.b) : undefined)
+
+const viewItems = [
+  { label: 'Between devices', value: 'pair' },
+  { label: 'Graph', value: 'graph' },
+]
+
+const deviceItems = computed(() =>
+  devices.value.map((d) => ({
+    id: d.id,
+    name: d.site ? `${d.name} (${d.site})` : d.name,
+  })),
+)
 
 const nodeTypes = { device: markRaw(ConnectionDeviceNode) }
 
@@ -140,13 +164,52 @@ function onEdgeClick({ edge }) {
   selectedEdge.value = edge?.data || null
 }
 
+function setView(next) {
+  view.value = next
+  const query = { ...route.query, view: next }
+  if (next === 'pair') {
+    if (deviceAId.value) query.a = String(deviceAId.value)
+    else delete query.a
+    if (deviceBId.value) query.b = String(deviceBId.value)
+    else delete query.b
+  }
+  router.replace({ query })
+}
+
+function deviceIdFromPicker(v) {
+  if (v == null) return undefined
+  if (typeof v === 'object') return v.id || undefined
+  return v || undefined
+}
+
+function onDeviceA(id) {
+  deviceAId.value = deviceIdFromPicker(id)
+  setView('pair')
+}
+
+function onDeviceB(id) {
+  deviceBId.value = deviceIdFromPicker(id)
+  setView('pair')
+}
+
+function swapDevices() {
+  const a = deviceAId.value
+  deviceAId.value = deviceBId.value
+  deviceBId.value = a
+  setView('pair')
+}
+
 onMounted(() => {
-  Promise.all([getSites(), getRacks()]).then(([s, r]) => {
+  Promise.all([getSites(), getRacks(), getDevices()]).then(([s, r, d]) => {
     sites.value = s ?? []
     racks.value = r ?? []
+    devices.value = d ?? []
   })
-  if (filters.value.site_id || filters.value.rack_id || filters.value.device_id) load()
-  else loading.value = false
+  if (view.value === 'graph' && (filters.value.site_id || filters.value.rack_id || filters.value.device_id)) {
+    load()
+  } else {
+    loading.value = false
+  }
 })
 
 watch(
@@ -166,6 +229,61 @@ watch(
   <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
     <div class="flex flex-wrap items-end gap-3 shrink-0">
       <h4 class="m-0 mr-2">Connections</h4>
+      <div class="flex gap-1">
+        <UButton
+          v-for="item in viewItems"
+          :key="item.value"
+          size="sm"
+          :variant="view === item.value ? 'solid' : 'ghost'"
+          color="neutral"
+          :label="item.label"
+          @click="setView(item.value)"
+        />
+      </div>
+    </div>
+
+    <div v-if="view === 'pair'" class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <div class="flex flex-wrap items-end gap-3 shrink-0">
+        <UFormField label="Device A">
+          <USelectMenu
+            :model-value="deviceAId"
+            :items="deviceItems"
+            value-key="id"
+            label-key="name"
+            placeholder="Search device…"
+            class="w-72"
+            @update:model-value="onDeviceA"
+          />
+        </UFormField>
+        <UButton
+          icon="i-lucide-arrow-left-right"
+          size="sm"
+          color="neutral"
+          variant="outline"
+          :disabled="!deviceAId && !deviceBId"
+          @click="swapDevices"
+        />
+        <UFormField label="Device B">
+          <USelectMenu
+            :model-value="deviceBId"
+            :items="deviceItems"
+            value-key="id"
+            label-key="name"
+            placeholder="Search device…"
+            class="w-72"
+            @update:model-value="onDeviceB"
+          />
+        </UFormField>
+      </div>
+      <DevicePairCables
+        :device-a-id="deviceAId || 0"
+        :device-b-id="deviceBId || 0"
+        :can-write="canWrite"
+      />
+    </div>
+
+    <template v-else>
+    <div class="flex flex-wrap items-end gap-3 shrink-0">
       <UFormField label="Site">
         <USelect v-model="filters.site_id" :items="siteItems" class="w-48" />
       </UFormField>
@@ -231,5 +349,6 @@ watch(
         <p class="text-muted">Cables are read-only here. Change them in NetBox and sync.</p>
       </div>
     </USlideover>
+    </template>
   </div>
 </template>

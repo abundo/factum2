@@ -1725,6 +1725,19 @@ func (nb *NetboxClient) CreateCableWithOptions(aInterfaceID, bInterfaceID uint, 
 	return result.toNBCable(), nil
 }
 
+// UpdateCable replaces both terminations and any extra REST fields
+// (e.g. "label") on an existing cable.
+func (nb *NetboxClient) UpdateCable(cableID, aInterfaceID, bInterfaceID uint, extra map[string]any) error {
+	payload := map[string]any{
+		"a_terminations": []netboxCableTermination{{ObjectType: "dcim.interface", ObjectID: aInterfaceID}},
+		"b_terminations": []netboxCableTermination{{ObjectType: "dcim.interface", ObjectID: bInterfaceID}},
+	}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	return nb.restPatch("/api/dcim/cables/"+strconv.FormatUint(uint64(cableID), 10)+"/", payload)
+}
+
 // netboxCableListREST is one page of the REST cables list endpoint.
 // "next" is the full URL (scheme+host+query) of the following page, or
 // nil on the last page - Netbox's standard DRF pagination shape.

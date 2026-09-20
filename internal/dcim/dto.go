@@ -132,6 +132,52 @@ type GraphDTO struct {
 	Edges     []GraphEdge `json:"edges"`
 }
 
+// PairLink is the cable occupying one interface, if any.
+type PairLink struct {
+	ID                uint   `json:"id"`
+	Label             string `json:"label,omitempty"`
+	NetboxID          uint   `json:"netbox_id,omitempty"`
+	Source            string `json:"source"`
+	PeerDeviceID      uint   `json:"peer_device_id"`
+	PeerDeviceName    string `json:"peer_device_name"`
+	PeerInterfaceID   uint   `json:"peer_interface_id"`
+	PeerInterfaceName string `json:"peer_interface_name"`
+}
+
+type PairPort struct {
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Type        string    `json:"type,omitempty"`
+	Enabled     bool      `json:"enabled"`
+	Connection  *PairLink `json:"connection,omitempty"`
+}
+
+type PairDevice struct {
+	ID         uint       `json:"id"`
+	Name       string     `json:"name"`
+	Site       string     `json:"site,omitempty"`
+	Interfaces []PairPort `json:"interfaces"`
+}
+
+type PairCable struct {
+	ID           uint   `json:"id"`
+	Label        string `json:"label,omitempty"`
+	NetboxID     uint   `json:"netbox_id,omitempty"`
+	Source       string `json:"source"`
+	DeviceAID    uint   `json:"device_a_id"`
+	InterfaceAID uint   `json:"interface_a_id"`
+	DeviceBID    uint   `json:"device_b_id"`
+	InterfaceBID uint   `json:"interface_b_id"`
+}
+
+// PairDTO is two devices with every interface and the cables between them.
+type PairDTO struct {
+	DeviceA PairDevice  `json:"device_a"`
+	DeviceB PairDevice  `json:"device_b"`
+	Cables  []PairCable `json:"cables"`
+}
+
 type LayoutDTO struct {
 	Scope    string        `json:"scope"`
 	Revision int           `json:"revision"`

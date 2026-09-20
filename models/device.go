@@ -214,18 +214,28 @@ type AddressCreateDTO struct {
 	Management *bool `json:"management"`
 }
 
-// Connection is a Netbox cable directly connecting two device interfaces,
-// synced read-only from Netbox (internal/netbox.syncCables) - covers every
-// interface-to-interface cable Netbox knows about, not just the
-// LLDP-discovered ones internal/device-sync creates there.
+// Connection is a direct interface-to-interface cable. NetBox-synced rows
+// keep NetboxID set (partial unique index WHERE netbox_id <> 0) and are
+// read-only here. Factum-created cables keep NetboxID=0 and can be
+// created, retimed, and deleted from the Connections page.
 type Connection struct {
 	FactumModel
-	NetboxID     uint   `json:"netbox_id" gorm:"uniqueIndex"`
+	// NetboxID uniqueness is a partial index WHERE netbox_id <> 0 so many
+	// Factum-local cables (netbox_id=0) can coexist.
+	NetboxID     uint   `json:"netbox_id"`
 	DeviceAID    uint   `json:"device_a_id" gorm:"index"`
 	InterfaceAID uint   `json:"interface_a_id" gorm:"index"`
 	DeviceBID    uint   `json:"device_b_id" gorm:"index"`
 	InterfaceBID uint   `json:"interface_b_id" gorm:"index"`
 	Label        string `json:"label" gorm:"type:varchar(255)"`
+}
+
+// ConnectionWriteDTO is the body for POST/PUT /api/dcim/connections.
+// Device IDs are taken from the chosen interfaces, not the client.
+type ConnectionWriteDTO struct {
+	InterfaceAID uint   `json:"interface_a_id"`
+	InterfaceBID uint   `json:"interface_b_id"`
+	Label        string `json:"label"`
 }
 
 const (

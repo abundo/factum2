@@ -36,6 +36,38 @@ export function parseInterfaceNamePattern(pattern, { expandRanges = true } = {})
   }
 }
 
+// Same alphanumeric / natural order as DeviceList's interface UTable
+// (TanStack Table's default sortingFn). Ethernet1, Ethernet2, Ethernet10
+// rather than SQL ORDER BY name (Ethernet1, Ethernet10, Ethernet2).
+const reSplitAlphaNumeric = /([0-9]+)/gm
+
+export function compareInterfaceName(a, b) {
+  return compareAlphanumeric(String(a ?? '').toLowerCase(), String(b ?? '').toLowerCase())
+}
+
+function compareAlphanumeric(aStr, bStr) {
+  const a = aStr.split(reSplitAlphaNumeric).filter(Boolean)
+  const b = bStr.split(reSplitAlphaNumeric).filter(Boolean)
+  while (a.length && b.length) {
+    const aa = a.shift()
+    const bb = b.shift()
+    const an = parseInt(aa, 10)
+    const bn = parseInt(bb, 10)
+    const combo = [an, bn].sort()
+    if (Number.isNaN(combo[0])) {
+      if (aa > bb) return 1
+      if (bb > aa) return -1
+      continue
+    }
+    if (Number.isNaN(combo[1])) {
+      return Number.isNaN(an) ? -1 : 1
+    }
+    if (an > bn) return 1
+    if (bn > an) return -1
+  }
+  return a.length - b.length
+}
+
 function expandAll(s) {
   const open = (s.match(/\[/g) || []).length
   const close = (s.match(/\]/g) || []).length

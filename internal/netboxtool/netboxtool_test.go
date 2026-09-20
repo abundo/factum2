@@ -458,14 +458,29 @@ func TestCreateCableWithOptions_SendsLabel(t *testing.T) {
 	assert.Equal(t, "lldp", cable.Label)
 }
 
+func TestUpdateCable_PatchesTerminationsAndLabel(t *testing.T) {
+	nb := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPatch, r.Method)
+		assert.Equal(t, "/api/dcim/cables/11/", r.URL.Path)
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "uplink", body["label"])
+		assert.Contains(t, body, "a_terminations")
+		assert.Contains(t, body, "b_terminations")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	require.NoError(t, nb.UpdateCable(11, 100, 200, map[string]any{"label": "uplink"}))
+}
+
 func TestParseDevices_VLANNames(t *testing.T) {
 	nb := &NetboxClient{}
 	devices, err := nb.parseDevices([]JSONDevice{{
 		ID:   1,
 		Name: "sw1",
 		Interfaces: []JSONInterface{{
-			ID:   10,
-			Name: "Ethernet1",
+			ID:           10,
+			Name:         "Ethernet1",
 			UntaggedVLAN: &NetboxVlanRef{ID: 1, VID: 100, Name: "MGMT"},
 			TaggedVLANs: []NetboxVlanRef{
 				{ID: 2, VID: 200, Name: "servers"},

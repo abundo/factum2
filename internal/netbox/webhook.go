@@ -4,12 +4,11 @@ import (
 	"errors"
 
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // SyncCable applies one Netbox cable to factum's Connection table: refetch
@@ -105,16 +104,35 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 		InterfaceBID: bIntf.ID,
 		Label:        cable.Label,
 	}
-	if err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "netbox_id"}},
-		UpdateAll: true,
-	}).Create(&conn).Error; err != nil {
+	if err := deleteLocalCablesOnInterfaces(db, aIntf.ID, bIntf.ID); err != nil {
 		return 0, 0, 0, 0, err
 	}
 	if isNew {
+		if err := db.Create(&conn).Error; err != nil {
+			return 0, 0, 0, 0, err
+		}
 		return 1, 0, 0, 0, nil
 	}
+	if err := db.Model(&models.Connection{}).Where("id = ?", existing.ID).Updates(map[string]any{
+		"device_a_id":    conn.DeviceAID,
+		"interface_a_id": conn.InterfaceAID,
+		"device_b_id":    conn.DeviceBID,
+		"interface_b_id": conn.InterfaceBID,
+		"label":          conn.Label,
+	}).Error; err != nil {
+		return 0, 0, 0, 0, err
+	}
 	return 0, 1, 0, 0, nil
+}
+
+// deleteLocalCablesOnInterfaces drops Factum-only cables on these ports so a
+// later NetBox cable can occupy them. NetBox-synced rows are left alone.
+func deleteLocalCablesOnInterfaces(db *gorm.DB, ifaceIDs ...uint) error {
+	if len(ifaceIDs) == 0 {
+		return nil
+	}
+	return db.Where("netbox_id = 0 AND (interface_a_id IN ? OR interface_b_id IN ?)", ifaceIDs, ifaceIDs).
+		Delete(&models.Connection{}).Error
 }
 
 // DeleteConnectionByNetboxID removes one Connection by its Netbox cable id

@@ -2,12 +2,213 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
+
+func TestApiDCIMConnectionPairCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	a := models.Device{Name: "leaf-1", CfSource: "factum"}
+	b := models.Device{Name: "spine-1", CfSource: "factum"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, Name: "Ethernet1", Description: "uplink"}
+	ib := models.Interface{DeviceID: b.ID, Name: "Ethernet1", Description: "to leaf"}
+	ic := models.Interface{DeviceID: b.ID, Name: "Ethernet2"}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ic).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/dcim/connections/pair?a="+strconv.FormatUint(uint64(a.ID), 10)+"&b="+strconv.FormatUint(uint64(b.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiDCIMConnectionPair(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pair status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/connections", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID, Label: "uplink",
+	}, nil, nil)
+	if err := ctrl.ApiDCIMConnectionCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Connection
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == 0 || created.NetboxID != 0 || created.Label != "uplink" {
+		t.Fatalf("created = %+v", created)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/connections/x", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ic.ID, Label: "moved",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDCIMConnectionUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	nb := models.Connection{
+		NetboxID: 5, DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID,
+	}
+	if err := db.Create(&nb).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/connections/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(nb.ID), 10)})
+	if err := ctrl.ApiDCIMConnectionDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("nb delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/connections/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDCIMConnectionDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestApiDCIMConnectionCreatePushesToNetbox(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	a := models.Device{Name: "nb-a", NetboxID: 1, CfSource: "netbox"}
+	b := models.Device{Name: "nb-b", NetboxID: 2, CfSource: "netbox"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, Name: "Eth1", NetboxID: 11}
+	ib := models.Interface{DeviceID: b.ID, Name: "Eth1", NetboxID: 22}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/dcim/connections", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID, Label: "uplink",
+	}, nil, nil)
+	if err := ctrl.ApiDCIMConnectionCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no netbox config status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var posted map[string]any
+	var patched map[string]any
+	deleted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/dcim/cables/":
+			_ = json.Unmarshal(body, &posted)
+			_, _ = w.Write([]byte(`{
+				"id": 99,
+				"label": "uplink",
+				"a_terminations": [{"object_type": "dcim.interface", "object_id": 11}],
+				"b_terminations": [{"object_type": "dcim.interface", "object_id": 22}]
+			}`))
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/dcim/cables/"):
+			_ = json.Unmarshal(body, &patched)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/dcim/cables/"):
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotImplemented)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.NetboxApiURL = srv.URL
+	settings.NetboxApiToken = "t"
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/connections", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID, Label: "uplink",
+	}, nil, nil)
+	if err := ctrl.ApiDCIMConnectionCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Connection
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.NetboxID != 99 {
+		t.Fatalf("netbox_id = %d, want 99; posted=%v", created.NetboxID, posted)
+	}
+	if posted["label"] != "uplink" {
+		t.Fatalf("posted label = %v", posted["label"])
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/connections/x", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID, Label: "renamed",
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDCIMConnectionUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if patched["label"] != "renamed" {
+		t.Fatalf("patched = %v", patched)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/connections/x", nil, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDCIMConnectionDelete(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !deleted {
+		t.Fatal("want NetBox cable deleted")
+	}
+}
 
 func TestApiGetConnections(t *testing.T) {
 	db := newTestDB(t)

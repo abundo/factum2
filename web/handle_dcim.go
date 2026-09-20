@@ -547,6 +547,9 @@ func (ctrl *Controller) ApiDeviceDelete(c *echo.Context) error {
 		if err := ctrl.DB.Where("interface_id IN ?", ifaceIDs).Delete(&models.Address{}).Error; err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
+		if err := ctrl.DB.Where("interface_a_id IN ? OR interface_b_id IN ?", ifaceIDs, ifaceIDs).Delete(&models.Connection{}).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
 	}
 	if err := ctrl.DB.Where("device_id = ?", existing.ID).Delete(&models.Interface{}).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -910,6 +913,9 @@ func (ctrl *Controller) ApiDeleteDCIMInterface(c *echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]any{"error": "interfaces on NetBox-synced devices cannot be deleted here"})
 	}
 	if err := ctrl.DB.Where("interface_id = ?", iface.ID).Delete(&models.Address{}).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := ctrl.DB.Where("interface_a_id = ? OR interface_b_id = ?", iface.ID, iface.ID).Delete(&models.Connection{}).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	if err := ctrl.DB.Delete(&iface).Error; err != nil {

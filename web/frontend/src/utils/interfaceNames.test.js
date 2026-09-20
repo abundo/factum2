@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   MAX_INTERFACE_RANGE,
+  compareInterfaceName,
   expandInterfaceNames,
   parseInterfaceNamePattern,
 } from './interfaceNames.js'
@@ -89,4 +90,26 @@ test('parseInterfaceNamePattern does not throw', () => {
     names: ['Ethernet[1-2]'],
     error: '',
   })
+})
+
+test('compareInterfaceName is alphanumeric like DeviceList', () => {
+  const names = [
+    'Ethernet10',
+    'Ethernet2',
+    'Ethernet1',
+    'Ethernet1/10',
+    'Ethernet1/2',
+    'Management1',
+    'ethernet3',
+  ]
+  names.sort(compareInterfaceName)
+  assert.deepEqual(names, [
+    'Ethernet1',
+    'Ethernet1/2',
+    'Ethernet1/10',
+    'Ethernet2',
+    'ethernet3',
+    'Ethernet10',
+    'Management1',
+  ])
 })

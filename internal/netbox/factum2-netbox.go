@@ -252,6 +252,9 @@ func syncCables(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repo
 	}
 	existingIDs := make(map[uint]bool, len(existing))
 	for _, c := range existing {
+		if c.NetboxID == 0 {
+			continue
+		}
 		existingIDs[c.NetboxID] = true
 	}
 
@@ -277,25 +280,34 @@ func syncCables(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repo
 			InterfaceBID: bIntf.ID,
 			Label:        nb_cable.Label,
 		}
-		err := db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "netbox_id"}},
-			UpdateAll: true,
-		}).Create(&conn).Error
-		if err != nil {
+		if err := deleteLocalCablesOnInterfaces(db, aIntf.ID, bIntf.ID); err != nil {
 			return err
 		}
 		if existingIDs[nb_cable.NetboxID] {
+			if err := db.Model(&models.Connection{}).Where("netbox_id = ?", nb_cable.NetboxID).Updates(map[string]any{
+				"device_a_id":    conn.DeviceAID,
+				"interface_a_id": conn.InterfaceAID,
+				"device_b_id":    conn.DeviceBID,
+				"interface_b_id": conn.InterfaceBID,
+				"label":          conn.Label,
+			}).Error; err != nil {
+				return err
+			}
 			count_updated++
 		} else {
+			if err := db.Create(&conn).Error; err != nil {
+				return err
+			}
 			count_new++
 		}
 	}
 
-	// Skip connection cleanup on an empty cable list so a fetch that
-	// returned no interface-to-interface cables cannot wipe every row.
+	// Skip connection cleanup on an empty resolved list so a fetch that
+	// returned no usable interface-to-interface cables cannot wipe every
+	// row. Factum-local cables (netbox_id=0) are never deleted here.
 	var count_deleted int
-	if len(nb_cables) > 0 {
-		result := db.Where("netbox_id NOT IN ?", syncedIDs).Delete(&models.Connection{})
+	if len(syncedIDs) > 0 {
+		result := db.Where("netbox_id <> 0 AND netbox_id NOT IN ?", syncedIDs).Delete(&models.Connection{})
 		if result.Error != nil {
 			return result.Error
 		}

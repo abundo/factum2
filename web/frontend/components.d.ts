@@ -19,6 +19,7 @@ declare module 'vue' {
     CustomBranding: typeof import('./src/components/CustomBranding.vue')['default']
     DcimDetailDialog: typeof import('./src/components/DcimDetailDialog.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
+    DevicePairCables: typeof import('./src/components/dcim/DevicePairCables.vue')['default']
     DhcpLeasePicker: typeof import('./src/components/DhcpLeasePicker.vue')['default']
     FloorPlanCanvas: typeof import('./src/components/dcim/FloorPlanCanvas.vue')['default']
     FormModal: typeof import('./src/components/FormModal.vue')['default']

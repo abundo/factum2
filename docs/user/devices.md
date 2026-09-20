@@ -67,11 +67,13 @@ push and device-sync. `factum2-driver-cli` still takes `--username` /
 ## Network map
 
 **Network map** draws sites and links from Factum's topology (cables
-synced from NetBox). Use it to see how devices connect, not to edit
-cabling — change cables in NetBox and sync. Sites without GPS are omitted.
+synced from NetBox, plus cables created in Factum). Sites without GPS
+are omitted.
 
-**Infrastructure → Racks**, **Floor plans**, and **Connections** are the room and
-rack drawings. See [Datacenter](datacenter.md).
+**Infrastructure → Racks**, **Floor plans**, and **Connections** are the room
+and rack drawings. On **Connections → Between devices** you can create,
+change, and remove cables. When both ports came from NetBox, the cable is
+stored in NetBox as well. See [Datacenter](datacenter.md).
 
 **Organization → Sites** (when Organization is enabled) is the hierarchical
 site tree. NetBox regions, sites, and locations all import as sites, nested
