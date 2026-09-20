@@ -7,7 +7,9 @@ package icinga
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -17,6 +19,28 @@ import (
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
+
+// DefaultCertTemplate is the Jet source seeded in the lab and shown as the
+// Icinga settings placeholder. Rendered once per sync with .Checks.
+const DefaultCertTemplate = `template Service "factum-cert-check" {
+  // max_check_attempts = 3
+  check_interval = 1d
+  retry_interval = 5m
+  check_command = "http"
+  vars.http_ssl = false
+  vars.http_certificate = "20,10"
+  vars.http_sni = "true"
+}
+
+{{ range .Checks }}
+object Service "HTTPS cert - {{ quote(.Domain) }}" {
+  import "factum-cert-check"
+  host_name = "{{ quote(.Host) }}"
+  vars.http_vhost = "{{ quote(.Domain) }}"
+}
+
+{{ end }}
+`
 
 type FactumIcingaClient struct {
 	Config       *util.ConfigFactum
@@ -118,6 +142,7 @@ func hostTemplateFuncs(defaultDomain string) map[string]any {
 			}
 			return name + "." + defaultDomain
 		}),
+		"quote": tmpl.StringFunc("quote", quote),
 	}
 }
 
@@ -277,8 +302,150 @@ func (fic *FactumIcingaClient) writeUsers(reporter jobevent.Reporter) (bool, err
 	return installConfFile(tmpFile, fic.IcingaConfig.UsersFile)
 }
 
-// Sync fetches devices from the Factum API, writes the icinga2 hosts and
-// users config files, and asks icinga2 to reload if anything changed.
+// certCheck is one Icinga HTTPS certificate check: connect to Host, require
+// the certificate to present Domain (SNI / http_vhost).
+type certCheck struct {
+	Host     string
+	Domain   string
+	CertName string
+}
+
+type certTemplateData struct {
+	Checks []certCheck
+}
+
+func normalizeCertHost(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") && len(s) > 2 {
+		s = s[1 : len(s)-1]
+	}
+	return strings.TrimSuffix(s, ".")
+}
+
+func collectCertChecks(certs []util.ConfigIcingaCert) []certCheck {
+	type pair struct{ host, domain string }
+	seen := map[pair]bool{}
+	var out []certCheck
+	for _, cert := range certs {
+		host := normalizeCertHost(cert.Host)
+		if host == "" {
+			continue
+		}
+		for _, name := range cert.Domains {
+			name = strings.TrimSpace(name)
+			if name == "" || strings.Contains(name, "*") {
+				continue
+			}
+			p := pair{host, name}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, certCheck{Host: host, Domain: name, CertName: cert.Name})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Host != out[j].Host {
+			return out[i].Host < out[j].Host
+		}
+		if out[i].Domain != out[j].Domain {
+			return out[i].Domain < out[j].Domain
+		}
+		return out[i].CertName < out[j].CertName
+	})
+	return out
+}
+
+var icingaHostObjectRe = regexp.MustCompile(`(?m)^object\s+Host\s+"((?:\\.|[^"\\])*)"`)
+
+func icingaHostObjectNames(content []byte) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range icingaHostObjectRe.FindAllSubmatch(content, -1) {
+		name := string(m[1])
+		name = strings.ReplaceAll(name, `\"`, `"`)
+		name = strings.ReplaceAll(name, `\\`, `\`)
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func extraCertHostObjects(checks []certCheck, existing map[string]bool) string {
+	seen := map[string]bool{}
+	var b strings.Builder
+	for _, c := range checks {
+		if existing[c.Host] || seen[c.Host] {
+			continue
+		}
+		ip := net.ParseIP(c.Host)
+		if ip == nil {
+			continue
+		}
+		seen[c.Host] = true
+		fmt.Fprintf(&b, "object Host \"%s\" {\n  import \"generic-host\"\n", quote(c.Host))
+		if ip.To4() == nil {
+			fmt.Fprintf(&b, "  address6 = \"%s\"\n", quote(c.Host))
+		} else {
+			fmt.Fprintf(&b, "  address = \"%s\"\n", quote(c.Host))
+		}
+		fmt.Fprintf(&b, "}\n\n")
+	}
+	return b.String()
+}
+
+// writeCerts renders IcingaConfig.CertTemplate once with every concrete
+// certificate name (wildcards skipped) into IcingaConfig.CertsFile. IP
+// check hosts that are not already Icinga Host objects get a generic-host
+// object in the same file so the Service can attach.
+func (fic *FactumIcingaClient) writeCerts(reporter jobevent.Reporter) (bool, error) {
+	if strings.TrimSpace(fic.IcingaConfig.CertsFile) == "" || strings.TrimSpace(fic.IcingaConfig.CertTemplate) == "" {
+		return false, nil
+	}
+	if err := tmpl.Parse(fic.IcingaConfig.CertTemplate, icingaTemplateOpts("cert", fic.IcingaConfig.DefaultDomain)); err != nil {
+		return false, fmt.Errorf("parsing icinga cert template: %w", err)
+	}
+
+	checks := collectCertChecks(fic.IcingaConfig.Certificates)
+	rendered, err := executeIcingaTemplate("cert", fic.IcingaConfig.CertTemplate, certTemplateData{Checks: checks}, fic.IcingaConfig.DefaultDomain)
+	if err != nil {
+		return false, fmt.Errorf("rendering icinga cert template: %w", err)
+	}
+
+	existing := map[string]bool{}
+	if fic.IcingaConfig.HostsFile != "" {
+		if body, err := os.ReadFile(fic.IcingaConfig.HostsFile); err == nil {
+			existing = icingaHostObjectNames(body)
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+
+	tmpFile := fic.IcingaConfig.CertsFile + ".tmp"
+	f, err := createConfFile(tmpFile, fmt.Sprintf("%d certificate check(s)", len(checks)))
+	if err != nil {
+		return false, err
+	}
+	if extra := extraCertHostObjects(checks, existing); extra != "" {
+		if _, err := f.WriteString(extra); err != nil {
+			f.Close()
+			return false, err
+		}
+	}
+	if _, err := f.WriteString(rendered); err != nil {
+		f.Close()
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	reporter.Emit(jobevent.Info, "wrote %d certificate check(s) to %s", len(checks), fic.IcingaConfig.CertsFile)
+	return installConfFile(tmpFile, fic.IcingaConfig.CertsFile)
+}
+
+// Sync fetches devices from the Factum API, writes the icinga2 hosts,
+// users, and certificate-check config files, and asks icinga2 to reload
+// if anything changed.
 func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "Icinga sync started")
 	factumClient := factum.NewFactumClient(fic.Config)
@@ -308,8 +475,13 @@ func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 		reporter.EmitErr(err)
 		return err
 	}
+	certsChanged, err := fic.writeCerts(reporter)
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
 
-	if hostsChanged || usersChanged {
+	if hostsChanged || usersChanged || certsChanged {
 		reporter.Emit(jobevent.Info, "Asking icinga to reload configuration")
 		if _, err := fic.Icinga.Reload(); err != nil {
 			reporter.EmitErr(err)

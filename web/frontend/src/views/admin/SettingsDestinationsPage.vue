@@ -4,6 +4,8 @@ import { useSettings } from '@/composables/useSettings'
 import GoTemplateField from '@/components/GoTemplateField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import {
+  icingaCertTemplateExample,
+  icingaCertTemplateSchema,
   icingaDefaultNotificationSchema,
   icingaDependencyTemplateSchema,
   icingaHostTemplateSchema,
@@ -216,6 +218,14 @@ const certKeyTypeItems = [
               <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
             </div>
             <div>
+              <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
+              <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
+              <small class="text-muted-color"
+                >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it
+                next to the hosts and users files. Leave blank to skip writing.</small
+              >
+            </div>
+            <div>
               <label for="icinga_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
               <UTextarea
                 id="icinga_ignore_devices"
@@ -255,6 +265,14 @@ const certKeyTypeItems = [
               :rows="6"
               placeholder="Jet template, executed with .Username, .DisplayName and .Email"
               :schema="icingaUserTemplateSchema"
+            />
+            <GoTemplateField
+              id="icinga_cert_template"
+              v-model="settings.icinga_cert_template"
+              label="Certificate template"
+              :rows="12"
+              :placeholder="icingaCertTemplateExample"
+              :schema="icingaCertTemplateSchema"
             />
           </div>
         </template>

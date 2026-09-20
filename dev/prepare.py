@@ -312,6 +312,10 @@ def prepare(*, demo: bool = False) -> None:
         DIR / "data" / "icinga" / "users.conf",
         "// Written by factum2-icinga. Empty until the first sync.\n",
     )
+    _write_if_empty(
+        DIR / "data" / "icinga" / "certs.conf",
+        "// Written by factum2-icinga. Empty until the first sync.\n",
+    )
     _write_if_empty(DIR / "data" / "oxidized" / "router.db", "lab-dummy:127.0.0.1:ios\n")
     _write_if_empty(
         DIR / "data" / "dns" / "records",
@@ -333,6 +337,7 @@ def prepare(*, demo: bool = False) -> None:
     writable = (
         DIR / "data" / "icinga" / "hosts.conf",
         DIR / "data" / "icinga" / "users.conf",
+        DIR / "data" / "icinga" / "certs.conf",
         DIR / "data" / "oxidized" / "router.db",
         DIR / "data" / "oxidized" / "config",
         DIR / "data" / "dns" / "records",

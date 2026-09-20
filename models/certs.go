@@ -82,14 +82,17 @@ type CertChallengeDTO struct {
 // KeyType and EnableCommonName nil/empty inherit Settings.CertsDefault*.
 type Certificate struct {
 	FactumModel
-	Name             string              `json:"name" gorm:"uniqueIndex;not null;type:varchar(255)"`
-	AccountID        uint                `json:"account_id"`
-	Account          CertAccount         `json:"account,omitempty" gorm:"constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
-	ChallengeID      uint                `json:"challenge_id"`
-	Challenge        CertChallenge       `json:"challenge,omitempty" gorm:"constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
-	KeyType          string              `json:"key_type" gorm:"type:varchar(32)"`
-	EnableCommonName *bool               `json:"enable_common_name"`
-	Domains          []CertificateDomain `json:"domains" gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Name             string        `json:"name" gorm:"uniqueIndex;not null;type:varchar(255)"`
+	AccountID        uint          `json:"account_id"`
+	Account          CertAccount   `json:"account,omitempty" gorm:"constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
+	ChallengeID      uint          `json:"challenge_id"`
+	Challenge        CertChallenge `json:"challenge,omitempty" gorm:"constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
+	KeyType          string        `json:"key_type" gorm:"type:varchar(32)"`
+	EnableCommonName *bool         `json:"enable_common_name"`
+	// Host is the IPv4/IPv6/hostname Icinga connects to when checking
+	// this certificate. Empty skips Icinga cert checks for this cert.
+	Host    string              `json:"host" gorm:"type:varchar(255)"`
+	Domains []CertificateDomain `json:"domains" gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 }
 
 func (Certificate) TableName() string { return "certificates" }
@@ -112,5 +115,6 @@ type CertificateDTO struct {
 	Challenge        string   `json:"challenge"`
 	KeyType          string   `json:"key_type"`
 	EnableCommonName *bool    `json:"enable_common_name"`
+	Host             string   `json:"host"`
 	Domains          []string `json:"domains"`
 }

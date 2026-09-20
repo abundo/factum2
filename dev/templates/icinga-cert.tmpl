@@ -1,0 +1,18 @@
+template Service "factum-cert-check" {
+  // max_check_attempts = 3
+  check_interval = 1d
+  retry_interval = 5m
+  check_command = "http"
+  vars.http_ssl = false
+  vars.http_certificate = "20,10"
+  vars.http_sni = "true"
+}
+
+{{ range .Checks }}
+object Service "HTTPS cert - {{ quote(.Domain) }}" {
+  import "factum-cert-check"
+  host_name = "{{ quote(.Host) }}"
+  vars.http_vhost = "{{ quote(.Domain) }}"
+}
+
+{{ end }}

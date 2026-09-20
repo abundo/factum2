@@ -398,6 +398,7 @@ def _settings_sql(
 ) -> str:
     host_tmpl = (DIR / "templates" / "icinga-host.tmpl").read_text()
     user_tmpl = (DIR / "templates" / "icinga-user.tmpl").read_text()
+    cert_tmpl = (DIR / "templates" / "icinga-cert.tmpl").read_text()
     # OxidizedApiURL is used by factum2-oxidized (reload) and by
     # factum-web's /oxidized browser. Compose DNS oxidized:8888 is
     # reachable from both; 127.0.0.1:8888 is only the oxidized container.
@@ -435,8 +436,10 @@ UPDATE settings SET
   icinga_api_pass = 'factum',
   icinga_hosts_file = {_sql_lit("/factum/hosts.conf")},
   icinga_users_file = {_sql_lit("/factum/users.conf")},
+  icinga_certs_file = {_sql_lit("/factum/certs.conf")},
   icinga_host_template = {_sql_lit(host_tmpl)},
   icinga_user_template = {_sql_lit(user_tmpl)},
+  icinga_cert_template = {_sql_lit(cert_tmpl)},
   librenms_enabled = true,
   librenms_api_url = 'http://127.0.0.1:8000/api/v0',
   librenms_api_token = {_sql_lit(librenms_token)},

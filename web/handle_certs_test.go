@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/abundo/factum2/internal/util"
@@ -83,6 +84,7 @@ func TestCertificateLifecycle(t *testing.T) {
 
 	c, rec = jsonRequest(t, http.MethodPost, "/api/certs/certificates", certificateBody{
 		Name: "web", AccountID: acc.ID, ChallengeID: ch.ID,
+		Host:    "lu1-vm15.example.com",
 		Domains: []string{"example.com", "*.example.com"},
 	}, nil, nil)
 	if err := ctrl.ApiCertificateCreate(c); err != nil {
@@ -98,6 +100,9 @@ func TestCertificateLifecycle(t *testing.T) {
 	if len(cert.Domains) != 2 {
 		t.Fatalf("domains = %#v", cert.Domains)
 	}
+	if cert.Host != "lu1-vm15.example.com" {
+		t.Fatalf("host = %q", cert.Host)
+	}
 
 	c, rec = jsonRequest(t, http.MethodGet, "/api/certs-config", nil, nil, nil)
 	if err := ctrl.ApiCertsConfig(c); err != nil {
@@ -105,5 +110,31 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("config status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/certs/certificates/"+strconv.FormatUint(uint64(cert.ID), 10), certificateBody{
+		Name: "web", AccountID: acc.ID, ChallengeID: ch.ID,
+		Host: "not a host", Domains: []string{"example.com"},
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(cert.ID), 10)})
+	if err := ctrl.ApiCertificateUpdate(c); err != nil {
+		t.Fatalf("update invalid host: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid host status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestValidCertHost(t *testing.T) {
+	ok := []string{"", "192.0.2.10", "2001:db8::10", "[2001:db8::10]", "lu1-vm15.itn.nu", "localhost"}
+	for _, h := range ok {
+		if err := validCertHost(h); err != nil {
+			t.Errorf("validCertHost(%q) = %v", h, err)
+		}
+	}
+	bad := []string{"http://example.com", "1.2.3.4/24", "has space.com", "*.example.com", "a_b.example.com"}
+	for _, h := range bad {
+		if err := validCertHost(h); err == nil {
+			t.Errorf("validCertHost(%q) = nil", h)
+		}
 	}
 }

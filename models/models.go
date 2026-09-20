@@ -453,6 +453,9 @@ type Settings struct {
 	IcingaApiPass   string `gorm:"column:icinga_api_pass" form:"icinga_api_pass" json:"icinga_api_pass"`
 	IcingaHostsFile string `gorm:"column:icinga_hosts_file" form:"icinga_hosts_file" json:"icinga_hosts_file"`
 	IcingaUsersFile string `gorm:"column:icinga_users_file" form:"icinga_users_file" json:"icinga_users_file"`
+	// IcingaCertsFile is the Icinga 2 conf written by factum2-icinga for
+	// HTTPS certificate checks (one Service per certificate name).
+	IcingaCertsFile string `gorm:"column:icinga_certs_file" form:"icinga_certs_file" json:"icinga_certs_file"`
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
 	// per line) that factum2-icinga's Update() skips entirely.
 	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`
@@ -468,6 +471,10 @@ type Settings struct {
 	IcingaHostTemplate       string `gorm:"column:icinga_host_template;type:text" form:"icinga_host_template" json:"icinga_host_template"`
 	IcingaDependencyTemplate string `gorm:"column:icinga_dependency_template;type:text" form:"icinga_dependency_template" json:"icinga_dependency_template"`
 	IcingaUserTemplate       string `gorm:"column:icinga_user_template;type:text" form:"icinga_user_template" json:"icinga_user_template"`
+	// IcingaCertTemplate is a Jet template executed once per Icinga sync
+	// with .Checks (Host, Domain, CertName). Typically an Icinga
+	// `template Service` plus one `object Service` per check.
+	IcingaCertTemplate string `gorm:"column:icinga_cert_template;type:text" form:"icinga_cert_template" json:"icinga_cert_template"`
 
 	// Librenms
 	LibrenmsApiURL   string `gorm:"column:librenms_api_url" form:"librenms_api_url" json:"librenms_api_url"`

@@ -104,6 +104,63 @@ export const icingaDependencyTemplateSchema = {
   functions: [],
 }
 
+export const icingaCertTemplateExample = `template Service "factum-cert-check" {
+  // max_check_attempts = 3
+  check_interval = 1d
+  retry_interval = 5m
+  check_command = "http"
+  vars.http_ssl = false
+  vars.http_certificate = "20,10"
+  vars.http_sni = "true"
+}
+
+{{ range .Checks }}
+object Service "HTTPS cert - {{ quote(.Domain) }}" {
+  import "factum-cert-check"
+  host_name = "{{ quote(.Host) }}"
+  vars.http_vhost = "{{ quote(.Domain) }}"
+}
+
+{{ end }}`
+
+export const icingaCertTemplateSchema = {
+  notes:
+    'Rendered once per Icinga sync. Output is Icinga 2 DSL. One Service object per concrete certificate name (wildcards are skipped). Certificates with an empty Host are skipped. IP check hosts that are not already Icinga Host objects are written as generic-host objects in the same file.',
+  variables: [
+    {
+      name: '.Checks',
+      type: '[]certCheck',
+      insert: '{{ range .Checks }}{{ .Domain }}{{ end }}',
+      description: 'Every concrete name on every certificate that has a Host',
+    },
+    {
+      name: '.Host',
+      type: 'string',
+      insert: '{{ quote(.Host) }}',
+      description: 'Inside range .Checks: IPv4, IPv6, or hostname to connect to',
+    },
+    {
+      name: '.Domain',
+      type: 'string',
+      insert: '{{ quote(.Domain) }}',
+      description: 'Inside range .Checks: DNS name to present as SNI / http_vhost',
+    },
+    {
+      name: '.CertName',
+      type: 'string',
+      description: 'Inside range .Checks: Factum certificate name',
+    },
+  ],
+  functions: [
+    {
+      name: 'quote',
+      args: 's',
+      insert: '{{ quote(.Domain) }}',
+      description: 'Escape backslash, quote, tab, and newline for Icinga double-quoted strings',
+    },
+  ],
+}
+
 const cfgmgmtDeviceVars = [
   { name: '.Device.Name', type: 'string', description: 'Factum device name' },
   { name: '.Device.Platform', type: 'string', description: 'NOS platform (eos, sros, ios-xr, …)' },

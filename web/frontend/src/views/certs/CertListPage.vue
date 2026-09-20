@@ -25,6 +25,7 @@ const form = reactive(emptyForm())
 
 const columns = [
   { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'host', header: 'Host' },
   { id: 'domains', header: 'Domains' },
   { accessorKey: 'account', header: 'Account' },
   { accessorKey: 'challenge', header: 'Challenge' },
@@ -54,6 +55,7 @@ function emptyForm() {
     challenge_id: undefined,
     key_type: '',
     enable_cn: 'default',
+    host: '',
     domains: [''],
   }
 }
@@ -98,6 +100,7 @@ function openEdit(row) {
     challenge_id: row.challenge_id,
     key_type: row.key_type || '',
     enable_cn,
+    host: row.host || '',
     domains,
   })
   dialog.value = true
@@ -115,6 +118,7 @@ async function save() {
       challenge_id: form.challenge_id,
       key_type: form.key_type || '',
       enable_common_name,
+      host: form.host.trim(),
       domains: form.domains.map((d) => d.trim()).filter(Boolean),
     }
     if (editing.value) {
@@ -209,6 +213,16 @@ onMounted(load)
         </UFormField>
         <UFormField label="Enable Common Name (override)">
           <USelect v-model="form.enable_cn" :items="cnItems" class="w-full" />
+        </UFormField>
+        <UFormField
+          label="Host"
+          description="IPv4, IPv6, or hostname Icinga connects to when checking this certificate. Leave blank to skip Icinga cert checks."
+        >
+          <UInput
+            v-model="form.host"
+            class="w-full font-mono"
+            placeholder="192.0.2.10, 2001:db8::10, or lu1-vm15.example.com"
+          />
         </UFormField>
         <UFormField label="Domains">
           <div class="space-y-2">

@@ -34,8 +34,9 @@ type ConfigFactum struct {
 // ConfigIcinga is a runtime-only DTO, not part of ConfigRoot - unlike
 // ConfigLibrenms's Sync maps, every field here already has a DB-backed
 // equivalent (Settings.IcingaApiURL/User/Pass/HostsFile/UsersFile/
-// IgnoreDevices/DefaultNotification/HostTemplate/DependencyTemplate/
-// UserTemplate), so factum2-icinga - which typically runs on a different
+// CertsFile/IgnoreDevices/DefaultNotification/HostTemplate/
+// DependencyTemplate/UserTemplate/CertTemplate), so factum2-icinga - which
+// typically runs on a different
 // host than the primary - fetches this entirely over REST
 // (internal/icinga.FetchRemoteConfig/RemoteClient, GET /api/icinga-config,
 // served by web.ApiIcingaConfig from the Settings row) rather than reading
@@ -48,6 +49,7 @@ type ConfigIcinga struct {
 
 	HostsFile string
 	UsersFile string
+	CertsFile string
 
 	// IgnoreDevices is a newline-separated list of device names to skip
 	// entirely (Settings.IcingaIgnoreDevices).
@@ -59,12 +61,26 @@ type ConfigIcinga struct {
 	// object via hostTemplateData.Options.
 	DefaultNotification string
 
-	// HostTemplate/DependencyTemplate/UserTemplate are Jet templates
-	// source, executed by internal/icinga.FactumIcingaClient - see that
-	// package for the data each is executed with.
+	// HostTemplate/DependencyTemplate/UserTemplate/CertTemplate are Jet
+	// templates source, executed by internal/icinga.FactumIcingaClient -
+	// see that package for the data each is executed with.
 	HostTemplate       string
 	DependencyTemplate string
 	UserTemplate       string
+	CertTemplate       string
+
+	// Certificates is the slim list used to emit Icinga cert checks
+	// (name, check host, DNS names). Fetched with icinga-config so the
+	// Icinga worker does not need ACME account secrets.
+	Certificates []ConfigIcingaCert
+}
+
+// ConfigIcingaCert is one ACME certificate as Icinga needs it: the host to
+// connect to and every name that must be presented on that host.
+type ConfigIcingaCert struct {
+	Name    string   `json:"name"`
+	Host    string   `json:"host"`
+	Domains []string `json:"domains"`
 }
 
 // ConfigOxidized is a runtime-only DTO, not part of ConfigRoot - same

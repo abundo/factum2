@@ -18,13 +18,16 @@ type remoteConfigResponse struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 
-	HostsFile           string `json:"hosts_file"`
-	UsersFile           string `json:"users_file"`
-	IgnoreDevices       string `json:"ignore_devices"`
-	DefaultNotification string `json:"default_notification"`
-	HostTemplate        string `json:"host_template"`
-	DependencyTemplate  string `json:"dependency_template"`
-	UserTemplate        string `json:"user_template"`
+	HostsFile           string                  `json:"hosts_file"`
+	UsersFile           string                  `json:"users_file"`
+	CertsFile           string                  `json:"certs_file"`
+	IgnoreDevices       string                  `json:"ignore_devices"`
+	DefaultNotification string                  `json:"default_notification"`
+	HostTemplate        string                  `json:"host_template"`
+	DependencyTemplate  string                  `json:"dependency_template"`
+	UserTemplate        string                  `json:"user_template"`
+	CertTemplate        string                  `json:"cert_template"`
+	Certificates        []util.ConfigIcingaCert `json:"certificates"`
 }
 
 // FetchRemoteConfig pulls the Icinga API connection settings from the
@@ -43,11 +46,14 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigIcinga, err
 
 		HostsFile:           remote.HostsFile,
 		UsersFile:           remote.UsersFile,
+		CertsFile:           remote.CertsFile,
 		IgnoreDevices:       remote.IgnoreDevices,
 		DefaultNotification: remote.DefaultNotification,
 		HostTemplate:        remote.HostTemplate,
 		DependencyTemplate:  remote.DependencyTemplate,
 		UserTemplate:        remote.UserTemplate,
+		CertTemplate:        remote.CertTemplate,
+		Certificates:        remote.Certificates,
 	}, nil
 }
 

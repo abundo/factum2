@@ -53,5 +53,6 @@ type Cert struct {
 	Challenge        string   `json:"challenge"`
 	KeyType          string   `json:"key_type"`
 	EnableCommonName *bool    `json:"enable_common_name"`
+	Host             string   `json:"host"`
 	Domains          []string `json:"domains"`
 }

@@ -2,7 +2,9 @@ package web
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/abundo/factum2/internal/certs"
@@ -86,7 +88,8 @@ func (ctrl *Controller) ApiCertsConfig(c *echo.Context) error {
 		}
 		resp.Certificates = append(resp.Certificates, certs.Cert{
 			Name: cert.Name, Account: cert.Account.Name, Challenge: cert.Challenge.Name,
-			KeyType: cert.KeyType, EnableCommonName: cert.EnableCommonName, Domains: domains,
+			KeyType: cert.KeyType, EnableCommonName: cert.EnableCommonName,
+			Host: cert.Host, Domains: domains,
 		})
 	}
 	return c.JSON(http.StatusOK, resp)
@@ -128,6 +131,7 @@ type certificateBody struct {
 	ChallengeID      uint     `json:"challenge_id"`
 	KeyType          string   `json:"key_type"`
 	EnableCommonName *bool    `json:"enable_common_name"`
+	Host             string   `json:"host"`
 	Domains          []string `json:"domains"`
 }
 
@@ -193,8 +197,47 @@ func certificateJSON(c *models.Certificate) models.CertificateDTO {
 	return models.CertificateDTO{
 		ID: c.ID, Name: c.Name, AccountID: c.AccountID, Account: c.Account.Name,
 		ChallengeID: c.ChallengeID, Challenge: c.Challenge.Name,
-		KeyType: c.KeyType, EnableCommonName: c.EnableCommonName, Domains: domains,
+		KeyType: c.KeyType, EnableCommonName: c.EnableCommonName,
+		Host: c.Host, Domains: domains,
 	}
+}
+
+// hostnameLabel is one DNS label: alphanumeric, hyphens in the middle, 1–63 chars.
+var hostnameLabel = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+func normalizeCertHost(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") && len(s) > 2 {
+		s = s[1 : len(s)-1]
+	}
+	s = strings.TrimSuffix(s, ".")
+	return s
+}
+
+func validCertHost(s string) error {
+	s = normalizeCertHost(s)
+	if s == "" {
+		return nil
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return nil
+	}
+	if strings.ContainsAny(s, " /\\") || strings.Contains(s, "://") {
+		return errors.New("host must be an IPv4 address, IPv6 address, or hostname")
+	}
+	if len(s) > 253 {
+		return errors.New("host must be an IPv4 address, IPv6 address, or hostname")
+	}
+	labels := strings.Split(s, ".")
+	if len(labels) == 0 {
+		return errors.New("host must be an IPv4 address, IPv6 address, or hostname")
+	}
+	for _, label := range labels {
+		if !hostnameLabel.MatchString(label) {
+			return errors.New("host must be an IPv4 address, IPv6 address, or hostname")
+		}
+	}
+	return nil
 }
 
 func (ctrl *Controller) certPreload() *gorm.DB {
@@ -440,11 +483,16 @@ func (ctrl *Controller) applyCertificate(item *models.Certificate, req certifica
 	if n == 0 {
 		return errors.New("challenge not found")
 	}
+	host := normalizeCertHost(req.Host)
+	if err := validCertHost(host); err != nil {
+		return err
+	}
 	item.Name = name
 	item.AccountID = req.AccountID
 	item.ChallengeID = req.ChallengeID
 	item.KeyType = strings.TrimSpace(req.KeyType)
 	item.EnableCommonName = req.EnableCommonName
+	item.Host = host
 	return nil
 }
 
