@@ -73,7 +73,7 @@ type oxidizedAPI interface {
 func oxidizedAPIError(c *echo.Context, err error) error {
 	if errors.Is(err, oxidized.ErrNotConfigured) {
 		return c.JSON(http.StatusServiceUnavailable, map[string]any{
-			"error": "Oxidized API URL is not configured. Set it under Admin → Settings → Destinations → Oxidized. The URL must be reachable from this factum-web host.",
+			"error": "Oxidized API URL is not configured. Set it under Admin → Destinations → Oxidized. The URL must be reachable from this factum-web host.",
 		})
 	}
 	msg := err.Error()

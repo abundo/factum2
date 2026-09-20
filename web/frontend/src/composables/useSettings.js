@@ -3,9 +3,9 @@ import { onMounted, reactive, ref } from 'vue'
 import { getSettings, updateSettings } from '@/api/settings'
 import { useAuthStore } from '@/stores/auth'
 
-// Shared load/save logic for the admin settings pages (Sources,
-// Destinations, Factum, Device sync) - they all read and write the same
-// single `Settings` row, just render a different subset of its fields.
+// Shared load/save logic for the admin settings pages (Sources, Destinations,
+// Factum, Device sync) - they all read and write the same single `Settings`
+// row, just render a different subset of its fields.
 export function useSettings() {
   const toast = useToast()
 

@@ -50,5 +50,4 @@ LibreNMS delayed delete is a separate queue: devices LibreNMS still has
 that Factum no longer wants monitored. **Device deletions** lists them
 with a reason (no matching Factum device, disabled, not monitored).
 Operators can wait for the grace period or delete on the next sync.
-Enable the delay and its day count under Admin → Settings → Destinations
-→ LibreNMS.
+Enable the delay and its day count under Admin → Destinations → LibreNMS.

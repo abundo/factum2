@@ -9,7 +9,7 @@ The DNS zone editor is optional. Turn it on under **Admin → Settings →
 Factum**. Off by default. Turning it off hides the menu; it does not
 delete SOA templates, DNS templates, DNSSEC policies, or zones.
 
-This is separate from **Admin → Settings → Destinations → DNS**, which
+This is separate from **Admin → Destinations → DNS**, which
 is the device-record sync (`factum2-dns` writing a JSON records file
 for devices, then applying BIND/Kea through the dnsmgr2 library).
 
@@ -28,7 +28,7 @@ template default.
 
 ## DHCP
 
-Optional. Turn it on under **Admin → Settings → Destinations → DHCP**.
+Optional. Turn it on under **Admin → Destinations → DHCP**.
 Off by default. Turning it off hides the IPAM DHCP fields and the
 zone-editor MAC column; it does not delete stored values.
 

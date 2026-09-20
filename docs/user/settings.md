@@ -19,7 +19,7 @@ Feature switches (all off by default except as noted):
   maintenance impact
 - **IP address management** — namespaces, VRFs, prefixes
 - **DNS zone editor** — zones, DNS templates, SOA templates, DNSSEC
-  policies. Distinct from Destinations → DNS (device-record sync).
+  policies. Distinct from Admin → Destinations → DNS (device-record sync).
 - **Software repository** — NOS images for routers and switches
   ([Software](software.md)). Files live on the `factum2-storage` host.
 
@@ -35,35 +35,39 @@ message from that tab after filling the host.
 **Dashboard** (under Settings) is the shortcut links on the home page:
 name, URL, group, optional icon.
 
-## Settings → Sources
+## Sources
 
-Enable and credential **BECS**, **NetBox**, and **Lime**. NetBox also has
-a webhook secret (HMAC on `POST /api/netbox-webhook`) and options to
-sync Factum customers to NetBox tenants and Factum contacts to NetBox
-contacts (assigned onto the matching tenant when that tenant exists).
+Enable and credential **BECS**, **NetBox**, and **Lime** under **Admin →
+Sources**. NetBox also has a webhook secret (HMAC on
+`POST /api/netbox-webhook`) and options to sync Factum customers to
+NetBox tenants and Factum contacts to NetBox contacts (assigned onto
+the matching tenant when that tenant exists).
 
 A source that is disabled is skipped by [jobs](jobs.md). Credentials are
 used by the corresponding sync tool, which may run on the primary
 (NetBox/Lime/BECS talk to Postgres) rather than a remote worker.
 
-## Settings → Destinations
+## Destinations
 
 DNS, DHCP, Icinga, LibreNMS, Oxidized, Prometheus, and Certificates each have an
-enabled flag. DNS, Icinga, LibreNMS, Oxidized, and Prometheus also have
-a destination file or API URL, and ignore lists (newline-separated).
-The DNS tab also has the path of the **dnsmgr2 zone include** written when
-the [zone editor](dns.md) is on. BIND paths, sqlite serial DB, and host
-templates live in the administrator-managed `dnsmgr2.yaml`.
-The DHCP tab is [DHCP server management](dns.md#dhcp): per-prefix DHCP
-in IPAM, the MAC column on DNS zone records, default DNS servers for
-DHCP clients, and the path of the **dnsmgr2 prefix include**. Kea paths
+enabled flag under **Admin → Destinations**. DNS, Icinga, LibreNMS, Oxidized,
+and Prometheus also have a destination file or API URL, and ignore lists
+(newline-separated).
+**Destinations → DNS** also has the path of the **dnsmgr2 zone include**
+written when the [zone editor](dns.md) is on. BIND paths, sqlite serial DB,
 and host templates live in the administrator-managed `dnsmgr2.yaml`.
-LibreNMS delayed delete lives here. Oxidized **API URL** is what the GUI
-Oxidized browser uses; it must be reachable from `factum2-web`.
+**Destinations → DHCP** is [DHCP server management](dns.md#dhcp):
+per-prefix DHCP in IPAM, the MAC column on DNS zone records, default DNS
+servers for DHCP clients, and the path of the **dnsmgr2 prefix include**.
+Kea paths and host templates live in the administrator-managed
+`dnsmgr2.yaml`.
+LibreNMS delayed delete lives under **Destinations → LibreNMS**. Oxidized
+**API URL** is what the GUI Oxidized browser uses; it must be reachable
+from `factum2-web`.
 
-The Certificates tab is [ACME / lego](certs.md): YAML and dotenv paths,
-lego binary, default key type and Common Name. Sync writes those files
-and runs lego; it does not install certificates on hosts.
+**Destinations → Certificates** is [ACME / lego](certs.md): YAML and dotenv
+paths, lego binary, default key type and Common Name. Sync writes those
+files and runs lego; it does not install certificates on hosts.
 
 These tools normally run on the destination host, talking back through a
 [worker](jobs.md) — not by opening Postgres from that host.

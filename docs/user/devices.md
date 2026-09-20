@@ -86,7 +86,7 @@ and assigns the device to it.
 
 ## Oxidized
 
-When Oxidized is enabled under Admin → Settings → Destinations, an
+When Oxidized is enabled under Admin → Destinations → Oxidized, an
 **Oxidized** menu entry lists nodes, last backup time, and status. Open a
 node to view the current config, older versions, and diffs.
 

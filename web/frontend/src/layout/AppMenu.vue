@@ -57,8 +57,9 @@ function topLevelValues() {
   return values
 }
 
-// Nested accordions (Admin > Settings/AAA) also emit update:modelValue through
-// UNavigationMenu. Ignore those so they don't collapse every top-level heading.
+// Nested accordions (Admin > Settings/Sources/Destinations/AAA) also emit
+// update:modelValue through UNavigationMenu. Ignore those so they don't
+// collapse every top-level heading.
 function onOpenSectionsUpdate(val) {
   const incoming = Array.isArray(val) ? val : val != null ? [val] : []
   const allowed = topLevelValues()
@@ -178,8 +179,6 @@ const groups = computed(() => {
             ...(authStore.opticalEnabled
               ? [{ label: 'Optical', icon: 'i-lucide-aperture', to: '/admin/settings/optical' }]
               : []),
-            { label: 'Sources', icon: 'i-lucide-database', to: '/admin/settings/sources' },
-            { label: 'Destinations', icon: 'i-lucide-send', to: '/admin/settings/destinations' },
             {
               label: 'Dashboard',
               icon: 'i-lucide-layout-dashboard',
@@ -187,6 +186,36 @@ const groups = computed(() => {
             },
             { label: 'Worker nodes', icon: 'i-lucide-server-cog', to: '/admin/worker-nodes' },
             { label: 'Device sync', icon: 'i-lucide-key-round', to: '/admin/device-sync' },
+          ],
+        },
+        {
+          label: 'Sources',
+          icon: 'i-lucide-database',
+          children: [
+            { label: 'BECS', icon: 'i-lucide-radio-tower', to: '/admin/sources/becs' },
+            { label: 'Netbox', icon: 'i-lucide-boxes', to: '/admin/sources/netbox' },
+            { label: 'Lime', icon: 'i-lucide-contact', to: '/admin/sources/lime' },
+          ],
+        },
+        {
+          label: 'Destinations',
+          icon: 'i-lucide-send',
+          children: [
+            {
+              label: 'Certificates',
+              icon: 'i-lucide-file-key',
+              to: '/admin/destinations/certificates',
+            },
+            { label: 'DHCP', icon: 'i-lucide-router', to: '/admin/destinations/dhcp' },
+            { label: 'DNS', icon: 'i-lucide-globe-2', to: '/admin/destinations/dns' },
+            { label: 'Icinga', icon: 'i-lucide-bell', to: '/admin/destinations/icinga' },
+            { label: 'LibreNMS', icon: 'i-lucide-activity', to: '/admin/destinations/librenms' },
+            { label: 'Oxidized', icon: 'i-lucide-save', to: '/admin/destinations/oxidized' },
+            {
+              label: 'Prometheus',
+              icon: 'i-lucide-chart-line',
+              to: '/admin/destinations/prometheus',
+            },
           ],
         },
         {
