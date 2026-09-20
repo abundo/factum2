@@ -22,11 +22,12 @@ var (
 
 // Entry is one file or folder in the software repository.
 type Entry struct {
-	Name    string    `json:"name"`
-	Path    string    `json:"path"`
-	IsDir   bool      `json:"is_dir"`
-	Size    int64     `json:"size"`
-	ModTime time.Time `json:"mod_time"`
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	IsDir       bool      `json:"is_dir"`
+	HasChildren bool      `json:"has_children"`
+	Size        int64     `json:"size"`
+	ModTime     time.Time `json:"mod_time"`
 }
 
 // Repo is a path-jailed directory tree used as the software image store.
@@ -89,6 +90,19 @@ func (r *Repo) resolve(relPath string) (abs string, apiPath string, err error) {
 	return abs, cleaned, nil
 }
 
+func dirHasVisibleChildren(abs string) bool {
+	ents, err := os.ReadDir(abs)
+	if err != nil {
+		return false
+	}
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return true
+		}
+	}
+	return false
+}
+
 func hiddenSegment(apiPath string) bool {
 	for _, seg := range strings.Split(strings.Trim(apiPath, "/"), "/") {
 		if seg == "" {
@@ -136,11 +150,12 @@ func (r *Repo) List(relPath string) ([]Entry, error) {
 			child = child + "/" + e.Name()
 		}
 		out = append(out, Entry{
-			Name:    e.Name(),
-			Path:    child,
-			IsDir:   e.IsDir(),
-			Size:    info.Size(),
-			ModTime: info.ModTime().UTC(),
+			Name:        e.Name(),
+			Path:        child,
+			IsDir:       e.IsDir(),
+			HasChildren: e.IsDir() && dirHasVisibleChildren(filepath.Join(abs, e.Name())),
+			Size:        info.Size(),
+			ModTime:     info.ModTime().UTC(),
 		})
 	}
 	return out, nil

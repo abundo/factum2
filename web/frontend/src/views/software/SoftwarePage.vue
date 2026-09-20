@@ -47,6 +47,11 @@ const copyDest = ref('')
 const copySaving = ref(false)
 const devices = ref([])
 
+const folderIcon =
+  '<i class="wb-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></i>'
+const folderOpenIcon =
+  '<i class="wb-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 14l1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg></i>'
+
 const protocolItems = [
   { label: 'HTTP (device pull)', value: 'http' },
   { label: 'TFTP (device pull)', value: 'tftp' },
@@ -113,10 +118,11 @@ function payload(node) {
 
 function toWbNode(entry) {
   const isDir = !!entry.is_dir
+  const lazy = isDir && entry.has_children !== false
   const node = {
     key: entry.path,
     title: entry.name,
-    lazy: isDir,
+    lazy,
     type: isDir ? 'folder' : 'file',
     name: entry.name,
     path: entry.path,
@@ -124,7 +130,7 @@ function toWbNode(entry) {
     size: entry.size ?? 0,
     mod_time: entry.mod_time,
   }
-  if (!isDir) node.children = []
+  if (!lazy) node.children = []
   return node
 }
 
@@ -175,6 +181,9 @@ function buildTree(source) {
       expanderExpanded: '<i class="wb-expander">−</i>',
       expanderCollapsed: '<i class="wb-expander">+</i>',
       expanderLazy: '<i class="wb-expander">+</i>',
+      folder: folderIcon,
+      folderOpen: folderOpenIcon,
+      folderLazy: folderIcon,
     },
     source,
     columns: [
@@ -184,7 +193,7 @@ function buildTree(source) {
       { id: 'mod_time', title: 'Modified', width: '180px' },
     ],
     types: {
-      folder: { icon: false },
+      folder: { icon: true },
       file: { icon: false },
     },
     lazyLoad: (e) => listSoftware(e.node.key).then((rows) => sortEntries(rows).map(toWbNode)),
@@ -500,3 +509,24 @@ onBeforeUnmount(destroyTree)
     </template>
   </FormModal>
 </template>
+
+<style scoped>
+:deep(.ipam-tree span.wb-node i.wb-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  padding: 0;
+  flex-shrink: 0;
+  color: var(--ui-text-muted, var(--ui-text-dimmed, var(--ui-text)));
+}
+
+:deep(.ipam-tree span.wb-node i.wb-icon svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+</style>

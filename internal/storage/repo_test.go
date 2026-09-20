@@ -60,8 +60,15 @@ func TestRepoCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ents) != 1 || ents[0].Name != "a.bin" || ents[0].IsDir || ents[0].Size != 5 {
+	if len(ents) != 1 || ents[0].Name != "a.bin" || ents[0].IsDir || ents[0].Size != 5 || ents[0].HasChildren {
 		t.Fatalf("list: %+v", ents)
+	}
+	rootEnts, err := r.List("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootEnts) != 1 || !rootEnts[0].IsDir || !rootEnts[0].HasChildren {
+		t.Fatalf("parent list: %+v", rootEnts)
 	}
 	if err := r.Move("/eos/a.bin", "/eos/b.bin"); err != nil {
 		t.Fatal(err)
@@ -74,6 +81,13 @@ func TestRepoCRUD(t *testing.T) {
 	}
 	if err := r.Remove("/eos/b.bin"); err != nil {
 		t.Fatal(err)
+	}
+	empty, err := r.List("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 1 || !empty[0].IsDir || empty[0].HasChildren {
+		t.Fatalf("empty dir still has children: %+v", empty)
 	}
 	if err := r.Remove("/eos"); err != nil {
 		t.Fatal(err)
