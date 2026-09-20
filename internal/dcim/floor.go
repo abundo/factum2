@@ -94,6 +94,22 @@ func CreateFloorPlan(db *gorm.DB, siteID uint, name string, width, height, grid 
 	return &p, nil
 }
 
+func RenameFloorPlan(db *gorm.DB, id uint, name string) (*models.FloorPlan, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errf(http.StatusBadRequest, ReasonInvalid, "name is required")
+	}
+	var p models.FloorPlan
+	if err := db.First(&p, id).Error; err != nil {
+		return nil, errf(http.StatusNotFound, ReasonNotFound, "floor plan not found")
+	}
+	p.Name = name
+	if err := db.Model(&p).Update("name", name).Error; err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func GetFloorPlan(db *gorm.DB, id uint) (*FloorPlanDTO, error) {
 	var p models.FloorPlan
 	if err := db.First(&p, id).Error; err != nil {

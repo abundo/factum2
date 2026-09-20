@@ -70,6 +70,7 @@ Proposed endpoints; align final route names with `web/web.go`:
 | DELETE /api/dcim/devices/:id/placement | Unmount a local device without deleting its inventory record. |
 | GET/POST /api/dcim/floor-plans | List/create plans, scoped to a local Site ID. |
 | GET /api/dcim/floor-plans/:id | Complete bounded plan snapshot and rack summaries. |
+| PUT /api/dcim/floor-plans/:id | Rename a plan. Does not bump layout revision. |
 | PUT /api/dcim/floor-plans/:id/layout | Save geometry changes atomically with expected revision. |
 | GET /api/dcim/connections/graph | Bounded graph by site, rack or seed device; configurable capped neighbor depth. |
 | GET/PUT /api/dcim/connection-view-layouts/:scope | Load/save the current user's graph layout with expected revision. |

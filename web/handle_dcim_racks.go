@@ -176,6 +176,26 @@ func (ctrl *Controller) ApiDCIMFloorPlanGet(c *echo.Context) error {
 	return c.JSON(http.StatusOK, row)
 }
 
+type floorPlanRename struct {
+	Name string `json:"name"`
+}
+
+func (ctrl *Controller) ApiDCIMFloorPlanRename(c *echo.Context) error {
+	id, err := echo.PathParam[uint](c, "id")
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	var w floorPlanRename
+	if err := c.Bind(&w); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	row, err := dcim.RenameFloorPlan(ctrl.DB, id, w.Name)
+	if err != nil {
+		return dcimError(c, err)
+	}
+	return c.JSON(http.StatusOK, row)
+}
+
 func (ctrl *Controller) ApiDCIMFloorPlanLayout(c *echo.Context) error {
 	id, err := echo.PathParam[uint](c, "id")
 	if err != nil {

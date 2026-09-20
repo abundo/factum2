@@ -8,6 +8,10 @@ export function createFloorPlan(payload) {
   return http.post('/dcim/floor-plans', payload).then((res) => res.data)
 }
 
+export function renameFloorPlan(id, name) {
+  return http.put(`/dcim/floor-plans/${id}`, { name }).then((res) => res.data)
+}
+
 export function getFloorPlan(id) {
   return http.get(`/dcim/floor-plans/${id}`).then((res) => res.data)
 }

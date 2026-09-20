@@ -338,6 +338,7 @@ func GUI(p *GuiParams) error {
 	api.GET("/dcim/floor-plans", ctrl.ApiDCIMFloorPlanList, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/dcim/floor-plans", ctrl.ApiDCIMFloorPlanCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/dcim/floor-plans/:id", ctrl.ApiDCIMFloorPlanGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.PUT("/dcim/floor-plans/:id", ctrl.ApiDCIMFloorPlanRename, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/dcim/floor-plans/:id/layout", ctrl.ApiDCIMFloorPlanLayout, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/dcim/connections/graph", ctrl.ApiDCIMConnectionGraph, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/dcim/connections/pair", ctrl.ApiDCIMConnectionPair, ctrl.RequireAPIAuth, ctrl.RequireRead)

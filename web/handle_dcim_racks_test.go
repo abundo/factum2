@@ -138,6 +138,22 @@ func TestDCIMFloorPlanSaveAndGraph(t *testing.T) {
 		t.Fatalf("layout %d %s", rec.Code, rec.Body.String())
 	}
 
+	c, rec = jsonRequest(t, http.MethodPut, "/api/dcim/floor-plans/x", floorPlanRename{Name: "Room A2"},
+		[]string{"id"}, []string{strconv.FormatUint(uint64(plan.ID), 10)})
+	if err := ctrl.ApiDCIMFloorPlanRename(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename %d %s", rec.Code, rec.Body.String())
+	}
+	var renamed models.FloorPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &renamed); err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Name != "Room A2" {
+		t.Fatalf("renamed %+v", renamed)
+	}
+
 	devA := models.Device{Name: "a", SiteID: site.ID}
 	devB := models.Device{Name: "b", SiteID: site.ID}
 	db.Create(&devA)

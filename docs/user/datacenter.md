@@ -26,8 +26,9 @@ racked.
 
 ## Floor plans
 
-**Infrastructure → Floor plans** are drawings of a site. Create a plan, then Edit to
-drag racks onto the room, snap to the grid, and rotate in 90° steps.
+**Infrastructure → Floor plans** are drawings of a site. Create a plan or
+rename one from the list, then Edit to drag racks onto the room, snap to
+the grid, and rotate in 90° steps.
 Save/Cancel keep a draft; undo is in-session. A rejected or stale save
 keeps your draft so you can reload or reapply. Dragging a rack on the plan
 does not change which site it belongs to.
