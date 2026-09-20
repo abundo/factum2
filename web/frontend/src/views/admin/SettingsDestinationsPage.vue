@@ -43,13 +43,13 @@ const snmpVersionOptions = [
 
 const destinationTab = ref('dns')
 const destinationTabItems = [
-  { label: 'DNS', value: 'dns', slot: 'dns' },
+  { label: 'Certificates', value: 'certs', slot: 'certs' },
   { label: 'DHCP', value: 'dhcp', slot: 'dhcp' },
+  { label: 'DNS', value: 'dns', slot: 'dns' },
   { label: 'Icinga', value: 'icinga', slot: 'icinga' },
   { label: 'LibreNMS', value: 'librenms', slot: 'librenms' },
   { label: 'Oxidized', value: 'oxidized', slot: 'oxidized' },
   { label: 'Prometheus', value: 'prometheus', slot: 'prometheus' },
-  { label: 'Certificates', value: 'certs', slot: 'certs' },
 ]
 
 const certKeyTypeItems = [
