@@ -13,7 +13,7 @@ local — they survive a NetBox sync.
 
 ## Racks
 
-**DCIM → Racks** lists every rack. Open a row for the elevation: numbered
+**Infrastructure → Racks** lists every rack. Open a row for the elevation: numbered
 rails, front and rear faces, and occupancy. Full-depth devices occupy both
 faces. Devices whose type has no height show as unknown rather than as 1U.
 
@@ -26,7 +26,7 @@ racked.
 
 ## Floor plans
 
-**DCIM → Floor plans** are drawings of a site. Create a plan, then Edit to
+**Infrastructure → Floor plans** are drawings of a site. Create a plan, then Edit to
 drag racks onto the room, snap to the grid, and rotate in 90° steps.
 Save/Cancel keep a draft; undo is in-session. A rejected or stale save
 keeps your draft so you can reload or reapply. Dragging a rack on the plan
@@ -36,7 +36,7 @@ From a rack on the plan, open its elevation.
 
 ## Connections
 
-**DCIM → Connections** shows **direct interface-to-interface cables**
+**Infrastructure → Connections** shows **direct interface-to-interface cables**
 synced from NetBox. It is not end-to-end tracing through patch panels,
 power, or services. Filter by site or rack. Cables that leave the selected
 scope appear as labelled stubs. Rearranging nodes only stores your layout;

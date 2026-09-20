@@ -97,12 +97,14 @@ const groups = computed(() => {
             ]),
           ]
         : []),
-      section('DCIM', [
-        { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
-        { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
+      section('Infrastructure', [
         { label: 'Racks', icon: 'i-lucide-rows-3', to: '/dcim/racks' },
         { label: 'Floor plans', icon: 'i-lucide-layout-panel-left', to: '/dcim/floor-plans' },
         { label: 'Connections', icon: 'i-lucide-share-2', to: '/dcim/connections' },
+      ]),
+      section('DCIM', [
+        { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
+        { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
         { label: 'Interfaces', icon: 'i-lucide-cable', to: '/dcim/interfaces' },
         { label: 'Interface types', icon: 'i-lucide-tag', to: '/dcim/interface-types' },
         { label: 'Manufacturers', icon: 'i-lucide-factory', to: '/dcim/manufacturers' },
