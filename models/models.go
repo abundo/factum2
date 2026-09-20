@@ -346,6 +346,11 @@ type Settings struct {
 
 	// factum
 	FactumApiToken string `gorm:"column:factum_api_token" form:"factum_api_token" json:"factum_api_token"`
+	// BrandLogo is an optional image shown to the right of the Factum
+	// wordmark (data URL or http(s) URL). Empty hides it.
+	BrandLogo string `gorm:"column:brand_logo;type:text" form:"brand_logo" json:"brand_logo"`
+	// BrandText is optional label shown next to BrandLogo.
+	BrandText string `gorm:"column:brand_text" form:"brand_text" json:"brand_text"`
 	// PublicBaseURL is the externally-reachable origin (e.g.
 	// "https://factum.example.com") used to build absolute links in
 	// outgoing email, currently just the password-reset link

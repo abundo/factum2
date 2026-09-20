@@ -26,7 +26,9 @@ Feature switches (all off by default except as noted):
 Also set the **API token** (service-to-service, not a user password),
 **default domain** (used when matching short device names to FQDNs),
 **public URL** (absolute links in email — set this to the HTTPS origin
-when `factum2-web` sits behind a reverse proxy), and how many finished jobs
+when `factum2-web` sits behind a reverse proxy), optional **header
+branding** (logo and text shown to the right of the Factum wordmark;
+AbundoPortal can show the same values), and how many finished jobs
 housekeeping keeps. Unfinished jobs are never deleted.
 
 The **Email** tab is SMTP for password reset and similar. Send a test

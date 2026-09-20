@@ -1,6 +1,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { onMounted, reactive, ref } from 'vue'
 import { getSettings, updateSettings } from '@/api/settings'
+import { loadBranding } from '@/composables/useBranding'
 import { useAuthStore } from '@/stores/auth'
 
 // Shared load/save logic for the admin settings pages (Sources, Destinations,
@@ -49,6 +50,7 @@ export function useSettings() {
         // Feature flags (optical/ipam/organization/oxidized/dhcp) live on /api/me
         // and gate the sidebar — refresh so the menu updates without a reload.
         useAuthStore().fetchCurrentUser()
+        loadBranding()
       })
       .catch((err) => {
         toast.add({

@@ -5,11 +5,14 @@ import { useSettings } from '@/composables/useSettings'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { sendTestEmail } from '@/api/settings'
 
+const MAX_LOGO_BYTES = 300 * 1024
+
 const { settings, loading, saving, forbidden, loadError, save } = useSettings()
 
 const toast = useToast()
 const testEmailTo = ref('')
 const testingEmail = ref(false)
+const logoFile = ref(null)
 
 const smtpTlsModeOptions = [
   { label: 'None', value: 'none' },
@@ -22,6 +25,30 @@ const factumTabItems = [
   { label: 'Software', value: 'software', slot: 'software' },
   { label: 'Email', value: 'email', slot: 'email' },
 ]
+
+function onLogoFileChange(file) {
+  if (!file) return
+  if (file.size > MAX_LOGO_BYTES) {
+    toast.add({
+      color: 'error',
+      title: 'Error',
+      description: 'Logo must be smaller than 300 KB.',
+      duration: 3000,
+    })
+    logoFile.value = null
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    settings.brand_logo = reader.result
+  }
+  reader.readAsDataURL(file)
+}
+
+function removeLogo() {
+  settings.brand_logo = ''
+  logoFile.value = null
+}
 
 function fillStorageDefaults() {
   if (!settings.storage_root) settings.storage_root = '/var/lib/factum2/storage'
@@ -158,6 +185,52 @@ function testEmail() {
               off hides the UI; it does not delete any DNS data. Device-record sync stays on
               Destinations → DNS.</small
             >
+            <div>
+              <label class="block font-bold mb-3">Header logo</label>
+              <div class="flex items-center gap-3">
+                <img
+                  v-if="settings.brand_logo"
+                  :src="settings.brand_logo"
+                  alt=""
+                  class="h-8 w-auto max-w-40 rounded object-contain border border-default"
+                />
+                <UFileUpload
+                  v-model="logoFile"
+                  accept="image/*"
+                  icon="i-lucide-image"
+                  label="Upload logo"
+                  variant="button"
+                  @update:model-value="onLogoFileChange"
+                />
+                <UButton
+                  v-if="settings.brand_logo"
+                  label="Remove"
+                  icon="i-lucide-x"
+                  variant="ghost"
+                  color="neutral"
+                  size="sm"
+                  @click="removeLogo"
+                />
+              </div>
+              <small class="text-muted-color"
+                >Shown to the right of the Factum wordmark in the header. Optional. Max 300
+                KB.</small
+              >
+            </div>
+            <div>
+              <label for="brand_text" class="block font-bold mb-3">Header text</label>
+              <UInput
+                id="brand_text"
+                v-model="settings.brand_text"
+                maxlength="80"
+                placeholder="e.g. Acme Energy"
+                class="w-full"
+              />
+              <small class="text-muted-color"
+                >Optional label next to the header logo. AbundoPortal can show the same
+                branding.</small
+              >
+            </div>
             <div>
               <label for="factum_api_token" class="block font-bold mb-3">API token</label>
               <PasswordInput id="factum_api_token" v-model="settings.factum_api_token" />

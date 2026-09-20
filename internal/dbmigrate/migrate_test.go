@@ -146,6 +146,37 @@ func TestMigrationsIncludeServiceDefinitions(t *testing.T) {
 	}
 }
 
+func TestMigrationsIncludeBranding(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "00021_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatal("missing 00021_*.sql for settings.brand_logo / brand_text")
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"brand_logo",
+		"brand_text",
+		"IF NOT EXISTS",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}
+
 func TestMigrationsIncludeIcingaCertChecks(t *testing.T) {
 	entries, err := fs.ReadDir(migrationFS, "sql")
 	if err != nil {

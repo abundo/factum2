@@ -16,6 +16,7 @@ declare module 'vue' {
     ConfigNodeInspector: typeof import('./src/components/ConfigNodeInspector.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     ConnectionDeviceNode: typeof import('./src/components/dcim/ConnectionDeviceNode.vue')['default']
+    CustomBranding: typeof import('./src/components/CustomBranding.vue')['default']
     DcimDetailDialog: typeof import('./src/components/DcimDetailDialog.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
     DhcpLeasePicker: typeof import('./src/components/DhcpLeasePicker.vue')['default']

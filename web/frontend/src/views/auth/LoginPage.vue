@@ -3,9 +3,12 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLayout } from '@/layout/composables/layout'
 import { useAuthStore } from '@/stores/auth'
+import { useBranding } from '@/composables/useBranding'
 import BuildInfo from '@/components/BuildInfo.vue'
+import CustomBranding from '@/components/CustomBranding.vue'
 
 const { layoutState, toggleDarkMode } = useLayout()
+const { branding } = useBranding()
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -66,7 +69,16 @@ function submit() {
     <div class="flex flex-col items-center justify-center">
       <div class="w-full rounded-2xl border border-default bg-default px-8 py-20 sm:px-20">
         <div class="mb-8 text-center">
-          <div class="mb-4 text-3xl font-medium">Factum</div>
+          <div class="mb-4 flex items-center justify-center gap-3">
+            <div class="text-3xl font-medium">Factum</div>
+            <div v-if="branding.logo || branding.text" class="h-8 w-px shrink-0 bg-accented" />
+            <CustomBranding
+              :logo="branding.logo"
+              :text="branding.text"
+              img-class="h-8 w-auto max-h-10 max-w-40 object-contain"
+              text-class="text-2xl font-medium truncate max-w-56"
+            />
+          </div>
           <span class="text-muted font-medium">Sign in to continue</span>
         </div>
 

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -48,11 +49,50 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	if settings.StorageEnabled != nil && *settings.StorageEnabled {
 		storage.ApplySettingsDefaults(settings)
 	}
+	if err := validateBranding(settings.BrandLogo, settings.BrandText); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
 
 	if err := ctrl.DB.Save(settings).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, settings)
+}
+
+const maxBrandLogoBytes = 400 * 1024
+const maxBrandTextLen = 80
+
+func validateBranding(logo, text string) error {
+	if len([]rune(text)) > maxBrandTextLen {
+		return fmt.Errorf("brand text must be at most %d characters", maxBrandTextLen)
+	}
+	if logo == "" {
+		return nil
+	}
+	if len(logo) > maxBrandLogoBytes {
+		return fmt.Errorf("brand logo is too large")
+	}
+	if strings.HasPrefix(logo, "data:image/") {
+		return nil
+	}
+	if strings.HasPrefix(logo, "https://") || strings.HasPrefix(logo, "http://") {
+		return nil
+	}
+	return fmt.Errorf("brand logo must be an image data URL or http(s) URL")
+}
+
+// ApiBranding is unauthenticated so the login page and other apps (e.g.
+// AbundoPortal) can show the operator-configured logo and text next to
+// the Factum wordmark. It returns only those two fields.
+func (ctrl *Controller) ApiBranding(c *echo.Context) error {
+	settings, err := util.GetOrCreateSettings(ctrl.DB)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"logo": settings.BrandLogo,
+		"text": settings.BrandText,
+	})
 }
 
 // SettingsTestEmailRequest carries the (possibly-unsaved, currently-in-form)

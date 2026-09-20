@@ -4,11 +4,14 @@ import { useRouter } from 'vue-router'
 import { useLayout } from '@/layout/composables/layout'
 import { useLogPanel } from '@/layout/composables/logPanel'
 import { useAuthStore } from '@/stores/auth'
+import { useBranding } from '@/composables/useBranding'
+import CustomBranding from '@/components/CustomBranding.vue'
 
 const { layoutState, toggleDarkMode, toggleMobileMenu } = useLayout()
 const { toggle: toggleLogPanel } = useLogPanel()
 const authStore = useAuthStore()
 const router = useRouter()
+const { branding } = useBranding()
 
 function logout() {
   authStore.logout().then(() => router.push('/login'))
@@ -63,6 +66,8 @@ const userMenuItems = computed(() => [
         </svg>
         <span>Factum</span>
       </router-link>
+      <div v-if="branding.logo || branding.text" class="h-6 w-px shrink-0 bg-accented" />
+      <CustomBranding :logo="branding.logo" :text="branding.text" />
     </div>
     <div class="flex items-center gap-1">
       <div class="hidden flex-col items-end leading-tight mr-2 sm:flex">

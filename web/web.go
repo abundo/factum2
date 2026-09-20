@@ -166,6 +166,10 @@ func GUI(p *GuiParams) error {
 	// (git tag / commit / date / Go version) are not sensitive.
 	api.GET("/version", ctrl.ApiVersion)
 
+	// Public: custom header branding (logo + text). Same fields as
+	// Settings.BrandLogo / BrandText; not a secret.
+	api.GET("/branding", ctrl.ApiBranding)
+
 	// Operator Markdown from docs/user/ (same files GitHub Pages publishes).
 	// Any logged-in user, including those with no role — /doc is help, not
 	// an inventory view.
