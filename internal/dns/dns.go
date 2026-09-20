@@ -45,7 +45,7 @@ func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {
 }
 
 // Get all devices from factum database
-// Write a dnsmgr2 JSON records file and config, then apply BIND/Kea.
+// Write a dnsmgr2 JSON records file and zone include, then apply BIND/Kea.
 func (dns *DNSClient) Sync(reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "DNS sync started")
 	if err := dns.validate(); err != nil {
@@ -110,26 +110,24 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		reporter.Emit(jobevent.Info, "DNS records unchanged")
 	}
 
-	if (dns.DNS.ZonesEnabled || dns.DNS.DhcpEnabled) && strings.TrimSpace(dns.DNS.ConfigFile) != "" {
-		yamlBytes, err := RenderDnsmgrConfig(dns.DNS)
+	if dns.DNS.ZonesEnabled && strings.TrimSpace(dns.DNS.ZonesFile) != "" {
+		yamlBytes, err := RenderZoneInclude(dns.DNS)
 		if err != nil {
 			reporter.EmitErr(err)
 			return err
 		}
-		cfgTmp := dns.DNS.ConfigFile + ".tmp"
-		if err := os.WriteFile(cfgTmp, yamlBytes, 0o644); err != nil {
-			reporter.EmitErr(err)
+		if err := dns.installInclude(reporter, yamlBytes, dns.DNS.ZonesFile, "zone"); err != nil {
 			return err
 		}
-		cfgChanged, err := installConfFile(cfgTmp, dns.DNS.ConfigFile)
+	}
+	if dns.DNS.DhcpEnabled && strings.TrimSpace(dns.DNS.PrefixesFile) != "" {
+		yamlBytes, err := RenderPrefixInclude(dns.DNS)
 		if err != nil {
 			reporter.EmitErr(err)
 			return err
 		}
-		if cfgChanged {
-			reporter.Emit(jobevent.Info, "dnsmgr2 config changed: %s", dns.DNS.ConfigFile)
-		} else {
-			reporter.Emit(jobevent.Info, "dnsmgr2 config unchanged: %s", dns.DNS.ConfigFile)
+		if err := dns.installInclude(reporter, yamlBytes, dns.DNS.PrefixesFile, "prefix"); err != nil {
+			return err
 		}
 	}
 
@@ -143,6 +141,25 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 	return nil
 }
 
+func (dns *DNSClient) installInclude(reporter jobevent.Reporter, yamlBytes []byte, path, kind string) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, yamlBytes, 0o644); err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+	changed, err := installConfFile(tmp, path)
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+	if changed {
+		reporter.Emit(jobevent.Info, "dnsmgr2 %s include changed: %s", kind, path)
+	} else {
+		reporter.Emit(jobevent.Info, "dnsmgr2 %s include unchanged: %s", kind, path)
+	}
+	return nil
+}
+
 func (dns *DNSClient) runUpdate() error {
 	if dns.update != nil {
 		return dns.update()
@@ -151,11 +168,6 @@ func (dns *DNSClient) runUpdate() error {
 }
 
 func (dns *DNSClient) dnsmgrConfigPath() string {
-	if dns.DNS != nil {
-		if p := strings.TrimSpace(dns.DNS.ConfigFile); p != "" {
-			return p
-		}
-	}
 	return "/etc/dnsmgr2/dnsmgr2.yaml"
 }
 

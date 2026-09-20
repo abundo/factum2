@@ -18,13 +18,9 @@ func TestDnsmgrConfigPath(t *testing.T) {
 	if got := (&DNSClient{}).dnsmgrConfigPath(); got != "/etc/dnsmgr2/dnsmgr2.yaml" {
 		t.Errorf("empty client = %q", got)
 	}
-	client := &DNSClient{DNS: &Config{ConfigFile: "  /tmp/dnsmgr2.yaml  "}}
-	if got := client.dnsmgrConfigPath(); got != "/tmp/dnsmgr2.yaml" {
-		t.Errorf("ConfigFile = %q", got)
-	}
-	client.DNS.ConfigFile = "   "
+	client := &DNSClient{DNS: &Config{ZonesFile: "/etc/dnsmgr2/zones.yaml"}}
 	if got := client.dnsmgrConfigPath(); got != "/etc/dnsmgr2/dnsmgr2.yaml" {
-		t.Errorf("blank ConfigFile = %q", got)
+		t.Errorf("path = %q", got)
 	}
 }
 
@@ -264,6 +260,73 @@ func TestValidate(t *testing.T) {
 	client.DNS.DestFile = "/tmp/records"
 	if err := client.validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSyncDevicesWritesZoneInclude(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "records")
+	inc := filepath.Join(dir, "zones.yaml")
+	client := &DNSClient{
+		DNS: &Config{
+			ConfigDNS: util.ConfigDNS{
+				CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+				DestFile:     dest,
+			},
+			ZonesEnabled: true,
+			ZonesFile:    inc,
+			Zones: []ConfigDNSZone{
+				{Name: "example.com", Type: "forward", DnsTemplate: "default_dns"},
+			},
+		},
+		update: func() error { return nil },
+	}
+	if err := client.syncDevices(jobevent.NewConsoleReporter(os.Stdout), nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(inc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, "name: example.com") || !strings.Contains(s, "dns_template: default_dns") {
+		t.Fatalf("include:\n%s", s)
+	}
+	if strings.Contains(s, "prefixes:") {
+		t.Fatalf("zone include has prefixes:\n%s", s)
+	}
+}
+
+func TestSyncDevicesWritesPrefixInclude(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "records")
+	inc := filepath.Join(dir, "prefixes.yaml")
+	client := &DNSClient{
+		DNS: &Config{
+			ConfigDNS: util.ConfigDNS{
+				CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+				DestFile:     dest,
+			},
+			DhcpEnabled:  true,
+			PrefixesFile: inc,
+			DHCP: ConfigDHCP{
+				Prefixes: []ConfigDHCPPrefix{
+					{Name: "192.0.2.0/24", Range: "192.0.2.100-192.0.2.200", Gateway: "192.0.2.1"},
+				},
+			},
+		},
+		update: func() error { return nil },
+	}
+	if err := client.syncDevices(jobevent.NewConsoleReporter(os.Stdout), nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(inc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, "name: 192.0.2.0/24") || !strings.Contains(s, "range: 192.0.2.100-192.0.2.200") {
+		t.Fatalf("include:\n%s", s)
 	}
 }
 

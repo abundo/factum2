@@ -291,9 +291,15 @@ def prepare(*, demo: bool = False) -> None:
     grafana_dst.write_bytes(grafana_src.read_bytes())
 
     shutil.copyfile(DIR / "dns" / "named.conf", DIR / "data" / "bind" / "named.conf")
-    dst_yaml = DIR / "data" / "dns" / "dnsmgr2.yaml"
-    if not dst_yaml.is_file() or dst_yaml.stat().st_size == 0:
-        shutil.copyfile(DIR / "dns" / "dnsmgr2.yaml", dst_yaml)
+    shutil.copyfile(DIR / "dns" / "dnsmgr2.yaml", DIR / "data" / "dns" / "dnsmgr2.yaml")
+    _write_if_empty(
+        DIR / "data" / "dns" / "zones.yaml",
+        "# Written by factum2-dns. Empty until the first DNS sync.\n",
+    )
+    _write_if_empty(
+        DIR / "data" / "dns" / "prefixes.yaml",
+        "# Written by factum2-dns. Empty until the first DHCP sync.\n",
+    )
     _write_if_empty(
         DIR / "data" / "bind" / "named.conf.dnsmgr2",
         "// Written by dnsmgr2. Empty until the first sync.\n",
@@ -331,6 +337,8 @@ def prepare(*, demo: bool = False) -> None:
         DIR / "data" / "oxidized" / "config",
         DIR / "data" / "dns" / "records",
         DIR / "data" / "dns" / "dnsmgr2.yaml",
+        DIR / "data" / "dns" / "zones.yaml",
+        DIR / "data" / "dns" / "prefixes.yaml",
         DIR / "data" / "bind" / "named.conf",
         DIR / "data" / "bind" / "named.conf.dnsmgr2",
         DIR / "data" / "prometheus" / "targets.json",

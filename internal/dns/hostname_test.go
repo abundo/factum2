@@ -32,9 +32,9 @@ func TestNormalizeDNSName(t *testing.T) {
 
 func TestDnsNameRelative(t *testing.T) {
 	cases := []struct {
-		name, zone     string
-		unqualified    bool
-		want           string
+		name, zone  string
+		unqualified bool
+		want        string
 	}{
 		{"lo0.r1.example.com", "example.com", true, "lo0.r1"},
 		{"example.com", "example.com", true, "@"},

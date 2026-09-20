@@ -51,13 +51,13 @@ used by the corresponding sync tool, which may run on the primary
 DNS, DHCP, Icinga, LibreNMS, Oxidized, Prometheus, and Certificates each have an
 enabled flag. DNS, Icinga, LibreNMS, Oxidized, and Prometheus also have
 a destination file or API URL, and ignore lists (newline-separated).
-The DNS tab also has the path of the generated **dnsmgr2 config file** and
-BIND host-template fields used when the [zone editor](dns.md) is on.
+The DNS tab also has the path of the **dnsmgr2 zone include** written when
+the [zone editor](dns.md) is on. BIND paths, sqlite serial DB, and host
+templates live in the administrator-managed `dnsmgr2.yaml`.
 The DHCP tab is [DHCP server management](dns.md#dhcp): per-prefix DHCP
 in IPAM, the MAC column on DNS zone records, default DNS servers for
-DHCP clients, and Kea host-template fields. The Kea include file is a
-JSON array of subnets that the main Kea config must include; it is not
-the main config file.
+DHCP clients, and the path of the **dnsmgr2 prefix include**. Kea paths
+and host templates live in the administrator-managed `dnsmgr2.yaml`.
 LibreNMS delayed delete lives here. Oxidized **API URL** is what the GUI
 Oxidized browser uses; it must be reachable from `factum2-web`.
 

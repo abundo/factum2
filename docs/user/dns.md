@@ -43,40 +43,51 @@ When it is on:
   a `mac` field on the JSON A/AAAA record so dnsmgr2 can emit a Kea
   reservation.
 
-Default DNS servers for DHCP clients and Kea paths (config dir, include
-file, restart command) are on **Destinations → DHCP**. The include file is
-a JSON array of subnets (typically `kea-dhcp4.dnsmgr2.json`); the main Kea
-config must include it as `"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`.
+Default DNS servers for DHCP clients are on **Destinations → DHCP**.
+Kea paths, restart commands, and `host_dhcp_template` stay in the
+administrator-managed `dnsmgr2.yaml`. The Kea subnet JSON
+(`kea-dhcp4.dnsmgr2.json`) is still included from the main Kea config as
+`"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`.
 
-When DHCP is on and **Destinations → DNS → Config file** is set,
-`factum2-dns` includes `dhcp:` / `host_dhcp_template` / prefixes in the
-generated `dnsmgr2.yaml`.
+When DHCP is on and **Destinations → DHCP → Include file** is set,
+`factum2-dns` writes enabled prefixes into that YAML. List it from the
+main config after `host_dhcp_template`:
+
+    dnsmgr2:
+      - host_dhcp_template: isc_kea
+      - include: /etc/dnsmgr2/prefixes.yaml
 
 Reverse zones use a prefix as the name (`192.168.0.0/16`,
 `2001:db8::/32`), matching dnsmgr2.
 
-## Config file for dnsmgr2
+## Include file for dnsmgr2
 
-When the zone editor or DHCP is on and **Destinations → DNS → Config
-file** is set, `factum2-dns` writes that path as a `dnsmgr2.yaml`: host
-template (BIND paths and reload commands), SOA templates, zone
-templates, the zone list, and (if DHCP is on) Kea host template, global
-DNS servers, and enabled prefixes. The existing **Destination file** is
-the JSON records file (`sources[].type: json`, `sources[].name`). Empty
-config-file path means "do not overwrite a locally maintained yaml"
-(that yaml must use `type: json` if the dest file is JSON).
+`/etc/dnsmgr2/dnsmgr2.yaml` is maintained by the operator (BIND/Kea
+paths, sqlite serial DB, SOA templates, zone templates, host templates).
+Zone template names in the Factum zone editor must match names in that
+file.
 
-BIND path fields on the same Destinations tab default to the Ubuntu
-layout from dnsmgr2's example config when left blank.
+When the zone editor is on and **Destinations → DNS → Include file** is
+set, `factum2-dns` writes that path as a YAML zone list (`zones:`). List
+it from the main config:
+
+    dnsmgr2:
+      - host_dns_template: isc_bind
+      - include: /etc/dnsmgr2/zones.yaml
+
+The **Destination file** is still the JSON records file
+(`sources[].type: json`, `sources[].name`). An empty include-file path
+means "do not write a zone list" (zones stay inline in the main yaml).
 
 ## Sync
 
-A DNS job still writes the JSON records file (devices plus zone-editor
-records) and the `dnsmgr2.yaml` config, then `factum2-dns` applies them
-in-process (BIND zone files, `rndc`, optional Kea). No separate `dnsmgr2`
-binary is required on the worker. Zone-editor records for a zone named
-the same as **default domain** are merged into that domain's `records`
-array with the device records.
+A DNS job writes the JSON records file (devices plus zone-editor
+records), the zone include, and (if DHCP is on) the prefix include, then
+`factum2-dns` applies the administrator-managed `dnsmgr2.yaml` in-process
+(BIND zone files, `rndc`, optional Kea). No separate `dnsmgr2` binary is
+required on the worker. Zone-editor records for a zone named the same as **default
+domain** are merged into that domain's `records` array with the device
+records.
 
 The DNS host still needs BIND (`named-checkzone`, `rndc`) and, if DHCP
 is on, Kea. Those stay OS packages.

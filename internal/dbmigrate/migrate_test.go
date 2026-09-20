@@ -145,3 +145,63 @@ func TestMigrationsIncludeServiceDefinitions(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationsIncludeDhcpPrefixesFile(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "00019_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatal("missing 00019_*.sql for settings.dhcp_prefixes_file")
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"dhcp_prefixes_file",
+		"IF NOT EXISTS",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}
+
+func TestMigrationsIncludeDnsZonesFile(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "00018_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatal("missing 00018_*.sql for settings.dns_zones_file")
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"dns_zones_file",
+		"IF NOT EXISTS",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}

@@ -8,45 +8,41 @@ import (
 	"github.com/abundo/factum2/models"
 )
 
-func TestRenderDnsmgrConfig(t *testing.T) {
+func TestRenderZoneInclude(t *testing.T) {
 	cfg := &Config{
 		ConfigDNS: util.ConfigDNS{
 			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
 			DestFile:     "/etc/dnsmgr2/records",
-		},
-		DbFile: "/var/lib/dnsmgr2/dnsmgr2.sqlite",
-		Host:   ConfigDNSHost{Name: "isc_bind_ubuntu"},
-		SOATemplates: []ConfigDNSSOA{
-			{Name: "default_soa", Mname: "ns1.example.com.", Rname: "hostmaster.example.com.", Refresh: 36000, Retry: 3600, Expire: 604800, Minimum: 900},
-		},
-		Templates: []ConfigDNSTemplate{
-			{Name: "default_dns", SOA: "default_soa", DefaultTTL: "900", DNSSECPolicy: "dnssec-policy", NS: []string{"ns1.example.com.", "ns2.example.com."}},
 		},
 		Zones: []ConfigDNSZone{
 			{Name: "example.com", Type: "forward", DnsTemplate: "default_dns"},
 			{Name: "192.168.0.0/16", Type: "reverse4", DnsTemplate: "default_dns"},
 		},
 	}
-	out, err := RenderDnsmgrConfig(cfg)
+	out, err := RenderZoneInclude(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
 	for _, want := range []string{
-		"default_domain: example.com",
-		"dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite",
-		"name: /etc/dnsmgr2/records",
-		"type: json",
-		"default_soa:",
-		"default_dns:",
+		"WARNING! do not edit, factum2-dns will overwrite",
+		"name: example.com",
 		"dns_template: default_dns",
 		"type: reverse4",
-		"dnssec_policy: dnssec-policy",
-		"ns1.example.com.",
-		"cmd_reload_all: sudo rndc reload",
+		"name: 192.168.0.0/16",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("yaml missing %q\n%s", want, s)
+		}
+	}
+	for _, not := range []string{
+		"dbfile:",
+		"host_templates:",
+		"cmd_reload_all:",
+		"soa_templates:",
+	} {
+		if strings.Contains(s, not) {
+			t.Errorf("zone include should not contain %q\n%s", not, s)
 		}
 	}
 }
@@ -153,12 +149,8 @@ func TestWriteZoneRecordsJSONTXT(t *testing.T) {
 	}
 }
 
-func TestRenderDnsmgrConfigDHCP(t *testing.T) {
+func TestRenderPrefixInclude(t *testing.T) {
 	cfg := &Config{
-		ConfigDNS: util.ConfigDNS{
-			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
-			DestFile:     "/etc/dnsmgr2/records",
-		},
 		DhcpEnabled: true,
 		DHCP: ConfigDHCP{
 			DnsServers: []string{"192.0.2.53", "192.0.2.54"},
@@ -172,50 +164,51 @@ func TestRenderDnsmgrConfigDHCP(t *testing.T) {
 			},
 		},
 	}
-	out, err := RenderDnsmgrConfig(cfg)
+	out, err := RenderPrefixInclude(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
 	for _, want := range []string{
-		"type: dhcp_isc_kea",
-		"host_dhcp_template: isc_kea",
+		"WARNING! do not edit, factum2-dns will overwrite",
 		"name: 192.0.2.0/24",
 		"range: 192.0.2.100-192.0.2.200",
 		"gateway: 192.0.2.1",
-		"kea-dhcp4.dnsmgr2.json",
 		"192.0.2.53",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("yaml missing %q\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "host_dns_template") {
-		t.Errorf("DHCP-only yaml should omit BIND host template\n%s", s)
+	for _, not := range []string{
+		"host_dhcp_template",
+		"kea-dhcp4",
+		"zones:",
+		"dns_template:",
+	} {
+		if strings.Contains(s, not) {
+			t.Errorf("prefix include should not contain %q\n%s", not, s)
+		}
 	}
 }
 
-func TestRenderDnsmgrConfigDHCPOmitsEmptyGlobalDNSServers(t *testing.T) {
+func TestRenderZoneIncludeOmitsPrefixes(t *testing.T) {
 	cfg := &Config{
-		ConfigDNS: util.ConfigDNS{
-			CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
-			DestFile:     "/etc/dnsmgr2/records",
-		},
 		DhcpEnabled: true,
+		Zones: []ConfigDNSZone{
+			{Name: "example.com", Type: "forward", DnsTemplate: "default_dns"},
+		},
 		DHCP: ConfigDHCP{
 			Prefixes: []ConfigDHCPPrefix{{Name: "192.0.2.0/24"}},
 		},
 	}
-	out, err := RenderDnsmgrConfig(cfg)
+	out, err := RenderZoneInclude(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	if !strings.Contains(s, "host_dhcp_template: isc_kea") {
-		t.Errorf("yaml missing kea host\n%s", s)
-	}
-	if strings.Contains(s, "dns_servers:") {
-		t.Errorf("empty global dns_servers should be omitted\n%s", s)
+	if strings.Contains(s, "192.0.2.0/24") || strings.Contains(s, "prefixes:") {
+		t.Errorf("zone include should omit prefixes\n%s", s)
 	}
 }
 

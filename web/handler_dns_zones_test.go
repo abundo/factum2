@@ -148,6 +148,21 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 		t.Fatalf("delete in-use template status = %d, want 409, body=%s", rec.Code, rec.Body.String())
 	}
 
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dns-config", nil, nil, nil)
+	if err := ctrl.ApiDNSConfig(c); err != nil {
+		t.Fatalf("dns-config: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dns-config status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var cfg DNSConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode dns-config: %v", err)
+	}
+	if !cfg.ZonesEnabled || len(cfg.Zones) != 1 || cfg.Zones[0].Name != "example.com" {
+		t.Fatalf("unexpected dns-config: %+v", cfg)
+	}
+
 	c, rec = jsonRequest(t, http.MethodDelete, "/api/dns/zones/"+itoa(zone.ID), nil, []string{"id"}, []string{itoa(zone.ID)})
 	if err := ctrl.ApiDnsZoneDelete(c); err != nil {
 		t.Fatalf("delete zone: %v", err)
@@ -164,21 +179,6 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("host bits status = %d, want 400, body=%s", rec.Code, rec.Body.String())
-	}
-
-	c, rec = jsonRequest(t, http.MethodGet, "/api/dns-config", nil, nil, nil)
-	if err := ctrl.ApiDNSConfig(c); err != nil {
-		t.Fatalf("dns-config: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("dns-config status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	var cfg DNSConfigResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode dns-config: %v", err)
-	}
-	if !cfg.ZonesEnabled || len(cfg.SOATemplates) != 1 || len(cfg.Templates) != 1 {
-		t.Fatalf("unexpected dns-config: %+v", cfg)
 	}
 }
 

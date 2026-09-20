@@ -313,7 +313,7 @@ type Settings struct {
 	// and the MAC column on DNS zone records. Off (nil/false) is the
 	// default. Turning it off only hides the UI — prefix DHCP fields and
 	// record MACs stay in the database. factum2-dns writes Kea prefixes
-	// into dnsmgr2.yaml when this is on.
+	// into the dnsmgr2 prefix include when this is on.
 	DhcpEnabled       *bool `gorm:"column:dhcp_enabled" form:"dhcp_enabled" json:"dhcp_enabled"`
 	LibrenmsEnabled   *bool `gorm:"column:librenms_enabled" form:"librenms_enabled" json:"librenms_enabled"`
 	LimeEnabled       *bool `gorm:"column:lime_enabled" form:"lime_enabled" json:"lime_enabled"`
@@ -385,13 +385,15 @@ type Settings struct {
 	// internal/dns.filterDevices skips a device matching either.
 	DnsIgnoreModels    string `gorm:"column:dns_ignore_models;type:text" form:"dns_ignore_models" json:"dns_ignore_models"`
 	DnsIgnorePlatforms string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
-	// DnsConfigFile is the path factum2-dns writes the generated dnsmgr2
-	// YAML to when DnsZonesEnabled is on. Empty skips writing the YAML
-	// (the operator keeps a local file).
-	DnsConfigFile string `gorm:"column:dns_config_file" form:"dns_config_file" json:"dns_config_file"`
-	DnsDbFile     string `gorm:"column:dns_db_file" form:"dns_db_file" json:"dns_db_file"`
-	// BIND host template used when generating dnsmgr2.yaml. Empty fields
-	// fall back to the Ubuntu BIND defaults from dnsmgr2's example config.
+	// DnsZonesFile is the path factum2-dns writes the dnsmgr2 zone-include
+	// YAML to when DnsZonesEnabled is on. Empty skips writing (the
+	// operator lists zones in the main dnsmgr2.yaml).
+	DnsZonesFile string `gorm:"column:dns_zones_file" form:"dns_zones_file" json:"dns_zones_file"`
+	// Unused by current factum2-dns (the administrator-managed
+	// dnsmgr2.yaml holds BIND paths and the sqlite serial DB). Kept so
+	// existing Settings rows continue to load.
+	DnsConfigFile        string `gorm:"column:dns_config_file" form:"dns_config_file" json:"dns_config_file"`
+	DnsDbFile            string `gorm:"column:dns_db_file" form:"dns_db_file" json:"dns_db_file"`
 	DnsHostTemplate      string `gorm:"column:dns_host_template" form:"dns_host_template" json:"dns_host_template"`
 	DnsBindType          string `gorm:"column:dns_bind_type" form:"dns_bind_type" json:"dns_bind_type"`
 	DnsBindConfigDir     string `gorm:"column:dns_bind_config_dir" form:"dns_bind_config_dir" json:"dns_bind_config_dir"`
@@ -406,9 +408,11 @@ type Settings struct {
 	// clients (newline-separated). A prefix may override this. Edited on
 	// the Factum tab next to the DHCP feature switch.
 	DhcpDnsServers string `gorm:"column:dhcp_dns_servers;type:text" form:"dhcp_dns_servers" json:"dhcp_dns_servers"`
-	// Kea host-template fields, written into dnsmgr2.yaml when DhcpEnabled
-	// is on. Empty fields fall back to the Ubuntu Kea layout from
-	// dnsmgr2's example config, same convention as the BIND fields above.
+	// DhcpPrefixesFile is the path factum2-dns writes the dnsmgr2
+	// prefix-include YAML to when DhcpEnabled is on. Empty skips writing.
+	DhcpPrefixesFile string `gorm:"column:dhcp_prefixes_file" form:"dhcp_prefixes_file" json:"dhcp_prefixes_file"`
+	// Kea host-template fields. Paths belong in the administrator-managed
+	// dnsmgr2.yaml; these Settings columns remain for existing rows.
 	DhcpHostTemplate    string `gorm:"column:dhcp_host_template" form:"dhcp_host_template" json:"dhcp_host_template"`
 	DhcpKeaType         string `gorm:"column:dhcp_kea_type" form:"dhcp_kea_type" json:"dhcp_kea_type"`
 	DhcpKea4ConfigDir   string `gorm:"column:dhcp_kea4_config_dir" form:"dhcp_kea4_config_dir" json:"dhcp_kea4_config_dir"`

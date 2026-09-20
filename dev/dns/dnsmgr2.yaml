@@ -1,6 +1,7 @@
 ---
-# Bootstrap config used until factum2-dns overwrites /etc/dnsmgr2/dnsmgr2.yaml
-# (Settings.dns_config_file) on the first DNS sync with the zone editor on.
+# Administrator-managed dnsmgr2 config for the lab. factum2-dns writes
+# /etc/dnsmgr2/zones.yaml and /etc/dnsmgr2/prefixes.yaml and does not
+# overwrite this file.
 default_domain: lab.example
 dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
 
@@ -44,7 +45,7 @@ dns:
 
 dnsmgr2:
     - host_dns_template: isc_bind
-      zones:
-          - name: lab.example
-            type: forward
-            dns_template: default_dns
+    - include: /etc/dnsmgr2/zones.yaml
+    # Enable DHCP in Destinations, then uncomment:
+    # - host_dhcp_template: isc_kea
+    # - include: /etc/dnsmgr2/prefixes.yaml

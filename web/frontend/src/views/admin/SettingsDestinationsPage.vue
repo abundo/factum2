@@ -121,104 +121,21 @@ const certKeyTypeItems = [
                 class="w-full"
               />
             </div>
-            <div class="font-semibold">dnsmgr2 config file</div>
-            <small class="text-muted-color -mt-4"
-              >When the DNS zone editor is on, factum2-dns writes a dnsmgr2.yaml here as well as the
-              records file above. Leave blank to keep a locally maintained config.</small
-            >
             <div>
-              <label for="dns_config_file" class="block font-bold mb-3">Config file</label>
+              <label for="dns_zones_file" class="block font-bold mb-3">Include file</label>
               <UInput
-                id="dns_config_file"
-                v-model="settings.dns_config_file"
-                placeholder="/etc/dnsmgr2/dnsmgr2.yaml"
+                id="dns_zones_file"
+                v-model="settings.dns_zones_file"
+                placeholder="/etc/dnsmgr2/zones.yaml"
                 class="w-full"
               />
-            </div>
-            <div>
-              <label for="dns_db_file" class="block font-bold mb-3">SQLite serial DB</label>
-              <UInput
-                id="dns_db_file"
-                v-model="settings.dns_db_file"
-                placeholder="/var/lib/dnsmgr2/dnsmgr2.sqlite"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_host_template" class="block font-bold mb-3">Host template name</label>
-              <UInput
-                id="dns_host_template"
-                v-model="settings.dns_host_template"
-                placeholder="isc_bind"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_config_dir" class="block font-bold mb-3">BIND config dir</label>
-              <UInput
-                id="dns_bind_config_dir"
-                v-model="settings.dns_bind_config_dir"
-                placeholder="/etc/bind"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_include_file" class="block font-bold mb-3">Include file</label>
-              <UInput
-                id="dns_bind_include_file"
-                v-model="settings.dns_bind_include_file"
-                placeholder="named.conf.dnsmgr2"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_zones_dir" class="block font-bold mb-3">Zones dir</label>
-              <UInput
-                id="dns_bind_zones_dir"
-                v-model="settings.dns_bind_zones_dir"
-                placeholder="/var/lib/bind"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_tmp_dir" class="block font-bold mb-3">Temp dir</label>
-              <UInput
-                id="dns_bind_tmp_dir"
-                v-model="settings.dns_bind_tmp_dir"
-                placeholder="/var/lib/dnsmgr2"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_cmd_reload_zone" class="block font-bold mb-3"
-                >Reload zone command</label
+              <small class="text-muted-color"
+                >YAML zone list written by factum2-dns when the zone editor or DHCP is on. Add it as
+                its own item in the administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
+                <code>- include: /etc/dnsmgr2/zones.yaml</code>
+                (after the <code>host_dns_template</code> entry). Leave blank to skip
+                writing.</small
               >
-              <UInput
-                id="dns_bind_cmd_reload_zone"
-                v-model="settings.dns_bind_cmd_reload_zone"
-                placeholder="sudo rndc reload {zone}"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_cmd_reload_all" class="block font-bold mb-3"
-                >Reload all command</label
-              >
-              <UInput
-                id="dns_bind_cmd_reload_all"
-                v-model="settings.dns_bind_cmd_reload_all"
-                placeholder="sudo rndc reload"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dns_bind_cmd_restart" class="block font-bold mb-3">Restart command</label>
-              <UInput
-                id="dns_bind_cmd_restart"
-                v-model="settings.dns_bind_cmd_restart"
-                placeholder="systemctl restart named.service"
-                class="w-full"
-              />
             </div>
           </div>
         </template>
@@ -236,8 +153,8 @@ const certKeyTypeItems = [
             <small class="text-muted-color -mt-4"
               >Per-prefix DHCP in IPAM (range, gateway, DNS servers) and a MAC column on DNS zone
               records for static reservations. Off by default. Turning this off hides the UI; it
-              does not delete stored DHCP data. Empty Kea fields fall back to the Ubuntu layout from
-              dnsmgr2's example config.</small
+              does not delete stored DHCP data. Kea paths and <code>host_dhcp_template</code> live
+              in the administrator-managed <code>dnsmgr2.yaml</code>.</small
             >
             <div v-if="settings.dhcp_enabled">
               <label for="dhcp_dns_servers" class="block font-bold mb-3">Default DNS servers</label>
@@ -254,90 +171,20 @@ const certKeyTypeItems = [
               >
             </div>
             <div>
-              <label for="dhcp_host_template" class="block font-bold mb-3"
-                >Host template name</label
-              >
+              <label for="dhcp_prefixes_file" class="block font-bold mb-3">Include file</label>
               <UInput
-                id="dhcp_host_template"
-                v-model="settings.dhcp_host_template"
-                placeholder="isc_kea"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dhcp_kea4_config_dir" class="block font-bold mb-3"
-                >DHCPv4 config dir</label
-              >
-              <UInput
-                id="dhcp_kea4_config_dir"
-                v-model="settings.dhcp_kea4_config_dir"
-                placeholder="/etc/kea"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dhcp_kea4_include_file" class="block font-bold mb-3"
-                >DHCPv4 include file</label
-              >
-              <UInput
-                id="dhcp_kea4_include_file"
-                v-model="settings.dhcp_kea4_include_file"
-                placeholder="kea-dhcp4.dnsmgr2.json"
+                id="dhcp_prefixes_file"
+                v-model="settings.dhcp_prefixes_file"
+                placeholder="/etc/dnsmgr2/prefixes.yaml"
                 class="w-full"
               />
               <small class="text-muted-color"
-                >JSON array of subnets written by dnsmgr2. Include it from the main Kea config as
-                <code>"subnet4": &lt;?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?&gt;</code> — not
-                the main config file itself.</small
+                >YAML prefix list written by factum2-dns when DHCP is on. Add it as its own item in
+                the administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
+                <code>- include: /etc/dnsmgr2/prefixes.yaml</code>
+                (after the <code>host_dhcp_template</code> entry). Leave blank to skip
+                writing.</small
               >
-            </div>
-            <div>
-              <label for="dhcp_kea4_cmd_restart" class="block font-bold mb-3"
-                >DHCPv4 restart command</label
-              >
-              <UInput
-                id="dhcp_kea4_cmd_restart"
-                v-model="settings.dhcp_kea4_cmd_restart"
-                placeholder="systemctl restart kea-dhcp4-server"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dhcp_kea6_config_dir" class="block font-bold mb-3"
-                >DHCPv6 config dir</label
-              >
-              <UInput
-                id="dhcp_kea6_config_dir"
-                v-model="settings.dhcp_kea6_config_dir"
-                placeholder="/etc/kea"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label for="dhcp_kea6_include_file" class="block font-bold mb-3"
-                >DHCPv6 include file</label
-              >
-              <UInput
-                id="dhcp_kea6_include_file"
-                v-model="settings.dhcp_kea6_include_file"
-                placeholder="kea-dhcp6.dnsmgr2.json"
-                class="w-full"
-              />
-              <small class="text-muted-color"
-                >Same include pattern as DHCPv4, with
-                <code>"subnet6": &lt;?include "/etc/kea/kea-dhcp6.dnsmgr2.json"?&gt;</code>.</small
-              >
-            </div>
-            <div>
-              <label for="dhcp_kea6_cmd_restart" class="block font-bold mb-3"
-                >DHCPv6 restart command</label
-              >
-              <UInput
-                id="dhcp_kea6_cmd_restart"
-                v-model="settings.dhcp_kea6_cmd_restart"
-                placeholder="systemctl restart kea-dhcp6-server"
-                class="w-full"
-              />
             </div>
           </div>
         </template>

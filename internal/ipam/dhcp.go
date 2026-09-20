@@ -100,7 +100,7 @@ func parseAddrInPrefix(raw string, prefix netip.Prefix, what string) (netip.Addr
 }
 
 // ListDhcpPrefixes returns every allocated prefix with DHCP enabled,
-// across namespaces. Used by factum2-dns to build dnsmgr2.yaml.
+// across namespaces. Used by factum2-dns to build the dnsmgr2 prefix include.
 func ListDhcpPrefixes(db *gorm.DB) ([]models.IpamPrefix, error) {
 	var rows []models.IpamPrefix
 	if err := db.Where("dhcp_enabled = ?", true).Order("prefix").Find(&rows).Error; err != nil {
