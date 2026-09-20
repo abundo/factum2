@@ -9,6 +9,7 @@ import (
 	"os"
 
 	cmdbase "github.com/abundo/factum2/cmd"
+	"github.com/abundo/factum2/internal/dns"
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobscheduler"
 	"github.com/abundo/factum2/internal/util"
@@ -49,6 +50,9 @@ type Controller struct {
 	driverFn          func(device *models.Device, creds deviceCredentialsRequest, settings *models.Settings) (drivers.DriverClient, error)
 	netboxFn          func(settings *models.Settings) (serviceNetboxAPI, error)
 	interfaceNetboxFn func(settings *models.Settings) (interfaceRefreshNetbox, error)
+	// dhcpLeasesFn, if set, replaces the Kea/hub lease fetch used by
+	// GET /api/dns/leases (tests).
+	dhcpLeasesFn func(ctx context.Context) ([]dns.DHCPLease, error)
 	// netboxDeviceSyncDebounce coalesces NetBox device/interface/IP webhooks
 	// into one SyncDB per device after a quiet period. Zero value uses the
 	// default 3s delay.
@@ -382,6 +386,7 @@ func GUI(p *GuiParams) error {
 	dnsg.GET("/zones/:id", ctrl.ApiDnsZoneGet, ctrl.RequireRead)
 	dnsg.PUT("/zones/:id", ctrl.ApiDnsZoneUpdate, ctrl.RequireWrite)
 	dnsg.DELETE("/zones/:id", ctrl.ApiDnsZoneDelete, ctrl.RequireWrite)
+	dnsg.GET("/leases", ctrl.ApiDnsDhcpLeases, ctrl.RequireRead)
 
 	ipamg := api.Group("/ipam", ctrl.RequireAPIAuth, ctrl.RequireIpamEnabled)
 	ipamg.GET("/namespaces", ctrl.ApiIpamNamespaceList, ctrl.RequireRead)

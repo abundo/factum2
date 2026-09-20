@@ -41,7 +41,12 @@ When it is on:
 - A/AAAA records in the zone editor gain a **MAC** column. That is a
   DHCP host reservation, not a DNS comment. `factum2-dns` writes it as
   a `mac` field on the JSON A/AAAA record so dnsmgr2 can emit a Kea
-  reservation.
+  reservation. The list-button on the MAC field opens current IPv4 and
+  IPv6 Kea leases (MAC, IP, hostname); picking a row copies that MAC
+  onto the record. The DNS dest worker reads leases from the Kea
+  control socket (`lease4-get-all` / `lease6-get-all`, which needs the
+  `lease_cmds` hook) and falls back to the memfile CSV if that command
+  is not loaded.
 
 Default DNS servers for DHCP clients are on **Destinations → DHCP**.
 Kea paths, restart commands, and `host_dhcp_template` stay in the

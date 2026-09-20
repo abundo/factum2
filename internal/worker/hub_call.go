@@ -9,9 +9,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/abundo/factum2/internal/dns"
 	"github.com/abundo/factum2/internal/storage"
 	"github.com/abundo/factum2/internal/util"
 )
@@ -21,7 +24,12 @@ import (
 // extra args on the same command.
 const StorageRole = "storage"
 
-// CallMsg is a primary→agent HTTP-subset proxy onto the storage unix socket.
+// DNSRole is the worker.commands key on the DNS dest (BIND/Kea). The
+// hub uses CallRole this name for dest-local reads such as DHCP leases.
+const DNSRole = "dns"
+
+// CallMsg is a primary→agent HTTP-subset proxy. Paths other than
+// /dhcp/leases are forwarded to the storage unix socket.
 type CallMsg struct {
 	ID     string            `json:"id"`
 	Method string            `json:"method"`
@@ -88,7 +96,7 @@ func (m *RemoteManager) CallRole(ctx context.Context, role, method, path string,
 	}
 	if target == nil {
 		m.mu.Unlock()
-		return CallResultMsg{}, fmt.Errorf("no connected worker with role %q (add worker.commands.%s and run factum2-storage start)", role, role)
+		return CallResultMsg{}, fmt.Errorf("no connected worker with role %q", role)
 	}
 	m.callWaiters[id] = ch
 	m.mu.Unlock()
@@ -119,6 +127,10 @@ func (m *RemoteManager) CallRole(ctx context.Context, role, method, path string,
 }
 
 func (w *Worker) handleCall(msg CallMsg, outbox chan<- Envelope) {
+	if callPath(msg.Path) == "/dhcp/leases" {
+		w.handleDhcpLeasesCall(msg, outbox)
+		return
+	}
 	res := CallResultMsg{ID: msg.ID}
 	socket := storage.StorageSocketPath(w.storageSocket)
 	if socket == "" {
@@ -174,6 +186,50 @@ func (w *Worker) handleCall(msg CallMsg, outbox chan<- Envelope) {
 		}
 	}
 	sendCallResult(outbox, res)
+}
+
+func (w *Worker) handleDhcpLeasesCall(msg CallMsg, outbox chan<- Envelope) {
+	res := CallResultMsg{ID: msg.ID, Header: map[string]string{"Content-Type": "application/json"}}
+	if !strings.EqualFold(msg.Method, http.MethodGet) {
+		res.Status = http.StatusMethodNotAllowed
+		res.Body, _ = json.Marshal(map[string]string{"error": "method not allowed"})
+		sendCallResult(outbox, res)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), util.HubRPCTimeout)
+	defer cancel()
+	leases, err := dns.ListKeaLeases(ctx, nil)
+	if err != nil {
+		res.Status = http.StatusBadGateway
+		res.Error = err.Error()
+		res.Body, _ = json.Marshal(map[string]string{"error": err.Error()})
+		sendCallResult(outbox, res)
+		return
+	}
+	if leases == nil {
+		leases = []dns.DHCPLease{}
+	}
+	body, err := json.Marshal(map[string]any{"leases": leases})
+	if err != nil {
+		res.Status = http.StatusInternalServerError
+		res.Error = err.Error()
+		sendCallResult(outbox, res)
+		return
+	}
+	res.Status = http.StatusOK
+	res.Body = body
+	sendCallResult(outbox, res)
+}
+
+func callPath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimSuffix(raw, "/")
+	}
+	return strings.TrimSuffix(u.Path, "/")
 }
 
 func sendCallResult(outbox chan<- Envelope, res CallResultMsg) {

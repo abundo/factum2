@@ -259,7 +259,11 @@
             </UTooltip>
           </template>
           <template #mac-cell="{ row }">
-            <div data-record-col="mac" class="w-full" @keydown="onCellKeydown($event, row, 'mac')">
+            <div
+              data-record-col="mac"
+              class="w-full flex items-center min-w-0"
+              @keydown="onCellKeydown($event, row, 'mac')"
+            >
               <UTooltip v-bind="cellTooltipProps(row.original.mac, row.original, 'mac')">
                 <div
                   class="w-full min-w-0"
@@ -280,6 +284,18 @@
                   />
                 </div>
               </UTooltip>
+              <UButton
+                v-if="!disabled && isAddressRecord(row.original)"
+                type="button"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-list"
+                class="shrink-0"
+                :aria-label="t('zoneRecords.pickMac')"
+                :title="t('zoneRecords.pickMac')"
+                @click.stop="openLeasePicker(row.original)"
+              />
             </div>
           </template>
           <template #description-cell="{ row }">
@@ -344,11 +360,13 @@
         </UTable>
       </div>
     </UContextMenu>
+    <DhcpLeasePicker v-model:open="leasePickerOpen" @select="applyLeaseMac" />
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
+import DhcpLeasePicker from '@/components/DhcpLeasePicker.vue'
 import {
   COMMENT_TYPE,
   emptyCommentRecord,
@@ -377,6 +395,7 @@ const STRINGS = {
   'zoneRecords.value': 'Value',
   'zoneRecords.description': 'Description',
   'zoneRecords.mac': 'MAC',
+  'zoneRecords.pickMac': 'Pick MAC from DHCP leases',
   'zoneRecords.remove': 'Remove record',
   'zoneRecords.add': 'Add record',
   'zoneRecords.addComment': 'Add comment',
@@ -442,7 +461,7 @@ const colWidths = reactive({
   ttl: 64,
   type: 96,
   value: 200,
-  mac: 160,
+  mac: 196,
   description: 200,
 })
 
@@ -690,6 +709,23 @@ function colFlexStyle(key) {
 function isAddressRecord(row) {
   const type = (row?.type || '').toUpperCase()
   return type === 'A' || type === 'AAAA'
+}
+
+const leasePickerOpen = ref(false)
+const leasePickerRow = ref(null)
+
+function openLeasePicker(row) {
+  if (props.disabled || !isAddressRecord(row)) return
+  leasePickerRow.value = row
+  leasePickerOpen.value = true
+}
+
+function applyLeaseMac(lease) {
+  const row = leasePickerRow.value
+  leasePickerRow.value = null
+  if (!row || !lease?.mac) return
+  row.mac = lease.mac
+  syncRowChanged(row)
 }
 
 function setRowType(row, type) {

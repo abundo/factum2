@@ -34,6 +34,9 @@ export const createDnsTemplate = (payload) => create('/dns/templates', payload)
 export const updateDnsTemplate = (id, payload) => update(`/dns/templates/${id}`, payload)
 export const deleteDnsTemplate = (id) => remove(`/dns/templates/${id}`)
 
+export const listDhcpLeases = () =>
+  list('/dns/leases').then((data) => (Array.isArray(data) ? data : (data?.leases ?? [])))
+
 export const listDnsZones = () => list('/dns/zones')
 export const getDnsZone = (id) => get(`/dns/zones/${id}`)
 export const createDnsZone = (payload) => create('/dns/zones', payload)

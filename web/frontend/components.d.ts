@@ -18,6 +18,7 @@ declare module 'vue' {
     ConnectionDeviceNode: typeof import('./src/components/dcim/ConnectionDeviceNode.vue')['default']
     DcimDetailDialog: typeof import('./src/components/DcimDetailDialog.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
+    DhcpLeasePicker: typeof import('./src/components/DhcpLeasePicker.vue')['default']
     FloorPlanCanvas: typeof import('./src/components/dcim/FloorPlanCanvas.vue')['default']
     FormModal: typeof import('./src/components/FormModal.vue')['default']
     GoTemplateEditor: typeof import('./src/components/GoTemplateEditor.vue')['default']
