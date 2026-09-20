@@ -43,6 +43,9 @@ function apply() {
       />
     </div>
     <p v-if="description" class="mb-2 text-sm text-muted">{{ description }}</p>
+    <div v-if="$slots.default" class="mb-3">
+      <slot />
+    </div>
     <UTextarea
       :id="id"
       :model-value="model ?? ''"

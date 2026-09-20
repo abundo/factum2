@@ -210,22 +210,6 @@ const certKeyTypeItems = [
               <PasswordInput id="icinga_api_pass" v-model="settings.icinga_api_pass" />
             </div>
             <div>
-              <label for="icinga_hosts_file" class="block font-bold mb-3">Hosts file</label>
-              <UInput id="icinga_hosts_file" v-model="settings.icinga_hosts_file" class="w-full" />
-            </div>
-            <div>
-              <label for="icinga_users_file" class="block font-bold mb-3">Users file</label>
-              <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
-            </div>
-            <div>
-              <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
-              <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
-              <small class="text-muted-color"
-                >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it
-                next to the hosts and users files. Leave blank to skip writing.</small
-              >
-            </div>
-            <div>
               <label for="icinga_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
               <UTextarea
                 id="icinga_ignore_devices"
@@ -250,7 +234,10 @@ const certKeyTypeItems = [
               :rows="6"
               placeholder="Jet template, executed with .Device and .Options"
               :schema="icingaHostTemplateSchema"
-            />
+            >
+              <label for="icinga_hosts_file" class="block font-bold mb-3">Hosts file</label>
+              <UInput id="icinga_hosts_file" v-model="settings.icinga_hosts_file" class="w-full" />
+            </GoTemplateField>
             <GoTemplateField
               id="icinga_dependency_template"
               v-model="settings.icinga_dependency_template"
@@ -265,7 +252,10 @@ const certKeyTypeItems = [
               :rows="6"
               placeholder="Jet template, executed with .Username, .DisplayName and .Email"
               :schema="icingaUserTemplateSchema"
-            />
+            >
+              <label for="icinga_users_file" class="block font-bold mb-3">Users file</label>
+              <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
+            </GoTemplateField>
             <GoTemplateField
               id="icinga_cert_template"
               v-model="settings.icinga_cert_template"
@@ -273,7 +263,14 @@ const certKeyTypeItems = [
               :rows="12"
               :placeholder="icingaCertTemplateExample"
               :schema="icingaCertTemplateSchema"
-            />
+            >
+              <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
+              <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
+              <small class="text-muted-color"
+                >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it
+                next to the hosts and users files. Leave blank to skip writing.</small
+              >
+            </GoTemplateField>
           </div>
         </template>
 
