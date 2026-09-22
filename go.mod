@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/CloudyKit/jet/v6 v6.3.2
 	github.com/GiGurra/boa v1.0.28
-	github.com/abundo/dnsmgr2 v1.2.0
+	github.com/abundo/dnsmgr2 v1.2.1
 	github.com/abundo/limetool v1.1.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-ldap/ldap/v3 v3.4.14
