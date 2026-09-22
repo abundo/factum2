@@ -90,7 +90,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 17
+INSTALLER_VERSION = 18
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -1947,6 +1947,38 @@ def ensure_factum_group(
     )
 
 
+def ensure_nagios_in_factum_group(
+    *,
+    target_host: str,
+    ssh_user: str,
+    dry_run: bool,
+) -> None:
+    """Add user nagios to group factum on an Icinga host.
+
+    factum2-icinga-notifications runs as nagios and opens
+    /run/factum2-worker/api.sock (group factum, mode 0660). A missing
+    nagios account is not fatal. Supplementary groups are fixed at
+    process start, so restart icinga2 when that unit exists.
+    """
+    where = "this host" if is_local_host(target_host) else target_host
+    log(f"==> Adding user nagios to group factum on {where}")
+    remote = (
+        "if id nagios >/dev/null 2>&1; then "
+        "usermod -aG factum nagios; "
+        "if systemctl cat icinga2 >/dev/null 2>&1; then "
+        "systemctl try-restart icinga2; "
+        "fi; "
+        "else echo 'nagios user not found; skipping factum group membership'; fi"
+    )
+    if is_local_host(target_host):
+        if dry_run:
+            log(f"    [dry-run] {remote}")
+            return
+        run(sudo_prefix() + ["sh", "-c", remote])
+        return
+    run(ssh_cmd(ssh_user, target_host, remote), dry_run=dry_run)
+
+
 def copy_unit_file(
     src: Path,
     unit: str,
@@ -2317,6 +2349,10 @@ def install_worker(
         ssh_user=ssh_user,
         dry_run=dry_run,
     )
+    if "icinga" in host:
+        ensure_nagios_in_factum_group(
+            target_host=host, ssh_user=ssh_user, dry_run=dry_run
+        )
     if dry_run:
         log(f"    [dry-run] would verify {host} factum2-worker version {tag}")
         return
