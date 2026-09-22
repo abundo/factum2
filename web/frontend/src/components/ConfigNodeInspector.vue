@@ -15,7 +15,7 @@ import {
   unrealizeService,
   updateServiceType,
 } from '@/api/services'
-import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
+import GoTemplateField from '@/components/GoTemplateField.vue'
 import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import { reshapeEndpoints } from '@/utils/serviceEndpoints'
 import {
@@ -466,12 +466,6 @@ function featurePayload(draft) {
   }
 }
 
-function patchFeatureDraft(id, field, value) {
-  const draft = featureDrafts.value[id]
-  if (!draft) return
-  draft[field] = value
-}
-
 function saveCLI() {
   if (!props.selected?.id) return
   saving.value = true
@@ -766,32 +760,20 @@ function toggleFeature(id) {
               ><USwitch v-model="featureDrafts[feat.id].remove_at_root" :disabled="!canWrite" />
               Remove at root</label
             >
-            <div>
-              <label class="mb-1 block font-bold">Add commands</label>
-              <GoTemplateEditor
-                :model-value="featureDrafts[feat.id].add_commands"
-                compact
-                :line-wrapping="false"
-                :autofocus="false"
-                :schema="cliSchema"
-                placeholder="Jet template. One CLI command per output line."
-                @update:model-value="(v) => patchFeatureDraft(feat.id, 'add_commands', v)"
-                @apply="saveFeature(feat.id)"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block font-bold">Remove commands</label>
-              <GoTemplateEditor
-                :model-value="featureDrafts[feat.id].remove_commands"
-                compact
-                :line-wrapping="false"
-                :autofocus="false"
-                :schema="cliSchema"
-                placeholder="Jet template. Idempotent teardown."
-                @update:model-value="(v) => patchFeatureDraft(feat.id, 'remove_commands', v)"
-                @apply="saveFeature(feat.id)"
-              />
-            </div>
+            <GoTemplateField
+              v-model="featureDrafts[feat.id].add_commands"
+              label="Add commands"
+              :rows="6"
+              :schema="cliSchema"
+              placeholder="Jet template. One CLI command per output line."
+            />
+            <GoTemplateField
+              v-model="featureDrafts[feat.id].remove_commands"
+              label="Remove commands"
+              :rows="6"
+              :schema="cliSchema"
+              placeholder="Jet template. Idempotent teardown."
+            />
             <div v-if="canWrite" class="flex justify-end">
               <UButton
                 label="Save commands"
