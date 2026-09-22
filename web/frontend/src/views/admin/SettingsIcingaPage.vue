@@ -48,6 +48,10 @@ import {
       placeholder="Jet template; inserted into the host object when a device has no alarm destination"
       :schema="icingaDefaultNotificationSchema"
     />
+    <div>
+      <label for="icinga_hosts_file" class="block font-bold mb-3">Hosts file</label>
+      <UInput id="icinga_hosts_file" v-model="settings.icinga_hosts_file" class="w-full" />
+    </div>
     <GoTemplateField
       id="icinga_host_template"
       v-model="settings.icinga_host_template"
@@ -55,10 +59,7 @@ import {
       :rows="6"
       placeholder="Jet template, executed with .Device and .Options"
       :schema="icingaHostTemplateSchema"
-    >
-      <label for="icinga_hosts_file" class="block font-bold mb-3">Hosts file</label>
-      <UInput id="icinga_hosts_file" v-model="settings.icinga_hosts_file" class="w-full" />
-    </GoTemplateField>
+    />
     <GoTemplateField
       id="icinga_dependency_template"
       v-model="settings.icinga_dependency_template"
@@ -66,6 +67,10 @@ import {
       :rows="6"
       :schema="icingaDependencyTemplateSchema"
     />
+    <div>
+      <label for="icinga_users_file" class="block font-bold mb-3">Users file</label>
+      <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
+    </div>
     <GoTemplateField
       id="icinga_user_template"
       v-model="settings.icinga_user_template"
@@ -73,10 +78,15 @@ import {
       :rows="6"
       placeholder="Jet template, executed with .Username, .DisplayName and .Email"
       :schema="icingaUserTemplateSchema"
-    >
-      <label for="icinga_users_file" class="block font-bold mb-3">Users file</label>
-      <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
-    </GoTemplateField>
+    />
+    <div>
+      <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
+      <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
+      <small class="text-muted-color"
+        >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it next to
+        the hosts and users files. Leave blank to skip writing.</small
+      >
+    </div>
     <GoTemplateField
       id="icinga_cert_template"
       v-model="settings.icinga_cert_template"
@@ -84,13 +94,6 @@ import {
       :rows="12"
       :placeholder="icingaCertTemplateExample"
       :schema="icingaCertTemplateSchema"
-    >
-      <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
-      <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
-      <small class="text-muted-color"
-        >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it next to
-        the hosts and users files. Leave blank to skip writing.</small
-      >
-    </GoTemplateField>
+    />
   </SettingsFormPage>
 </template>
