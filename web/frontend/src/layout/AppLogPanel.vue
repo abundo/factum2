@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { formatDateTime } from '@/utils/datetime'
 import { useLogPanel } from './composables/logPanel'
 
@@ -34,15 +34,16 @@ function setBodyRef(el) {
   bodyEl = el
 }
 
-// Autoscroll to the newest line as it arrives, unless the user paused the
-// stream to read something further up.
+// Scroll once after the DOM catches up. Watching the newest id (not the
+// length) still follows the tail once the buffer is full and a batch only
+// scrolls once, so a reload jumps to the end instead of stepping there.
 watch(
-  () => state.lines.length,
-  async () => {
+  () => state.lines.at(-1)?.id,
+  () => {
     if (state.paused || !bodyEl) return
-    await nextTick()
     bodyEl.scrollTop = bodyEl.scrollHeight
   },
+  { flush: 'post' },
 )
 
 function startResize(event) {
@@ -172,7 +173,10 @@ onUnmounted(disconnect)
         />
       </div>
     </div>
-    <div :ref="setBodyRef" class="flex-1 space-y-0.5 overflow-y-auto px-3 py-2 font-mono text-xs">
+    <div
+      :ref="setBodyRef"
+      class="flex-1 space-y-0.5 overflow-y-auto px-3 py-2 font-mono text-xs [overflow-anchor:none]"
+    >
       <div v-if="!state.lines.length" class="text-muted">No log events yet</div>
       <div
         v-for="line in state.lines"

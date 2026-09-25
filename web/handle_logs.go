@@ -18,7 +18,17 @@ var logsUpgrader = websocket.Upgrader{
 const (
 	logsWriteWait  = 10 * time.Second
 	logsPingPeriod = 30 * time.Second
+	// logFrameHistory is the first websocket text frame. It carries the
+	// replay buffer in one payload so the GUI can paint the backlog once.
+	logFrameHistory = "history"
 )
+
+// logHistoryFrame is the backlog sent once on subscribe. Live records after
+// that stay as individual LogEvent frames.
+type logHistoryFrame struct {
+	Type   string     `json:"type"`
+	Events []LogEvent `json:"events"`
+}
 
 // ApiLogsWebSocket streams live slog records (published via hubHandler in
 // logstream.go) to the frontend's log window. Gated by RequireAdmin in
@@ -52,10 +62,14 @@ func (ctrl *Controller) ApiLogsWebSocket(c *echo.Context) error {
 		return conn.WriteJSON(e)
 	}
 
-	for _, e := range history {
-		if err := writeEvent(e); err != nil {
-			return nil
-		}
+	// One frame for the whole ring buffer. A line-at-a-time replay makes the
+	// open panel scroll once per stored line on every GUI reload.
+	if history == nil {
+		history = []LogEvent{}
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(logsWriteWait))
+	if err := conn.WriteJSON(logHistoryFrame{Type: logFrameHistory, Events: history}); err != nil {
+		return nil
 	}
 
 	ticker := time.NewTicker(logsPingPeriod)

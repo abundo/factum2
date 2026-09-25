@@ -20,6 +20,8 @@ const state = reactive({
 let socket = null
 let reconnectTimer = null
 let nextId = 0
+let pendingLive = []
+let liveFrame = 0
 
 // connect/disconnect are driven by AppLogPanel's mount lifecycle (itself
 // gated by state.open via v-if in AppLayout), so the websocket only exists
@@ -34,8 +36,15 @@ function connect() {
     state.connected = true
   }
   socket.onmessage = (event) => {
+    const data = JSON.parse(event.data)
+    // Always take the backlog, including while paused, so a reconnect does
+    // not drop it. Live lines stay paused.
+    if (data?.type === 'history' && Array.isArray(data.events)) {
+      applyHistory(data.events)
+      return
+    }
     if (state.paused) return
-    pushLine(JSON.parse(event.data))
+    enqueueLive(data)
   }
   socket.onclose = () => {
     state.connected = false
@@ -49,16 +58,73 @@ function connect() {
   }
 }
 
-function pushLine(data) {
-  state.lines.push({ id: nextId++, ...data })
-  if (state.lines.length > MAX_LINES) {
-    state.lines.splice(0, state.lines.length - MAX_LINES)
+function lineKey(line) {
+  const attrs = line?.attrs && typeof line.attrs === 'object' ? line.attrs : {}
+  const keys = Object.keys(attrs).sort()
+  const attrsKey = keys.map((key) => `${key}=${attrs[key]}`).join('\n')
+  return `${line?.time || ''}|${line?.level || ''}|${line?.source || ''}|${line?.message || ''}|${attrsKey}`
+}
+
+function pushLines(events) {
+  if (!events.length) return
+  const added = events.map((data) => ({ id: nextId++, ...data }))
+  const overflow = state.lines.length + added.length - MAX_LINES
+  if (overflow >= state.lines.length) {
+    state.lines = added.slice(added.length - MAX_LINES)
+    return
   }
+  if (overflow > 0) state.lines.splice(0, overflow)
+  state.lines.push(...added)
+}
+
+function pushLine(data) {
+  pushLines([data])
+}
+
+// History is the ring buffer the server already has. Skip lines this tab
+// already shows (count-aware, so identical lines are kept) and append the
+// rest in one reactive update.
+function applyHistory(events) {
+  const counts = new Map()
+  for (const line of state.lines) {
+    const key = lineKey(line)
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  const fresh = []
+  for (const event of events) {
+    const key = lineKey(event)
+    const n = counts.get(key) || 0
+    if (n > 0) {
+      counts.set(key, n - 1)
+      continue
+    }
+    fresh.push(event)
+  }
+  pushLines(fresh)
+}
+
+function flushLive() {
+  liveFrame = 0
+  if (!pendingLive.length) return
+  const batch = pendingLive
+  pendingLive = []
+  pushLines(batch)
+}
+
+// Live records are one websocket message each. Coalesce a burst into a
+// single DOM update per frame so the tail does not scroll line by line.
+function enqueueLive(data) {
+  pendingLive.push(data)
+  if (liveFrame) return
+  liveFrame = requestAnimationFrame(flushLive)
 }
 
 function disconnect() {
   clearTimeout(reconnectTimer)
   reconnectTimer = null
+  if (liveFrame) cancelAnimationFrame(liveFrame)
+  liveFrame = 0
+  pendingLive = []
   if (socket) {
     socket.onclose = null
     socket.close()
