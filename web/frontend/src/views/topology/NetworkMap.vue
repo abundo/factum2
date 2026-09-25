@@ -42,13 +42,10 @@ function readBasemap() {
 }
 
 const BASEMAP_STYLES = {
-  // VersaTiles Colorful on Shortbread vector tiles - OSM Carto-like
-  // (cream land, pale-yellow roads, olive parks, light-blue water), no
-  // API key. Needs outbound access to tiles.versatiles.org; swap for a
-  // self-hosted Shortbread source if the deployment network doesn't have
-  // that. OSMF's own vector.openstreetmap.org is the same schema but
-  // donation-funded with a usage policy that production apps shouldn't hit.
-  light: 'https://tiles.versatiles.org/assets/styles/colorful/style.json',
+  // OpenFreeMap Liberty: OpenStreetMap vector tiles with buildings, streets,
+  // and points of interest. No API key. Needs outbound access to
+  // tiles.openfreemap.org. MapLibre shows the style's attribution.
+  light: 'https://tiles.openfreemap.org/styles/liberty',
   // CARTO Dark Matter - no API key, needs outbound access to
   // basemaps.cartocdn.com. High contrast for the colored device dots and
   // the fiber / wavelength / capacity arcs.
