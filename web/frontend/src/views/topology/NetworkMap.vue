@@ -18,10 +18,9 @@ import SiteAssignPanel from './SiteAssignPanel.vue'
 const toast = useToast()
 const authStore = useAuthStore()
 
-// Role filter and basemap, remembered per-browser (not per-user account -
-// the map has no server-side per-user settings store) so they survive reloads.
+// Role filter, remembered per-browser (not per-user account - the map has
+// no server-side per-user settings store) so it survives reloads.
 const DEFAULT_ROLES_STORAGE_KEY = 'networkMap.defaultRoles'
-const BASEMAP_STORAGE_KEY = 'networkMap.basemap'
 
 function readDefaultRoles() {
   try {
@@ -32,31 +31,10 @@ function readDefaultRoles() {
   }
 }
 
-function readBasemap() {
-  try {
-    const raw = localStorage.getItem(BASEMAP_STORAGE_KEY)
-    return raw === 'dark' || raw === 'light' ? raw : 'light'
-  } catch {
-    return 'light'
-  }
-}
-
-const BASEMAP_STYLES = {
-  // OpenFreeMap Liberty: OpenStreetMap vector tiles with buildings, streets,
-  // and points of interest. No API key. Needs outbound access to
-  // tiles.openfreemap.org. MapLibre shows the style's attribution.
-  light: 'https://tiles.openfreemap.org/styles/liberty',
-  // CARTO Dark Matter - no API key, needs outbound access to
-  // basemaps.cartocdn.com. High contrast for the colored device dots and
-  // the fiber / wavelength / capacity arcs.
-  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-}
-
-const basemapItems = [
-  { label: 'Light', value: 'light' },
-  { label: 'Dark', value: 'dark' },
-]
-const basemap = ref(readBasemap())
+// OpenFreeMap Liberty: OpenStreetMap vector tiles with buildings, streets,
+// and points of interest. No API key. Needs outbound access to
+// tiles.openfreemap.org. MapLibre shows the style's attribution.
+const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
 
 // Vite/Rolldown doesn't statically detect maplibre-gl's internal
 // `new Worker(new URL('./maplibre-gl-worker.mjs', import.meta.url))` the
@@ -109,9 +87,6 @@ const availableRoles = computed(() =>
 
 let map = null
 let overlay = null
-// Bumped on every setStyle so a slow previous style.load can't restore
-// an older camera/overlay after the user has already picked a newer one.
-let styleGen = 0
 
 // Hovering shouldn't pop up info instantly - only once the pointer has
 // rested on the same device/cable for a bit. `pending` tracks whatever's
@@ -190,60 +165,30 @@ const STATUS_COLORS = {
   staged: [234, 179, 8],
 }
 
-// Overlay colors follow the basemap: light-on-dark pills for Dark Matter,
-// dark-on-white for the OSM-like light style. Device status fills stay the
-// same in both so the legend above the map doesn't have to switch.
-const OVERLAY_PALETTES = {
-  light: {
-    other: [100, 116, 139],
-    siteRing: [71, 85, 105, 220],
-    arcWidth: 2,
-    deviceStroke: [51, 65, 85],
-    deviceStrokeWidth: 1.5,
-    labelText: [30, 41, 59],
-    labelBg: [255, 255, 255, 230],
-    siteLabelText: [71, 85, 105],
-    siteLabelBg: [255, 255, 255, 230],
-    edgeLabelText: [71, 85, 105],
-  },
-  dark: {
-    other: [148, 163, 184],
-    siteRing: [148, 163, 184, 200],
-    arcWidth: 1.5,
-    deviceStroke: [15, 23, 42],
-    deviceStrokeWidth: 1,
-    labelText: [226, 232, 240],
-    labelBg: [15, 23, 42, 160],
-    siteLabelText: [148, 163, 184, 220],
-    siteLabelBg: [15, 23, 42, 130],
-    edgeLabelText: [203, 213, 225, 230],
-  },
+// Dark-on-white pills for the Liberty basemap. Device status fills stay
+// the same so the legend above the map matches the dots.
+const OVERLAY_PALETTE = {
+  other: [100, 116, 139],
+  siteRing: [71, 85, 105, 220],
+  arcWidth: 2,
+  deviceStroke: [51, 65, 85],
+  deviceStrokeWidth: 1.5,
+  labelText: [30, 41, 59],
+  labelBg: [255, 255, 255, 230],
+  siteLabelText: [71, 85, 105],
+  siteLabelBg: [255, 255, 255, 230],
+  edgeLabelText: [71, 85, 105],
 }
 
 // Line colors follow the service riding the link. LF and LI share fiber,
 // VL and VI share wavelength, CN and CI share capacity. A cable with no
 // optical hop stays neutral; one used by both fiber and wavelength is mixed.
 const LINK_COLORS = {
-  cable: {
-    light: [100, 116, 139, 210],
-    dark: [148, 163, 184, 200],
-  },
-  fiber: {
-    light: [217, 119, 6, 235],
-    dark: [251, 191, 36, 235],
-  },
-  wavelength: {
-    light: [147, 51, 234, 235],
-    dark: [216, 180, 254, 235],
-  },
-  capacity: {
-    light: [2, 132, 199, 235],
-    dark: [56, 189, 248, 235],
-  },
-  mixed: {
-    light: [190, 18, 60, 235],
-    dark: [251, 113, 133, 235],
-  },
+  cable: [100, 116, 139, 210],
+  fiber: [217, 119, 6, 235],
+  wavelength: [147, 51, 234, 235],
+  capacity: [2, 132, 199, 235],
+  mixed: [190, 18, 60, 235],
 }
 
 const LINK_LEGEND = [
@@ -254,8 +199,7 @@ const LINK_LEGEND = [
 ]
 
 function linkColor(kind) {
-  const mode = basemap.value === 'dark' ? 'dark' : 'light'
-  return (LINK_COLORS[kind] ?? LINK_COLORS.cable)[mode]
+  return LINK_COLORS[kind] ?? LINK_COLORS.cable
 }
 
 function linkSwatch(kind) {
@@ -278,12 +222,8 @@ function kindLabel(kind) {
   }
 }
 
-function overlayPalette() {
-  return OVERLAY_PALETTES[basemap.value] ?? OVERLAY_PALETTES.light
-}
-
 function statusColor(status) {
-  return STATUS_COLORS[(status ?? '').toLowerCase()] ?? overlayPalette().other
+  return STATUS_COLORS[(status ?? '').toLowerCase()] ?? OVERLAY_PALETTE.other
 }
 
 // Devices with no coordinates of their own inherit their site's (see
@@ -360,7 +300,7 @@ function bowServiceLinks(links) {
 }
 
 function buildLayers(devices, edges, serviceLinks, sites) {
-  const palette = overlayPalette()
+  const palette = OVERLAY_PALETTE
   const byID = new Map(devices.map((d) => [d.id, d]))
 
   const arcs = placeEdges(edges, byID)
@@ -603,32 +543,6 @@ function showAllRoles() {
 function toggleOpticalOnly() {
   opticalOnly.value = !opticalOnly.value
   rebuild()
-}
-
-function applyBasemapStyle() {
-  if (!map) return
-  const gen = ++styleGen
-  const camera = {
-    center: map.getCenter(),
-    zoom: map.getZoom(),
-    pitch: map.getPitch(),
-    bearing: map.getBearing(),
-  }
-  map.setStyle(BASEMAP_STYLES[basemap.value])
-  map.once('style.load', () => {
-    if (gen !== styleGen || !map) return
-    map.jumpTo(camera)
-    rebuild()
-  })
-}
-
-function onBasemapChange() {
-  try {
-    localStorage.setItem(BASEMAP_STORAGE_KEY, basemap.value)
-  } catch {
-    // Same as saveDefaultRoles: map still switches, just won't persist.
-  }
-  applyBasemapStyle()
 }
 
 function saveDefaultRoles() {
@@ -1067,7 +981,7 @@ watch([assignSelected, assignSelectedSite, pickedCoords], () => {
 onMounted(() => {
   map = new MaplibreMap({
     container: mapContainer.value,
-    style: BASEMAP_STYLES[basemap.value],
+    style: BASEMAP_STYLE,
     center: [15, 58],
     zoom: 3,
     pitch: 0,
@@ -1093,7 +1007,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  styleGen += 1
   map?.remove()
   map = null
   overlay = null
@@ -1105,13 +1018,6 @@ onBeforeUnmount(() => {
     <div class="flex flex-wrap gap-2 items-center justify-between mb-4 shrink-0">
       <div class="flex flex-wrap items-center gap-4">
         <h4 class="m-0">Network map</h4>
-        <URadioGroup
-          v-model="basemap"
-          :items="basemapItems"
-          orientation="horizontal"
-          size="sm"
-          @update:model-value="onBasemapChange"
-        />
         <UButton
           label="Assign locations"
           size="xs"
