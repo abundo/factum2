@@ -51,7 +51,7 @@ const BASEMAP_STYLES = {
   light: 'https://tiles.versatiles.org/assets/styles/colorful/style.json',
   // CARTO Dark Matter - no API key, needs outbound access to
   // basemaps.cartocdn.com. High contrast for the colored device dots and
-  // cyan connection arcs.
+  // the fiber / wavelength / capacity arcs.
   dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
 }
 
@@ -99,6 +99,7 @@ let geocodeGen = 0
 // devices/edges/layers from these plus `activeRoles`.
 const rawDevices = ref([])
 const rawEdges = ref([])
+const rawServiceLinks = ref([])
 // Sites are plotted unconditionally, independent of the role filter - a
 // site is a location, not a device, so it has no role to filter by.
 const rawSites = ref([])
@@ -199,7 +200,6 @@ const OVERLAY_PALETTES = {
   light: {
     other: [100, 116, 139],
     siteRing: [71, 85, 105, 220],
-    arc: [2, 132, 199, 210],
     arcWidth: 2,
     deviceStroke: [51, 65, 85],
     deviceStrokeWidth: 1.5,
@@ -207,12 +207,11 @@ const OVERLAY_PALETTES = {
     labelBg: [255, 255, 255, 230],
     siteLabelText: [71, 85, 105],
     siteLabelBg: [255, 255, 255, 230],
-    edgeLabelText: [3, 105, 161],
+    edgeLabelText: [71, 85, 105],
   },
   dark: {
     other: [148, 163, 184],
     siteRing: [148, 163, 184, 200],
-    arc: [56, 189, 248, 160],
     arcWidth: 1.5,
     deviceStroke: [15, 23, 42],
     deviceStrokeWidth: 1,
@@ -220,8 +219,66 @@ const OVERLAY_PALETTES = {
     labelBg: [15, 23, 42, 160],
     siteLabelText: [148, 163, 184, 220],
     siteLabelBg: [15, 23, 42, 130],
-    edgeLabelText: [125, 211, 252, 230],
+    edgeLabelText: [203, 213, 225, 230],
   },
+}
+
+// Line colors follow the service riding the link. LF and LI share fiber,
+// VL and VI share wavelength, CN and CI share capacity. A cable with no
+// optical hop stays neutral; one used by both fiber and wavelength is mixed.
+const LINK_COLORS = {
+  cable: {
+    light: [100, 116, 139, 210],
+    dark: [148, 163, 184, 200],
+  },
+  fiber: {
+    light: [217, 119, 6, 235],
+    dark: [251, 191, 36, 235],
+  },
+  wavelength: {
+    light: [147, 51, 234, 235],
+    dark: [216, 180, 254, 235],
+  },
+  capacity: {
+    light: [2, 132, 199, 235],
+    dark: [56, 189, 248, 235],
+  },
+  mixed: {
+    light: [190, 18, 60, 235],
+    dark: [251, 113, 133, 235],
+  },
+}
+
+const LINK_LEGEND = [
+  { kind: 'cable', label: 'Cable' },
+  { kind: 'fiber', label: 'Fiber (LF/LI)' },
+  { kind: 'wavelength', label: 'Wavelength (VL/VI)' },
+  { kind: 'capacity', label: 'Capacity (CN/CI)' },
+]
+
+function linkColor(kind) {
+  const mode = basemap.value === 'dark' ? 'dark' : 'light'
+  return (LINK_COLORS[kind] ?? LINK_COLORS.cable)[mode]
+}
+
+function linkSwatch(kind) {
+  const [r, g, b] = linkColor(kind)
+  return `rgb(${r} ${g} ${b})`
+}
+
+function kindLabel(kind) {
+  switch (kind) {
+    case 'fiber':
+      return 'Fiber (LF/LI)'
+    case 'wavelength':
+      return 'Wavelength (VL/VI)'
+    case 'capacity':
+      return 'Capacity (CN/CI)'
+    case 'mixed':
+      return 'Fiber and wavelength'
+    default:
+      return 'Cable'
+  }
 }
 
 function overlayPalette() {
@@ -266,11 +323,8 @@ function layoutDevices(devices) {
   return out
 }
 
-function buildLayers(devices, edges, sites) {
-  const palette = overlayPalette()
-  const byID = new Map(devices.map((d) => [d.id, d]))
-
-  const arcs = edges
+function placeEdges(edges, byID) {
+  return edges
     .map((e) => {
       const a = byID.get(e.device_a_id)
       const b = byID.get(e.device_b_id)
@@ -291,7 +345,30 @@ function buildLayers(devices, edges, sites) {
         : null
     })
     .filter((e) => e !== null)
-  const labeledArcs = arcs.filter((e) => e.label)
+}
+
+// Several services between the same two devices share one screen line.
+// Bow each successive one a little higher so the colors stay visible.
+function bowServiceLinks(links) {
+  const seen = new Map()
+  return links.map((e) => {
+    const key =
+      e.device_a_id < e.device_b_id
+        ? `${e.device_a_id}:${e.device_b_id}`
+        : `${e.device_b_id}:${e.device_a_id}`
+    const n = seen.get(key) ?? 0
+    seen.set(key, n + 1)
+    return { ...e, bow: 0.22 + n * 0.14 }
+  })
+}
+
+function buildLayers(devices, edges, serviceLinks, sites) {
+  const palette = overlayPalette()
+  const byID = new Map(devices.map((d) => [d.id, d]))
+
+  const arcs = placeEdges(edges, byID)
+  const serviceArcs = bowServiceLinks(placeEdges(serviceLinks, byID))
+  const labeledArcs = [...arcs, ...serviceArcs].filter((e) => e.label)
 
   return [
     // Sites render as a hollow ring beneath everything else, so a site with
@@ -336,10 +413,36 @@ function buildLayers(devices, edges, sites) {
       pickable: false,
       getSourcePosition: (d) => d.source,
       getTargetPosition: (d) => d.target,
-      getSourceColor: palette.arc,
-      getTargetColor: palette.arc,
+      getSourceColor: (d) => linkColor(d.kind),
+      getTargetColor: (d) => linkColor(d.kind),
       getWidth: palette.arcWidth,
       getHeight: 0,
+      greatCircle: true,
+    }),
+    new ArcLayer({
+      id: 'service-links-hit',
+      data: serviceArcs,
+      pickable: true,
+      getSourcePosition: (d) => d.source,
+      getTargetPosition: (d) => d.target,
+      getSourceColor: [0, 0, 0, 1],
+      getTargetColor: [0, 0, 0, 1],
+      getWidth: CONNECTION_HIT_WIDTH_PX,
+      widthMinPixels: CONNECTION_HIT_WIDTH_PX,
+      getHeight: (d) => d.bow,
+      greatCircle: true,
+      onHover: (info) => handleHover('edge', info),
+    }),
+    new ArcLayer({
+      id: 'service-links',
+      data: serviceArcs,
+      pickable: false,
+      getSourcePosition: (d) => d.source,
+      getTargetPosition: (d) => d.target,
+      getSourceColor: (d) => linkColor(d.kind),
+      getTargetColor: (d) => linkColor(d.kind),
+      getWidth: palette.arcWidth + 0.5,
+      getHeight: (d) => d.bow,
       greatCircle: true,
     }),
     new ScatterplotLayer({
@@ -384,7 +487,7 @@ function buildLayers(devices, edges, sites) {
       pickable: true,
       getPosition: (d) => d.midpoint,
       getText: (d) => d.label,
-      getColor: palette.edgeLabelText,
+      getColor: (d) => (d.kind ? linkColor(d.kind) : palette.edgeLabelText),
       getSize: 11,
       background: true,
       getBackgroundColor: palette.labelBg,
@@ -480,7 +583,9 @@ function rebuild() {
   const laidOutSites = layoutSites(
     rawSites.value.filter((s) => s.latitude != null && s.longitude != null),
   )
-  overlay?.setProps({ layers: buildLayers(laidOutDevices, rawEdges.value, laidOutSites) })
+  overlay?.setProps({
+    layers: buildLayers(laidOutDevices, rawEdges.value, rawServiceLinks.value, laidOutSites),
+  })
   return { devices: laidOutDevices, sites: laidOutSites }
 }
 
@@ -555,6 +660,7 @@ function loadTopology() {
     .then((data) => {
       rawDevices.value = data.devices ?? []
       rawEdges.value = data.edges ?? []
+      rawServiceLinks.value = data.service_links ?? []
       rawSites.value = data.sites ?? []
       // A saved default only applies to roles that still exist - a role
       // dropped from Netbox since the save shouldn't silently hide devices
@@ -868,6 +974,7 @@ function reloadAfterAssign(latitude, longitude) {
     getTopology().then((topo) => {
       rawDevices.value = topo.devices ?? []
       rawEdges.value = topo.edges ?? []
+      rawServiceLinks.value = topo.service_links ?? []
       rawSites.value = topo.sites ?? []
       rebuild()
       panTo(latitude, longitude)
@@ -1030,6 +1137,14 @@ onBeforeUnmount(() => {
         <span class="flex items-center gap-1">
           <span class="size-2.5 rounded-full" style="background: rgb(100 116 139)" />Other
         </span>
+        <span class="mx-1 h-3 w-px bg-default" />
+        <span v-for="item in LINK_LEGEND" :key="item.kind" class="flex items-center gap-1">
+          <span
+            class="inline-block h-0.5 w-4 rounded-full"
+            :style="{ background: linkSwatch(item.kind) }"
+          />
+          {{ item.label }}
+        </span>
       </div>
     </div>
 
@@ -1164,6 +1279,15 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <div class="space-y-1.5">
+              <div>
+                <div class="font-medium">{{ kindLabel(hoverInfo.object.kind) }}</div>
+                <div v-if="hoverInfo.object.service_id" class="text-muted-color">
+                  {{ hoverInfo.object.service_id }}
+                </div>
+                <div v-else-if="hoverInfo.object.service_ids?.length" class="text-muted-color">
+                  {{ hoverInfo.object.service_ids.join(', ') }}
+                </div>
+              </div>
               <div>
                 <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-color">
                   A

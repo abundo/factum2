@@ -117,6 +117,165 @@ func TestApiGetTopology_EdgesIncludeInterfaceDescription(t *testing.T) {
 	}
 }
 
+func TestApiGetTopology_ServiceLineColors(t *testing.T) {
+	db := newTestDB(t)
+	place := func(name string, lat float64) models.Device {
+		d := models.Device{Name: name, Latitude: ptrFloat(lat), Longitude: ptrFloat(18)}
+		if err := db.Create(&d).Error; err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	peA := place("pe-a", 59.0)
+	peB := place("pe-b", 59.2)
+	peC := place("pe-c", 59.4)
+	roadmA := place("roadm-a", 57.0)
+	roadmB := place("roadm-b", 57.2)
+	odfA := place("odf-a", 55.0)
+	odfB := place("odf-b", 55.2)
+	unplaced := models.Device{Name: "unplaced"}
+	if err := db.Create(&unplaced).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	mkIface := func(dev models.Device, name string) models.Interface {
+		iface := models.Interface{DeviceID: dev.ID, Name: name}
+		if err := db.Create(&iface).Error; err != nil {
+			t.Fatal(err)
+		}
+		return iface
+	}
+	mkCable := func(a, b models.Device, ifa, ifb models.Interface) models.Connection {
+		c := models.Connection{
+			DeviceAID: a.ID, InterfaceAID: ifa.ID,
+			DeviceBID: b.ID, InterfaceBID: ifb.ID,
+		}
+		if err := db.Create(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	mkSvc := func(serviceID string) models.Service {
+		s := models.Service{ServiceID: serviceID}
+		if err := db.Create(&s).Error; err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	// A wavelength and a dark fiber share one cable: mixed.
+	wl := mkSvc("VL00001")
+	fiber := mkSvc("LF00001")
+	ifa := mkIface(roadmA, "deg-1")
+	ifb := mkIface(roadmB, "deg-1")
+	shared := mkCable(roadmA, roadmB, ifa, ifb)
+	for i, svc := range []models.Service{wl, fiber} {
+		connID := shared.ID
+		hop := models.ServiceHop{
+			ServiceID: svc.ID, Seq: i + 1, Kind: models.HopConnection, ConnectionID: &connID,
+		}
+		if err := db.Create(&hop).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Internal fiber hop colors that cable and does not also draw an arc.
+	li := mkSvc("LI00007")
+	odfIfA := mkIface(odfA, "port-a")
+	odfIfB := mkIface(odfB, "port-b")
+	fiberCable := mkCable(odfA, odfB, odfIfA, odfIfB)
+	fiberConn := fiberCable.ID
+	if err := db.Create(&models.ServiceHop{
+		ServiceID: li.ID, Seq: 1, Kind: models.HopConnection, ConnectionID: &fiberConn,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ServicePath{
+		ServiceID: li.ID, Mode: models.TraceModeFiber, Status: models.PathComplete,
+		EndpointAInterfaceID: odfIfA.ID, EndpointZInterfaceID: odfIfB.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Wavelength with ends on the map but no hop yet: a direct arc.
+	vi := mkSvc("VI00003")
+	peIfA := mkIface(peA, "1/1/1")
+	peIfB := mkIface(peB, "1/1/1")
+	plain := mkCable(peA, peB, peIfA, peIfB)
+	if err := db.Create(&models.ServicePath{
+		ServiceID: vi.ID, Mode: models.TraceModeWDM, Status: models.PathIncomplete,
+		EndpointAInterfaceID: peIfA.ID, EndpointZInterfaceID: peIfB.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Capacity between two sites, plus an ELAN star, plus one end off the map.
+	cn := mkSvc("CN00001")
+	ci := mkSvc("CI00002")
+	cnOff := mkSvc("CN00099")
+	for _, ep := range []models.ServiceEndpoint{
+		{ServiceID: cn.ID, Role: models.EndpointRoleInterface, DeviceID: peA.ID, InterfaceID: peIfA.ID},
+		{ServiceID: cn.ID, Role: models.EndpointRoleInterface, DeviceID: peB.ID, InterfaceID: peIfB.ID},
+		{ServiceID: ci.ID, Role: models.EndpointRoleInterface, DeviceID: peC.ID, InterfaceID: peIfA.ID},
+		{ServiceID: ci.ID, Role: models.EndpointRoleInterface, DeviceID: peA.ID, InterfaceID: peIfA.ID},
+		{ServiceID: ci.ID, Role: models.EndpointRoleInterface, DeviceID: peB.ID, InterfaceID: peIfB.ID},
+		{ServiceID: cnOff.ID, Role: models.EndpointRoleInterface, DeviceID: peA.ID, InterfaceID: peIfA.ID},
+		{ServiceID: cnOff.ID, Role: models.EndpointRoleInterface, DeviceID: unplaced.ID, InterfaceID: peIfA.ID},
+	} {
+		if err := db.Create(&ep).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/topology", nil, nil, nil)
+	if err := (&Controller{DB: db}).ApiGetTopology(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body TopologyDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+
+	byCable := map[uint]TopologyEdgeDTO{}
+	for _, e := range body.Edges {
+		byCable[e.ID] = e
+	}
+	if got := byCable[shared.ID]; got.Kind != "mixed" || len(got.ServiceIDs) != 2 ||
+		got.ServiceIDs[0] != "LF00001" || got.ServiceIDs[1] != "VL00001" {
+		t.Errorf("shared cable = %+v, want mixed LF00001,VL00001", got)
+	}
+	if got := byCable[fiberCable.ID]; got.Kind != "fiber" || len(got.ServiceIDs) != 1 || got.ServiceIDs[0] != "LI00007" {
+		t.Errorf("fiber cable = %+v, want fiber LI00007", got)
+	}
+	if got := byCable[plain.ID]; got.Kind != "" || len(got.ServiceIDs) != 0 {
+		t.Errorf("plain cable = %+v, want uncolored", got)
+	}
+
+	gotLinks := map[string]TopologyServiceLinkDTO{}
+	for _, l := range body.ServiceLinks {
+		gotLinks[l.ServiceID+"|"+strconv.FormatUint(uint64(l.DeviceAID), 10)+"|"+strconv.FormatUint(uint64(l.DeviceBID), 10)] = l
+	}
+	want := []TopologyServiceLinkDTO{
+		{ServiceID: "CI00002", Category: "CI", Kind: "capacity", DeviceAID: peA.ID, DeviceBID: peB.ID, Label: "CI00002"},
+		{ServiceID: "CI00002", Category: "CI", Kind: "capacity", DeviceAID: peA.ID, DeviceBID: peC.ID, Label: "CI00002"},
+		{ServiceID: "CN00001", Category: "CN", Kind: "capacity", DeviceAID: peA.ID, DeviceBID: peB.ID, Label: "CN00001"},
+		{ServiceID: "VI00003", Category: "VI", Kind: "wavelength", DeviceAID: peA.ID, DeviceBID: peB.ID, Label: "VI00003"},
+	}
+	if len(body.ServiceLinks) != len(want) {
+		t.Fatalf("service links = %+v, want %d", body.ServiceLinks, len(want))
+	}
+	for _, w := range want {
+		key := w.ServiceID + "|" + strconv.FormatUint(uint64(w.DeviceAID), 10) + "|" + strconv.FormatUint(uint64(w.DeviceBID), 10)
+		got, ok := gotLinks[key]
+		if !ok || got.Kind != w.Kind || got.Category != w.Category || got.Label != w.Label {
+			t.Errorf("missing %+v in %+v", w, body.ServiceLinks)
+		}
+	}
+}
+
 func TestApiGetTopologyDevices_IncludesUnlocated(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.Create(&models.Device{

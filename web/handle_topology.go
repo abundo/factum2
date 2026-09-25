@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -42,6 +43,26 @@ type TopologyEdgeDTO struct {
 	InterfaceB            string `json:"interface_b"`
 	InterfaceBDescription string `json:"interface_b_description"`
 	Label                 string `json:"label"`
+	// Kind is how the map colors this cable: "fiber" (an LF/LI hop),
+	// "wavelength" (a VL/VI hop), "mixed" when both ride it, or "" when
+	// no optical service hop references it. Capacity (CN/CI) is not a
+	// cable color — those are TopologyServiceLinkDTO arcs.
+	Kind       string   `json:"kind,omitempty"`
+	ServiceIDs []string `json:"service_ids,omitempty"`
+}
+
+// TopologyServiceLinkDTO is one service drawn as its own arc between two
+// devices already present in Devices. Capacity (CN/CI) always uses this:
+// it has endpoints, not a cable path. Wavelength (VL/VI) and fiber (LF/LI)
+// use it only when the path's ends are on the map but none of its hops are
+// a cable already drawn — those hops recolor the cable instead.
+type TopologyServiceLinkDTO struct {
+	ServiceID string `json:"service_id"`
+	Category  string `json:"category"`
+	Kind      string `json:"kind"`
+	DeviceAID uint   `json:"device_a_id"`
+	DeviceBID uint   `json:"device_b_id"`
+	Label     string `json:"label"`
 }
 
 // TopologySiteDTO is a Netbox site plotted on the map independently of any
@@ -56,9 +77,10 @@ type TopologySiteDTO struct {
 }
 
 type TopologyDTO struct {
-	Devices []TopologyDeviceDTO `json:"devices"`
-	Edges   []TopologyEdgeDTO   `json:"edges"`
-	Sites   []TopologySiteDTO   `json:"sites"`
+	Devices      []TopologyDeviceDTO      `json:"devices"`
+	Edges        []TopologyEdgeDTO        `json:"edges"`
+	ServiceLinks []TopologyServiceLinkDTO `json:"service_links"`
+	Sites        []TopologySiteDTO        `json:"sites"`
 }
 
 // TopologyDeviceListDTO is one device for the map's location-assignment
@@ -179,6 +201,11 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 		})
 	}
 
+	out.ServiceLinks = []TopologyServiceLinkDTO{}
+	if err := applyTopologyServiceColors(ctx, DB, onMap, out); err != nil {
+		return nil, err
+	}
+
 	sites, err := gorm.G[models.Site](DB).Order("Name").Find(ctx)
 	if err != nil {
 		return nil, err
@@ -191,6 +218,225 @@ func fetchTopology(ctx context.Context, DB *gorm.DB) (*TopologyDTO, error) {
 		out.Sites = append(out.Sites, topologySiteDTO(s))
 	}
 	return out, nil
+}
+
+// topologyLinkKind maps a service-id category onto a map line color.
+// LF/LI are dark fiber, VL/VI are wavelength, CN/CI are capacity.
+// Anything else (free-text Lime ids) is not colored.
+func topologyLinkKind(category string) string {
+	switch category {
+	case "LF", "LI":
+		return "fiber"
+	case "VL", "VI":
+		return "wavelength"
+	case "CN", "CI":
+		return "capacity"
+	default:
+		return ""
+	}
+}
+
+type topologyEdgeMark struct {
+	kinds    map[string]struct{}
+	services map[string]struct{}
+}
+
+func (m *topologyEdgeMark) add(kind, serviceID string) {
+	if m.kinds == nil {
+		m.kinds = map[string]struct{}{}
+		m.services = map[string]struct{}{}
+	}
+	m.kinds[kind] = struct{}{}
+	if serviceID != "" {
+		m.services[serviceID] = struct{}{}
+	}
+}
+
+func (m topologyEdgeMark) kind() string {
+	switch len(m.kinds) {
+	case 0:
+		return ""
+	case 1:
+		for k := range m.kinds {
+			return k
+		}
+	}
+	return "mixed"
+}
+
+func (m topologyEdgeMark) serviceIDs() []string {
+	if len(m.services) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m.services))
+	for id := range m.services {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// applyTopologyServiceColors recolors cables that a fiber or wavelength
+// hop rides, and adds direct arcs for capacity services plus fiber or
+// wavelength paths whose hops are not already a drawn cable.
+func applyTopologyServiceColors(ctx context.Context, DB *gorm.DB, onMap map[uint]bool, out *TopologyDTO) error {
+	services, err := gorm.G[models.Service](DB).Find(ctx)
+	if err != nil {
+		return err
+	}
+	byPK := make(map[uint]models.Service, len(services))
+	for _, s := range services {
+		byPK[s.ID] = s
+	}
+
+	edgeIndex := make(map[uint]int, len(out.Edges))
+	for i, e := range out.Edges {
+		edgeIndex[e.ID] = i
+	}
+
+	hops, err := gorm.G[models.ServiceHop](DB).Where("kind = ?", models.HopConnection).Find(ctx)
+	if err != nil {
+		return err
+	}
+	marks := map[uint]*topologyEdgeMark{}
+	hopVisible := map[uint]bool{}
+	for _, h := range hops {
+		if h.ConnectionID == nil {
+			continue
+		}
+		if _, drawn := edgeIndex[*h.ConnectionID]; !drawn {
+			continue
+		}
+		svc, ok := byPK[h.ServiceID]
+		if !ok {
+			continue
+		}
+		kind := topologyLinkKind(models.CategoryFromServiceID(svc.ServiceID))
+		if kind != "fiber" && kind != "wavelength" {
+			continue
+		}
+		mark := marks[*h.ConnectionID]
+		if mark == nil {
+			mark = &topologyEdgeMark{}
+			marks[*h.ConnectionID] = mark
+		}
+		mark.add(kind, svc.ServiceID)
+		hopVisible[h.ServiceID] = true
+	}
+	for connID, mark := range marks {
+		e := &out.Edges[edgeIndex[connID]]
+		e.Kind = mark.kind()
+		e.ServiceIDs = mark.serviceIDs()
+	}
+
+	paths, err := gorm.G[models.ServicePath](DB).Find(ctx)
+	if err != nil {
+		return err
+	}
+	ifaceIDs := make([]uint, 0, len(paths)*2)
+	for _, p := range paths {
+		ifaceIDs = append(ifaceIDs, p.EndpointAInterfaceID, p.EndpointZInterfaceID)
+	}
+	ifaceDevice := map[uint]uint{}
+	if len(ifaceIDs) > 0 {
+		ifaces, err := gorm.G[models.Interface](DB).Where("id IN ?", ifaceIDs).Find(ctx)
+		if err != nil {
+			return err
+		}
+		for _, iface := range ifaces {
+			ifaceDevice[iface.ID] = iface.DeviceID
+		}
+	}
+
+	endpoints, err := gorm.G[models.ServiceEndpoint](DB).Find(ctx)
+	if err != nil {
+		return err
+	}
+	devicesByService := map[uint][]uint{}
+	for _, ep := range endpoints {
+		if !onMap[ep.DeviceID] {
+			continue
+		}
+		devicesByService[ep.ServiceID] = append(devicesByService[ep.ServiceID], ep.DeviceID)
+	}
+
+	links := make([]TopologyServiceLinkDTO, 0)
+	for _, svc := range services {
+		if topologyLinkKind(models.CategoryFromServiceID(svc.ServiceID)) != "capacity" {
+			continue
+		}
+		for _, pair := range topologyStarPairs(devicesByService[svc.ID]) {
+			links = append(links, TopologyServiceLinkDTO{
+				ServiceID: svc.ServiceID,
+				Category:  models.CategoryFromServiceID(svc.ServiceID),
+				Kind:      "capacity",
+				DeviceAID: pair[0],
+				DeviceBID: pair[1],
+				Label:     svc.ServiceID,
+			})
+		}
+	}
+	for _, p := range paths {
+		svc, ok := byPK[p.ServiceID]
+		if !ok || hopVisible[p.ServiceID] {
+			continue
+		}
+		kind := topologyLinkKind(models.CategoryFromServiceID(svc.ServiceID))
+		if kind != "fiber" && kind != "wavelength" {
+			continue
+		}
+		a := ifaceDevice[p.EndpointAInterfaceID]
+		b := ifaceDevice[p.EndpointZInterfaceID]
+		if a == 0 || b == 0 || a == b || !onMap[a] || !onMap[b] {
+			continue
+		}
+		links = append(links, TopologyServiceLinkDTO{
+			ServiceID: svc.ServiceID,
+			Category:  models.CategoryFromServiceID(svc.ServiceID),
+			Kind:      kind,
+			DeviceAID: a,
+			DeviceBID: b,
+			Label:     svc.ServiceID,
+		})
+	}
+	slices.SortFunc(links, func(a, b TopologyServiceLinkDTO) int {
+		if a.ServiceID != b.ServiceID {
+			return strings.Compare(a.ServiceID, b.ServiceID)
+		}
+		if a.DeviceAID != b.DeviceAID {
+			return int(a.DeviceAID) - int(b.DeviceAID)
+		}
+		return int(a.DeviceBID) - int(b.DeviceBID)
+	})
+	out.ServiceLinks = links
+	return nil
+}
+
+// topologyStarPairs joins every other on-map endpoint device to the
+// lowest device id. Two endpoints are one line; an ELAN is a star rather
+// than a full mesh.
+func topologyStarPairs(deviceIDs []uint) [][2]uint {
+	if len(deviceIDs) < 2 {
+		return nil
+	}
+	seen := make(map[uint]struct{}, len(deviceIDs))
+	ids := make([]uint, 0, len(deviceIDs))
+	for _, id := range deviceIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	if len(ids) < 2 {
+		return nil
+	}
+	out := make([][2]uint, 0, len(ids)-1)
+	for _, id := range ids[1:] {
+		out = append(out, [2]uint{ids[0], id})
+	}
+	return out
 }
 
 // ApiGetTopology returns every mappable device and the connections between
