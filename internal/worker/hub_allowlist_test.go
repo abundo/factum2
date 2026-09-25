@@ -24,6 +24,8 @@ func TestAllowHubAPI(t *testing.T) {
 		{http.MethodPost, "/api/storage-config", false},
 		{http.MethodGet, "/api/device", true},
 		{http.MethodGet, "/api/device/name/core-sw1", true},
+		{http.MethodGet, "/api/device/name/core-sw1.example.com/impact", true},
+		{http.MethodGet, "/api/device/name/core-sw1/impact", true},
 		{http.MethodGet, "/api/librenms/pending-deletes", true},
 		{http.MethodPut, "/api/librenms/pending-deletes/7", true},
 		{http.MethodDelete, "/api/librenms/pending-deletes/7", true},

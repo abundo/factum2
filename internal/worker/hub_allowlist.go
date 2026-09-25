@@ -27,6 +27,9 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/storage-config`},
 	{http.MethodGet, `/api/device`},
 	{http.MethodGet, `/api/device/name/[^/]+`},
+	// Name-based impact for factum2-icinga-notifications. Numeric
+	// /api/device/:id and /api/device/:id/impact stay off the hub.
+	{http.MethodGet, `/api/device/name/[^/]+/impact`},
 	{http.MethodGet, `/api/librenms/pending-deletes`},
 	{http.MethodPut, `/api/librenms/pending-deletes/[0-9]+`},
 	{http.MethodDelete, `/api/librenms/pending-deletes/[0-9]+`},

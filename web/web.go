@@ -281,7 +281,10 @@ func GUI(p *GuiParams) error {
 	api.GET("/device/:id/impact", ctrl.ApiDeviceImpact, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device/:id", ctrl.ApiGetDeviceByID, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	// /device/name/:name is registered separately from /device/:id - it has
-	// its own path segment count, so the two never collide.
+	// its own path segment count, so the two never collide. The /impact
+	// sibling is what factum2-icinga-notifications calls over the worker
+	// socket; numeric /device/:id/impact is not on the hub allowlist.
+	api.GET("/device/name/:name/impact", ctrl.ApiDeviceImpactByName, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device/name/:name", ctrl.ApiGetDeviceByName, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device", ctrl.ApiGetDevices, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/device", ctrl.ApiDeviceCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)

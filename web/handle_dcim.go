@@ -338,6 +338,28 @@ func (ctrl *Controller) ApiDeviceImpact(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
 	}
+	return ctrl.writeDeviceImpact(c, id)
+}
+
+// ApiDeviceImpactByName is GET /api/device/name/:name/impact. The Icinga
+// notifier knows the host by name, not by factum id, and the hub allowlist
+// permits this path (not /device/:id/impact).
+func (ctrl *Controller) ApiDeviceImpactByName(c *echo.Context) error {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
+	}
+	matches, err := gorm.G[models.Device](ctrl.DB).Where("name = ?", name).Order("id").Limit(1).Find(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if len(matches) == 0 {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "device not found"})
+	}
+	return ctrl.writeDeviceImpact(c, matches[0].ID)
+}
+
+func (ctrl *Controller) writeDeviceImpact(c *echo.Context, id uint) error {
 	out, err := optical.DeviceDownImpact(ctrl.DB, id)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})

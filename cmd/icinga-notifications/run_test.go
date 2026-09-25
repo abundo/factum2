@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/syslog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,11 +201,12 @@ func TestDryRun(t *testing.T) {
 	logPath := filepath.Join(dir, "n.log")
 	tpl := filepath.Join("..", "..", "examples", "icinga-notification-email.tpl")
 
-	origSend, origFetch, origClient := mailSend, fetchIcingaConfig, newIcingaClient
+	origSend, origFetch, origClient, origAffected := mailSend, fetchIcingaConfig, newIcingaClient, fetchAffected
 	t.Cleanup(func() {
 		mailSend = origSend
 		fetchIcingaConfig = origFetch
 		newIcingaClient = origClient
+		fetchAffected = origAffected
 	})
 
 	sent := false
@@ -221,6 +226,16 @@ func TestDryRun(t *testing.T) {
 		}, nil
 	}
 	newIcingaClient = func(c util.ConfigIcinga) icingaDownFetcher { return stubFetcher{} }
+	fetchAffected = func(cfg *util.ConfigFactum, names []string) (affectedImpact, error) {
+		if len(names) == 0 || names[0] != "sw1.example.com" {
+			t.Errorf("impact names %v", names)
+		}
+		return affectedImpact{
+			DeviceName: "sw1",
+			Customers:  []string{"Acme"},
+			Services:   []affectedService{{ServiceID: "CN00001", Customer: "Acme", Category: "CN"}},
+		}, nil
+	}
 
 	args := hostFlags(
 		"--dry-run",
@@ -255,6 +270,9 @@ func TestDryRun(t *testing.T) {
 	if !strings.Contains(got, "sw2") {
 		t.Fatalf("expected down-host row in body: %s", got)
 	}
+	if !strings.Contains(got, "Acme") || !strings.Contains(got, "CN00001") {
+		t.Fatalf("expected affected customer and service in body: %s", got)
+	}
 
 	logBody, err := os.ReadFile(logPath)
 	if err != nil {
@@ -283,6 +301,83 @@ func TestRunArgsParseFailLogs(t *testing.T) {
 	s := string(body)
 	if !strings.Contains(s, "result=fail step=parse") {
 		t.Fatalf("missing parse fail: %s", s)
+	}
+}
+
+func TestImpactNames(t *testing.T) {
+	got := impactNames("sw1.example.com", "example.com")
+	want := []string{"sw1.example.com", "sw1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v", got)
+	}
+	short := impactNames("sw1", "example.com")
+	if strings.Join(short, ",") != "sw1,sw1.example.com" {
+		t.Fatalf("short got %v", short)
+	}
+	if got := impactNames("  ", "example.com"); len(got) != 0 {
+		t.Fatalf("blank got %v", got)
+	}
+}
+
+func TestApplyFactumImpactSortsAndDedupesCustomers(t *testing.T) {
+	var body factumImpactBody
+	if err := json.Unmarshal([]byte(`{"services":[
+		{"service_id":"VL00002","category":"VL","customer":"Beta"},
+		{"service_id":"CN00001","category":"CN","customer":"Acme"},
+		{"service_id":"CN00009","category":"CN","customer":"Acme"}
+	]}`), &body); err != nil {
+		t.Fatal(err)
+	}
+	got := applyFactumImpact("sw1", body)
+	if strings.Join(got.Customers, ",") != "Acme,Beta" {
+		t.Fatalf("customers %v", got.Customers)
+	}
+	if got.Services[0].ServiceID != "CN00001" || got.Services[2].ServiceID != "VL00002" {
+		t.Fatalf("services %+v", got.Services)
+	}
+}
+
+func TestFetchAffectedFallsBackToShortName(t *testing.T) {
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/sw1.example.com/impact") {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("auth %q", r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"services": []map[string]string{{
+				"service_id": "CN00001",
+				"category":   "CN",
+				"customer":   "Acme",
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := fetchAffectedHTTP(&util.ConfigFactum{URL: srv.URL, Socket: "none", Token: "secret"}, []string{"sw1.example.com", "sw1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DeviceName != "sw1" || len(got.Customers) != 1 || got.Customers[0] != "Acme" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(hits) != 2 || !strings.HasSuffix(hits[1], "/sw1/impact") {
+		t.Fatalf("hits %v", hits)
+	}
+}
+
+func TestFetchAffectedNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	_, err := fetchAffectedHTTP(&util.ConfigFactum{URL: srv.URL, Socket: "none", Token: "t"}, []string{"missing"})
+	if !errors.Is(err, errDeviceNotInFactum) {
+		t.Fatalf("err %v", err)
 	}
 }
 

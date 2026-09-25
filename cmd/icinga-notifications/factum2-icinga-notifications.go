@@ -1,8 +1,10 @@
 // factum2-icinga-notifications is the Icinga2 NotificationCommand invoked
 // directly by icinga2 whenever a host/service alarm fires. It builds an
-// HTML alert email (alarm details plus a live "hosts/services currently
-// down" summary from the Icinga API) from a Go html/template on disk, and
-// sends it over SMTP.
+// HTML alert email (alarm details, the factum customers and services on
+// the alarming host, plus a live "hosts/services currently down" summary
+// from the Icinga API) from a Go html/template on disk, and sends it over
+// SMTP. The factum lookup is GET /api/device/name/:name/impact over the
+// factum2-worker unix socket (HTTPS bearer is the fallback).
 //
 // Unlike every other cmd/* binary, this one does NOT use
 // github.com/GiGurra/boa/spf13/cobra - Icinga invokes it with its own fixed
@@ -23,13 +25,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"log/syslog"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -95,8 +101,13 @@ var (
 	newIcingaClient   = func(c util.ConfigIcinga) icingaDownFetcher {
 		return icinga.NewIcingaClient(c)
 	}
-	mailSend = mail.Send
+	fetchAffected = fetchAffectedHTTP
+	mailSend      = mail.Send
 )
+
+// errDeviceNotInFactum means every candidate host name 404'd. The alarm
+// email still goes out; the template says the host was not found.
+var errDeviceNotInFactum = errors.New("device not found in factum")
 
 type hostArgs struct {
 	commonArgs
@@ -246,6 +257,24 @@ func runArgs(args []string) error {
 	rl.write(fmt.Sprintf("down-summaries hosts=%d services=%d hosts_err=%s services_err=%s",
 		len(data.HostsDown), len(data.ServicesDown),
 		strconv.Quote(data.HostsDownError), strconv.Quote(data.ServicesDownError)), false)
+
+	names := impactNames(n.HostName, icingaConfig.DefaultDomain)
+	affected, err := fetchAffected(&config.Factum, names)
+	if err != nil {
+		if errors.Is(err, errDeviceNotInFactum) {
+			data.AffectedMissing = true
+		} else {
+			data.AffectedError = err.Error()
+		}
+	} else {
+		data.AffectedDevice = affected.DeviceName
+		data.AffectedCustomers = affected.Customers
+		data.AffectedServices = affected.Services
+	}
+	rl.write(fmt.Sprintf("affected names=%s device=%s customers=%d services=%d missing=%t err=%s",
+		strings.Join(names, ","), data.AffectedDevice,
+		len(data.AffectedCustomers), len(data.AffectedServices),
+		data.AffectedMissing, strconv.Quote(data.AffectedError)), false)
 
 	body, err := renderTemplate(n.TemplateFile, data)
 	if err != nil {
@@ -508,10 +537,25 @@ type emailData struct {
 	ServicesDown      []serviceDownRow
 	ServicesDownError string
 
-	// CustomersDownEstimate is HostsDown's length times a rough
-	// per-host customer count - carried over as-is from the original
-	// script's hardcoded "20 *" estimate.
-	CustomersDownEstimate int
+	// Customers and services factum says ride on this host. A failed
+	// lookup is recorded and does not block the alarm email.
+	AffectedDevice    string
+	AffectedCustomers []string
+	AffectedServices  []affectedService
+	AffectedMissing   bool
+	AffectedError     string
+}
+
+type affectedService struct {
+	ServiceID string
+	Customer  string
+	Category  string
+}
+
+type affectedImpact struct {
+	DeviceName string
+	Customers  []string
+	Services   []affectedService
 }
 
 type hostDownRow struct {
@@ -521,10 +565,6 @@ type hostDownRow struct {
 type serviceDownRow struct {
 	Host, Service, Since, Changed, Output, Notes string
 }
-
-// customersPerHostEstimate is the rough "how many customers does one down
-// host affect" multiplier the original Python notification script used.
-const customersPerHostEstimate = 20
 
 func buildEmailData(n notification, defaultDomain string) emailData {
 	when := strings.Fields(n.LongDateTime)
@@ -629,7 +669,6 @@ func fetchDownSummaries(client icingaDownFetcher, data *emailData) {
 				Notes:        h.Notes,
 			})
 		}
-		data.CustomersDownEstimate = len(hostsDown.Results) * customersPerHostEstimate
 	}
 
 	servicesDown, err := client.GetServicesDown()
@@ -647,6 +686,106 @@ func fetchDownSummaries(client icingaDownFetcher, data *emailData) {
 			})
 		}
 	}
+}
+
+// impactNames is the factum device-name candidates for an Icinga host.
+// Host objects are fqdn(device.Name), so the object name, the short name,
+// and a default-domain qualification are all tried, in that order.
+func impactNames(host, defaultDomain string) []string {
+	host = strings.TrimSpace(host)
+	var names []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		for _, existing := range names {
+			if strings.EqualFold(existing, s) {
+				return
+			}
+		}
+		names = append(names, s)
+	}
+	add(host)
+	add(util.ShortName(host, defaultDomain))
+	add(util.FormatName(defaultDomain, host))
+	return names
+}
+
+type factumImpactBody struct {
+	Services []struct {
+		ServiceRef string `json:"service_id"`
+		Category   string `json:"category"`
+		Customer   string `json:"customer"`
+	} `json:"services"`
+}
+
+func fetchAffectedHTTP(cfg *util.ConfigFactum, names []string) (affectedImpact, error) {
+	if len(names) == 0 {
+		return affectedImpact{}, errDeviceNotInFactum
+	}
+	client, baseURL, viaSocket, err := util.FactumHTTP(cfg)
+	if err != nil {
+		return affectedImpact{}, err
+	}
+	for _, name := range names {
+		path := "/api/device/name/" + url.PathEscape(name) + "/impact"
+		req, err := http.NewRequest(http.MethodGet, baseURL+path, nil)
+		if err != nil {
+			return affectedImpact{}, err
+		}
+		if !viaSocket {
+			req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return affectedImpact{}, err
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return affectedImpact{}, readErr
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return affectedImpact{}, fmt.Errorf("factum impact %s: %s", path, resp.Status)
+		}
+		var parsed factumImpactBody
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return affectedImpact{}, fmt.Errorf("factum impact %s: %w", path, err)
+		}
+		return applyFactumImpact(name, parsed), nil
+	}
+	return affectedImpact{}, errDeviceNotInFactum
+}
+
+func applyFactumImpact(deviceName string, body factumImpactBody) affectedImpact {
+	out := affectedImpact{DeviceName: deviceName}
+	seenCustomer := map[string]bool{}
+	for _, row := range body.Services {
+		out.Services = append(out.Services, affectedService{
+			ServiceID: row.ServiceRef,
+			Customer:  row.Customer,
+			Category:  row.Category,
+		})
+		if row.Customer != "" && !seenCustomer[row.Customer] {
+			seenCustomer[row.Customer] = true
+			out.Customers = append(out.Customers, row.Customer)
+		}
+	}
+	sort.Strings(out.Customers)
+	sort.Slice(out.Services, func(i, j int) bool {
+		if out.Services[i].Customer != out.Services[j].Customer {
+			return out.Services[i].Customer < out.Services[j].Customer
+		}
+		if out.Services[i].ServiceID != out.Services[j].ServiceID {
+			return out.Services[i].ServiceID < out.Services[j].ServiceID
+		}
+		return out.Services[i].Category < out.Services[j].Category
+	})
+	return out
 }
 
 // humanDuration formats a duration as "1d 2h", "2h 3m" or "5m" - compact

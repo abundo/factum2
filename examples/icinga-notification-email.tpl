@@ -134,12 +134,41 @@
       {{end}}
     </table>
 
+    <br><strong>Affected customers and services</strong><br>
+    {{if .AffectedError}}
+      Error asking factum: {{.AffectedError}}<br>
+    {{else if .AffectedMissing}}
+      Host not found in factum<br>
+    {{else if or .AffectedCustomers .AffectedServices}}
+      {{if .AffectedDevice}}Factum device: {{.AffectedDevice}}<br>{{end}}
+      Customers: {{len .AffectedCustomers}}<br>
+      {{range .AffectedCustomers}}{{.}}<br>{{end}}
+      {{if .AffectedServices}}
+      Services: {{len .AffectedServices}}<br>
+      <table style="border-collapse: collapse;">
+        <tr style="border-top: 1px solid black;">
+          <th style="padding: 0.2em 0.5em; text-align:left;">Service</th>
+          <th style="padding: 0.2em 0.5em; text-align:left;">Customer</th>
+          <th style="padding: 0.2em 0.5em; text-align:left;">Category</th>
+        </tr>
+        {{range .AffectedServices}}
+        <tr style="border-top: 1px solid black; vertical-align:top;">
+          <td style="padding: 0.2em 0.5em;">{{.ServiceID}}</td>
+          <td style="padding: 0.2em 0.5em;">{{.Customer}}</td>
+          <td style="padding: 0.2em 0.5em;">{{.Category}}</td>
+        </tr>
+        {{end}}
+      </table>
+      {{end}}
+    {{else}}
+      None<br>
+    {{end}}
+
     <br><strong>Hosts - not acknowledged</strong><br>
     {{if .HostsDownError}}
       Error getting list of down hosts: {{.HostsDownError}}<br>
     {{else if .HostsDown}}
       Number of hosts: {{len .HostsDown}}<br>
-      Approximate number of customers down: {{.CustomersDownEstimate}}<br>
       <table style="border-collapse: collapse;">
         <tr style="border-top: 1px solid black;">
           <th style="padding: 0.2em 0.5em; text-align:left;">Host</th>

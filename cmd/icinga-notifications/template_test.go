@@ -20,8 +20,12 @@ func TestRenderTemplateHost(t *testing.T) {
 		HostsDown: []hostDownRow{
 			{Name: "sw2", Since: "1h2m", Changed: "2024-01-02 14:00:00", Location: "DC2"},
 		},
-		CustomersDownEstimate: 20,
-		ServicesDownError:     "connection refused",
+		ServicesDownError: "connection refused",
+		AffectedDevice:    "sw1",
+		AffectedCustomers: []string{"Acme"},
+		AffectedServices: []affectedService{
+			{ServiceID: "CN00001", Customer: "Acme", Category: "CN"},
+		},
 	}
 
 	body, err := renderTemplate(exampleTemplate, data)
@@ -40,6 +44,9 @@ func TestRenderTemplateHost(t *testing.T) {
 	}
 	if !strings.Contains(body, "connection refused") {
 		t.Errorf("expected services-down error message in body")
+	}
+	if !strings.Contains(body, "CN00001") || !strings.Contains(body, "Acme") {
+		t.Errorf("expected affected service in body, got:\n%s", body)
 	}
 }
 
