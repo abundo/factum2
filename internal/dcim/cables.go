@@ -2,10 +2,12 @@ package dcim
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
@@ -129,14 +131,33 @@ func ConnectionPair(db *gorm.DB, aID, bID uint) (*PairDTO, error) {
 }
 
 func CreateCable(db *gorm.DB, ifaceAID, ifaceBID uint, label string) (*models.Connection, error) {
+	return createCable(db, ifaceAID, ifaceBID, label, 0)
+}
+
+// CreateLinkedCable stores a cable that already exists in NetBox. A webhook
+// often inserts that netbox_id while this save is in flight; the existing
+// row is kept instead of inserting a second one.
+func CreateLinkedCable(db *gorm.DB, ifaceAID, ifaceBID uint, label string, netboxID uint) (*models.Connection, error) {
+	if netboxID == 0 {
+		return CreateCable(db, ifaceAID, ifaceBID, label)
+	}
+	return createCable(db, ifaceAID, ifaceBID, label, netboxID)
+}
+
+func createCable(db *gorm.DB, ifaceAID, ifaceBID uint, label string, netboxID uint) (*models.Connection, error) {
 	a, b, err := loadCableEnds(db, ifaceAID, ifaceBID)
 	if err != nil {
 		return nil, err
 	}
-	if err := assertInterfacesFree(db, a.ID, b.ID, 0); err != nil {
+	existing, err := ExistingPairCable(db, a.ID, b.ID)
+	if err != nil {
 		return nil, err
 	}
+	if existing != nil {
+		return bindExistingPair(db, existing, a.ID, b.ID, netboxID)
+	}
 	conn := models.Connection{
+		NetboxID:     netboxID,
 		DeviceAID:    a.DeviceID,
 		InterfaceAID: a.ID,
 		DeviceBID:    b.DeviceID,
@@ -144,9 +165,93 @@ func CreateCable(db *gorm.DB, ifaceAID, ifaceBID uint, label string) (*models.Co
 		Label:        strings.TrimSpace(label),
 	}
 	if err := db.Create(&conn).Error; err != nil {
+		if netboxID != 0 && isUniqueViolation(err) {
+			if row, gerr := GetCableByNetboxID(db, netboxID); gerr == nil && CableJoins(row, a.ID, b.ID) {
+				return row, nil
+			}
+		}
 		return nil, err
 	}
 	return &conn, nil
+}
+
+// ExistingPairCable returns the cable that already joins ifaceAID and ifaceBID.
+// Duplicate rows of that same pair collapse to one. A cable from either
+// port to a different interface is a conflict.
+func ExistingPairCable(db *gorm.DB, ifaceAID, ifaceBID uint) (*models.Connection, error) {
+	conns, err := connectionsTouchingInterfaces(db, []uint{ifaceAID, ifaceBID})
+	if err != nil {
+		return nil, err
+	}
+	if len(conns) == 0 {
+		return nil, nil
+	}
+	same := make([]models.Connection, 0, len(conns))
+	for _, c := range conns {
+		if !CableJoins(&c, ifaceAID, ifaceBID) {
+			return nil, interfacesBusy(db, ifaceAID, ifaceBID, conns)
+		}
+		same = append(same, c)
+	}
+	return keepOnePair(db, same)
+}
+
+func keepOnePair(db *gorm.DB, same []models.Connection) (*models.Connection, error) {
+	sort.Slice(same, func(i, j int) bool {
+		if (same[i].NetboxID != 0) != (same[j].NetboxID != 0) {
+			return same[i].NetboxID != 0
+		}
+		return same[i].ID < same[j].ID
+	})
+	keeper := same[0]
+	for _, extra := range same[1:] {
+		_ = optical.MarkStaleByConnection(db, extra.ID)
+		if err := db.Delete(&models.Connection{}, extra.ID).Error; err != nil {
+			return nil, err
+		}
+	}
+	return &keeper, nil
+}
+
+func bindExistingPair(db *gorm.DB, existing *models.Connection, ifaceAID, ifaceBID, netboxID uint) (*models.Connection, error) {
+	if existing == nil {
+		return nil, nil
+	}
+	if netboxID == 0 || existing.NetboxID == netboxID {
+		return existing, nil
+	}
+	if existing.NetboxID != 0 {
+		return nil, interfacesBusy(db, ifaceAID, ifaceBID, []models.Connection{*existing})
+	}
+	if err := SetCableNetboxID(db, existing.ID, netboxID); err != nil {
+		if !isUniqueViolation(err) {
+			return nil, err
+		}
+		winner, gerr := GetCableByNetboxID(db, netboxID)
+		if gerr != nil || !CableJoins(winner, ifaceAID, ifaceBID) {
+			return nil, err
+		}
+		if winner.ID != existing.ID {
+			_ = optical.MarkStaleByConnection(db, existing.ID)
+			if derr := db.Delete(&models.Connection{}, existing.ID).Error; derr != nil {
+				return nil, derr
+			}
+		}
+		return winner, nil
+	}
+	existing.NetboxID = netboxID
+	return existing, nil
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "unique constraint") || strings.Contains(s, "duplicate key")
 }
 
 func UpdateCable(db *gorm.DB, id, ifaceAID, ifaceBID uint, label string) (*models.Connection, error) {
@@ -188,6 +293,29 @@ func DeleteCable(db *gorm.DB, id uint) error {
 
 func SetCableNetboxID(db *gorm.DB, id, netboxID uint) error {
 	return db.Model(&models.Connection{}).Where("id = ?", id).Update("netbox_id", netboxID).Error
+}
+
+// StampCableNetboxID sets netbox_id on localID. When a webhook row already
+// holds that id and joins the same interfaces, that row is kept and localID
+// is removed.
+func StampCableNetboxID(db *gorm.DB, localID, netboxID, ifaceAID, ifaceBID uint) (uint, error) {
+	if err := SetCableNetboxID(db, localID, netboxID); err != nil {
+		if !isUniqueViolation(err) {
+			return 0, err
+		}
+		winner, gerr := GetCableByNetboxID(db, netboxID)
+		if gerr != nil || !CableJoins(winner, ifaceAID, ifaceBID) {
+			return 0, err
+		}
+		if winner.ID != localID {
+			_ = optical.MarkStaleByConnection(db, localID)
+			if derr := db.Delete(&models.Connection{}, localID).Error; derr != nil {
+				return 0, derr
+			}
+		}
+		return winner.ID, nil
+	}
+	return localID, nil
 }
 
 func GetCable(db *gorm.DB, id uint) (*models.Connection, error) {
@@ -271,14 +399,92 @@ func assertInterfacesFree(db *gorm.DB, ifaceAID, ifaceBID, exceptID uint) error 
 	if exceptID != 0 {
 		q = q.Where("id <> ?", exceptID)
 	}
-	var n int64
-	if err := q.Count(&n).Error; err != nil {
+	var conns []models.Connection
+	if err := q.Find(&conns).Error; err != nil {
 		return err
 	}
-	if n > 0 {
-		return errf(http.StatusConflict, ReasonConflict, "one of the interfaces already has a cable")
+	if len(conns) > 0 {
+		return interfacesBusy(db, ifaceAID, ifaceBID, conns)
 	}
 	return nil
+}
+
+// CableJoins reports whether conn terminates on ifaceAID and ifaceBID in either order.
+func CableJoins(conn *models.Connection, ifaceAID, ifaceBID uint) bool {
+	if conn == nil {
+		return false
+	}
+	return (conn.InterfaceAID == ifaceAID && conn.InterfaceBID == ifaceBID) ||
+		(conn.InterfaceAID == ifaceBID && conn.InterfaceBID == ifaceAID)
+}
+
+// GetCableByNetboxID loads the Connection stored for a NetBox cable id.
+func GetCableByNetboxID(db *gorm.DB, netboxID uint) (*models.Connection, error) {
+	if netboxID == 0 {
+		return nil, errf(http.StatusNotFound, ReasonNotFound, "cable not found")
+	}
+	var existing models.Connection
+	if err := db.Where("netbox_id = ?", netboxID).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errf(http.StatusNotFound, ReasonNotFound, "cable not found")
+		}
+		return nil, err
+	}
+	return &existing, nil
+}
+
+func interfacesBusy(db *gorm.DB, wantA, wantB uint, conns []models.Connection) error {
+	sort.Slice(conns, func(i, j int) bool { return conns[i].ID < conns[j].ID })
+	msg, err := describeBusyCable(db, wantA, wantB, conns)
+	if err != nil || msg == "" {
+		return errf(http.StatusConflict, ReasonConflict, "one of the interfaces already has a cable")
+	}
+	return errf(http.StatusConflict, ReasonConflict, "%s", msg)
+}
+
+func describeBusyCable(db *gorm.DB, wantA, wantB uint, conns []models.Connection) (string, error) {
+	ids := map[uint]bool{wantA: true, wantB: true}
+	for _, c := range conns {
+		ids[c.InterfaceAID] = true
+		ids[c.InterfaceBID] = true
+	}
+	var rows []models.Interface
+	if err := db.Select("id", "name", "device_id").Where("id IN ?", keys(ids)).Find(&rows).Error; err != nil {
+		return "", err
+	}
+	ifaces := make(map[uint]models.Interface, len(rows))
+	devIDs := map[uint]bool{}
+	for _, row := range rows {
+		ifaces[row.ID] = row
+		devIDs[row.DeviceID] = true
+	}
+	names, err := deviceNamesByID(db, keys(devIDs))
+	if err != nil {
+		return "", err
+	}
+	occupied := make([]string, 0, len(conns))
+	for _, c := range conns {
+		occupied = append(occupied, fmt.Sprintf("cable %d is %s to %s",
+			c.ID, interfaceRef(names, ifaces, c.InterfaceAID), interfaceRef(names, ifaces, c.InterfaceBID)))
+	}
+	return fmt.Sprintf("one of the interfaces already has a cable: trying %s to %s; %s",
+		interfaceRef(names, ifaces, wantA), interfaceRef(names, ifaces, wantB), strings.Join(occupied, "; ")), nil
+}
+
+func interfaceRef(deviceNames map[uint]string, ifaces map[uint]models.Interface, id uint) string {
+	iface, ok := ifaces[id]
+	name := "interface"
+	device := ""
+	if ok {
+		if iface.Name != "" {
+			name = iface.Name
+		}
+		device = deviceNames[iface.DeviceID]
+	}
+	if device == "" {
+		return fmt.Sprintf("%s (interface %d)", name, id)
+	}
+	return fmt.Sprintf("%s %s (interface %d)", device, name, id)
 }
 
 func connectionsTouchingInterfaces(db *gorm.DB, ifaceIDs []uint) ([]models.Connection, error) {

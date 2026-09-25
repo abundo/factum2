@@ -210,6 +210,153 @@ func TestApiDCIMConnectionCreatePushesToNetbox(t *testing.T) {
 	}
 }
 
+func TestApiDCIMConnectionCreateKeepsWebhookRow(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	a := models.Device{Name: "lu17-lab-r0.itn.nu", NetboxID: 1, CfSource: "netbox"}
+	b := models.Device{Name: "lu17-lab-r2.itn.nu", NetboxID: 2, CfSource: "netbox"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, Name: "Ethernet4", NetboxID: 11}
+	ib := models.Interface{DeviceID: b.ID, Name: "Ethernet4", NetboxID: 22}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	deleted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/dcim/cables/":
+			// Webhook lands before the local insert, same as the lab log.
+			wh := models.Connection{
+				NetboxID: 8, DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID, Label: "uplink",
+			}
+			if err := db.Create(&wh).Error; err != nil {
+				t.Errorf("webhook insert: %v", err)
+			}
+			_, _ = w.Write([]byte(`{
+				"id": 8,
+				"label": "uplink",
+				"a_terminations": [{"object_type": "dcim.interface", "object_id": 11}],
+				"b_terminations": [{"object_type": "dcim.interface", "object_id": 22}]
+			}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/dcim/cables/"):
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotImplemented)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.NetboxApiURL = srv.URL
+	settings.NetboxApiToken = "t"
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/dcim/connections", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID, Label: "uplink",
+	}, nil, nil)
+	if err := ctrl.ApiDCIMConnectionCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if deleted {
+		t.Fatal("webhook cable was rolled back in NetBox")
+	}
+	var n int64
+	if err := db.Model(&models.Connection{}).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("connections = %d, want the webhook row kept", n)
+	}
+}
+
+func TestApiDCIMConnectionCreateExistingPairSkipsNetbox(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	a := models.Device{Name: "lu17-lab-r0.itn.nu", NetboxID: 1, CfSource: "netbox"}
+	b := models.Device{Name: "lu17-lab-r2.itn.nu", NetboxID: 2, CfSource: "netbox"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, Name: "Ethernet4", NetboxID: 11}
+	ib := models.Interface{DeviceID: b.ID, Name: "Ethernet4", NetboxID: 22}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+	wh := models.Connection{
+		NetboxID: 8, DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID,
+	}
+	if err := db.Create(&wh).Error; err != nil {
+		t.Fatal(err)
+	}
+	local := models.Connection{DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		http.Error(w, "netbox should not be called", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.NetboxApiURL = srv.URL
+	settings.NetboxApiToken = "t"
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/dcim/connections", models.ConnectionWriteDTO{
+		InterfaceAID: ia.ID, InterfaceBID: ib.ID,
+	}, nil, nil)
+	if err := ctrl.ApiDCIMConnectionCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if posts != 0 {
+		t.Fatalf("netbox calls = %d", posts)
+	}
+	var n int64
+	if err := db.Model(&models.Connection{}).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("connections = %d, want 1", n)
+	}
+}
+
 func TestApiGetConnections(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

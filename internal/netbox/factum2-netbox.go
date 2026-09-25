@@ -294,10 +294,21 @@ func syncCables(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repo
 				return err
 			}
 			count_updated++
-		} else {
-			if err := db.Create(&conn).Error; err != nil {
+		} else if err := db.Create(&conn).Error; err != nil {
+			if !isUniqueViolation(err) {
 				return err
 			}
+			if err := db.Model(&models.Connection{}).Where("netbox_id = ?", conn.NetboxID).Updates(map[string]any{
+				"device_a_id":    conn.DeviceAID,
+				"interface_a_id": conn.InterfaceAID,
+				"device_b_id":    conn.DeviceBID,
+				"interface_b_id": conn.InterfaceBID,
+				"label":          conn.Label,
+			}).Error; err != nil {
+				return err
+			}
+			count_updated++
+		} else {
 			count_new++
 		}
 	}

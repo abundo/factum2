@@ -2,6 +2,7 @@ package netbox
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netboxtool"
@@ -109,9 +110,18 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 	}
 	if isNew {
 		if err := db.Create(&conn).Error; err != nil {
-			return 0, 0, 0, 0, err
+			if !isUniqueViolation(err) {
+				return 0, 0, 0, 0, err
+			}
+			// The GUI save inserted this netbox_id first.
+			var winner models.Connection
+			if err := db.Select("id").Where("netbox_id = ?", cable.NetboxID).First(&winner).Error; err != nil {
+				return 0, 0, 0, 0, err
+			}
+			existing = winner
+		} else {
+			return 1, 0, 0, 0, nil
 		}
-		return 1, 0, 0, 0, nil
 	}
 	if err := db.Model(&models.Connection{}).Where("id = ?", existing.ID).Updates(map[string]any{
 		"device_a_id":    conn.DeviceAID,
@@ -127,6 +137,17 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 
 // deleteLocalCablesOnInterfaces drops Factum-only cables on these ports so a
 // later NetBox cable can occupy them. NetBox-synced rows are left alone.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "unique constraint") || strings.Contains(s, "duplicate key")
+}
+
 func deleteLocalCablesOnInterfaces(db *gorm.DB, ifaceIDs ...uint) error {
 	if len(ifaceIDs) == 0 {
 		return nil

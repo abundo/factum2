@@ -1,6 +1,7 @@
 package dcim
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/abundo/factum2/models"
@@ -49,8 +50,11 @@ func TestCreateUpdateDeleteLocalCable(t *testing.T) {
 		t.Fatalf("want a second local row, got %+v", c2)
 	}
 
-	if _, err := CreateCable(db, ia1.ID, ib2.ID, "busy"); err == nil {
-		t.Fatal("want conflict when interface already has a cable")
+	if _, err := CreateCable(db, ia1.ID, ib2.ID, "busy"); err == nil ||
+		!strings.Contains(err.Error(), "leaf-1 Ethernet1") ||
+		!strings.Contains(err.Error(), "spine-1 Ethernet2") ||
+		!strings.Contains(err.Error(), "spine-1 Ethernet1") {
+		t.Fatalf("want conflict naming both ends and the existing cable, got %v", err)
 	}
 
 	if _, err := CreateCable(db, ia1.ID, ia1.ID, ""); err == nil {
@@ -110,6 +114,58 @@ func TestCreateUpdateDeleteLocalCable(t *testing.T) {
 	}
 	if pair.DeviceA.Interfaces[1].Connection == nil || pair.DeviceA.Interfaces[1].Connection.PeerDeviceName != "spine-1" {
 		t.Fatalf("peer on Ethernet2 = %+v", pair.DeviceA.Interfaces[1].Connection)
+	}
+}
+
+func TestCreateLinkedCableKeepsWebhookRow(t *testing.T) {
+	db := newTestDB(t)
+	a := models.Device{Name: "lu17-lab-r0.itn.nu"}
+	b := models.Device{Name: "lu17-lab-r2.itn.nu"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, Name: "Ethernet4"}
+	ib := models.Interface{DeviceID: b.ID, Name: "Ethernet4"}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+	wh := models.Connection{
+		NetboxID: 8, DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID,
+	}
+	dup := models.Connection{
+		DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID,
+	}
+	if err := db.Create(&wh).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&dup).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := CreateLinkedCable(db, ia.ID, ib.ID, "uplink", 8)
+	if err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if got.ID != wh.ID || got.NetboxID != 8 {
+		t.Fatalf("kept = %+v, want webhook id %d", got, wh.ID)
+	}
+	var n int64
+	if err := db.Model(&models.Connection{}).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("connections = %d, want the netbox row only", n)
+	}
+
+	again, err := CreateLinkedCable(db, ia.ID, ib.ID, "uplink", 8)
+	if err != nil || again.ID != wh.ID {
+		t.Fatalf("second link = %+v %v", again, err)
 	}
 }
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,28 @@ import (
 	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
 )
+
+func (ctrl *Controller) cableEndAttrs(a, b models.Interface) []any {
+	names := map[uint]string{}
+	var devs []models.Device
+	_ = ctrl.DB.Select("id", "name").Where("id IN ?", []uint{a.DeviceID, b.DeviceID}).Find(&devs).Error
+	for _, d := range devs {
+		names[d.ID] = d.Name
+	}
+	return []any{
+		"device_a", names[a.DeviceID],
+		"interface_a", a.Name,
+		"interface_a_id", a.ID,
+		"device_b", names[b.DeviceID],
+		"interface_b", b.Name,
+		"interface_b_id", b.ID,
+	}
+}
+
+func (ctrl *Controller) logCableRejected(a, b models.Interface, err error) {
+	attrs := append(ctrl.cableEndAttrs(a, b), "error", err.Error())
+	slog.Warn("could not save cable", attrs...)
+}
 
 func netboxCableExtra(label string) map[string]any {
 	return map[string]any{"label": strings.TrimSpace(label)}
@@ -63,8 +86,13 @@ func (ctrl *Controller) ApiDCIMConnectionCreate(c *echo.Context) error {
 	if err != nil {
 		return dcimError(c, err)
 	}
-	if err := dcim.AssertInterfacesFree(ctrl.DB, a.ID, b.ID, 0); err != nil {
+	if row, err := dcim.ExistingPairCable(ctrl.DB, a.ID, b.ID); err != nil {
+		ctrl.logCableRejected(a, b, err)
 		return dcimError(c, err)
+	} else if row != nil {
+		attrs := append(ctrl.cableEndAttrs(a, b), "connection_id", row.ID, "netbox_id", row.NetboxID)
+		slog.Info("cable already connects these interfaces", attrs...)
+		return c.JSON(http.StatusCreated, row)
 	}
 	var nbID uint
 	if dcim.BothNetboxInterfaces(a, b) {
@@ -81,20 +109,20 @@ func (ctrl *Controller) ApiDCIMConnectionCreate(c *echo.Context) error {
 		}
 		nbID = created.NetboxID
 	}
-	row, err := dcim.CreateCable(ctrl.DB, dto.InterfaceAID, dto.InterfaceBID, dto.Label)
+	var row *models.Connection
+	if nbID != 0 {
+		row, err = dcim.CreateLinkedCable(ctrl.DB, dto.InterfaceAID, dto.InterfaceBID, dto.Label, nbID)
+	} else {
+		row, err = dcim.CreateCable(ctrl.DB, dto.InterfaceAID, dto.InterfaceBID, dto.Label)
+	}
 	if err != nil {
 		if nbID != 0 {
 			if nb, nerr := ctrl.netboxClientIfConfigured(); nerr == nil && nb != nil {
 				_ = nb.DeleteCable(nbID)
 			}
 		}
+		ctrl.logCableRejected(a, b, err)
 		return dcimError(c, err)
-	}
-	if nbID != 0 {
-		if err := dcim.SetCableNetboxID(ctrl.DB, row.ID, nbID); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		}
-		row.NetboxID = nbID
 	}
 	if err := optical.RebuildStale(ctrl.DB); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -141,14 +169,18 @@ func (ctrl *Controller) ApiDCIMConnectionUpdate(c *echo.Context) error {
 			if err != nil {
 				return netboxUpstream(c, err)
 			}
-			if err := dcim.SetCableNetboxID(ctrl.DB, existing.ID, created.NetboxID); err != nil {
-				return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			stamped, berr := dcim.StampCableNetboxID(ctrl.DB, existing.ID, created.NetboxID, a.ID, b.ID)
+			if berr != nil {
+				ctrl.logCableRejected(a, b, berr)
+				return dcimError(c, berr)
 			}
+			id = stamped
 		}
 	}
 	_ = optical.MarkStaleByConnection(ctrl.DB, id)
 	row, err := dcim.UpdateCable(ctrl.DB, id, dto.InterfaceAID, dto.InterfaceBID, dto.Label)
 	if err != nil {
+		ctrl.logCableRejected(a, b, err)
 		return dcimError(c, err)
 	}
 	if err := optical.RebuildStale(ctrl.DB); err != nil {
