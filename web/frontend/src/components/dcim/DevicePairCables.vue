@@ -7,25 +7,23 @@ import {
   getConnectionPair,
   updateConnection,
 } from '@/api/connections'
-import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 import { compareInterfaceName } from '@/utils/interfaceNames'
 
 const props = defineProps({
-  deviceAId: { type: Number, default: 0 },
-  deviceBId: { type: Number, default: 0 },
+  deviceIds: { type: Array, default: () => [0] },
+  deviceItems: { type: Array, default: () => [] },
   canWrite: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['update:deviceIds'])
+
 const toast = useToast()
-const { load: loadTypes, typeLabel } = useInterfaceTypes()
 
 const stage = ref(null)
 const scroller = ref(null)
 const loading = ref(false)
 const error = ref(null)
-const pair = ref(null)
-const filterA = ref('')
-const filterB = ref('')
+const byId = ref({})
 const selected = ref(null)
 const saving = ref(false)
 const editLabel = ref('')
@@ -34,74 +32,123 @@ const editB = ref(null)
 const points = ref({})
 const drag = ref(null)
 const pending = ref(null)
-const hoverId = ref(0)
+const hoverKey = ref('')
+const ringTip = ref(null)
 let dragCleanup = null
 let scrollRaf = 0
 let lastPointer = { x: 0, y: 0 }
+let loadGen = 0
 
-const cables = computed(() => pair.value?.cables ?? [])
-const deviceA = computed(() => pair.value?.device_a ?? null)
-const deviceB = computed(() => pair.value?.device_b ?? null)
+const columns = computed(() => (props.deviceIds.length ? props.deviceIds : [0]))
 
 function errMsg(err, fallback) {
   return err.response?.data?.error ?? fallback
 }
 
-function matchesFilter(iface, q) {
-  if (!q) return true
-  const hay = `${iface.name} ${iface.description || ''} ${iface.type || ''}`.toLowerCase()
-  return hay.includes(q)
+function deviceIdFromPicker(v) {
+  if (v == null) return 0
+  if (typeof v === 'object') return v.id || 0
+  return v || 0
+}
+
+function emitIds(ids) {
+  emit('update:deviceIds', ids.length ? ids : [0])
+}
+
+function setDevice(index, id) {
+  const next = columns.value.slice()
+  next[index] = id || 0
+  emitIds(next)
+}
+
+function addColumn() {
+  emitIds([...columns.value, 0])
+}
+
+function removeColumn(index) {
+  emitIds(columns.value.filter((_, i) => i !== index))
+}
+
+function follow(index, iface) {
+  const peer = iface.connection?.peer_device_id
+  if (!peer) return
+  if (columns.value[index + 1] === peer) return
+  emitIds([...columns.value.slice(0, index + 1), peer])
+}
+
+function isPhysical(iface) {
+  const t = (iface.type || '').toLowerCase()
+  return t !== 'virtual' && t !== 'lag'
 }
 
 function sortedIfaces(list) {
   return [...(list ?? [])].sort((a, b) => compareInterfaceName(a.name, b.name) || a.id - b.id)
 }
 
-function visiblePorts(dev, q, otherId) {
-  const list = sortedIfaces(dev?.interfaces)
-  const query = q.trim().toLowerCase()
-  if (!query) return list
-  return list.filter(
-    (p) => matchesFilter(p, query) || (p.connection && p.connection.peer_device_id === otherId),
-  )
+function deviceAt(index) {
+  const id = columns.value[index]
+  return id ? byId.value[id] || null : null
 }
 
-const portsA = computed(() => visiblePorts(deviceA.value, filterA.value, deviceB.value?.id))
-const portsB = computed(() => visiblePorts(deviceB.value, filterB.value, deviceA.value?.id))
-
-function isBetween(link) {
-  if (!link || !deviceA.value || !deviceB.value) return false
-  const ids = new Set([deviceA.value.id, deviceB.value.id])
-  return ids.has(link.peer_device_id)
+function portsAt(index) {
+  return sortedIfaces(deviceAt(index)?.interfaces).filter(isPhysical)
 }
 
-function linkingSide() {
-  return drag.value?.fromSide || pending.value?.side || null
+function tipText(iface) {
+  if (!iface?.connection) return 'Not connected'
+  return `${iface.connection.peer_device_name} ${iface.connection.peer_interface_name}`
 }
 
-function isValidDrop(iface, side) {
-  const from = linkingSide()
-  if (!from || from === side) return false
-  if (iface.id === drag.value?.fromId || iface.id === pending.value?.id) return false
+function showRingTip(e, iface) {
+  ringTip.value = { x: e.clientX + 14, y: e.clientY + 16, text: tipText(iface) }
+}
+
+function cableSide(iface, index) {
+  const peer = iface.connection?.peer_device_id
+  if (!peer) return null
+  if (index > 0 && columns.value[index - 1] === peer) return 'left'
+  if (columns.value[index + 1] === peer) return 'right'
+  return null
+}
+
+function isAdjacentCable(iface, index) {
+  return !!cableSide(iface, index)
+}
+
+function portKey(index, ifaceId, dir) {
+  return `${index}:${ifaceId}:${dir}`
+}
+
+function linking() {
+  return drag.value || pending.value
+}
+
+function targetIndex(fromIndex, fromDir) {
+  return fromDir === 'left' ? fromIndex - 1 : fromIndex + 1
+}
+
+function isValidDrop(iface, index) {
+  const from = linking()
+  if (!from) return false
+  if (targetIndex(from.fromIndex, from.fromDir) !== index) return false
+  if (iface.id === from.fromId && index === from.fromIndex) return false
   if (!iface.connection) return true
-  if (!isBetween(iface.connection)) return false
-  return !!(drag.value?.reconnectId && iface.connection.id === drag.value.reconnectId)
+  return !!(from.reconnectId && iface.connection.id === from.reconnectId)
 }
 
-function handleClass(iface, side) {
-  const drop = isValidDrop(iface, side)
-  const hot = drop && hoverId.value === iface.id
-  const mine = pending.value?.id === iface.id || drag.value?.fromId === iface.id
+function handleClass(iface, index, dir) {
+  const drop = isValidDrop(iface, index) && (!iface.connection || dir === cableSide(iface, index) || !iface.connection)
+  const hot = drop && hoverKey.value === portKey(index, iface.id, dir)
+  const mine = pending.value && pending.value.fromIndex === index && pending.value.fromId === iface.id
+  const connectedHere = cableSide(iface, index) === dir
   const parts = [
     'relative z-10 size-5 shrink-0 rounded-full border-2 shadow-sm transition-transform touch-none',
   ]
-  if (iface.connection && !isBetween(iface.connection)) {
-    parts.push('cursor-not-allowed border-muted bg-muted')
-  } else if (iface.connection && isBetween(iface.connection)) {
+  if (iface.connection) {
     parts.push(
       iface.connection.source === 'netbox'
-        ? 'cursor-grab border-warning bg-warning'
-        : 'cursor-grab border-primary bg-primary',
+        ? 'cursor-pointer border-warning bg-warning'
+        : 'cursor-pointer border-primary bg-primary',
     )
   } else {
     parts.push(
@@ -110,46 +157,100 @@ function handleClass(iface, side) {
         : 'cursor-default border-primary bg-default',
     )
   }
-  if (drop) parts.push('scale-110 border-success bg-success')
-  if (mine) parts.push('scale-110 ring-2 ring-primary')
+  if (drop && !iface.connection) parts.push('scale-110 border-success bg-success')
+  if (drop && connectedHere) parts.push('scale-110 border-success bg-success')
+  if (mine && pending.value.fromDir === dir) parts.push('scale-110 ring-2 ring-primary')
   if (hot) parts.push('scale-125 ring-2 ring-success')
   return parts.join(' ')
 }
 
+function showHandle(iface, index, dir) {
+  const side = cableSide(iface, index)
+  if (iface.connection && side) return side === dir
+  const hasPrev = index > 0 && !!columns.value[index - 1]
+  const hasNext = !!columns.value[index + 1]
+  if (iface.connection) return dir === 'right'
+  if (dir === 'left') return hasPrev
+  return hasNext || !hasPrev
+}
+
 function load() {
-  if (!props.deviceAId || !props.deviceBId) {
-    pair.value = null
+  const ids = [...new Set(columns.value.filter((id) => id > 0))]
+  if (!ids.length) {
+    byId.value = {}
     selected.value = null
     error.value = null
     loading.value = false
     return Promise.resolve()
   }
+  const gen = ++loadGen
   loading.value = true
   error.value = null
-  return getConnectionPair(props.deviceAId, props.deviceBId)
-    .then((data) => {
-      pair.value = data
+  return Promise.all(
+    ids.map((id) =>
+      getConnectionPair(id, id)
+        .then((data) => ({ id, device: data.device_a }))
+        .catch((err) => ({ id, err })),
+    ),
+  )
+    .then((rows) => {
+      if (gen !== loadGen) return
+      const next = {}
+      const failed = rows.find((row) => row.err)
+      for (const row of rows) {
+        if (row.device) next[row.id] = row.device
+      }
+      byId.value = next
+      error.value = failed ? errMsg(failed.err, 'Failed to load interfaces.') : null
       if (selected.value) {
-        const still = (data.cables || []).find((c) => c.id === selected.value.id)
-        selected.value = still || null
+        const still = findCable(selected.value.id)
+        selected.value = still
         if (still) syncEditFrom(still)
       }
     })
-    .catch((err) => {
-      error.value = errMsg(err, 'Failed to load interfaces.')
-      pair.value = null
-    })
     .finally(() => {
+      if (gen !== loadGen) return
       loading.value = false
       nextTick(measure)
     })
 }
 
+function adjacentCables() {
+  const out = []
+  for (let i = 0; i < columns.value.length - 1; i++) {
+    const left = deviceAt(i)
+    const rightId = columns.value[i + 1]
+    if (!left || !rightId) continue
+    for (const iface of left.interfaces || []) {
+      const link = iface.connection
+      if (!link || link.peer_device_id !== rightId) continue
+      out.push({
+        id: link.id,
+        label: link.label || '',
+        source: link.source,
+        leftIndex: i,
+        device_a_id: left.id,
+        device_a_name: left.name,
+        interface_a_id: iface.id,
+        device_b_id: rightId,
+        device_b_name: link.peer_device_name,
+        interface_b_id: link.peer_interface_id,
+      })
+    }
+  }
+  return out
+}
+
+const drawnCables = computed(() => adjacentCables())
+
+function findCable(id) {
+  return drawnCables.value.find((c) => c.id === id) || null
+}
+
 function syncEditFrom(cable) {
   editLabel.value = cable.label || ''
-  const aOnLeft = cable.device_a_id === deviceA.value?.id
-  editA.value = aOnLeft ? cable.interface_a_id : cable.interface_b_id
-  editB.value = aOnLeft ? cable.interface_b_id : cable.interface_a_id
+  editA.value = cable.interface_a_id
+  editB.value = cable.interface_b_id
 }
 
 function measure() {
@@ -161,29 +262,27 @@ function measure() {
   const box = root.getBoundingClientRect()
   const next = {}
   for (const el of root.querySelectorAll('[data-port-handle]')) {
-    const id = Number(el.getAttribute('data-iface-id'))
+    const key = el.getAttribute('data-port-key')
     const r = el.getBoundingClientRect()
-    next[id] = { x: r.left + r.width / 2 - box.left, y: r.top + r.height / 2 - box.top }
+    next[key] = { x: r.left + r.width / 2 - box.left, y: r.top + r.height / 2 - box.top }
   }
   points.value = next
 }
 
 function cablePath(c) {
-  const aOnLeft = c.device_a_id === deviceA.value?.id
-  const leftId = aOnLeft ? c.interface_a_id : c.interface_b_id
-  const rightId = aOnLeft ? c.interface_b_id : c.interface_a_id
-  const p1 = points.value[leftId]
-  const p2 = points.value[rightId]
+  const p1 = points.value[portKey(c.leftIndex, c.interface_a_id, 'right')]
+  const p2 = points.value[portKey(c.leftIndex + 1, c.interface_b_id, 'left')]
   if (!p1 || !p2) return ''
-  const dx = Math.max(40, (p2.x - p1.x) / 2)
-  return `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`
+  const dx = Math.max(40, Math.abs(p2.x - p1.x) / 2)
+  const dir = p2.x >= p1.x ? 1 : -1
+  return `M ${p1.x} ${p1.y} C ${p1.x + dx * dir} ${p1.y}, ${p2.x - dx * dir} ${p2.y}, ${p2.x} ${p2.y}`
 }
 
 const dragPath = computed(() => {
   const d = drag.value
   if (!d || !stage.value) return ''
   const box = stage.value.getBoundingClientRect()
-  const from = points.value[d.fromId]
+  const from = points.value[portKey(d.fromIndex, d.fromId, d.fromDir)]
   if (!from) return ''
   const x = d.x - box.left
   const y = d.y - box.top
@@ -191,17 +290,8 @@ const dragPath = computed(() => {
   return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${x - dx} ${y}, ${x} ${y}`
 })
 
-function findIface(id) {
-  const lists = [deviceA.value?.interfaces, deviceB.value?.interfaces]
-  for (const list of lists) {
-    const hit = (list || []).find((p) => p.id === id)
-    if (hit) return hit
-  }
-  return null
-}
-
-function cableById(id) {
-  return cables.value.find((c) => c.id === id) || null
+function findIface(index, id) {
+  return (deviceAt(index)?.interfaces || []).find((p) => p.id === id) || null
 }
 
 function stopAutoScroll() {
@@ -250,13 +340,18 @@ function autoScrollStep() {
 }
 
 function handleUnderPoint(x, y) {
-  const el = document.elementFromPoint(x, y)
-  return el?.closest?.('[data-port-handle]') || null
+  const stack = document.elementsFromPoint?.(x, y) ?? [document.elementFromPoint(x, y)]
+  for (const el of stack) {
+    const handle = el?.closest?.('[data-port-handle]')
+    if (handle) return handle
+  }
+  return null
 }
 
 function stopDragListen() {
   stopAutoScroll()
-  hoverId.value = 0
+  hoverKey.value = ''
+  ringTip.value = null
   if (!dragCleanup) return
   dragCleanup()
   dragCleanup = null
@@ -282,53 +377,66 @@ function onPointerMove(e) {
   const moved = drag.value.moved || dx * dx + dy * dy > 16
   if (moved) pending.value = null
   const handle = handleUnderPoint(e.clientX, e.clientY)
-  hoverId.value = handle ? Number(handle.getAttribute('data-iface-id')) : 0
+  hoverKey.value = handle?.getAttribute('data-port-key') || ''
+  if (handle) {
+    showRingTip(
+      e,
+      findIface(Number(handle.getAttribute('data-col')), Number(handle.getAttribute('data-iface-id'))),
+    )
+  } else {
+    ringTip.value = null
+  }
   drag.value = { ...drag.value, x: e.clientX, y: e.clientY, moved }
   if (!scrollRaf) scrollRaf = requestAnimationFrame(autoScrollStep)
 }
 
 function onPointerUp(e) {
   const d = drag.value
+  const handle = handleUnderPoint(e.clientX, e.clientY)
+  const toId = handle ? Number(handle.getAttribute('data-iface-id')) : 0
+  const toIndex = handle ? Number(handle.getAttribute('data-col')) : -1
+  const iface = toId ? findIface(toIndex, toId) : null
+  // isValidDrop reads the in-progress drag, so decide before clearing it.
+  const valid = !!(iface && isValidDrop(iface, toIndex))
   stopDragListen()
   drag.value = null
   if (!d) return
-  const handle = handleUnderPoint(e.clientX, e.clientY)
-  const toId = handle ? Number(handle.getAttribute('data-iface-id')) : 0
-  const toSide = handle?.getAttribute('data-side')
-  if (!toId || toId === d.fromId || toSide === d.fromSide) {
+  if (!valid) {
     if (!d.moved) {
-      const iface = findIface(d.fromId)
-      if (iface?.connection && isBetween(iface.connection)) {
-        const cable = cableById(iface.connection.id)
-        if (cable) selectCable(cable)
+      const from = findIface(d.fromIndex, d.fromId)
+      if (from?.connection) {
+        follow(d.fromIndex, from)
         return
       }
-      togglePending(d.fromId, d.fromSide)
+      togglePending(d.fromId, d.fromIndex, d.fromDir)
     }
     return
   }
   connectPorts(d.fromId, toId, d.reconnectId)
 }
 
-function startDrag(e, iface, side) {
+function startDrag(e, iface, index, dir) {
+  if (!showHandle(iface, index, dir)) return
   if (!props.canWrite) {
-    if (iface.connection && isBetween(iface.connection)) {
-      const cable = cableById(iface.connection.id)
-      if (cable) selectCable(cable)
-    }
+    if (iface.connection) follow(index, iface)
     return
   }
-  if (iface.connection && !isBetween(iface.connection)) return
+  if (iface.connection && !isAdjacentCable(iface, index)) {
+    follow(index, iface)
+    return
+  }
+  if (iface.connection && cableSide(iface, index) !== dir) return
   e.preventDefault()
   drag.value = {
     fromId: iface.id,
-    fromSide: side,
+    fromIndex: index,
+    fromDir: dir,
     x: e.clientX,
     y: e.clientY,
     originX: e.clientX,
     originY: e.clientY,
     moved: false,
-    reconnectId: isBetween(iface.connection) ? iface.connection.id : null,
+    reconnectId: cableSide(iface, index) === dir ? iface.connection.id : null,
   }
   lastPointer = { x: e.clientX, y: e.clientY }
   window.addEventListener('pointermove', onPointerMove)
@@ -341,21 +449,21 @@ function startDrag(e, iface, side) {
   }
 }
 
-function togglePending(ifaceId, side) {
+function togglePending(ifaceId, index, dir) {
   if (!props.canWrite) return
   if (!pending.value) {
-    pending.value = { id: ifaceId, side }
+    pending.value = { fromId: ifaceId, fromIndex: index, fromDir: dir, reconnectId: null }
     return
   }
-  if (pending.value.id === ifaceId) {
+  if (pending.value.fromId === ifaceId && pending.value.fromIndex === index) {
     pending.value = null
     return
   }
-  if (pending.value.side === side) {
-    pending.value = { id: ifaceId, side }
+  if (targetIndex(pending.value.fromIndex, pending.value.fromDir) !== index) {
+    pending.value = { fromId: ifaceId, fromIndex: index, fromDir: dir, reconnectId: null }
     return
   }
-  const fromId = pending.value.id
+  const fromId = pending.value.fromId
   pending.value = null
   connectPorts(fromId, ifaceId, null)
 }
@@ -372,7 +480,7 @@ function connectPorts(fromId, toId, reconnectId) {
 }
 
 function labelFor(id) {
-  return cables.value.find((c) => c.id === id)?.label || ''
+  return findCable(id)?.label || ''
 }
 
 function selectCable(c) {
@@ -421,34 +529,23 @@ function removeSelected() {
   removeCable(selected.value)
 }
 
-function removeCableAt(iface) {
-  if (!iface?.connection || !isBetween(iface.connection)) return
-  const cable = cableById(iface.connection.id)
+function removeCableAt(index, iface) {
+  if (!iface?.connection || !isAdjacentCable(iface, index)) return
+  const cable = findCable(iface.connection.id)
   if (cable) removeCable(cable)
 }
 
-const ifaceItemsA = computed(() =>
-  sortedIfaces(deviceA.value?.interfaces).map((i) => ({
+function ifaceItems(deviceId) {
+  const dev = byId.value[deviceId]
+  return sortedIfaces(dev?.interfaces).map((i) => ({
     label: i.description ? `${i.name} — ${i.description}` : i.name,
     value: i.id,
-  })),
-)
-const ifaceItemsB = computed(() =>
-  sortedIfaces(deviceB.value?.interfaces).map((i) => ({
-    label: i.description ? `${i.name} — ${i.description}` : i.name,
-    value: i.id,
-  })),
-)
+  }))
+}
 
 const selectedWritable = computed(() => !!selected.value && props.canWrite)
 
-function peerNote(iface) {
-  if (!iface.connection || isBetween(iface.connection)) return ''
-  return `${iface.connection.peer_device_name} ${iface.connection.peer_interface_name}`
-}
-
 onMounted(() => {
-  loadTypes()
   load()
   window.addEventListener('resize', measure)
 })
@@ -459,59 +556,95 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [props.deviceAId, props.deviceBId],
+  () => props.deviceIds.join(','),
   () => load(),
 )
 
-watch(portsA, () => nextTick(measure))
-watch(portsB, () => nextTick(measure))
+watch(drawnCables, () => nextTick(measure))
 </script>
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col gap-3">
-    <p class="text-muted text-sm shrink-0">
-      Drag between the port circles to create a cable, or click one port then the other. The list
-      scrolls when you drag near the edge. Click a cable or a connected port to change it, or use
-      the trash control to remove it. Cables between NetBox interfaces are also stored in NetBox.
-    </p>
+    <div class="flex flex-wrap items-center gap-3 shrink-0">
+      <p class="text-muted text-sm m-0">
+        Physical interfaces only. Point at a port circle to see where it connects, and click a
+        connected circle to open that device in the next column. Drag between circles on
+        neighbouring devices to create a cable, or click one free port then the other. Click a
+        cable line to change it, or use the trash control to remove it.
+      </p>
+      <UButton
+        label="Add device"
+        icon="i-lucide-plus"
+        size="sm"
+        color="neutral"
+        variant="outline"
+        class="ml-auto shrink-0"
+        @click="addColumn"
+      />
+    </div>
     <div v-if="error" class="text-error text-sm">{{ error }}</div>
-    <div v-if="loading && deviceAId && deviceBId" class="text-muted text-sm">Loading…</div>
     <div
-      v-if="deviceA && deviceB"
       ref="scroller"
       data-pair-scroller
-      class="min-h-0 flex-1 overflow-auto rounded border border-default"
+      class="flex min-h-0 flex-1 gap-3 overflow-auto"
       :class="drag ? 'select-none cursor-grabbing' : ''"
       @scroll="onStageScroll"
     >
-      <div ref="stage" class="relative grid min-h-full grid-cols-2 gap-24 p-3">
-        <div class="min-w-0">
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <div class="min-w-0">
-              <div class="truncate font-medium">{{ deviceA.name }}</div>
-              <div class="truncate text-xs text-muted">{{ deviceA.site }}</div>
-            </div>
-            <UInput v-model="filterA" placeholder="Filter ports" size="sm" class="w-36" />
+      <div ref="stage" class="relative flex min-h-full w-max items-start gap-8 p-2">
+        <div
+          v-for="(deviceId, index) in columns"
+          :key="index"
+          class="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-default bg-default p-1.5"
+        >
+          <div class="flex items-center gap-0.5">
+            <USelectMenu
+              :model-value="deviceId || undefined"
+              :items="deviceItems"
+              value-key="id"
+              label-key="name"
+              placeholder="Device…"
+              size="sm"
+              class="min-w-0 flex-1"
+              @update:model-value="(v) => setDevice(index, deviceIdFromPicker(v))"
+            />
+            <UButton
+              v-if="columns.length > 1"
+              icon="i-lucide-x"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              title="Remove column"
+              @click="removeColumn(index)"
+            />
           </div>
-          <div class="flex flex-col gap-1">
+          <div v-if="loading && deviceId && !deviceAt(index)" class="text-xs text-muted">Loading…</div>
+          <div v-else-if="deviceAt(index)" class="flex flex-col">
             <div
-              v-for="iface in portsA"
-              :key="'a-' + iface.id"
-              class="flex items-center gap-2 rounded px-1 py-1"
-              :class="pending?.id === iface.id ? 'bg-primary/10' : 'hover:bg-elevated/50'"
+              v-for="iface in portsAt(index)"
+              :key="iface.id"
+              class="flex items-center gap-1 rounded px-0.5 py-0.5"
+              :class="
+                pending?.fromId === iface.id && pending?.fromIndex === index
+                  ? 'bg-primary/10'
+                  : 'hover:bg-elevated/60'
+              "
             >
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-sm">{{ iface.name }}</span>
-                  <span class="truncate text-[11px] text-muted">{{ typeLabel(iface.type) }}</span>
-                </div>
-                <div class="truncate text-xs text-muted">
-                  {{ iface.description || 'No description' }}
-                  <span v-if="peerNote(iface)" class="ml-1">· {{ peerNote(iface) }}</span>
-                </div>
-              </div>
+              <button
+                v-if="showHandle(iface, index, 'left')"
+                type="button"
+                :class="handleClass(iface, index, 'left')"
+                :data-port-handle="true"
+                :data-port-key="portKey(index, iface.id, 'left')"
+                :data-iface-id="iface.id"
+                :data-col="index"
+                data-dir="left"
+                @pointerenter="showRingTip($event, iface)"
+                @pointermove="showRingTip($event, iface)"
+                @pointerleave="ringTip = null"
+                @pointerdown="startDrag($event, iface, index, 'left')"
+              />
               <UButton
-                v-if="canWrite && iface.connection && isBetween(iface.connection)"
+                v-if="canWrite && iface.connection && cableSide(iface, index) === 'left'"
                 icon="i-lucide-trash"
                 variant="ghost"
                 color="error"
@@ -519,55 +652,16 @@ watch(portsB, () => nextTick(measure))
                 :loading="saving"
                 title="Remove cable"
                 @pointerdown.stop
-                @click.stop="removeCableAt(iface)"
+                @click.stop="removeCableAt(index, iface)"
               />
-              <button
-                type="button"
-                :class="handleClass(iface, 'a')"
-                :data-port-handle="true"
-                :data-iface-id="iface.id"
-                data-side="a"
-                :title="
-                  iface.connection && isBetween(iface.connection)
-                    ? 'Connected — drag to reconnect or click to edit'
-                    : 'Drag to a circle on the other device'
-                "
-                @pointerdown="startDrag($event, iface, 'a')"
-              />
-            </div>
-            <div v-if="!portsA.length" class="text-sm text-muted">No interfaces.</div>
-          </div>
-        </div>
-        <div class="min-w-0">
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <UInput v-model="filterB" placeholder="Filter ports" size="sm" class="w-36" />
-            <div class="min-w-0 text-right">
-              <div class="truncate font-medium">{{ deviceB.name }}</div>
-              <div class="truncate text-xs text-muted">{{ deviceB.site }}</div>
-            </div>
-          </div>
-          <div class="flex flex-col gap-1">
-            <div
-              v-for="iface in portsB"
-              :key="'b-' + iface.id"
-              class="flex items-center gap-2 rounded px-1 py-1"
-              :class="pending?.id === iface.id ? 'bg-primary/10' : 'hover:bg-elevated/50'"
-            >
-              <button
-                type="button"
-                :class="handleClass(iface, 'b')"
-                :data-port-handle="true"
-                :data-iface-id="iface.id"
-                data-side="b"
-                :title="
-                  iface.connection && isBetween(iface.connection)
-                    ? 'Connected — drag to reconnect or click to edit'
-                    : 'Drag to a circle on the other device'
-                "
-                @pointerdown="startDrag($event, iface, 'b')"
-              />
+              <div class="min-w-0 flex-1 leading-tight">
+                <div class="truncate font-mono text-xs">{{ iface.name }}</div>
+                <div v-if="iface.description" class="truncate text-[10px] text-muted">
+                  {{ iface.description }}
+                </div>
+              </div>
               <UButton
-                v-if="canWrite && iface.connection && isBetween(iface.connection)"
+                v-if="canWrite && iface.connection && cableSide(iface, index) === 'right'"
                 icon="i-lucide-trash"
                 variant="ghost"
                 color="error"
@@ -575,26 +669,31 @@ watch(portsB, () => nextTick(measure))
                 :loading="saving"
                 title="Remove cable"
                 @pointerdown.stop
-                @click.stop="removeCableAt(iface)"
+                @click.stop="removeCableAt(index, iface)"
               />
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-sm">{{ iface.name }}</span>
-                  <span class="truncate text-[11px] text-muted">{{ typeLabel(iface.type) }}</span>
-                </div>
-                <div class="truncate text-xs text-muted">
-                  {{ iface.description || 'No description' }}
-                  <span v-if="peerNote(iface)" class="ml-1">· {{ peerNote(iface) }}</span>
-                </div>
-              </div>
+              <button
+                v-if="showHandle(iface, index, 'right')"
+                type="button"
+                :class="handleClass(iface, index, 'right')"
+                :data-port-handle="true"
+                :data-port-key="portKey(index, iface.id, 'right')"
+                :data-iface-id="iface.id"
+                :data-col="index"
+                data-dir="right"
+                @pointerenter="showRingTip($event, iface)"
+                @pointermove="showRingTip($event, iface)"
+                @pointerleave="ringTip = null"
+                @pointerdown="startDrag($event, iface, index, 'right')"
+              />
             </div>
-            <div v-if="!portsB.length" class="text-sm text-muted">No interfaces.</div>
+            <div v-if="!portsAt(index).length" class="text-xs text-muted">No physical interfaces.</div>
           </div>
+          <div v-else-if="!deviceId" class="text-xs text-muted">Select a device.</div>
         </div>
         <svg class="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible">
           <path
-            v-for="c in cables"
-            :key="'hit-' + c.id"
+            v-for="c in drawnCables"
+            :key="'hit-' + c.id + '-' + c.leftIndex"
             :d="cablePath(c)"
             fill="none"
             stroke="transparent"
@@ -604,8 +703,8 @@ watch(portsB, () => nextTick(measure))
             @pointerdown.stop="selectCable(c)"
           />
           <path
-            v-for="c in cables"
-            :key="c.id"
+            v-for="c in drawnCables"
+            :key="c.id + '-' + c.leftIndex"
             :d="cablePath(c)"
             fill="none"
             :stroke="
@@ -629,8 +728,13 @@ watch(portsB, () => nextTick(measure))
         </svg>
       </div>
     </div>
-    <div v-else-if="!deviceAId || !deviceBId" class="text-muted text-sm">
-      Select two devices to list their interfaces.
+
+    <div
+      v-if="ringTip"
+      class="pointer-events-none fixed z-50 max-w-64 rounded-md border border-default bg-default px-2 py-1 text-xs shadow-lg"
+      :style="{ left: `${ringTip.x}px`, top: `${ringTip.y}px` }"
+    >
+      {{ ringTip.text }}
     </div>
 
     <UModal
@@ -652,19 +756,19 @@ watch(portsB, () => nextTick(measure))
             <UFormField label="Label">
               <UInput v-model="editLabel" class="w-full" data-cable-label />
             </UFormField>
-            <UFormField :label="deviceA?.name || 'Device A'">
+            <UFormField :label="selected.device_a_name || 'Device A'">
               <USelectMenu
                 v-model="editA"
-                :items="ifaceItemsA"
+                :items="ifaceItems(selected.device_a_id)"
                 value-key="value"
                 label-key="label"
                 class="w-full"
               />
             </UFormField>
-            <UFormField :label="deviceB?.name || 'Device B'">
+            <UFormField :label="selected.device_b_name || 'Device B'">
               <USelectMenu
                 v-model="editB"
-                :items="ifaceItemsB"
+                :items="ifaceItems(selected.device_b_id)"
                 value-key="value"
                 label-key="label"
                 class="w-full"

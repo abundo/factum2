@@ -48,8 +48,20 @@ function defaultView() {
 }
 
 const view = ref(defaultView())
-const deviceAId = ref(route.query.a ? Number(route.query.a) : undefined)
-const deviceBId = ref(route.query.b ? Number(route.query.b) : undefined)
+
+function readDeviceIds() {
+  const raw = route.query.devices
+  if (typeof raw === 'string') {
+    const ids = raw.split(',').map((part) => (part ? Number(part) : 0))
+    if (ids.length) return ids
+  }
+  const ids = []
+  if (route.query.a) ids.push(Number(route.query.a))
+  if (route.query.b) ids.push(Number(route.query.b))
+  return ids.length ? ids : [0]
+}
+
+const deviceIds = ref(readDeviceIds())
 
 const viewItems = [
   { label: 'Between devices', value: 'pair' },
@@ -164,39 +176,27 @@ function onEdgeClick({ edge }) {
   selectedEdge.value = edge?.data || null
 }
 
+function pairQuery(query) {
+  const ids = deviceIds.value
+  const next = { ...query, view: 'pair' }
+  if (ids.some((id) => id)) next.devices = ids.map((id) => (id ? String(id) : '')).join(',')
+  else delete next.devices
+  if (ids[0]) next.a = String(ids[0])
+  else delete next.a
+  if (ids[1]) next.b = String(ids[1])
+  else delete next.b
+  return next
+}
+
 function setView(next) {
   view.value = next
-  const query = { ...route.query, view: next }
-  if (next === 'pair') {
-    if (deviceAId.value) query.a = String(deviceAId.value)
-    else delete query.a
-    if (deviceBId.value) query.b = String(deviceBId.value)
-    else delete query.b
-  }
+  const query = next === 'pair' ? pairQuery(route.query) : { ...route.query, view: next }
   router.replace({ query })
 }
 
-function deviceIdFromPicker(v) {
-  if (v == null) return undefined
-  if (typeof v === 'object') return v.id || undefined
-  return v || undefined
-}
-
-function onDeviceA(id) {
-  deviceAId.value = deviceIdFromPicker(id)
-  setView('pair')
-}
-
-function onDeviceB(id) {
-  deviceBId.value = deviceIdFromPicker(id)
-  setView('pair')
-}
-
-function swapDevices() {
-  const a = deviceAId.value
-  deviceAId.value = deviceBId.value
-  deviceBId.value = a
-  setView('pair')
+function onDeviceIds(ids) {
+  deviceIds.value = ids.length ? ids : [0]
+  if (view.value === 'pair') router.replace({ query: pairQuery(route.query) })
 }
 
 onMounted(() => {
@@ -243,42 +243,11 @@ watch(
     </div>
 
     <div v-if="view === 'pair'" class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div class="flex flex-wrap items-end gap-3 shrink-0">
-        <UFormField label="Device A">
-          <USelectMenu
-            :model-value="deviceAId"
-            :items="deviceItems"
-            value-key="id"
-            label-key="name"
-            placeholder="Search device…"
-            class="w-72"
-            @update:model-value="onDeviceA"
-          />
-        </UFormField>
-        <UButton
-          icon="i-lucide-arrow-left-right"
-          size="sm"
-          color="neutral"
-          variant="outline"
-          :disabled="!deviceAId && !deviceBId"
-          @click="swapDevices"
-        />
-        <UFormField label="Device B">
-          <USelectMenu
-            :model-value="deviceBId"
-            :items="deviceItems"
-            value-key="id"
-            label-key="name"
-            placeholder="Search device…"
-            class="w-72"
-            @update:model-value="onDeviceB"
-          />
-        </UFormField>
-      </div>
       <DevicePairCables
-        :device-a-id="deviceAId || 0"
-        :device-b-id="deviceBId || 0"
+        :device-ids="deviceIds"
+        :device-items="deviceItems"
         :can-write="canWrite"
+        @update:device-ids="onDeviceIds"
       />
     </div>
 

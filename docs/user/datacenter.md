@@ -41,16 +41,19 @@ From a rack on the plan, open its elevation.
 interface-to-interface cables**. It is not end-to-end tracing through
 patch panels, power, or services.
 
-**Between devices** is the editor: pick two devices in the search boxes,
-then every interface (name, type, description) is listed on each side.
-Cables between those devices are drawn as lines. Drag from a port circle on
-one device to a port on the other to create a cable, or click one port
-then the other. The list scrolls if you drag near the top or bottom.
-Click a cable or a connected port to change the label or endpoints, or
-use the trash control to remove the cable. If both ports already exist in NetBox, Factum
-creates (and later changes or removes) the cable there too. Factum-only
-devices keep the cable local. A port that is already cabled to a third
-device is shown, but you cannot attach a second cable to it.
+**Between devices** is the editor. It opens on one device column and lists
+that device's physical interfaces (virtual ports and LAGs are hidden).
+**Add device** appends another column. Each device sits in its own box.
+Cables between neighbouring columns are drawn as lines. Point at a port
+circle to see the device and interface it connects to. Click a circle that
+already has a cable to open that device in the next column. Drag from a
+free port circle to a port on the neighbouring device to create a cable, or
+click one free port then the other. The list scrolls if you drag near the
+top or bottom. Click a cable line to change the label or endpoints, or use
+the trash control to remove the cable. If both ports already exist in
+NetBox, Factum creates (and later changes or removes) the cable there too.
+Factum-only devices keep the cable local. A port that is already cabled
+cannot take a second cable.
 
 **Graph** is the neighbourhood map. Filter by site or rack. Cables that
 leave the selected scope appear as labelled stubs. Rearranging nodes only
