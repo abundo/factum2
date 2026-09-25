@@ -317,14 +317,18 @@ determine group credentials`) and takes **hub command dispatch** down —
 
 `POST /api/netbox-webhook` lets NetBox push change events instead of waiting
 for `factum2-netbox sync`'s full polling sync. On a Device, Interface or IP
-Address create/update (or an Interface/IP delete) it resyncs just that one
-device (interfaces, addresses and tags included). Successive webhooks for
-the same device are coalesced: the sync waits until no further webhook has
-arrived for that device for 3 seconds, so a burst of interface/IP events
-produces one NetBox fetch rather than one per event. On a Device deletion it
-removes the matching netbox-sourced factum row by the payload's id —
-NetBox has already deleted the object, so it cannot be re-fetched. Cable
-and site create/update re-fetch that one object and upsert the local
+Address create/update (or an Interface/IP delete) it resyncs that device
+(interfaces, addresses and tags included). Those events share one quiet
+period: nothing is fetched until 3 seconds pass with no further Device,
+Interface, or IP webhook, then each changed device is synced one at a time.
+A burst that queues at least 10 devices and at least 20% of the NetBox
+devices already stored in factum runs one full sync instead. Each
+single-device sync re-reads every IP address, so a wide burst is cheaper
+as one inventory pass; the floor of 10 keeps a small lab on the per-device
+path. On a Device deletion it removes the matching netbox-sourced factum
+row by the payload's id — NetBox has already deleted the object, so it
+cannot be re-fetched — and drops that device from the quiet-period queue.
+Cable and site create/update re-fetch that one object and upsert the local
 Connection/Site row; their deletions remove the row by the payload's id
 the same way. Tenant and contact events are ignored — customer→tenant
 and contact→contact sync are factum→NetBox.

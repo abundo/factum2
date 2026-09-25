@@ -6,9 +6,11 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -19,26 +21,62 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// netboxWebhookDebounce is how long a device must go without another
-// Device / Interface / IP webhook before the queued single-device SyncDB
-// runs. NetBox typically fires a burst of those events for one edit.
+// netboxWebhookDebounce is how long Device / Interface / IP webhooks must
+// stay quiet before any queued device sync starts. The wait is shared
+// across devices: a burst resets one timer, and the syncs run only after
+// that timer fires.
 const netboxWebhookDebounce = 3 * time.Second
 
-// netboxSyncDB is the single-device sync the webhook debounce calls. Tests
-// replace it so they can assert GUI log lines without a live NetBox.
+// A full SyncDB reads NetBox once. Each single-device sync repeats the
+// full IP-address walk (fetchAddressDNSNames) plus a per-device fetch, so
+// a wide burst is cheaper as one inventory pass. The switch happens when
+// the queue is at least netboxWebhookFullSyncMin devices and at least
+// netboxWebhookFullSyncPercent of the NetBox devices already stored in
+// factum. The floor keeps a small lab on the per-device path: one edit
+// out of four is 25%, and a full sync also pulls cables, sites, racks,
+// VRFs, customers, and L2VPNs.
+const (
+	netboxWebhookFullSyncPercent = 20
+	netboxWebhookFullSyncMin     = 10
+)
+
+// netboxSyncDB is the sync the webhook debounce calls. Tests replace it
+// so they can assert GUI log lines without a live NetBox. An empty name
+// is a full sync.
 var netboxSyncDB = netbox.SyncDB
 
-// netboxWebhookDebouncer delays a callback until no further schedule()
-// for the same key has arrived for delay. Keys are independent so two
-// devices can be waiting at once. Zero delay uses netboxWebhookDebounce.
-type netboxWebhookDebouncer struct {
-	delay   time.Duration
-	mu      sync.Mutex
-	pending map[string]*netboxWebhookDebounceWait
+// netboxWebhookPreferFullSync reports whether pending device names should
+// be applied with one full SyncDB. known is the number of NetBox-sourced
+// devices already in factum; zero means the queued names are not in the
+// local inventory yet, so a large enough batch is still one full sync.
+func netboxWebhookPreferFullSync(pending, known int) bool {
+	if pending < netboxWebhookFullSyncMin {
+		return false
+	}
+	if known <= 0 {
+		return true
+	}
+	return int64(pending)*100 >= int64(known)*int64(netboxWebhookFullSyncPercent)
 }
 
-type netboxWebhookDebounceWait struct {
-	timer *time.Timer
+// netboxWebhookDebouncer collects device names and runs them once, after
+// delay with no further schedule(). Devices that arrive while a batch is
+// running join the next quiet window and do not start a second sync.
+// Zero delay uses netboxWebhookDebounce.
+type netboxWebhookDebouncer struct {
+	delay time.Duration
+	mu    sync.Mutex
+	// pending is the set of device names waiting for the quiet window.
+	pending map[string]struct{}
+	timer   *time.Timer
+	// generation invalidates a timer callback after the timer is reset.
+	generation uint64
+	// draining is true while run is executing a batch.
+	draining bool
+	// due is set when the quiet window elapses during a batch. That batch
+	// finishes first; the next one starts only if due is still set.
+	due bool
+	run func([]string)
 }
 
 func (d *netboxWebhookDebouncer) wait() time.Duration {
@@ -48,32 +86,88 @@ func (d *netboxWebhookDebouncer) wait() time.Duration {
 	return d.delay
 }
 
-// schedule arms or resets the quiet timer for deviceName. It returns true
-// if a wait was already in progress (this event only postponed the sync).
-func (d *netboxWebhookDebouncer) schedule(deviceName string, run func()) bool {
+// schedule adds deviceName to the shared quiet window and resets the
+// timer. fresh is true when deviceName was not already waiting. run
+// receives every device still waiting, sorted, and is not called
+// concurrently with itself.
+func (d *netboxWebhookDebouncer) schedule(deviceName string, run func([]string)) (fresh bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.pending == nil {
-		d.pending = make(map[string]*netboxWebhookDebounceWait)
+		d.pending = make(map[string]struct{})
 	}
-	delay := d.wait()
 	_, existed := d.pending[deviceName]
-	if existed {
-		d.pending[deviceName].timer.Stop()
+	d.pending[deviceName] = struct{}{}
+	d.run = run
+	d.armLocked()
+	return !existed
+}
+
+// armLocked resets the quiet timer. Caller holds d.mu.
+func (d *netboxWebhookDebouncer) armLocked() {
+	d.due = false
+	d.generation++
+	gen := d.generation
+	if d.timer != nil {
+		d.timer.Stop()
 	}
-	e := &netboxWebhookDebounceWait{}
-	e.timer = time.AfterFunc(delay, func() {
-		d.mu.Lock()
-		if d.pending[deviceName] != e {
+	d.timer = time.AfterFunc(d.wait(), func() {
+		d.onQuiet(gen)
+	})
+}
+
+func (d *netboxWebhookDebouncer) onQuiet(gen uint64) {
+	d.mu.Lock()
+	if gen != d.generation {
+		d.mu.Unlock()
+		return
+	}
+	d.timer = nil
+	if d.draining {
+		d.due = true
+		d.mu.Unlock()
+		return
+	}
+	d.drainLocked()
+}
+
+// drainLocked runs batches until a quiet window is no longer due.
+// Caller holds d.mu. It releases the lock before returning.
+func (d *netboxWebhookDebouncer) drainLocked() {
+	for {
+		names := d.takeLocked()
+		if len(names) == 0 {
+			d.due = false
 			d.mu.Unlock()
 			return
 		}
-		delete(d.pending, deviceName)
+		run := d.run
+		d.draining = true
+		d.due = false
 		d.mu.Unlock()
-		run()
-	})
-	d.pending[deviceName] = e
-	return existed
+		if run != nil {
+			run(names)
+		}
+		d.mu.Lock()
+		d.draining = false
+		if !d.due {
+			d.mu.Unlock()
+			return
+		}
+	}
+}
+
+func (d *netboxWebhookDebouncer) takeLocked() []string {
+	if len(d.pending) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(d.pending))
+	for name := range d.pending {
+		names = append(names, name)
+	}
+	d.pending = nil
+	sort.Strings(names)
+	return names
 }
 
 func (d *netboxWebhookDebouncer) cancel(deviceName string) {
@@ -82,19 +176,30 @@ func (d *netboxWebhookDebouncer) cancel(deviceName string) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if e, ok := d.pending[deviceName]; ok {
-		e.timer.Stop()
-		delete(d.pending, deviceName)
+	if _, ok := d.pending[deviceName]; !ok {
+		return
+	}
+	delete(d.pending, deviceName)
+	if len(d.pending) == 0 {
+		if d.timer != nil {
+			d.timer.Stop()
+			d.timer = nil
+		}
+		d.generation++
+		d.due = false
 	}
 }
 
 func (d *netboxWebhookDebouncer) stopAll() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for name, e := range d.pending {
-		e.timer.Stop()
-		delete(d.pending, name)
+	if d.timer != nil {
+		d.timer.Stop()
+		d.timer = nil
 	}
+	d.pending = nil
+	d.due = false
+	d.generation++
 }
 
 // NetboxConfigResponse is what internal/netbox's FetchRemoteConfig parses -
@@ -137,10 +242,13 @@ type NetboxWebhookPayload struct {
 
 // ApiNetboxWebhook receives change-event webhooks from Netbox.
 //
-// Device / interface / IP: create/update (and interface/IP delete) re-fetches
-// the named device and upserts it. Device delete removes the matching
+// Device / interface / IP: create/update (and interface/IP delete) queue
+// the named device. After a shared quiet period the queued devices sync
+// one at a time, or as one full sync when the burst is a large share of
+// the stored NetBox inventory. Device delete removes the matching
 // netbox-sourced factum row by the payload's id — GetDevice would return
-// nil once Netbox has already removed the object.
+// nil once Netbox has already removed the object — and drops that name
+// from the queue.
 //
 // Cable / site / region / location: create/update re-fetches that one
 // object and upserts the Connection or hierarchical Site row; delete
@@ -212,25 +320,52 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 	}
 
 	// Netbox's webhook delivery only waits on the HTTP response, not on the
-	// sync itself. A single Netbox edit often posts several Device /
-	// Interface / IP events for the same device; wait until that device has
-	// been quiet for netboxWebhookDebounce, then SyncDB once.
-	objectType := payload.ObjectType
-	alreadyQueued := ctrl.netboxDeviceSyncDebounce.schedule(deviceName, func() {
-		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
-		if err := netboxSyncDB(ctrl.DB, deviceName, reporter); err != nil {
-			slog.Error("netbox webhook sync", "device", deviceName, "object_type", objectType, "err", err)
-		}
-	})
-	if !alreadyQueued {
-		// One line at the start of a burst so the GUI log window shows
-		// activity immediately; further events for this device only reset
-		// the timer. webhookReporter emits started + summary when SyncDB
-		// actually runs after the quiet period.
+	// sync itself. Device, interface, and IP events share one quiet window:
+	// after netboxWebhookDebounce with no further event, the queued devices
+	// sync one at a time (or as one full sync when the burst is wide).
+	fresh := ctrl.netboxDeviceSyncDebounce.schedule(deviceName, ctrl.netboxWebhookSyncQueued)
+	if fresh {
+		// One line the first time a device joins the current window, so
+		// the GUI log shows activity immediately. Further events for a
+		// device already waiting only reset the shared timer.
 		slog.Info("Netbox webhook sync: device "+deviceName+" queued", "source", "netbox", "device", deviceName)
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "device": deviceName})
+}
+
+// netboxWebhookSyncQueued applies a quiet-window snapshot. A wide burst
+// becomes one full SyncDB; otherwise each device syncs in order, and a
+// failure on one device does not skip the rest.
+func (ctrl *Controller) netboxWebhookSyncQueued(names []string) {
+	if len(names) == 0 {
+		return
+	}
+	var known int64
+	full := false
+	if err := ctrl.DB.Model(&models.Device{}).Where("cf_source = ?", "netbox").Count(&known).Error; err != nil {
+		slog.Error("netbox webhook sync", "err", err)
+	} else {
+		full = netboxWebhookPreferFullSync(len(names), int(known))
+	}
+	if full {
+		slog.Info(fmt.Sprintf("Netbox webhook sync: %d devices changed, running full sync", len(names)),
+			"source", "netbox", "devices", len(names), "known", known)
+		if err := netboxSyncDB(ctrl.DB, "", jobevent.NewSlogReporter("source", "netbox")); err != nil {
+			slog.Error("netbox webhook sync", "err", err)
+		}
+		return
+	}
+	if len(names) > 1 {
+		slog.Info(fmt.Sprintf("Netbox webhook sync: %d devices, one at a time", len(names)),
+			"source", "netbox", "devices", len(names))
+	}
+	for _, deviceName := range names {
+		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
+		if err := netboxSyncDB(ctrl.DB, deviceName, reporter); err != nil {
+			slog.Error("netbox webhook sync", "device", deviceName, "err", err)
+		}
+	}
 }
 
 // netboxWebhookDeleteDevice applies a dcim.device "deleted" event: Netbox

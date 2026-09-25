@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -410,41 +411,172 @@ func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
 	t.Fatalf("missing GUI logs: started=%v summary=%v", started, summary)
 }
 
-func TestNetboxWebhookDebouncer_CoalescesPerDevice(t *testing.T) {
+func TestNetboxWebhookDebouncer_CoalescesAcrossDevices(t *testing.T) {
 	d := netboxWebhookDebouncer{delay: 40 * time.Millisecond}
 	t.Cleanup(d.stopAll)
 
-	var a, b atomic.Int32
-	d.schedule("sw1", func() { a.Add(1) })
-	d.schedule("sw1", func() { a.Add(1) })
-	d.schedule("sw2", func() { b.Add(1) })
+	var mu sync.Mutex
+	var batches [][]string
+	run := func(names []string) {
+		mu.Lock()
+		batches = append(batches, append([]string(nil), names...))
+		mu.Unlock()
+	}
+	if fresh := d.schedule("sw1", run); !fresh {
+		t.Fatal("first sw1 event should be fresh")
+	}
+	if fresh := d.schedule("sw1", run); fresh {
+		t.Fatal("second sw1 event should only reset the shared timer")
+	}
+	if fresh := d.schedule("sw2", run); !fresh {
+		t.Fatal("sw2 should be fresh")
+	}
 	time.Sleep(20 * time.Millisecond)
-	d.schedule("sw1", func() { a.Add(1) })
+	d.schedule("sw1", run) // resets the window for sw2 as well
+	time.Sleep(20 * time.Millisecond)
+
+	mu.Lock()
+	early := len(batches)
+	mu.Unlock()
+	if early != 0 {
+		t.Fatalf("fired %d batches before the shared quiet period", early)
+	}
 
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if a.Load() == 1 && b.Load() == 1 {
-			time.Sleep(60 * time.Millisecond)
-			if a.Load() != 1 || b.Load() != 1 {
-				t.Fatalf("extra fires: sw1=%d sw2=%d", a.Load(), b.Load())
-			}
-			return
+		mu.Lock()
+		n := len(batches)
+		mu.Unlock()
+		if n >= 1 {
+			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("timed out: sw1=%d sw2=%d, want 1 each", a.Load(), b.Load())
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(batches) != 1 {
+		t.Fatalf("batches = %v, want 1", batches)
+	}
+	if len(batches[0]) != 2 || batches[0][0] != "sw1" || batches[0][1] != "sw2" {
+		t.Fatalf("names = %v, want [sw1 sw2]", batches[0])
+	}
+}
+
+func TestNetboxWebhookDebouncer_SecondBurstDoesNotOverlap(t *testing.T) {
+	d := netboxWebhookDebouncer{delay: 30 * time.Millisecond}
+	t.Cleanup(d.stopAll)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var batches [][]string
+	var overlap atomic.Bool
+	var inFlight atomic.Int32
+	run := func(names []string) {
+		if inFlight.Add(1) != 1 {
+			overlap.Store(true)
+		}
+		defer inFlight.Add(-1)
+		mu.Lock()
+		batches = append(batches, append([]string(nil), names...))
+		n := len(batches)
+		mu.Unlock()
+		if n == 1 {
+			close(started)
+			<-release
+		}
+	}
+	d.schedule("sw1", run)
+	select {
+	case <-started:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("first batch did not start")
+	}
+	d.schedule("sw2", run)
+	time.Sleep(10 * time.Millisecond)
+	mu.Lock()
+	if len(batches) != 1 {
+		t.Fatalf("second device started during the first batch: %v", batches)
+	}
+	mu.Unlock()
+	close(release)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(batches)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if overlap.Load() {
+		t.Fatal("batches overlapped")
+	}
+	if len(batches) != 2 || len(batches[0]) != 1 || batches[0][0] != "sw1" || len(batches[1]) != 1 || batches[1][0] != "sw2" {
+		t.Fatalf("batches = %v, want [sw1] then [sw2]", batches)
+	}
 }
 
 func TestNetboxWebhookDebouncer_Cancel(t *testing.T) {
 	d := netboxWebhookDebouncer{delay: 30 * time.Millisecond}
 	t.Cleanup(d.stopAll)
 
+	var mu sync.Mutex
+	var batches [][]string
+	run := func(names []string) {
+		mu.Lock()
+		batches = append(batches, append([]string(nil), names...))
+		mu.Unlock()
+	}
+	d.schedule("sw1", run)
+	d.schedule("sw2", run)
+	d.cancel("sw1")
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(batches) != 1 || len(batches[0]) != 1 || batches[0][0] != "sw2" {
+		t.Fatalf("batches = %v, want [sw2]", batches)
+	}
+}
+
+func TestNetboxWebhookDebouncer_CancelLastStopsTimer(t *testing.T) {
+	d := netboxWebhookDebouncer{delay: 30 * time.Millisecond}
+	t.Cleanup(d.stopAll)
+
 	var fired atomic.Int32
-	d.schedule("sw1", func() { fired.Add(1) })
+	d.schedule("sw1", func([]string) { fired.Add(1) })
 	d.cancel("sw1")
 	time.Sleep(80 * time.Millisecond)
 	if got := fired.Load(); got != 0 {
 		t.Fatalf("fired %d times after cancel, want 0", got)
+	}
+}
+
+func TestNetboxWebhookPreferFullSync(t *testing.T) {
+	cases := []struct {
+		pending, known int
+		full           bool
+	}{
+		{pending: 9, known: 9, full: false},      // under the floor
+		{pending: 2, known: 4, full: false},      // 50% of a small lab
+		{pending: 10, known: 50, full: true},     // exactly 20%
+		{pending: 10, known: 51, full: false},    // just under 20%
+		{pending: 10, known: 0, full: true},      // nothing stored yet
+		{pending: 9, known: 0, full: false},      // under the floor
+		{pending: 30, known: 100, full: true},    // 30%
+		{pending: 100, known: 1000, full: false}, // 10%
+	}
+	for _, tc := range cases {
+		got := netboxWebhookPreferFullSync(tc.pending, tc.known)
+		if got != tc.full {
+			t.Errorf("preferFull(%d, %d) = %v, want %v", tc.pending, tc.known, got, tc.full)
+		}
 	}
 }
 
@@ -481,9 +613,10 @@ func TestApiNetboxWebhook_QueuesPerDevice(t *testing.T) {
 	n := len(ctrl.netboxDeviceSyncDebounce.pending)
 	_, sw1 := ctrl.netboxDeviceSyncDebounce.pending["sw1"]
 	_, sw2 := ctrl.netboxDeviceSyncDebounce.pending["sw2"]
+	timer := ctrl.netboxDeviceSyncDebounce.timer != nil
 	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
-	if n != 2 || !sw1 || !sw2 {
-		t.Fatalf("pending=%d sw1=%v sw2=%v, want one timer each", n, sw1, sw2)
+	if n != 2 || !sw1 || !sw2 || !timer {
+		t.Fatalf("pending=%d sw1=%v sw2=%v timer=%v, want both names on one timer", n, sw1, sw2, timer)
 	}
 }
 
@@ -512,7 +645,7 @@ func TestApiNetboxWebhook_DeleteDevice_CancelsPendingSync(t *testing.T) {
 	_, pending := ctrl.netboxDeviceSyncDebounce.pending["rtr1"]
 	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
 	if !pending {
-		t.Fatal("expected a pending debounce after the update webhook")
+		t.Fatal("expected rtr1 in the shared quiet window after the update webhook")
 	}
 
 	c, rec = signedWebhookRequest(t, webhookTestSecret, map[string]any{
@@ -529,9 +662,125 @@ func TestApiNetboxWebhook_DeleteDevice_CancelsPendingSync(t *testing.T) {
 
 	ctrl.netboxDeviceSyncDebounce.mu.Lock()
 	_, pending = ctrl.netboxDeviceSyncDebounce.pending["rtr1"]
+	timer := ctrl.netboxDeviceSyncDebounce.timer != nil
 	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
-	if pending {
-		t.Fatal("delete left a pending debounce")
+	if pending || timer {
+		t.Fatal("delete left a pending device or timer")
+	}
+}
+
+func TestApiNetboxWebhook_SyncsQueuedDevicesOneAtATime(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+
+	var mu sync.Mutex
+	var got []string
+	orig := netboxSyncDB
+	netboxSyncDB = func(_ *gorm.DB, name string, reporter jobevent.Reporter) error {
+		mu.Lock()
+		got = append(got, name)
+		mu.Unlock()
+		reporter.Emit(jobevent.Info, "Netbox sync started")
+		reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
+		return nil
+	}
+	t.Cleanup(func() { netboxSyncDB = orig })
+
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = 30 * time.Millisecond
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	for _, name := range []string{"sw2", "sw1", "sw2"} {
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.device",
+			"data":        map[string]any{"id": 1, "name": name},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook %s: %v", name, err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook %s status = %d, body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != "sw1" || got[1] != "sw2" {
+		t.Fatalf("synced %v, want [sw1 sw2]", got)
+	}
+}
+
+func TestApiNetboxWebhook_FullSyncWhenManyDevicesChange(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	// 50 NetBox devices and 10 queued names is exactly 20%. Five local
+	// devices must not count toward that inventory: 10/55 is under 20%.
+	for i := 1; i <= 50; i++ {
+		seedNetboxDevice(t, db, fmt.Sprintf("nb-%02d", i), uint(i))
+	}
+	for i := 1; i <= 5; i++ {
+		d := models.Device{Name: fmt.Sprintf("local-%d", i), CfSource: "factum"}
+		if err := db.Create(&d).Error; err != nil {
+			t.Fatalf("create local device: %v", err)
+		}
+	}
+
+	var mu sync.Mutex
+	var got []string
+	orig := netboxSyncDB
+	netboxSyncDB = func(_ *gorm.DB, name string, _ jobevent.Reporter) error {
+		mu.Lock()
+		got = append(got, name)
+		mu.Unlock()
+		return nil
+	}
+	t.Cleanup(func() { netboxSyncDB = orig })
+
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = 30 * time.Millisecond
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	for i := 1; i <= 10; i++ {
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.device",
+			"data":        map[string]any{"id": i, "name": fmt.Sprintf("nb-%02d", i)},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook %d: %v", i, err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook %d status = %d, body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "" {
+		t.Fatalf("synced %v, want one full sync", got)
 	}
 }
 

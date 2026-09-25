@@ -54,8 +54,8 @@ type Controller struct {
 	// GET /api/dns/leases (tests).
 	dhcpLeasesFn func(ctx context.Context) ([]dns.DHCPLease, error)
 	// netboxDeviceSyncDebounce coalesces NetBox device/interface/IP webhooks
-	// into one SyncDB per device after a quiet period. Zero value uses the
-	// default 3s delay.
+	// into one shared quiet period, then syncs the queued devices one at
+	// a time. Zero value uses the default 3s delay.
 	netboxDeviceSyncDebounce netboxWebhookDebouncer
 }
 
