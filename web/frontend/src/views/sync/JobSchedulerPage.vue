@@ -20,6 +20,7 @@ const targetInfo = {
   netbox: { label: 'Netbox' },
   'netbox-delta': { label: 'Netbox changes' },
   dns: { label: 'DNS' },
+  certs: { label: 'Certificates' },
   icinga: { label: 'Icinga' },
   librenms: { label: 'LibreNMS' },
   oxidized: { label: 'Oxidized' },
@@ -55,7 +56,7 @@ const sorting = ref([{ id: 'name', desc: false }])
 const columns = [
   { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'target', header: 'Job' },
+  { accessorKey: 'target', header: 'Jobs' },
   { accessorKey: 'cron', header: 'Schedule' },
   { id: 'enabled', header: 'Enabled' },
   { id: 'last_run_at', header: 'Last run' },
@@ -65,7 +66,7 @@ const columns = [
 
 const emptyForm = () => ({
   name: '',
-  target: 'all',
+  targets: ['all'],
   cron: '0 2 * * *',
   enabled: true,
 })
@@ -99,8 +100,36 @@ const cronPreset = computed({
   },
 })
 
+function splitTargets(target) {
+  return String(target ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
 function targetLabel(target) {
-  return targetInfo[target]?.label ?? target
+  const parts = splitTargets(target)
+  if (parts.length === 0) {
+    return '—'
+  }
+  return parts.map((part) => targetInfo[part]?.label ?? part).join(', ')
+}
+
+// All jobs already means every enabled sync, so it is stored and run on
+// its own. Picking it clears the other jobs; picking another job drops it.
+function setTargets(next) {
+  const values = Array.isArray(next) ? next.map(String) : []
+  const hadAll = form.value.targets.includes('all')
+  const hasAll = values.includes('all')
+  if (hasAll && !hadAll) {
+    form.value.targets = ['all']
+    return
+  }
+  if (hasAll && values.length > 1) {
+    form.value.targets = values.filter((target) => target !== 'all')
+    return
+  }
+  form.value.targets = values
 }
 
 function scheduleLabel(cron) {
@@ -153,7 +182,7 @@ function editSchedule(row) {
   editingId.value = row.id
   form.value = {
     name: row.name ?? '',
-    target: row.target ?? 'all',
+    targets: splitTargets(row.target),
     cron: row.cron ?? '',
     enabled: !!row.enabled,
   }
@@ -169,14 +198,14 @@ function hideDialog() {
 
 function save() {
   submitted.value = true
-  if (!form.value.name?.trim() || !form.value.target || !form.value.cron?.trim()) {
+  if (!form.value.name?.trim() || !form.value.targets?.length || !form.value.cron?.trim()) {
     return
   }
 
   saving.value = true
   const payload = {
     name: form.value.name.trim(),
-    target: form.value.target,
+    target: form.value.targets.join(','),
     cron: form.value.cron.trim(),
     enabled: form.value.enabled,
   }
@@ -271,9 +300,9 @@ onUnmounted(() => {
     </div>
 
     <p class="text-muted-color mb-4">
-      Periodic jobs that trigger one sync target, housekeeping (trims old job history in the
-      database), or all enabled syncs in sequence. Housekeeping is not part of "All jobs" and does
-      not run unless you schedule it. Times are Europe/Stockholm.
+      Periodic jobs that trigger the jobs you pick, one at a time. All jobs runs every enabled
+      source then destination, same as Sync all. Housekeeping trims old job history and is not part
+      of All jobs. Times are Europe/Stockholm.
     </p>
 
     <UTable
@@ -290,7 +319,7 @@ onUnmounted(() => {
         <SortableColumnHeader :column="column" label="Name" />
       </template>
       <template #target-header="{ column }">
-        <SortableColumnHeader :column="column" label="Job" />
+        <SortableColumnHeader :column="column" label="Jobs" />
       </template>
       <template #target-cell="{ row }">
         {{ targetLabel(row.original.target) }}
@@ -345,7 +374,7 @@ onUnmounted(() => {
     v-model:open="dialog"
     :source="form"
     :title="isCreate ? 'New schedule' : 'Edit schedule'"
-    :ui="{ content: 'sm:max-w-md' }"
+    :ui="{ content: 'sm:max-w-lg' }"
   >
     <template #body>
       <div class="flex flex-col gap-6">
@@ -364,18 +393,25 @@ onUnmounted(() => {
           >
         </div>
         <div>
-          <label for="sched-target" class="block font-bold mb-3">Job</label>
-          <USelect
+          <label for="sched-target" class="block font-bold mb-3">Jobs</label>
+          <USelectMenu
             id="sched-target"
-            v-model="form.target"
+            :model-value="form.targets"
             :items="targetItems"
             value-key="value"
             label-key="label"
+            multiple
+            placeholder="Select jobs"
             class="w-full"
+            @update:model-value="setTargets"
           />
-          <small class="text-muted-color">
-            All jobs runs every enabled source then destination, same as Sync all. Housekeeping is
-            not included in All jobs.
+          <small v-if="submitted && !form.targets?.length" class="text-red-500">
+            Select at least one job.
+          </small>
+          <small v-else class="text-muted-color">
+            Pick one or more. They run one at a time, sources before destinations. All jobs is every
+            enabled sync and is not combined with other jobs. Housekeeping is not included in All
+            jobs.
           </small>
         </div>
         <div>

@@ -120,6 +120,31 @@ func TestScheduleCreateHousekeeping(t *testing.T) {
 	}
 }
 
+func TestScheduleCreateMultipleTargets(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	c, rec := jsonRequest(t, http.MethodPost, "/api/schedules", models.JobScheduleDTO{
+		Name:    "DNS and Icinga",
+		Enabled: true,
+		Target:  "icinga, dns",
+		Cron:    "0 4 * * *",
+	}, nil, nil)
+	if err := ctrl.ApiScheduleCreate(c); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.JobSchedule
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Target != "icinga,dns" {
+		t.Fatalf("target = %q, want icinga,dns", created.Target)
+	}
+}
+
 func TestScheduleCreateRejectsInvalid(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
@@ -128,6 +153,8 @@ func TestScheduleCreateRejectsInvalid(t *testing.T) {
 		{Name: "", Enabled: true, Target: "dns", Cron: "* * * * *"},
 		{Name: "x", Enabled: true, Target: "nope", Cron: "* * * * *"},
 		{Name: "x", Enabled: true, Target: "dns", Cron: "bad"},
+		{Name: "x", Enabled: true, Target: "all,dns", Cron: "* * * * *"},
+		{Name: "x", Enabled: true, Target: "", Cron: "* * * * *"},
 	}
 	for i, dto := range cases {
 		c, rec := jsonRequest(t, http.MethodPost, "/api/schedules", dto, nil, nil)

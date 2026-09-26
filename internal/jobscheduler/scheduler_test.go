@@ -49,6 +49,33 @@ func TestValidate(t *testing.T) {
 	if _, _, _, err := Validate("x", "not-a-target", "* * * * *"); err == nil {
 		t.Fatal("expected error for unknown target")
 	}
+	if _, _, _, err := Validate("x", "all,dns", "* * * * *"); err == nil {
+		t.Fatal("expected error for all combined with another job")
+	}
+	if _, _, _, err := Validate("x", "", "* * * * *"); err == nil {
+		t.Fatal("expected error for empty target")
+	}
+	_, target, _, err = Validate("Nightly pair", "icinga, dns, netbox, dns", "0 2 * * *")
+	if err != nil {
+		t.Fatalf("multi target: %v", err)
+	}
+	if target != "netbox,icinga,dns" {
+		t.Fatalf("canonical target = %q, want netbox,icinga,dns", target)
+	}
+	_, target, _, err = Validate("Delta then dns", "dns,netbox-delta,netbox", "0 2 * * *")
+	if err != nil {
+		t.Fatalf("delta target: %v", err)
+	}
+	if target != "netbox,netbox-delta,dns" {
+		t.Fatalf("canonical target = %q, want netbox,netbox-delta,dns", target)
+	}
+	_, target, _, err = Validate("Trim after dns", "housekeeping,dns", "0 3 * * *")
+	if err != nil {
+		t.Fatalf("housekeeping combo: %v", err)
+	}
+	if target != "dns,housekeeping" {
+		t.Fatalf("canonical target = %q, want dns,housekeeping", target)
+	}
 	if _, _, _, err := Validate("x", "dns", "not cron"); err == nil {
 		t.Fatal("expected error for invalid cron")
 	}
@@ -132,6 +159,41 @@ func TestTickFiresDueSingleTarget(t *testing.T) {
 	s.Tick(now.Add(time.Second))
 	if len(calls) != 1 {
 		t.Fatalf("second tick fired extra StartJob, calls = %d", len(calls))
+	}
+}
+
+func TestTickFiresDueMultipleTargets(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+
+	sched := models.JobSchedule{
+		Name:      "DNS and Icinga",
+		Enabled:   true,
+		Target:    "icinga,dns,housekeeping",
+		Cron:      "* * * * *",
+		NextRunAt: &past,
+	}
+	if err := db.Create(&sched).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var gotTargets []string
+	s := New(db, func(_, _ string, targets []string) error {
+		gotTargets = append([]string{}, targets...)
+		return nil
+	})
+	s.loc = time.UTC
+	s.Tick(now)
+
+	want := []string{"icinga", "dns", "housekeeping"}
+	if len(gotTargets) != len(want) {
+		t.Fatalf("targets = %v, want %v", gotTargets, want)
+	}
+	for i := range want {
+		if gotTargets[i] != want[i] {
+			t.Fatalf("targets = %v, want %v", gotTargets, want)
+		}
 	}
 }
 

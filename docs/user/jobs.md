@@ -36,10 +36,13 @@ info/warning/error lines.
 
 ## Scheduler
 
-**Scheduler** stores cron entries. Each row has a name, a target (`all`
-or one job name, including `housekeeping` and `device-sync`), an enabled
-flag, and last/next run. Presets cover common intervals; **Custom** is a
-five-field cron expression.
+**Scheduler** stores cron entries. Each row has a name, one or more jobs
+(`all`, or any combination of job names such as `dns`, `icinga`,
+`housekeeping`, and `device-sync`), an enabled flag, and last/next run.
+Several jobs run one at a time, sources before destinations. **All jobs**
+stands alone — it is every enabled sync, and it does not include
+housekeeping. Presets cover common intervals; **Custom** is a five-field
+cron expression.
 
 Nothing starts housekeeping on its own. If you want old jobs pruned,
 create a schedule for it (or click **Run** on the overview tile).

@@ -250,13 +250,14 @@ type JobTaskEvent struct {
 
 // JobSchedule is one user-defined periodic trigger for a job, the in-app
 // replacement for a crontab entry on the primary. Target is either one
-// worker.IsValidJobTarget name (a single-target StartJob, same as clicking
-// one tile on Job overview - sync targets plus "housekeeping"), or the
-// sentinel "all" (SequencedSyncAllTargets + StartJob, same as "Sync all";
-// housekeeping is not included). Cron is a 5-field expression evaluated
-// in Europe/Stockholm; NextRunAt is computed at create/update and advanced
-// by the scheduler when a run is claimed so a restart only ever catch-up
-// fires once, not once per missed tick.
+// worker.IsValidJobTarget name, a comma-separated list of those names
+// (one StartJob batch, sources before destinations, same as clicking
+// several tiles), or the sentinel "all" (SequencedSyncAllTargets +
+// StartJob, same as "Sync all"; housekeeping is not included, and "all"
+// is not combined with other names). Cron is a 5-field expression
+// evaluated in Europe/Stockholm; NextRunAt is computed at create/update
+// and advanced by the scheduler when a run is claimed so a restart only
+// ever catch-up fires once, not once per missed tick.
 type JobSchedule struct {
 	FactumModel
 	Name    string `gorm:"not null" json:"name"`

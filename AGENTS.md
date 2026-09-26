@@ -358,9 +358,11 @@ firewall step, not something the process unbinds.
   finished jobs with their tasks and events, plus orphan events
   (`job_task_id IS NULL`). It is a valid scheduler / `POST /api/sync/:target`
   target (`worker.IsValidJobTarget`) but is **not** in `SyncTargets`, so
-  "Sync all" and schedule target `"all"` never include it. Nothing starts
-  it on its own; an operator creates a `JobSchedule` (or clicks Run on
-  the Job overview Maintenance tile).
+  "Sync all" and schedule target `"all"` never include it. A schedule may
+  name several jobs (`JobSchedule.Target` comma-separated); they run as
+  one `StartJob` batch, sources first, and `"all"` is not combined with
+  other names. Nothing starts it on its own; an operator creates a
+  `JobSchedule` (or clicks Run on the Job overview Maintenance tile).
 - `Sync()` in `internal/librenms/factum2-librenms.go` gets its Netbox client
   the same way as everything else on this page: `internal/netbox`'s
   `FetchRemoteConfig`/`RemoteClient` fetch `Settings.NetboxApiURL/

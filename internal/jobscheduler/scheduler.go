@@ -1,6 +1,6 @@
 // Package jobscheduler runs user-defined JobSchedule rows: each due
 // schedule triggers the same StartJob path as the Job overview page
-// (one sync target, housekeeping, or a sequenced "sync all").
+// (one or more job targets, or a sequenced "sync all").
 package jobscheduler
 
 import (
@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,8 @@ import (
 
 // TargetAll is the JobSchedule.Target sentinel for a sequenced sync of
 // every currently-enabled target - the scheduled equivalent of
-// POST /api/sync/all.
+// POST /api/sync/all. It is stored alone; a schedule that names specific
+// jobs stores those names comma-separated instead.
 const TargetAll = "all"
 
 // tickInterval is how often Run looks for due schedules. Cron is
@@ -142,24 +144,102 @@ func (s *Scheduler) recordError(id uint, err error) {
 
 // Validate trims and checks the writable fields. cronExpr must parse as a
 // standard 5-field expression (or a robfig descriptor like @hourly).
+// target is one job name, the sentinel "all", or a comma-separated list
+// of job names. The returned target is the canonical stored form.
 func Validate(name, target, cronExpr string) (string, string, string, error) {
 	name = strings.TrimSpace(name)
-	target = strings.TrimSpace(target)
 	cronExpr = strings.TrimSpace(cronExpr)
 	if name == "" {
 		return "", "", "", errors.New("name is required")
 	}
-	if !IsValidTarget(target) {
-		return "", "", "", errors.New("unknown sync target")
+	canonical, err := CanonicalTarget(target)
+	if err != nil {
+		return "", "", "", err
 	}
 	if _, err := cron.ParseStandard(cronExpr); err != nil {
 		return "", "", "", fmt.Errorf("invalid cron expression: %w", err)
 	}
-	return name, target, cronExpr, nil
+	return name, canonical, cronExpr, nil
 }
 
 func IsValidTarget(target string) bool {
 	return target == TargetAll || worker.IsValidJobTarget(target)
+}
+
+// CanonicalTarget parses a schedule target into the form stored on
+// JobSchedule.Target. A single name is unchanged. Several names are
+// de-duplicated and ordered sources-first (same order StartJob will run
+// them), joined with commas. "all" is only valid on its own.
+func CanonicalTarget(raw string) (string, error) {
+	parts, err := splitTarget(raw)
+	if err != nil {
+		return "", err
+	}
+	seen := make(map[string]bool, len(parts))
+	unique := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if seen[part] {
+			continue
+		}
+		seen[part] = true
+		if !IsValidTarget(part) {
+			return "", errors.New("unknown sync target")
+		}
+		unique = append(unique, part)
+	}
+	if seen[TargetAll] {
+		if len(unique) > 1 {
+			return "", errors.New("all jobs cannot be combined with other jobs")
+		}
+		return TargetAll, nil
+	}
+	return strings.Join(orderTargets(unique), ","), nil
+}
+
+func splitTarget(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("select at least one job")
+	}
+	chunks := strings.Split(raw, ",")
+	out := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			return nil, errors.New("unknown sync target")
+		}
+		out = append(out, chunk)
+	}
+	return out, nil
+}
+
+// orderTargets puts selected sync targets in SequencedSyncAllTargets
+// order, with netbox-delta beside the other source-side work (immediately
+// after a selected netbox, otherwise with the sources) and housekeeping
+// last. Housekeeping and netbox-delta are not SyncTargets, so they would
+// otherwise follow whichever position the caller happened to send.
+func orderTargets(targets []string) []string {
+	selected := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		selected[target] = true
+	}
+	seq := make([]string, 0, len(targets))
+	for _, target := range worker.SyncTargets {
+		if selected[target] {
+			seq = append(seq, target)
+		}
+		if target == "netbox" && selected[worker.NetboxDeltaTarget] {
+			seq = append(seq, worker.NetboxDeltaTarget)
+		}
+	}
+	if selected[worker.NetboxDeltaTarget] && !slices.Contains(seq, worker.NetboxDeltaTarget) {
+		seq = append(seq, worker.NetboxDeltaTarget)
+	}
+	ordered := worker.SequencedSyncAllTargets(seq)
+	if selected[worker.HousekeepingTarget] {
+		ordered = append(ordered, worker.HousekeepingTarget)
+	}
+	return ordered
 }
 
 // NextRun is the next activation of expr strictly after `after`, in loc.
@@ -180,15 +260,16 @@ func NextRun(expr string, after time.Time, loc *time.Location) (time.Time, error
 
 // ResolveTargets turns a schedule's Target into the StartJob target list.
 // "all" uses the same enabled, sources-first order as ApiSyncTriggerAll
-// (housekeeping is not included); a named target is passed through even
-// if currently disabled, matching ApiSyncTrigger (which checks
-// IsValidJobTarget).
+// (housekeeping is not included). A comma-separated list is the named
+// jobs in run order. A named target is passed through even if currently
+// disabled, matching ApiSyncTrigger (which checks IsValidJobTarget).
 func ResolveTargets(db *gorm.DB, target string) ([]string, error) {
-	if target != TargetAll {
-		if !worker.IsValidJobTarget(target) {
-			return nil, fmt.Errorf("unknown sync target %q", target)
-		}
-		return []string{target}, nil
+	canonical, err := CanonicalTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	if canonical != TargetAll {
+		return strings.Split(canonical, ","), nil
 	}
 	settings, err := util.GetOrCreateSettings(db)
 	if err != nil {
