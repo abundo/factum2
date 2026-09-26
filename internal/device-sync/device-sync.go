@@ -22,10 +22,10 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -411,6 +411,13 @@ func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
 
 	for _, name := range toCreate {
 		iface := pair.config.InterfacesByName[name]
+		if iface.VRF != "" {
+			if err := ds.ensureVRF(pair.nbDevice.Name, iface.VRF, pair.config); err != nil {
+				copied := *iface
+				copied.VRF = ""
+				iface = &copied
+			}
+		}
 		if templateType, ok := templateTypes[name]; ok && templateType != "" && templateType != iface.Type {
 			ifaceCopy := *iface
 			ifaceCopy.Type = templateType
@@ -435,16 +442,20 @@ func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
 }
 
 // syncInterfaceValues updates description/vrf/type/label/parent on existing
-// interfaces. VRF is only ever updated when both sides already have one set
-// and they differ - never set from empty. Type is compared against the
-// device type's own template (not the driver's guessed type -
-// syncInterfaceValues only runs against interfaces that already exist in
-// Netbox, so whatever created them, admin-curated template data is the more
-// trustworthy source of truth) and corrected when it differs. Label/Parent
-// are only ever pushed when the driver has an opinion (deviceIface.Label/
-// Parent set) - like VRF, never cleared from empty, since most interfaces
-// (anything but an SR OS SAP - see srosAddSapInterface) have no opinion on
-// either and Netbox may carry admin-set values there.
+// interfaces. A device VRF is written onto the Netbox interface whenever
+// it differs, including when Netbox has none yet: the interface object
+// stays, so cables and addresses on it are not removed and re-added. An
+// empty device VRF is not pushed: several parsers leave VRF blank when
+// they have no opinion, and that must not clear a VRF an operator set in
+// Netbox. Type is compared against the device type's own template (not
+// the driver's guessed type; syncInterfaceValues only runs against
+// interfaces that already exist in Netbox, so whatever created them,
+// admin-curated template data is the more trustworthy source of truth)
+// and corrected when it differs. Label/Parent are only ever pushed when
+// the driver has an opinion (deviceIface.Label/Parent set) and never
+// cleared from empty, since most interfaces (anything but an SR OS SAP,
+// see srosAddSapInterface) have no opinion on either and Netbox may
+// carry admin-set values there.
 func (ds *DeviceSync) syncInterfaceValues(pair *devicePair) {
 	templateTypes, err := ds.nb.TemplateInterfaceTypes(pair.nbDevice.Manufacturer, pair.nbDevice.ModelName)
 	if err != nil {
@@ -461,8 +472,10 @@ func (ds *DeviceSync) syncInterfaceValues(pair *devicePair) {
 		if nbIface.Description != deviceIface.Description {
 			changes["description"] = deviceIface.Description
 		}
-		if deviceIface.VRF != "" && nbIface.VRF != "" && nbIface.VRF != deviceIface.VRF {
-			changes["vrf"] = map[string]string{"name": deviceIface.VRF}
+		if deviceIface.VRF != "" && nbIface.VRF != deviceIface.VRF {
+			if err := ds.ensureVRF(pair.nbDevice.Name, deviceIface.VRF, pair.config); err == nil {
+				changes["vrf"] = map[string]string{"name": deviceIface.VRF}
+			}
 		}
 		if templateType, ok := templateTypes[nbIface.Name]; ok && templateType != "" && nbIface.Type != templateType {
 			changes["type"] = templateType
@@ -506,30 +519,105 @@ func addressMatch(nbAddr netip.Prefix, nbVRF string, devAddr netip.Prefix, devVR
 	return normalizeVRF(nbVRF, vrfInGlobal) == normalizeVRF(devVRF, vrfInGlobal)
 }
 
-// addressesDelete removes Netbox addresses that don't exist (address+VRF)
-// in the device's parsed config.
+// matchDeviceAddress returns the index of a device address with the same
+// prefix as nbPrefix. exact requires the VRFs to match too (after
+// vrf_in_global normalization). Indexes in claimed are skipped.
+func matchDeviceAddress(nbPrefix netip.Prefix, nbVRF string, devAddrs []drivers.InterfaceAddress, vrfInGlobal []string, claimed map[int]bool, exact bool) (int, bool) {
+	for i, devAddr := range devAddrs {
+		if claimed[i] || devAddr.Address != nbPrefix {
+			continue
+		}
+		if exact && normalizeVRF(nbVRF, vrfInGlobal) != normalizeVRF(devAddr.VRF, vrfInGlobal) {
+			continue
+		}
+		return i, true
+	}
+	return 0, false
+}
+
+// ensureVRF finds or creates vrfName in Netbox so a later interface or
+// address write can refer to it by name. RD and description come from the
+// parsed VRF when the device has one. vrf_in_global does not apply here:
+// that list only decides whether an address is stored in the global table.
+func (ds *DeviceSync) ensureVRF(deviceName, vrfName string, dc *drivers.DeviceConfig) error {
+	if vrfName == "" {
+		return nil
+	}
+	var rd, desc string
+	if dc != nil {
+		if v := dc.VRFs[vrfName]; v != nil {
+			rd, desc = v.RD, v.Description
+		}
+	}
+	_, err := ds.nb.EnsureVRF(deviceName, vrfName, rd, desc)
+	return err
+}
+
+// retargetAddressVRF PATCHes nbAddr onto the VRF the device has for the
+// same prefix. The Netbox address id is unchanged, so a primary_ip4 /
+// primary_ip6 that points at it stays put. A failed update leaves the
+// address in place.
+func (ds *DeviceSync) retargetAddressVRF(pair *devicePair, nbIface *models.Interface, nbAddr *models.Address, devAddr drivers.InterfaceAddress) {
+	want := normalizeVRF(devAddr.VRF, ds.cfg.VRFInGlobal)
+	var payload any
+	if want != "" {
+		if err := ds.ensureVRF(pair.nbDevice.Name, want, pair.config); err != nil {
+			return
+		}
+		payload = map[string]string{"name": want}
+	}
+	if err := ds.nb.UpdateAddress(pair.nbDevice, nbIface, nbAddr, map[string]any{"vrf": payload}); err != nil {
+		return
+	}
+	nbAddr.VRF = want
+}
+
+// addressesDelete removes Netbox addresses that don't exist on the
+// device. The same prefix in a different VRF is not a removal: the
+// existing address is patched onto the device VRF. Deleting it and
+// creating a new one would allocate a new Netbox IP id, and the device's
+// primary_ip4/primary_ip6 (the "primary IP for the device" flag) points
+// at that id, and losing it drops the management address that LibreNMS,
+// Icinga, and the other dests key off.
 func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
 		deviceIface := pair.config.InterfacesByName[nbIface.Name]
 		deletedIDs := map[uint]bool{}
+		// dev index claimed by a Netbox address that already matches
+		// prefix+VRF, so a second Netbox row for the same prefix is not
+		// retargeted onto it and is deleted instead. exact is the Netbox
+		// address indexes that won that claim.
+		claimed := map[int]bool{}
+		exact := map[int]bool{}
+		if deviceIface != nil {
+			for j := range nbIface.Addresses {
+				nbAddr := &nbIface.Addresses[j]
+				nbPrefix, err := netip.ParsePrefix(nbAddr.Address)
+				if err != nil {
+					continue
+				}
+				if idx, ok := matchDeviceAddress(nbPrefix, nbAddr.VRF, deviceIface.IPAddresses, ds.cfg.VRFInGlobal, claimed, true); ok {
+					claimed[idx] = true
+					exact[j] = true
+				}
+			}
+		}
 		for j := range nbIface.Addresses {
 			nbAddr := &nbIface.Addresses[j]
+			if exact[j] {
+				continue
+			}
 			nbPrefix, err := netip.ParsePrefix(nbAddr.Address)
 			if err != nil {
 				continue
 			}
-			found := false
 			if deviceIface != nil {
-				for _, devAddr := range deviceIface.IPAddresses {
-					if addressMatch(nbPrefix, nbAddr.VRF, devAddr.Address, devAddr.VRF, ds.cfg.VRFInGlobal) {
-						found = true
-						break
-					}
+				if idx, ok := matchDeviceAddress(nbPrefix, nbAddr.VRF, deviceIface.IPAddresses, ds.cfg.VRFInGlobal, claimed, false); ok {
+					claimed[idx] = true
+					ds.retargetAddressVRF(pair, nbIface, nbAddr, deviceIface.IPAddresses[idx])
+					continue
 				}
-			}
-			if found {
-				continue
 			}
 			ds.reportAddressDeleteReason(pair.nbDevice.Name, nbIface, nbAddr, deviceIface)
 			if !ds.confirmDelete("address", pair.nbDevice.Name, nbAddr.Address, "interface "+nbIface.Name) {
@@ -552,12 +640,10 @@ func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 }
 
 // reportAddressDeleteReason explains, before addressesDelete removes it, why
-// nbAddr (on nbIface) didn't match anything in deviceIface's parsed
-// addresses - deviceIface is nil when the interface itself no longer exists
-// in the device's config. Listing the device's own addresses (with their
-// VRFs) alongside Netbox's is what makes a VRF-string mismatch between the
-// two sides (as opposed to a genuinely removed address) obvious from the
-// log alone, rather than something that has to be debugged after the fact.
+// nbAddr (on nbIface) didn't match any prefix still configured on the
+// device. deviceIface is nil when the interface itself is gone from the
+// device's config. A same-prefix VRF change is not reported here; that
+// address is patched in place by retargetAddressVRF.
 func (ds *DeviceSync) reportAddressDeleteReason(deviceName string, nbIface *models.Interface, nbAddr *models.Address, deviceIface *drivers.Interface) {
 	nbVRF := nbAddr.VRF
 	if nbVRF == "" {
@@ -616,6 +702,9 @@ func (ds *DeviceSync) addressesCreate(pair *devicePair) {
 				role = "anycast"
 			}
 			if devAddr.VRF != "" && !contains(ds.cfg.VRFInGlobal, devAddr.VRF) {
+				if err := ds.ensureVRF(pair.nbDevice.Name, devAddr.VRF, pair.config); err != nil {
+					continue
+				}
 				extra["vrf"] = map[string]string{"name": devAddr.VRF}
 				vrf = devAddr.VRF
 			}

@@ -10,10 +10,10 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // ----- test doubles -----
@@ -738,18 +738,18 @@ func TestSyncInterfaceValues(t *testing.T) {
 
 	nbDevice := &models.Device{NetboxID: 1, Name: "sw1", Interfaces: []models.Interface{
 		{NetboxID: 10, Name: "Ethernet1", Description: "old descr", VRF: "OLD"},
-		{NetboxID: 11, Name: "Ethernet2", Description: "unchanged"}, // no VRF on netbox side -> never set from empty
+		{NetboxID: 11, Name: "Ethernet2", Description: "unchanged"}, // empty Netbox VRF is filled from the device
 	}}
 
 	dc := drivers.NewDeviceConfig()
 	dc.AddInterface(&drivers.Interface{Name: "Ethernet1", Description: "new descr", VRF: "NEW"})
-	dc.AddInterface(&drivers.Interface{Name: "Ethernet2", Description: "unchanged", VRF: "SHOULD-NOT-APPLY"})
+	dc.AddInterface(&drivers.Interface{Name: "Ethernet2", Description: "unchanged", VRF: "MGMT"})
 
 	pair := &devicePair{nbDevice: nbDevice, config: dc}
 	ds.syncInterfaceValues(pair)
 
-	if len(fake.updatedInterfaces) != 1 {
-		t.Fatalf("got %d interface updates, want 1 (only Ethernet1 changed): %+v", len(fake.updatedInterfaces), fake.updatedInterfaces)
+	if len(fake.updatedInterfaces) != 2 {
+		t.Fatalf("got %d interface updates, want 2: %+v", len(fake.updatedInterfaces), fake.updatedInterfaces)
 	}
 	changes := fake.updatedInterfaces[0]
 	if changes["description"] != "new descr" {
@@ -757,6 +757,12 @@ func TestSyncInterfaceValues(t *testing.T) {
 	}
 	if vrf, ok := changes["vrf"].(map[string]string); !ok || vrf["name"] != "NEW" {
 		t.Errorf("vrf change = %v", changes["vrf"])
+	}
+	if vrf, ok := fake.updatedInterfaces[1]["vrf"].(map[string]string); !ok || vrf["name"] != "MGMT" {
+		t.Errorf("Ethernet2 vrf change = %v, want MGMT", fake.updatedInterfaces[1]["vrf"])
+	}
+	if _, ok := fake.updatedInterfaces[1]["description"]; ok {
+		t.Errorf("Ethernet2 description = %v, want unchanged", fake.updatedInterfaces[1]["description"])
 	}
 }
 
@@ -887,51 +893,77 @@ func TestAddressesDelete(t *testing.T) {
 	}
 }
 
-// TestAddressesDeleteReportsVRFMismatch covers the case that prompted
-// reportAddressDeleteReason: an address that's actually present on the
-// device, but under a different VRF than Netbox has it in - addressMatch
-// correctly treats that as "not found" (it's not safe to assume they're the
-// same address), but the reported reason must say so plainly (both sides'
-// VRFs) rather than just "deleting", so a real VRF-string mismatch is
-// diagnosable from the log alone instead of looking like the address was
-// simply removed from the device.
-func TestAddressesDeleteReportsVRFMismatch(t *testing.T) {
+// TestAddressesVRFChangeUpdatesInPlace: the same prefix in a different VRF
+// is patched onto the existing Netbox address. Replacing the object would
+// mint a new id and drop device.primary_ip4 / primary_ip6.
+func TestAddressesVRFChangeUpdatesInPlace(t *testing.T) {
 	fake := newFakeNetboxAPI()
-	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
 
-	nbDevice := &models.Device{NetboxID: 1, Name: "alk-ce1", Interfaces: []models.Interface{
-		{NetboxID: 10, Name: "Port-Channel2.820", Addresses: []models.Address{
-			{NetboxID: 100, Address: "82.99.65.49/30", VRF: "AL-DCBD-1"},
+	nbDevice := &models.Device{NetboxID: 1, Name: "lu17-lab-r0.itn.nu", Interfaces: []models.Interface{
+		{NetboxID: 28, Name: "Management1", Addresses: []models.Address{
+			{NetboxID: 22, Address: "172.27.39.10/24"}, // global; device has it in MGMT
 		}},
 	}}
 
 	dc := drivers.NewDeviceConfig()
-	dc.AddInterface(&drivers.Interface{Name: "Port-Channel2.820", VRF: "AL-DCBD-1", IPAddresses: []drivers.InterfaceAddress{
-		// Same address, but parsed with no VRF - simulates the device-side
-		// VRF not matching Netbox's, rather than the address being gone.
-		{Address: mustPrefix(t, "82.99.65.49/30")},
+	dc.VRFs["MGMT"] = &drivers.VRF{Name: "MGMT", Description: "oob"}
+	dc.AddInterface(&drivers.Interface{Name: "Management1", VRF: "MGMT", IPAddresses: []drivers.InterfaceAddress{
+		{Address: mustPrefix(t, "172.27.39.10/24"), VRF: "MGMT"},
+	}})
+
+	pair := &devicePair{nbDevice: nbDevice, config: dc}
+	ds.addressesDelete(pair)
+	ds.addressesCreate(pair)
+
+	if len(fake.deletedAddressIDs) != 0 {
+		t.Fatalf("deletedAddressIDs = %v, want none", fake.deletedAddressIDs)
+	}
+	if len(fake.createdAddresses) != 0 {
+		t.Fatalf("createdAddresses = %v, want none (same object, new VRF)", fake.createdAddresses)
+	}
+	if len(fake.updatedAddresses) != 1 {
+		t.Fatalf("updatedAddresses = %v, want one vrf patch", fake.updatedAddresses)
+	}
+	vrf, ok := fake.updatedAddresses[0]["vrf"].(map[string]string)
+	if !ok || vrf["name"] != "MGMT" {
+		t.Errorf("vrf patch = %v, want {name: MGMT}", fake.updatedAddresses[0]["vrf"])
+	}
+	if got := pair.nbDevice.Interfaces[0].Addresses; len(got) != 1 || got[0].NetboxID != 22 || got[0].VRF != "MGMT" {
+		t.Errorf("in-memory address = %+v, want netbox id 22 vrf MGMT", got)
+	}
+	if len(fake.createdVRFs) != 1 || fake.createdVRFs[0].Name != "MGMT" || fake.createdVRFs[0].Description != "oob" {
+		t.Errorf("createdVRFs = %+v, want MGMT/oob", fake.createdVRFs)
+	}
+}
+
+// A prefix that really left the device is still deleted. A second Netbox
+// row for a prefix the device has in one VRF is not retargeted onto the
+// row that already matches.
+func TestAddressesDeleteKeepsExactVRFAndDropsExtra(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{NetboxID: 1, Name: "sw1", Interfaces: []models.Interface{
+		{NetboxID: 10, Name: "Ethernet1", Addresses: []models.Address{
+			{NetboxID: 100, Address: "10.0.0.1/24", VRF: "MGMT"},
+			{NetboxID: 101, Address: "10.0.0.1/24"}, // same prefix, stale global copy
+			{NetboxID: 102, Address: "10.0.0.9/24"}, // gone
+		}},
+	}}
+
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "Ethernet1", VRF: "MGMT", IPAddresses: []drivers.InterfaceAddress{
+		{Address: mustPrefix(t, "10.0.0.1/24"), VRF: "MGMT"},
 	}})
 
 	ds.addressesDelete(&devicePair{nbDevice: nbDevice, config: dc})
 
-	if len(fake.deletedAddressIDs) != 1 || fake.deletedAddressIDs[0] != 100 {
-		t.Fatalf("deletedAddressIDs = %v, want [100]", fake.deletedAddressIDs)
+	if len(fake.updatedAddresses) != 0 {
+		t.Errorf("updatedAddresses = %v, want none (MGMT already matches)", fake.updatedAddresses)
 	}
-
-	var reason string
-	for _, line := range reporter.lines {
-		if strings.Contains(line, "82.99.65.49/30") {
-			reason = line
-			break
-		}
-	}
-	if reason == "" {
-		t.Fatalf("no reported reason mentioning the address; lines: %v", reporter.lines)
-	}
-	for _, want := range []string{"vrf=AL-DCBD-1", "vrf=-"} {
-		if !strings.Contains(reason, want) {
-			t.Errorf("reported reason %q missing %q - both sides' VRF should be visible", reason, want)
-		}
+	if len(fake.deletedAddressIDs) != 2 || fake.deletedAddressIDs[0] != 101 || fake.deletedAddressIDs[1] != 102 {
+		t.Errorf("deletedAddressIDs = %v, want [101 102]", fake.deletedAddressIDs)
 	}
 }
 
@@ -990,6 +1022,54 @@ func TestAddressesUpdateTogglesAnycastRole(t *testing.T) {
 }
 
 // ----- addressMatch / normalizeVRF -----
+
+func TestAddressesVRFClearedInPlace(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{NetboxID: 1, Name: "sw1", Interfaces: []models.Interface{
+		{NetboxID: 10, Name: "Ethernet1", Addresses: []models.Address{
+			{NetboxID: 100, Address: "10.0.0.1/24", VRF: "CUSTOMER"},
+		}},
+	}}
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "Ethernet1", IPAddresses: []drivers.InterfaceAddress{
+		{Address: mustPrefix(t, "10.0.0.1/24")},
+	}})
+
+	ds.addressesDelete(&devicePair{nbDevice: nbDevice, config: dc})
+
+	if len(fake.deletedAddressIDs) != 0 {
+		t.Fatalf("deletedAddressIDs = %v, want none", fake.deletedAddressIDs)
+	}
+	if len(fake.updatedAddresses) != 1 || fake.updatedAddresses[0]["vrf"] != nil {
+		t.Fatalf("updatedAddresses = %v, want vrf cleared", fake.updatedAddresses)
+	}
+	if nbDevice.Interfaces[0].Addresses[0].VRF != "" {
+		t.Errorf("in-memory VRF = %q, want empty", nbDevice.Interfaces[0].Addresses[0].VRF)
+	}
+}
+
+func TestAddressesVRFInGlobalIsNotRetargeted(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{VRFInGlobal: []string{"MGMT"}})
+
+	nbDevice := &models.Device{NetboxID: 1, Name: "sw1", Interfaces: []models.Interface{
+		{NetboxID: 10, Name: "Management1", Addresses: []models.Address{
+			{NetboxID: 22, Address: "172.27.39.10/24"},
+		}},
+	}}
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "Management1", VRF: "MGMT", IPAddresses: []drivers.InterfaceAddress{
+		{Address: mustPrefix(t, "172.27.39.10/24"), VRF: "MGMT"},
+	}})
+
+	ds.addressesDelete(&devicePair{nbDevice: nbDevice, config: dc})
+
+	if len(fake.deletedAddressIDs) != 0 || len(fake.updatedAddresses) != 0 {
+		t.Errorf("deleted=%v updated=%v, want neither (MGMT is vrf_in_global)", fake.deletedAddressIDs, fake.updatedAddresses)
+	}
+}
 
 func TestAddressMatchVRFInGlobal(t *testing.T) {
 	vrfInGlobal := []string{"MGMT"}
