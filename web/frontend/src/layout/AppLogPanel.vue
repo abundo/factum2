@@ -12,6 +12,7 @@ const SOURCE_LABELS = {
   becs: 'BECS',
   lime: 'Lime',
   netbox: 'Netbox',
+  'netbox-delta': 'Netbox changes',
   dns: 'DNS',
   icinga: 'Icinga',
   librenms: 'LibreNMS',

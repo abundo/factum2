@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/internal/worker"
@@ -25,8 +26,22 @@ func (ctrl *Controller) ApiSyncTargets(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	targets := append([]string{}, worker.EnabledSyncTargets(settings)...)
+	if slices.Contains(targets, "netbox") {
+		targets = insertAfter(targets, "netbox", worker.NetboxDeltaTarget)
+	}
 	targets = append(targets, worker.HousekeepingTarget)
 	return c.JSON(http.StatusOK, targets)
+}
+
+func insertAfter(targets []string, after, extra string) []string {
+	out := make([]string, 0, len(targets)+1)
+	for _, t := range targets {
+		out = append(out, t)
+		if t == after {
+			out = append(out, extra)
+		}
+	}
+	return out
 }
 
 // ApiSyncTrigger dispatches :target to exactly one connected worker node

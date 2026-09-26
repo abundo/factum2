@@ -279,36 +279,6 @@ func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	}
 }
 
-type captureReporter struct {
-	lines []string
-}
-
-func (r *captureReporter) Emit(_ jobevent.Level, format string, args ...any) {
-	r.lines = append(r.lines, fmt.Sprintf(format, args...))
-}
-
-func (r *captureReporter) EmitErr(err error) {
-	if err != nil {
-		r.lines = append(r.lines, err.Error())
-	}
-}
-
-func TestWebhookReporter_IncludesDeviceNameOnStartAndSummary(t *testing.T) {
-	var got captureReporter
-	r := webhookReporter{next: &got, deviceName: "sw1"}
-	r.Emit(jobevent.Info, "Netbox sync started")
-	r.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
-	if len(got.lines) != 2 {
-		t.Fatalf("lines = %#v, want 2", got.lines)
-	}
-	if got.lines[0] != "Netbox sync: device sw1 started" {
-		t.Errorf("started = %q", got.lines[0])
-	}
-	if got.lines[1] != "Netbox sync: device sw1: 0 new, 1 updated, 0 deleted" {
-		t.Errorf("summary = %q", got.lines[1])
-	}
-}
-
 func TestApiNetboxWebhook_LogsQueuedToHub(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)
@@ -359,16 +329,12 @@ func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
 	slog.SetDefault(slog.New(newHubHandler(slog.NewTextHandler(io.Discard, nil), hub)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	orig := netboxSyncDB
-	netboxSyncDB = func(_ *gorm.DB, name string, reporter jobevent.Reporter) error {
-		reporter.Emit(jobevent.Info, "Netbox sync started")
-		reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
-		if name != "sw1" {
-			t.Errorf("synced %q, want sw1", name)
-		}
+	orig := netboxSyncDelta
+	netboxSyncDelta = func(_ *gorm.DB, reporter jobevent.Reporter) error {
+		reporter.Emit(jobevent.Info, "Netbox delta sync started")
 		return nil
 	}
-	t.Cleanup(func() { netboxSyncDB = orig })
+	t.Cleanup(func() { netboxSyncDelta = orig })
 
 	ctrl := &Controller{DB: db, LogHub: hub}
 	ctrl.netboxDeviceSyncDebounce.delay = 20 * time.Millisecond
@@ -396,10 +362,10 @@ func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
 			if e.Source != "netbox" {
 				continue
 			}
-			if e.Message == "Netbox sync: device sw1 started" {
+			if e.Message == "Netbox webhook sync: 1 queued, running delta sync" {
 				started = true
 			}
-			if e.Message == "Netbox sync: device sw1: 0 new, 1 updated, 0 deleted" {
+			if e.Message == "Netbox delta sync started" {
 				summary = true
 			}
 		}
@@ -558,28 +524,6 @@ func TestNetboxWebhookDebouncer_CancelLastStopsTimer(t *testing.T) {
 	}
 }
 
-func TestNetboxWebhookPreferFullSync(t *testing.T) {
-	cases := []struct {
-		pending, known int
-		full           bool
-	}{
-		{pending: 9, known: 9, full: false},      // under the floor
-		{pending: 2, known: 4, full: false},      // 50% of a small lab
-		{pending: 10, known: 50, full: true},     // exactly 20%
-		{pending: 10, known: 51, full: false},    // just under 20%
-		{pending: 10, known: 0, full: true},      // nothing stored yet
-		{pending: 9, known: 0, full: false},      // under the floor
-		{pending: 30, known: 100, full: true},    // 30%
-		{pending: 100, known: 1000, full: false}, // 10%
-	}
-	for _, tc := range cases {
-		got := netboxWebhookPreferFullSync(tc.pending, tc.known)
-		if got != tc.full {
-			t.Errorf("preferFull(%d, %d) = %v, want %v", tc.pending, tc.known, got, tc.full)
-		}
-	}
-}
-
 func TestApiNetboxWebhook_QueuesPerDevice(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)
@@ -674,17 +618,15 @@ func TestApiNetboxWebhook_SyncsQueuedDevicesOneAtATime(t *testing.T) {
 	seedWebhookSecret(t, db, webhookTestSecret)
 
 	var mu sync.Mutex
-	var got []string
-	orig := netboxSyncDB
-	netboxSyncDB = func(_ *gorm.DB, name string, reporter jobevent.Reporter) error {
+	var got int
+	orig := netboxSyncDelta
+	netboxSyncDelta = func(_ *gorm.DB, _ jobevent.Reporter) error {
 		mu.Lock()
-		got = append(got, name)
+		got++
 		mu.Unlock()
-		reporter.Emit(jobevent.Info, "Netbox sync started")
-		reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 1, 0)
 		return nil
 	}
-	t.Cleanup(func() { netboxSyncDB = orig })
+	t.Cleanup(func() { netboxSyncDelta = orig })
 
 	ctrl := &Controller{DB: db}
 	ctrl.netboxDeviceSyncDebounce.delay = 30 * time.Millisecond
@@ -707,9 +649,9 @@ func TestApiNetboxWebhook_SyncsQueuedDevicesOneAtATime(t *testing.T) {
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		mu.Lock()
-		n := len(got)
+		n := got
 		mu.Unlock()
-		if n >= 2 {
+		if n >= 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -717,36 +659,28 @@ func TestApiNetboxWebhook_SyncsQueuedDevicesOneAtATime(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) != 2 || got[0] != "sw1" || got[1] != "sw2" {
-		t.Fatalf("synced %v, want [sw1 sw2]", got)
+	if got != 1 {
+		t.Fatalf("delta calls = %d, want 1", got)
 	}
 }
 
 func TestApiNetboxWebhook_FullSyncWhenManyDevicesChange(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)
-	// 50 NetBox devices and 10 queued names is exactly 20%. Five local
-	// devices must not count toward that inventory: 10/55 is under 20%.
-	for i := 1; i <= 50; i++ {
-		seedNetboxDevice(t, db, fmt.Sprintf("nb-%02d", i), uint(i))
-	}
-	for i := 1; i <= 5; i++ {
-		d := models.Device{Name: fmt.Sprintf("local-%d", i), CfSource: "factum"}
-		if err := db.Create(&d).Error; err != nil {
-			t.Fatalf("create local device: %v", err)
-		}
-	}
+	// Ten device webhooks in one quiet window are one delta sync. Whether
+	// that delta refetches or falls back to a full sync is decided from
+	// the changelog, not from the webhook names.
 
 	var mu sync.Mutex
-	var got []string
-	orig := netboxSyncDB
-	netboxSyncDB = func(_ *gorm.DB, name string, _ jobevent.Reporter) error {
+	var got int
+	orig := netboxSyncDelta
+	netboxSyncDelta = func(_ *gorm.DB, _ jobevent.Reporter) error {
 		mu.Lock()
-		got = append(got, name)
+		got++
 		mu.Unlock()
 		return nil
 	}
-	t.Cleanup(func() { netboxSyncDB = orig })
+	t.Cleanup(func() { netboxSyncDelta = orig })
 
 	ctrl := &Controller{DB: db}
 	ctrl.netboxDeviceSyncDebounce.delay = 30 * time.Millisecond
@@ -769,7 +703,7 @@ func TestApiNetboxWebhook_FullSyncWhenManyDevicesChange(t *testing.T) {
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		mu.Lock()
-		n := len(got)
+		n := got
 		mu.Unlock()
 		if n >= 1 {
 			break
@@ -779,8 +713,8 @@ func TestApiNetboxWebhook_FullSyncWhenManyDevicesChange(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) != 1 || got[0] != "" {
-		t.Fatalf("synced %v, want one full sync", got)
+	if got != 1 {
+		t.Fatalf("delta calls = %d, want 1", got)
 	}
 }
 

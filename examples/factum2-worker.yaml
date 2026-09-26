@@ -57,6 +57,9 @@ worker:
     netbox:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync", "--job"]
+    netbox-delta:
+      cmd: /opt/factum2/factum2-netbox
+      args: ["sync-delta", "--job"]
     # Software repository (factum2-storage start is a separate unit).
     # storage:
     #   cmd: /opt/factum2/factum2-storage

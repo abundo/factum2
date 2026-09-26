@@ -13,6 +13,12 @@ import (
 // switch. Operators schedule it themselves.
 const HousekeepingTarget = "housekeeping"
 
+// NetboxDeltaTarget applies NetBox object-changes since the last cursor
+// (factum2-netbox sync-delta). It is a job target when NetBox is enabled,
+// scheduled and triggered on its own. It is not a SyncTargets entry, so
+// "Sync all" keeps running the full netbox inventory sync only.
+const NetboxDeltaTarget = "netbox-delta"
+
 // SyncTargets lists the systems that can be synced from the web UI. Each
 // name doubles as the role/command name a factum2-worker instance activates
 // to handle it - each one matches a corresponding "factum2-<name> sync" CLI
@@ -39,7 +45,7 @@ func IsValidSyncTarget(target string) bool {
 // IsValidJobTarget is the set StartJob / ApiSyncTrigger / the scheduler
 // will accept: every sync target, plus housekeeping.
 func IsValidJobTarget(target string) bool {
-	return target == HousekeepingTarget || IsValidSyncTarget(target)
+	return target == HousekeepingTarget || target == NetboxDeltaTarget || IsValidSyncTarget(target)
 }
 
 // SequencedSyncAllTargets orders targets (expected to already be filtered

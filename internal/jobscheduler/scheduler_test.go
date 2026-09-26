@@ -260,8 +260,8 @@ func TestResolveTargetsHousekeeping(t *testing.T) {
 		t.Fatalf("ResolveTargets(all): %v", err)
 	}
 	for _, tname := range all {
-		if tname == worker.HousekeepingTarget {
-			t.Fatal("housekeeping must not be included in schedule target \"all\"")
+		if tname == worker.HousekeepingTarget || tname == worker.NetboxDeltaTarget {
+			t.Fatalf("%s must not be included in schedule target \"all\"", tname)
 		}
 	}
 }

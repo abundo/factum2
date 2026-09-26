@@ -147,7 +147,7 @@ design:
 terminations. Operators set those mapping fields on the definition they
 create. A full `factum2-netbox
 sync` (no device name) then reverse-imports L2VPNs onto matching factum `Service` rows
-(`internal/netbox.syncServiceEndpointsFromL2VPNs`; skipped on single-device / webhook SyncDB): match by
+(`internal/netbox.syncServiceEndpointsFromL2VPNs`; also on delta sync when an L2VPN change is in the changelog window, skipped on single-device SyncDB): match by
 `Service.L2VPNNetboxID` or `Service.ServiceID == L2VPN.Name`, resolve
 terminations to physical ports + VLAN/subinterface, set `ServiceType`
 from the mapping and `service_endpoints` (`role=interface`, count from

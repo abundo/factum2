@@ -12,6 +12,7 @@ const targetInfo = {
   becs: { label: 'BECS', icon: 'i-lucide-database', section: 'source' },
   lime: { label: 'Lime', icon: 'i-lucide-briefcase', section: 'source' },
   netbox: { label: 'Netbox', icon: 'i-lucide-network', section: 'source' },
+  'netbox-delta': { label: 'Netbox changes', icon: 'i-lucide-git-compare', section: 'source' },
 
   dns: { label: 'DNS', icon: 'i-lucide-globe', section: 'destination' },
   certs: { label: 'Certificates', icon: 'i-lucide-file-key', section: 'destination' },

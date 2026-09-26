@@ -50,6 +50,11 @@ type ParamsSync struct {
 	Job  bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
 }
 
+type ParamsDelta struct {
+	Params
+	Job bool `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+}
+
 type ParamsCheck struct {
 	Params
 	Update bool `descr:"Create or update webhooks, event rules and custom fields that are missing or drifted" optional:"true"`
@@ -139,7 +144,7 @@ func main() {
 			},
 			boa.CmdT[ParamsSync]{
 				Use:   "sync",
-				Short: "Sync Netbox with factum",
+				Short: "Sync Netbox with factum (full inventory)",
 				RunFuncE: func(p *ParamsSync, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 					var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
@@ -147,6 +152,19 @@ func main() {
 						reporter = jobevent.NewStdoutReporter(os.Stdout)
 					}
 					return netbox.Sync(&p.Config, p.Name, reporter)
+				},
+			},
+
+			boa.CmdT[ParamsDelta]{
+				Use:   "sync-delta",
+				Short: "Apply NetBox changes since the last sync",
+				RunFuncE: func(p *ParamsDelta, cmd *cobra.Command, args []string) error {
+					cmdbase.SetupLog(p.CommonParams)
+					var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
+					if p.Job {
+						reporter = jobevent.NewStdoutReporter(os.Stdout)
+					}
+					return netbox.SyncDelta(&p.Config, reporter)
 				},
 			},
 

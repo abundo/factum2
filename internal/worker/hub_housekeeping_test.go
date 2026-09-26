@@ -62,6 +62,12 @@ func TestIsValidJobTarget(t *testing.T) {
 	if !IsValidJobTarget("dns") || !IsValidSyncTarget("dns") {
 		t.Fatal("dns should remain a valid sync and job target")
 	}
+	if !IsValidJobTarget(NetboxDeltaTarget) {
+		t.Fatal("netbox-delta should be a valid job target")
+	}
+	if IsValidSyncTarget(NetboxDeltaTarget) {
+		t.Fatal("netbox-delta must not be a sync target (Sync all / EnabledSyncTargets)")
+	}
 }
 
 func TestStartJobHousekeepingRunsLocally(t *testing.T) {

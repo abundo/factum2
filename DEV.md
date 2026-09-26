@@ -151,7 +151,7 @@ account, which any admin can already see via `GET /api/admin/settings`.
 | `factum2-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                        |
 | `factum2-librenms`             | `cmd/librenms`             | Sync/query LibreNMS with factum (`sync`, `get-devices`, `get-device`, `get-device-ports`, `get-locations`)   |
 | `factum2-becs`                 | `cmd/becs`                 | Sync BECS elements into Netbox (then factum) (`get-element`, `sync`)                                         |
-| `factum2-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `check`)                          |
+| `factum2-netbox`               | `cmd/netbox`               | Query/sync NetBox (`get-device`, `get-devices`, `get-device-type`, `sync`, `sync-delta`, `check`)            |
 | `factum2-oxidized`             | `cmd/oxidized`             | Sync Oxidized with factum (`sync`)                                                                           |
 | `factum2-prometheus`           | `cmd/prometheus`           | Sync Prometheus snmp_exporter targets with factum (`sync`)                                                   |
 | `factum2-storage`              | `cmd/storage`              | Software image repository (`start`, `ls`/`mkdir`/`mv`/`rm`, `copy` to devices over HTTP/TFTP/SCP/SFTP)      |

@@ -21,43 +21,14 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// netboxWebhookDebounce is how long Device / Interface / IP webhooks must
-// stay quiet before any queued device sync starts. The wait is shared
-// across devices: a burst resets one timer, and the syncs run only after
-// that timer fires.
+// netboxWebhookDebounce is how long webhooks must stay quiet before one
+// delta sync starts. The wait is shared: a burst resets one timer, and
+// a single changelog pass runs only after that timer fires.
 const netboxWebhookDebounce = 3 * time.Second
 
-// A full SyncDB reads NetBox once. Each single-device sync repeats the
-// full IP-address walk (fetchAddressDNSNames) plus a per-device fetch, so
-// a wide burst is cheaper as one inventory pass. The switch happens when
-// the queue is at least netboxWebhookFullSyncMin devices and at least
-// netboxWebhookFullSyncPercent of the NetBox devices already stored in
-// factum. The floor keeps a small lab on the per-device path: one edit
-// out of four is 25%, and a full sync also pulls cables, sites, racks,
-// VRFs, customers, and L2VPNs.
-const (
-	netboxWebhookFullSyncPercent = 20
-	netboxWebhookFullSyncMin     = 10
-)
-
-// netboxSyncDB is the sync the webhook debounce calls. Tests replace it
-// so they can assert GUI log lines without a live NetBox. An empty name
-// is a full sync.
-var netboxSyncDB = netbox.SyncDB
-
-// netboxWebhookPreferFullSync reports whether pending device names should
-// be applied with one full SyncDB. known is the number of NetBox-sourced
-// devices already in factum; zero means the queued names are not in the
-// local inventory yet, so a large enough batch is still one full sync.
-func netboxWebhookPreferFullSync(pending, known int) bool {
-	if pending < netboxWebhookFullSyncMin {
-		return false
-	}
-	if known <= 0 {
-		return true
-	}
-	return int64(pending)*100 >= int64(known)*int64(netboxWebhookFullSyncPercent)
-}
+// netboxSyncDelta is the sync the webhook debounce calls. Tests replace
+// it so they can assert GUI log lines without a live NetBox.
+var netboxSyncDelta = netbox.SyncDeltaDB
 
 // netboxWebhookDebouncer collects device names and runs them once, after
 // delay with no further schedule(). Devices that arrive while a batch is
@@ -242,19 +213,17 @@ type NetboxWebhookPayload struct {
 
 // ApiNetboxWebhook receives change-event webhooks from Netbox.
 //
-// Device / interface / IP: create/update (and interface/IP delete) queue
-// the named device. After a shared quiet period the queued devices sync
-// one at a time, or as one full sync when the burst is a large share of
-// the stored NetBox inventory. Device delete removes the matching
-// netbox-sourced factum row by the payload's id — GetDevice would return
-// nil once Netbox has already removed the object — and drops that name
-// from the queue.
+// Create and update events share one quiet period, then one delta sync
+// reads the changelog since the last cursor. That covers the device the
+// webhook named and anything else that changed in the same window
+// (interfaces, addresses, cables, sites, VMs, racks, VRFs, L2VPNs).
+// A wide device set, or a missing cursor, makes that delta run a full
+// sync instead.
 //
-// Cable / site / region / location: create/update re-fetches that one
-// object and upserts the Connection or hierarchical Site row; delete
-// removes it by the payload's netbox_id. These are not "resync one named
-// device" — they have no name lookup, and a deleted object cannot be
-// re-fetched.
+// Deletes of a device, VM, cable, site, region, or location are applied
+// immediately from the payload id — the object is already gone, so it
+// cannot be re-fetched — and a deleted device or VM is dropped from the
+// quiet-period queue.
 //
 // Tenants and contacts are not applied here: customer→tenant and
 // contact→contact sync are factum→Netbox.
@@ -291,10 +260,15 @@ func (ctrl *Controller) ApiNetboxWebhook(c *echo.Context) error {
 	switch payload.ObjectType {
 	case "dcim.device":
 		if payload.Event == "deleted" {
-			return ctrl.netboxWebhookDeleteDevice(c, payload)
+			return ctrl.netboxWebhookDeleteDevice(c, payload, false)
 		}
 		return ctrl.netboxWebhookSyncDevice(c, payload)
-	case "dcim.interface", "ipam.ipaddress":
+	case "virtualization.virtualmachine":
+		if payload.Event == "deleted" {
+			return ctrl.netboxWebhookDeleteDevice(c, payload, true)
+		}
+		return ctrl.netboxWebhookSyncDevice(c, payload)
+	case "dcim.interface", "virtualization.vminterface", "ipam.ipaddress":
 		return ctrl.netboxWebhookSyncDevice(c, payload)
 	case "dcim.cable":
 		return ctrl.netboxWebhookCable(c, payload)
@@ -304,6 +278,8 @@ func (ctrl *Controller) ApiNetboxWebhook(c *echo.Context) error {
 		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.region")
 	case "dcim.location":
 		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.location")
+	case "dcim.rack", "dcim.devicetype", "ipam.vrf", "vpn.l2vpn", "vpn.l2vpntermination":
+		return ctrl.netboxWebhookQueueDelta(c, payload.ObjectType, payload.ObjectType)
 	default:
 		slog.Debug("netbox webhook", "object_type", payload.ObjectType, "status", "ignored")
 		return c.JSON(http.StatusOK, map[string]any{"status": "ignored"})
@@ -319,52 +295,35 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 		return c.JSON(http.StatusOK, map[string]any{"status": "ignored"})
 	}
 
-	// Netbox's webhook delivery only waits on the HTTP response, not on the
-	// sync itself. Device, interface, and IP events share one quiet window:
-	// after netboxWebhookDebounce with no further event, the queued devices
-	// sync one at a time (or as one full sync when the burst is wide).
-	fresh := ctrl.netboxDeviceSyncDebounce.schedule(deviceName, ctrl.netboxWebhookSyncQueued)
-	if fresh {
-		// One line the first time a device joins the current window, so
-		// the GUI log shows activity immediately. Further events for a
-		// device already waiting only reset the shared timer.
-		slog.Info("Netbox webhook sync: device "+deviceName+" queued", "source", "netbox", "device", deviceName)
-	}
-
-	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "device": deviceName})
+	return ctrl.netboxWebhookQueueDelta(c, deviceName, "device "+deviceName)
 }
 
-// netboxWebhookSyncQueued applies a quiet-window snapshot. A wide burst
-// becomes one full SyncDB; otherwise each device syncs in order, and a
-// failure on one device does not skip the rest.
+// netboxWebhookQueueDelta arms the shared quiet window. logName is the
+// GUI log phrase ("device sw1", "dcim.cable"). key is the debounce set
+// member so a repeated event for the same object only logs once.
+func (ctrl *Controller) netboxWebhookQueueDelta(c *echo.Context, key, logName string) error {
+	if key == "" {
+		key = "delta"
+	}
+	// Netbox's webhook delivery only waits on the HTTP response, not on
+	// the sync itself. After netboxWebhookDebounce with no further event,
+	// one delta sync reads the changelog.
+	fresh := ctrl.netboxDeviceSyncDebounce.schedule(key, ctrl.netboxWebhookSyncQueued)
+	if fresh {
+		slog.Info("Netbox webhook sync: "+logName+" queued", "source", "netbox", "device", key)
+	}
+	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued"})
+}
+
+// netboxWebhookSyncQueued runs one delta sync for the quiet window.
 func (ctrl *Controller) netboxWebhookSyncQueued(names []string) {
 	if len(names) == 0 {
 		return
 	}
-	var known int64
-	full := false
-	if err := ctrl.DB.Model(&models.Device{}).Where("cf_source = ?", "netbox").Count(&known).Error; err != nil {
+	slog.Info(fmt.Sprintf("Netbox webhook sync: %d queued, running delta sync", len(names)),
+		"source", "netbox", "queued", len(names))
+	if err := netboxSyncDelta(ctrl.DB, jobevent.NewSlogReporter("source", "netbox")); err != nil {
 		slog.Error("netbox webhook sync", "err", err)
-	} else {
-		full = netboxWebhookPreferFullSync(len(names), int(known))
-	}
-	if full {
-		slog.Info(fmt.Sprintf("Netbox webhook sync: %d devices changed, running full sync", len(names)),
-			"source", "netbox", "devices", len(names), "known", known)
-		if err := netboxSyncDB(ctrl.DB, "", jobevent.NewSlogReporter("source", "netbox")); err != nil {
-			slog.Error("netbox webhook sync", "err", err)
-		}
-		return
-	}
-	if len(names) > 1 {
-		slog.Info(fmt.Sprintf("Netbox webhook sync: %d devices, one at a time", len(names)),
-			"source", "netbox", "devices", len(names))
-	}
-	for _, deviceName := range names {
-		reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
-		if err := netboxSyncDB(ctrl.DB, deviceName, reporter); err != nil {
-			slog.Error("netbox webhook sync", "device", deviceName, "err", err)
-		}
 	}
 }
 
@@ -372,7 +331,7 @@ func (ctrl *Controller) netboxWebhookSyncQueued(names []string) {
 // has already dropped the object, so we delete the factum row by the
 // payload's id rather than trying to re-fetch it. Local DB only, so this
 // runs in-request (unlike the create/update path, which waits on Netbox).
-func (ctrl *Controller) netboxWebhookDeleteDevice(c *echo.Context, payload NetboxWebhookPayload) error {
+func (ctrl *Controller) netboxWebhookDeleteDevice(c *echo.Context, payload NetboxWebhookPayload, vm bool) error {
 	netboxID, ok := netboxWebhookObjectID(payload.Data)
 	if !ok {
 		slog.Debug("netbox webhook", "delete", "missing id")
@@ -381,14 +340,14 @@ func (ctrl *Controller) netboxWebhookDeleteDevice(c *echo.Context, payload Netbo
 
 	deviceName := netboxWebhookDeviceName(payload.ObjectType, payload.Data)
 	ctrl.netboxDeviceSyncDebounce.cancel(deviceName)
-	deleted, err := netbox.DeleteDeviceByNetboxID(ctrl.DB, netboxID, false)
+	deleted, err := netbox.DeleteDeviceByNetboxID(ctrl.DB, netboxID, vm)
 	if err != nil {
 		slog.Error("netbox webhook delete", "device", deviceName, "netbox_id", netboxID, "err", err)
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
-	reporter := webhookReporter{next: jobevent.NewSlogReporter("source", "netbox"), deviceName: deviceName}
-	reporter.Emit(jobevent.Info, "Netbox sync: %d new, %d updated, %d deleted", 0, 0, deleted)
+	slog.Info(fmt.Sprintf("Netbox sync: device %s: %d new, %d updated, %d deleted", deviceName, 0, 0, deleted),
+		"source", "netbox", "device", deviceName)
 	return c.JSON(http.StatusOK, map[string]any{
 		"status":    "deleted",
 		"device":    deviceName,
@@ -411,12 +370,7 @@ func (ctrl *Controller) netboxWebhookCable(c *echo.Context, payload NetboxWebhoo
 		slog.Info("netbox webhook deleted cable", "netbox_id", netboxID, "deleted", deleted)
 		return c.JSON(http.StatusOK, map[string]any{"status": "deleted", "netbox_id": netboxID})
 	}
-	go func() {
-		if err := netbox.SyncCable(ctrl.DB, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
-			slog.Error("netbox webhook cable sync", "netbox_id", netboxID, "err", err)
-		}
-	}()
-	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "object_type": "dcim.cable", "netbox_id": netboxID})
+	return ctrl.netboxWebhookQueueDelta(c, fmt.Sprintf("cable:%d", netboxID), fmt.Sprintf("cable %d", netboxID))
 }
 
 func netboxKindFromObjectType(objectType string) string {
@@ -446,39 +400,7 @@ func (ctrl *Controller) netboxWebhookTreeItem(c *echo.Context, payload NetboxWeb
 		slog.Info("netbox webhook deleted "+objectType, "netbox_id", netboxID, "deleted", deleted)
 		return c.JSON(http.StatusOK, map[string]any{"status": "deleted", "netbox_id": netboxID})
 	}
-	go func() {
-		if err := netbox.SyncDCIMTreeItem(ctrl.DB, kind, netboxID, jobevent.NewSlogReporter("source", "netbox")); err != nil {
-			slog.Error("netbox webhook "+objectType+" sync", "netbox_id", netboxID, "err", err)
-		}
-	}()
-	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued", "object_type": objectType, "netbox_id": netboxID})
-}
-
-// webhookReporter wraps the reporter given to netbox.SyncDB for the webhook
-// path, which always syncs exactly one device. SyncDB is shared with the
-// CLI tools' console/JSON reporters, which still want the unadorned
-// "started" / summary lines, so rather than changing SyncDB itself this
-// folds the device name into both lines for the web GUI's log window
-// (fed by slog, see web/logstream.go).
-type webhookReporter struct {
-	next       jobevent.Reporter
-	deviceName string
-}
-
-func (r webhookReporter) Emit(level jobevent.Level, format string, args ...any) {
-	switch format {
-	case "Netbox sync started":
-		r.next.Emit(level, "Netbox sync: device %s started", r.deviceName)
-		return
-	case "Netbox sync: %d new, %d updated, %d deleted":
-		r.next.Emit(level, "Netbox sync: device %s: %d new, %d updated, %d deleted", append([]any{r.deviceName}, args...)...)
-		return
-	}
-	r.next.Emit(level, format, args...)
-}
-
-func (r webhookReporter) EmitErr(err error) {
-	r.next.EmitErr(err)
+	return ctrl.netboxWebhookQueueDelta(c, fmt.Sprintf("%s:%d", objectType, netboxID), objectType+" "+fmt.Sprint(netboxID))
 }
 
 func validNetboxSignature(body []byte, signature, secret string) bool {
@@ -500,13 +422,18 @@ func validNetboxSignature(body []byte, signature, secret string) bool {
 // is Netbox's generic-FK nested serialization of whatever the address is
 // assigned to - typically an interface, which nests "device" the same way).
 func netboxWebhookDeviceName(objectType string, data map[string]any) string {
-	if objectType == "dcim.device" {
+	if objectType == "dcim.device" || objectType == "virtualization.virtualmachine" {
 		if name, ok := data["name"].(string); ok {
 			return name
 		}
 	}
 	if dev, ok := data["device"].(map[string]any); ok {
 		if name, ok := dev["name"].(string); ok {
+			return name
+		}
+	}
+	if vm, ok := data["virtual_machine"].(map[string]any); ok {
+		if name, ok := vm["name"].(string); ok {
 			return name
 		}
 	}

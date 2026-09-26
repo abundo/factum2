@@ -45,6 +45,12 @@ Sources**. NetBox also has a webhook secret (HMAC on
 NetBox tenants and Factum contacts to NetBox contacts (assigned onto
 the matching tenant when that tenant exists).
 
+When NetBox is enabled, jobs show two NetBox targets. **Netbox** is the
+full inventory sync; schedule it a few times a day. **Netbox changes**
+reads the NetBox changelog since the last sync and is the one to run
+more often (and the one a webhook starts after a short quiet period).
+**Sync all** runs the full NetBox sync only.
+
 A source that is disabled is skipped by [jobs](jobs.md). Credentials are
 used by the corresponding sync tool, which may run on the primary
 (NetBox/Lime/BECS talk to Postgres) rather than a remote worker.

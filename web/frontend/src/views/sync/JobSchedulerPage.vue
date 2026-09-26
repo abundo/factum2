@@ -18,6 +18,7 @@ const targetInfo = {
   becs: { label: 'BECS' },
   lime: { label: 'Lime' },
   netbox: { label: 'Netbox' },
+  'netbox-delta': { label: 'Netbox changes' },
   dns: { label: 'DNS' },
   icinga: { label: 'Icinga' },
   librenms: { label: 'LibreNMS' },

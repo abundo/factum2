@@ -41,12 +41,18 @@ func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	return SyncDB(db, name, reporter)
 }
 
-// SyncDB is Sync against an already-connected database, for callers that
-// already hold a shared *gorm.DB (currently just the Netbox webhook
-// handler, web.ApiNetboxWebhook) - opening a brand new, unbounded connection
-// pool on every single webhook call is what exhausted Postgres's
-// max_connections under a burst of Netbox webhooks.
+// SyncDB is Sync against an already-connected database. Callers that
+// already hold a shared *gorm.DB (the NetBox webhook handler, delta
+// sync) use it so a burst does not open a new connection pool per
+// event. Full and delta sync share one lock so they do not apply
+// over each other.
 func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
+	return withNetboxSyncLock(db, func() error {
+		return syncDB(db, name, reporter)
+	})
+}
+
+func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	var err error
 	reporter.Emit(jobevent.Info, "Netbox sync started")
 
@@ -66,6 +72,18 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	}
 
 	fullSync := name == ""
+	// Stamp the changelog cursor to the head from before the inventory
+	// walk. Changes that land during the walk stay after the cursor, so
+	// the next delta sync refetches them.
+	var stamp *netboxtool.ChangelogMark
+	if fullSync {
+		mark, headErr := nb.ChangelogHead()
+		if headErr != nil {
+			reporter.Emit(jobevent.Warning, "Netbox changelog cursor not updated: %v", headErr)
+		} else {
+			stamp = &mark
+		}
+	}
 	var nb_devices []*netboxtool.NBDevice
 	if fullSync {
 		slog.Debug("Fetch devices from netbox")
@@ -216,6 +234,13 @@ func SyncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	// is device + interfaces + IP addresses only.
 	if fullSync {
 		if err := syncServiceEndpointsFromL2VPNs(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+	}
+
+	if stamp != nil {
+		if err := saveNetboxChangelogCursor(db, settings.ID, *stamp); err != nil {
 			reporter.EmitErr(err)
 			return err
 		}

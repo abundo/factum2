@@ -539,6 +539,12 @@ type Settings struct {
 	// custom fields as tenants). CustomerContact links become contact
 	// assignments on the matching tenant when that tenant exists.
 	NetboxSyncContactsEnabled *bool `gorm:"column:netbox_sync_contacts_enabled" form:"netbox_sync_contacts_enabled" json:"netbox_sync_contacts_enabled"`
+	// NetboxChangelogAt/NetboxChangelogID mark the newest NetBox object
+	// change a full or delta sync has applied. Not edited from the API:
+	// a settings save must not clear them. Nil At means delta sync has
+	// no cursor and falls back to a full sync.
+	NetboxChangelogAt *time.Time `gorm:"column:netbox_changelog_at" json:"-"`
+	NetboxChangelogID uint       `gorm:"column:netbox_changelog_id" json:"-"`
 
 	// Oxidized
 	OxidizedApiURL  string `gorm:"column:oxidized_api_url" form:"oxidized_api_url" json:"oxidized_api_url"`

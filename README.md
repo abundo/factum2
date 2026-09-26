@@ -313,25 +313,30 @@ determine group credentials`) and takes **hub command dispatch** down —
    `FACTUM_WORKER_API_SOCKET=none` unset when you do — a unix 502 after Dial
    will not fail over to HTTPS.
 
-## NetBox webhook (partial sync)
+## NetBox sync
 
-`POST /api/netbox-webhook` lets NetBox push change events instead of waiting
-for `factum2-netbox sync`'s full polling sync. On a Device, Interface or IP
-Address create/update (or an Interface/IP delete) it resyncs that device
-(interfaces, addresses and tags included). Those events share one quiet
-period: nothing is fetched until 3 seconds pass with no further Device,
-Interface, or IP webhook, then each changed device is synced one at a time.
-A burst that queues at least 10 devices and at least 20% of the NetBox
-devices already stored in factum runs one full sync instead. Each
-single-device sync re-reads every IP address, so a wide burst is cheaper
-as one inventory pass; the floor of 10 keeps a small lab on the per-device
-path. On a Device deletion it removes the matching netbox-sourced factum
-row by the payload's id — NetBox has already deleted the object, so it
-cannot be re-fetched — and drops that device from the quiet-period queue.
-Cable and site create/update re-fetch that one object and upsert the local
-Connection/Site row; their deletions remove the row by the payload's id
-the same way. Tenant and contact events are ignored — customer→tenant
-and contact→contact sync are factum→NetBox.
+`factum2-netbox sync` is a full inventory reconcile (devices, VMs, cables,
+sites, racks, VRFs, interface types, and, when enabled, customer and
+contact push plus L2VPN import). Run it a few times a day. A successful
+full sync records a changelog cursor.
+
+`factum2-netbox sync-delta` (job target `netbox-delta`) reads NetBox
+`/api/core/object-changes/` since that cursor and refetches only what
+changed. Schedule it more often than the full sync. It is not part of
+"Sync all". With no cursor, or when the change set is at least 10 devices
+and at least 20% of the stored NetBox inventory, it runs a full sync
+instead. The changelog does not keep deletes forever
+(`CHANGELOG_RETENTION`, 90 days by default); the periodic full sync is
+what picks up anything the cursor missed. Add a `netbox-delta` entry next
+to `netbox` in `worker.commands` (`sync-delta --job`).
+
+`POST /api/netbox-webhook` queues create/update events for one quiet
+period (3 seconds with no further event), then runs that same delta sync.
+Device, VM, cable, site, region, and location deletes are applied
+immediately from the payload id, because the object is already gone.
+Tenant and contact events are ignored — customer→tenant and
+contact→contact sync are factum→NetBox, and they still run only on a
+full sync.
 
 The endpoint isn't a logged-in user or a `factum.token` service client, so
 it authenticates differently: it verifies NetBox's HMAC-SHA512
