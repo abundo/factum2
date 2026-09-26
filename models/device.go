@@ -349,8 +349,11 @@ type DeviceType struct {
 	Model          string `json:"model" gorm:"type:varchar(255);not null"`
 	Slug           string `json:"slug" gorm:"type:varchar(255);not null"`
 	PlatformID     uint   `json:"platform_id" gorm:"index"`
-	Source         string `json:"source" gorm:"type:varchar(32)"`
-	NetboxID       uint   `json:"netbox_id"`
+	// VM marks this catalog row as a virtual machine. NetBox sync sets it
+	// from the device being imported (virtualization.VirtualMachine).
+	VM       bool   `json:"vm"`
+	Source   string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID uint   `json:"netbox_id"`
 	// HeightTicks is physical height in half-U ticks (2 ticks = 1U).
 	// nil means unknown — never treat as 1U.
 	HeightTicks *int   `json:"height_ticks"`
@@ -365,6 +368,7 @@ type DeviceTypeDTO struct {
 	Model          string `json:"model"`
 	Slug           string `json:"slug"`
 	PlatformID     uint   `json:"platform_id"`
+	VM             bool   `json:"vm"`
 	HeightTicks    *int   `json:"height_ticks"`
 	FullDepth      *bool  `json:"full_depth"`
 	FrontImage     string `json:"front_image"`
@@ -531,10 +535,13 @@ type DeviceCreateDTO struct {
 	Status       string `json:"status"`
 	// PrimaryIPv4/PrimaryIPv6 on this DTO are ignored. Primary addresses
 	// are assigned by referencing an interface address (management IP).
-	PrimaryIPv4       string `json:"primary_ipv4"`
-	PrimaryIPv6       string `json:"primary_ipv6"`
-	Comments          string `json:"comments"`
-	Enabled           *bool  `json:"enabled"`
+	PrimaryIPv4 string `json:"primary_ipv4"`
+	PrimaryIPv6 string `json:"primary_ipv6"`
+	Comments    string `json:"comments"`
+	Enabled     *bool  `json:"enabled"`
+	// VM is set when this Factum-local device is a virtual machine.
+	// Nil leaves the stored value (and, on create, copies the device type).
+	VM                *bool  `json:"vm"`
 	CfLocation        string `json:"cf_location"`
 	CfMonitorIcinga   *bool  `json:"cf_monitor_icinga"`
 	CfMonitorLibrenms *bool  `json:"cf_monitor_librenms"`

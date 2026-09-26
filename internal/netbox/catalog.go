@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -46,7 +46,7 @@ func upsertManufacturer(db *gorm.DB, name string, netboxID uint) (models.Manufac
 	return row, nil
 }
 
-func upsertDeviceType(db *gorm.DB, manufacturerID uint, model string, netboxID uint) (models.DeviceType, error) {
+func upsertDeviceType(db *gorm.DB, manufacturerID uint, model string, netboxID uint, vm bool) (models.DeviceType, error) {
 	model = strings.TrimSpace(model)
 	if model == "" || manufacturerID == 0 {
 		return models.DeviceType{}, nil
@@ -62,6 +62,7 @@ func upsertDeviceType(db *gorm.DB, manufacturerID uint, model string, netboxID u
 			ManufacturerID: manufacturerID,
 			Model:          model,
 			Slug:           slug,
+			VM:             vm,
 			Source:         "netbox",
 			NetboxID:       netboxID,
 		}
@@ -76,6 +77,12 @@ func upsertDeviceType(db *gorm.DB, manufacturerID uint, model string, netboxID u
 	row.ManufacturerID = manufacturerID
 	row.Model = model
 	row.Slug = slug
+	// A virtual machine sets the flag. A physical NetBox device clears it
+	// once this row is (or is about to be) sourced from NetBox. A Factum
+	// row that only matches by name, with no NetBox id, keeps its own flag.
+	if vm || row.Source == "netbox" || netboxID != 0 {
+		row.VM = vm
+	}
 	if netboxID != 0 {
 		row.NetboxID = netboxID
 		row.Source = "netbox"

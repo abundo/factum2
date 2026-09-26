@@ -417,6 +417,11 @@ func applyDeviceWrite(db *gorm.DB, device *models.Device, dto models.DeviceCreat
 	} else if device.ID == 0 {
 		device.Enabled = true
 	}
+	if dto.VM != nil {
+		device.VM = *dto.VM
+	} else if device.ID == 0 {
+		device.VM = dt.VM
+	}
 	device.Manufacturer = mfr.Name
 	device.ModelName = dt.Model
 	device.DeviceTypeID = dt.ID

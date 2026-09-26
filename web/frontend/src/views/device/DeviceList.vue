@@ -119,6 +119,7 @@ function emptyDeviceForm() {
     status: 'active',
     comments: '',
     enabled: true,
+    vm: false,
     cf_location: '',
     cf_monitor_icinga: false,
     cf_monitor_librenms: false,
@@ -146,7 +147,7 @@ const manufacturerById = computed(() => {
 })
 const deviceTypeItems = computed(() =>
   deviceTypes.value.map((dt) => ({
-    label: `${manufacturerById.value.get(dt.manufacturer_id) || '?'} ${dt.model}`,
+    label: `${manufacturerById.value.get(dt.manufacturer_id) || '?'} ${dt.model}${dt.vm ? ' (VM)' : ''}`,
     value: dt.id,
   })),
 )
@@ -242,7 +243,9 @@ watch(
   (id) => {
     if (!createDialog.value) return
     const dt = deviceTypes.value.find((t) => t.id === id)
-    if (dt) createForm.value.platform_id = dt.platform_id || 0
+    if (!dt) return
+    createForm.value.platform_id = dt.platform_id || 0
+    createForm.value.vm = !!dt.vm
   },
 )
 
@@ -257,6 +260,7 @@ function deviceWritePayload(form) {
     status: form.status,
     comments: form.comments.trim(),
     enabled: !!form.enabled,
+    vm: !!form.vm,
     cf_location: form.cf_location.trim(),
     cf_monitor_icinga: !!form.cf_monitor_icinga,
     cf_monitor_librenms: !!form.cf_monitor_librenms,
@@ -310,6 +314,7 @@ function fillFormFromDevice(d) {
     status: d.status || 'active',
     comments: d.comments ?? '',
     enabled: d.enabled !== false,
+    vm: !!d.vm,
     cf_location: d.cf_location ?? '',
     cf_monitor_icinga: !!d.cf_monitor_icinga,
     cf_monitor_librenms: !!d.cf_monitor_librenms,
@@ -1166,12 +1171,13 @@ onMounted(() => {
     <template #overview>
       <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
         <span class="font-bold whitespace-nowrap">Kind</span>
-        <div>
+        <div class="flex items-center gap-3">
           <UBadge
-            :label="device.vm ? 'VM' : 'Device'"
-            :color="device.vm ? 'warning' : 'neutral'"
+            :label="(isLocalDevice ? createForm.vm : device.vm) ? 'VM' : 'Device'"
+            :color="(isLocalDevice ? createForm.vm : device.vm) ? 'warning' : 'neutral'"
             variant="subtle"
           />
+          <USwitch v-if="isLocalDevice" id="device-vm" v-model="createForm.vm" />
         </div>
 
         <span class="font-bold whitespace-nowrap">Status</span>
@@ -1715,6 +1721,7 @@ onMounted(() => {
         <UFormField label="Device type">
           <USelect v-model="createForm.device_type_id" :items="deviceTypeItems" class="w-full" />
         </UFormField>
+        <UCheckbox v-model="createForm.vm" label="VM" />
         <UFormField label="Platform">
           <USelect v-model="createForm.platform_id" :items="platformItems" class="w-full" />
         </UFormField>

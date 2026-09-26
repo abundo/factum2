@@ -41,6 +41,7 @@ const columns = [
   { accessorKey: 'model', header: 'Model' },
   { id: 'platform', header: 'Platform' },
   { accessorKey: 'slug', header: 'Slug' },
+  { id: 'vm', header: 'VM' },
   { accessorKey: 'source', header: 'Source' },
 ]
 
@@ -119,6 +120,7 @@ function emptyTypeForm() {
     model: '',
     slug: '',
     platform_id: 0,
+    vm: false,
     height_u: '',
     full_depth: false,
   }
@@ -130,6 +132,7 @@ function fillFormFromType(row) {
     model: row.model ?? '',
     slug: row.slug ?? '',
     platform_id: row.platform_id || 0,
+    vm: !!row.vm,
     height_u: row.height_ticks != null ? String(row.height_ticks / 2) : '',
     full_depth: !!row.full_depth,
   }
@@ -187,6 +190,7 @@ function typePayload() {
     model: form.value.model.trim(),
     slug: form.value.slug.trim(),
     platform_id: form.value.platform_id || 0,
+    vm: !!form.value.vm,
     height_ticks,
     full_depth: !!form.value.full_depth,
   }
@@ -420,6 +424,10 @@ onMounted(() => {
       <template #source-header="{ column }">
         <SortableColumnHeader :column="column" label="Source" />
       </template>
+      <template #vm-cell="{ row }">
+        <UBadge v-if="row.original.vm" label="VM" color="warning" variant="subtle" />
+        <span v-else class="text-muted-color">—</span>
+      </template>
       <template #source-cell="{ row }">
         <UBadge
           :label="row.original.source || '—'"
@@ -472,6 +480,7 @@ onMounted(() => {
         <UFormField label="Height (U)" hint="Leave blank if unknown">
           <UInput v-model="form.height_u" class="w-full" />
         </UFormField>
+        <UCheckbox v-model="form.vm" label="VM" />
         <UCheckbox v-model="form.full_depth" label="Full depth (blocks front and rear)" />
       </div>
     </template>
@@ -555,6 +564,13 @@ onMounted(() => {
           class="w-full"
           :disabled="!(canWrite && editingLocal)"
           placeholder="unknown"
+        />
+
+        <label class="font-bold whitespace-nowrap">VM</label>
+        <UCheckbox
+          v-model="form.vm"
+          label="This device type is a virtual machine"
+          :disabled="!(canWrite && editingLocal)"
         />
 
         <label class="font-bold whitespace-nowrap">Full depth</label>

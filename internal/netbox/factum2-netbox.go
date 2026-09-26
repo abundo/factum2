@@ -723,7 +723,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	if mfr, err := upsertManufacturer(db, nb_device.Manufacturer, nb_device.ManufacturerID); err != nil {
 		return false, err
 	} else if mfr.ID != 0 {
-		dt, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID)
+		dt, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID, nb_device.VM)
 		if err != nil {
 			return false, err
 		}

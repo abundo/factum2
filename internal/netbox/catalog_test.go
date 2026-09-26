@@ -3,8 +3,8 @@ package netbox
 import (
 	"testing"
 
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 func TestSyncDeviceUpsertsCatalog(t *testing.T) {
@@ -66,6 +66,85 @@ func TestSyncDeviceUpsertsCatalog(t *testing.T) {
 	db.Model(&models.Manufacturer{}).Count(&n)
 	if n != 1 {
 		t.Fatalf("manufacturers = %d, want 1", n)
+	}
+}
+
+func TestSyncDeviceVMFlag(t *testing.T) {
+	db := newImportTestDB(t)
+
+	if _, err := syncDevice(db, &netboxtool.NBDevice{
+		VM:             true,
+		NetboxID:       5,
+		Name:           "vm1",
+		Manufacturer:   "Generic",
+		ManufacturerID: 1,
+		ModelName:      "virt",
+		ModelID:        2,
+		Status:         "active",
+		CfSource:       "netbox",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var dev models.Device
+	if err := db.Where("name = ?", "vm1").First(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !dev.VM {
+		t.Fatal("synced virtual machine has vm=false")
+	}
+	var dt models.DeviceType
+	if err := db.Where("model = ?", "virt").First(&dt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !dt.VM {
+		t.Fatal("device type imported from a virtual machine has vm=false")
+	}
+
+	// A later physical import of the same NetBox device type clears the flag.
+	if _, err := syncDevice(db, &netboxtool.NBDevice{
+		NetboxID:       10,
+		Name:           "sw1",
+		Manufacturer:   "Generic",
+		ManufacturerID: 1,
+		ModelName:      "virt",
+		ModelID:        2,
+		Status:         "active",
+		CfSource:       "netbox",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&dt, dt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dt.VM {
+		t.Fatal("physical device sync left device type vm=true")
+	}
+	if err := db.Where("name = ?", "vm1").First(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !dev.VM {
+		t.Fatal("physical sync cleared the virtual machine's own vm flag")
+	}
+
+	// A Factum-only type keeps the flag when it is not claimed by a NetBox id.
+	local := models.DeviceType{
+		ManufacturerID: dt.ManufacturerID,
+		Model:          "local-vm",
+		Slug:           "local-vm",
+		VM:             true,
+		Source:         "factum",
+	}
+	if err := db.Create(&local).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upsertDeviceType(db, local.ManufacturerID, "local-vm", 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&local, local.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !local.VM || local.Source != "factum" {
+		t.Fatalf("factum device type = %+v, want vm kept", local)
 	}
 }
 

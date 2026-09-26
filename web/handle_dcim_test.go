@@ -450,6 +450,76 @@ func TestApiGetDevicesIncludeInterfaces(t *testing.T) {
 	}
 }
 
+func TestApiDeviceCreateVM(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	mfr := models.Manufacturer{Name: "Generic", Slug: "generic"}
+	if err := db.Create(&mfr).Error; err != nil {
+		t.Fatal(err)
+	}
+	vmType := true
+	dt := models.DeviceType{ManufacturerID: mfr.ID, Model: "virt", Slug: "virt", VM: vmType}
+	if err := db.Create(&dt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	vm := true
+	c, rec := jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "vm-explicit",
+		DeviceTypeID: dt.ID,
+		VM:           &vm,
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if !created.VM {
+		t.Fatal("explicit vm flag was not stored")
+	}
+
+	c, rec = jsonRequest(t, http.MethodPost, "/api/device", models.DeviceCreateDTO{
+		Name:         "vm-from-type",
+		DeviceTypeID: dt.ID,
+	}, nil, nil)
+	if err := ctrl.ApiDeviceCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	var fromType models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &fromType); err != nil {
+		t.Fatal(err)
+	}
+	if !fromType.VM {
+		t.Fatal("create without vm should copy the device type flag")
+	}
+
+	off := false
+	c, rec = jsonRequest(t, http.MethodPut, "/api/device/x", models.DeviceCreateDTO{
+		Name:         "vm-explicit",
+		DeviceTypeID: dt.ID,
+		VM:           &off,
+	}, []string{"id"}, []string{strconv.FormatUint(uint64(created.ID), 10)})
+	if err := ctrl.ApiDeviceUpdate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var updated models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.VM {
+		t.Fatal("update did not clear vm")
+	}
+}
+
 func TestApiDeviceCreateLocal(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

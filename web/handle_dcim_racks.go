@@ -287,6 +287,7 @@ func (ctrl *Controller) ApiDeviceTypeUpdateChecked(c *echo.Context) error {
 	}
 	row.Slug = dto.Slug
 	row.PlatformID = dto.PlatformID
+	row.VM = dto.VM
 	row.HeightTicks = dto.HeightTicks
 	row.FullDepth = dto.FullDepth
 	if dto.FrontImage != "" {

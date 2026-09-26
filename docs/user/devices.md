@@ -14,7 +14,10 @@ types, platforms, and interface types are a shared catalog: NetBox sync
 fills the same tables (source `netbox`) that you can also create locally
 (source `factum`). Pick an existing type from either source. Platform is
 optional; its slug should match a driver such as `eos` or `sros` if you
-want interface refresh.
+want interface refresh. Check **VM** when the new device is a virtual
+machine. Picking a device type marked VM checks that for you; you can
+still change it before creating. NetBox sync sets the same flag:
+virtual machines are VMs, physical devices are not.
 
 **DCIM → Interface types** is the list used by the Type picker on
 interfaces and device-type templates. A full NetBox sync loads NetBox's
@@ -31,7 +34,9 @@ page or from the device's Interfaces dialog. When creating, a name like
 interfaces are read-only here.
 
 **DCIM → Device types** opens the same tabbed detail dialog as a device
-(Overview and Interfaces). VLAN and Oxidized tabs are device-only. The
+(Overview and Interfaces). Mark a type **VM** when devices of that type
+are virtual machines. NetBox sync sets that flag on the type from the
+device it imports. VLAN and Oxidized tabs are device-only. The
 Interfaces tab holds port templates for that type (synced from NetBox, or
 created locally). Range names such as `Ethernet[1-48]` create one template
 per expanded name. Creating a local device copies those templates onto it.

@@ -61,6 +61,7 @@ stores your layout; it never creates or edits cables.
 
 ## Device types
 
-Local device types can set height in U and whether the chassis is full
-depth. Those values drive occupancy. Leave height blank when you do not
-know it — Factum will not assume 1U.
+Local device types can set height in U, whether the chassis is full
+depth, and whether the type is a VM. Height and depth drive occupancy.
+Leave height blank when you do not know it — Factum will not assume 1U.
+A VM device is not placed in a rack.
