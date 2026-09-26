@@ -41,7 +41,7 @@ func TestSetAuthCookieSecureFlag(t *testing.T) {
 			withSecureCookies(t, tc.secure)
 			rec := httptest.NewRecorder()
 			c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/api/login", nil), rec)
-			if err := setAuthCookie(c, 1, false); err != nil {
+			if err := setAuthCookie(c, 1, 1, false); err != nil {
 				t.Fatalf("setAuthCookie: %v", err)
 			}
 			cookie := cookieByName(t, rec, "token")
@@ -97,7 +97,7 @@ func TestSetAuthCookieRememberMeTTL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/api/login", nil), rec)
-			if err := setAuthCookie(c, 1, tc.rememberMe); err != nil {
+			if err := setAuthCookie(c, 1, 1, tc.rememberMe); err != nil {
 				t.Fatalf("setAuthCookie: %v", err)
 			}
 			cookie := cookieByName(t, rec, "token")

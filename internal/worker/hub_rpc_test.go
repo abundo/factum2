@@ -39,6 +39,7 @@ func (m *RemoteManager) inFlightCount(node string) int {
 
 func TestHandleHubRequestSuccessInFlightReturnsToZero(t *testing.T) {
 	m := NewRemoteManager(nil)
+	m.SetNodeRoles("n1", []string{"librenms"})
 	m.SetAPIHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !IsHubAuth(r.Context()) {
 			t.Error("ServeHTTP request missing hub auth")
@@ -67,6 +68,7 @@ func TestHandleHubRequestInFlightCapAnd429DoesNotIncrement(t *testing.T) {
 	m := NewRemoteManager(nil)
 	entered := make(chan struct{}, hubRPCMaxInFlight)
 	release := make(chan struct{})
+	m.SetNodeRoles("n1", []string{"librenms"})
 	m.SetAPIHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		entered <- struct{}{}
 		<-release
@@ -263,6 +265,7 @@ func TestHandleHubRequestRejectsTraversal(t *testing.T) {
 
 func TestHandleHubRequestNilHandler(t *testing.T) {
 	m := NewRemoteManager(nil)
+	m.SetNodeRoles("n1", []string{"librenms"})
 	outbox := make(chan Envelope, 1)
 	m.HandleHubRequest(context.Background(), "n1", outbox, RequestMsg{
 		ID: "1", Method: http.MethodGet, Path: "/api/librenms-config",

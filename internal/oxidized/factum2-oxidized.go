@@ -27,12 +27,15 @@ type FactumOxidizedClient struct {
 // primary over REST - config.Oxidized is never used, since factum2-oxidized
 // typically runs on a different host than the primary and has no local
 // oxidized config of its own (see util.ConfigOxidized's doc comment).
-func NewFactumOxidizedClient(config *util.ConfigFactum) (*FactumOxidizedClient, error) {
+func NewFactumOxidizedClient(root *util.ConfigAgentRoot) (*FactumOxidizedClient, error) {
 	client := new(FactumOxidizedClient)
-	client.Config = config
+	client.Config = &root.Factum
 
-	oxidizedConfig, err := FetchRemoteConfig(config)
+	oxidizedConfig, err := FetchRemoteConfig(&root.Factum)
 	if err != nil {
+		return nil, err
+	}
+	if err := pinDest(oxidizedConfig, root.Worker.Paths); err != nil {
 		return nil, err
 	}
 	client.OxidizedConfig = oxidizedConfig

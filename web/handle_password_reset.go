@@ -145,14 +145,15 @@ func (ctrl *Controller) provisionLDAPUserByEmail(settings *models.Settings, emai
 	return &user, nil
 }
 
-// publicBaseURL is the origin used to build the reset link - prefers the
-// admin-configured Settings.PublicBaseURL, falling back to the incoming
-// request's scheme+Host for simple setups that haven't set it.
-func publicBaseURL(c *echo.Context, settings *models.Settings) string {
-	if settings.PublicBaseURL != "" {
-		return strings.TrimRight(settings.PublicBaseURL, "/")
+// resetLinkOrigin is the origin used to build the reset link. It is only
+// Settings.PublicBaseURL. The request Host is not used: a forgot-password
+// caller can set that header and receive the victim's token on their site.
+func resetLinkOrigin(settings *models.Settings) (string, error) {
+	origin := strings.TrimRight(strings.TrimSpace(settings.PublicBaseURL), "/")
+	if origin == "" {
+		return "", fmt.Errorf("public_base_url is not set")
 	}
-	return c.Scheme() + "://" + c.Request().Host
+	return origin, nil
 }
 
 // --------------------------------------------------------------------------
@@ -202,18 +203,21 @@ type ForgotPasswordRequest struct {
 // reset, or whether sending the email succeeded - anything else would let
 // a caller enumerate valid accounts by probing this endpoint.
 func (ctrl *Controller) ApiForgotPassword(c *echo.Context) error {
+	if !allowAuthAttempt("forgot:"+clientIP(c), 5, time.Hour) {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "too many requests"})
+	}
 	var req ForgotPasswordRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	email := strings.TrimSpace(req.Email)
 	if email != "" {
-		ctrl.sendPasswordResetEmailIfEligible(c, email)
+		ctrl.sendPasswordResetEmailIfEligible(email)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
-func (ctrl *Controller) sendPasswordResetEmailIfEligible(c *echo.Context, email string) {
+func (ctrl *Controller) sendPasswordResetEmailIfEligible(email string) {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		slog.Error("forgot-password: failed to load settings", "error", err)
@@ -249,9 +253,17 @@ func (ctrl *Controller) sendPasswordResetEmailIfEligible(c *echo.Context, email 
 			slog.Error("forgot-password: failed to render ldap-managed notice", "error", err)
 			return
 		}
-		if err := mail.Send(util.NewCommonConfig(settings), settings.EmailSender, user.Email, "About your Factum password", body); err != nil {
+		if err := mail.Send(util.WithSMTP(util.NewCommonConfig(settings), settings), settings.EmailSender, user.Email, "About your Factum password", body); err != nil {
 			slog.Error("forgot-password: failed to send ldap-managed notice", "error", err, "user", user.Username)
 		}
+		return
+	}
+
+	if _, err := resetLinkOrigin(settings); err != nil {
+		slog.Error("forgot-password: refusing to send a reset link without public_base_url")
+		return
+	}
+	if !allowAuthAttempt("forgot-email:"+strings.ToLower(email), 3, time.Hour) {
 		return
 	}
 
@@ -294,7 +306,12 @@ func (ctrl *Controller) sendPasswordResetEmailIfEligible(c *echo.Context, email 
 		return
 	}
 
-	link := fmt.Sprintf("%s/reset-password?token=%s", publicBaseURL(c, settings), rawToken)
+	origin, err := resetLinkOrigin(settings)
+	if err != nil {
+		slog.Error("forgot-password: refusing to send a reset link without public_base_url")
+		return
+	}
+	link := fmt.Sprintf("%s/reset-password?token=%s", origin, rawToken)
 	body, err := renderTemplate(resetEmailTmpl, resetEmailData{
 		Link:       link,
 		Code:       rawCode,
@@ -304,7 +321,7 @@ func (ctrl *Controller) sendPasswordResetEmailIfEligible(c *echo.Context, email 
 		slog.Error("forgot-password: failed to render email", "error", err)
 		return
 	}
-	if err := mail.Send(util.NewCommonConfig(settings), settings.EmailSender, user.Email, "Reset your Factum password", body); err != nil {
+	if err := mail.Send(util.WithSMTP(util.NewCommonConfig(settings), settings), settings.EmailSender, user.Email, "Reset your Factum password", body); err != nil {
 		slog.Error("forgot-password: failed to send email", "error", err, "user", user.Username)
 	}
 }
@@ -325,6 +342,9 @@ type ResetPasswordRequest struct {
 var errInvalidResetToken = fmt.Errorf("this reset link or code is invalid or has expired")
 
 func (ctrl *Controller) ApiResetPassword(c *echo.Context) error {
+	if !allowAuthAttempt("reset:"+clientIP(c), 20, time.Minute) {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "too many requests"})
+	}
 	var req ResetPasswordRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -356,6 +376,9 @@ func (ctrl *Controller) ApiResetPassword(c *echo.Context) error {
 			slog.Error("reset-password: ldap write-back failed", "error", err, "user", user.Username)
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed to update password in the directory"})
 		}
+		if err := ctrl.bumpTokenVersion(&user); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
 	} else {
 		hash, err := HashPassword(req.NewPassword)
 		if err != nil {
@@ -363,6 +386,9 @@ func (ctrl *Controller) ApiResetPassword(c *echo.Context) error {
 		}
 		user.PasswordHash = hash
 		if err := ctrl.DB.Save(&user).Error; err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		if err := ctrl.bumpTokenVersion(&user); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 	}
@@ -405,12 +431,20 @@ func (ctrl *Controller) resolveResetToken(req ResetPasswordRequest) (*models.Pas
 		Order("created_at DESC").First(&prt).Error; err != nil {
 		return nil, models.User{}, errInvalidResetToken
 	}
-	if prt.Attempts >= passwordResetMaxCodeAttempts {
+	// One UPDATE so parallel guesses cannot all read the same attempt count
+	// and slip past the cap. Postgres re-checks the WHERE after waiting
+	// for the row lock.
+	res := ctrl.DB.Model(&models.PasswordResetToken{}).
+		Where("id = ? AND consumed_at IS NULL AND attempts < ?", prt.ID, passwordResetMaxCodeAttempts).
+		Update("attempts", gorm.Expr("attempts + ?", 1))
+	if res.Error != nil {
+		return nil, models.User{}, errInvalidResetToken
+	}
+	if res.RowsAffected == 0 {
 		ctrl.consumeResetToken(&prt)
 		return nil, models.User{}, errInvalidResetToken
 	}
 	if subtle.ConstantTimeCompare([]byte(hashToken(req.Code)), []byte(prt.CodeHash)) != 1 {
-		ctrl.DB.Model(&prt).Update("attempts", prt.Attempts+1)
 		return nil, models.User{}, errInvalidResetToken
 	}
 	return &prt, user, nil

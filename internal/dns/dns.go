@@ -41,7 +41,33 @@ func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := applyWorkerPaths(client.DNS, config.Worker.Paths); err != nil {
+		return nil, err
+	}
 	return client, nil
+}
+
+func applyWorkerPaths(cfg *Config, paths util.ConfigWorkerPaths) error {
+	dest, err := util.PinnedPath(paths.DNSDestFile, cfg.DestFile, "worker.paths.dns_dest_file")
+	if err != nil {
+		return err
+	}
+	cfg.DestFile = dest
+	if cfg.ZonesEnabled || strings.TrimSpace(cfg.ZonesFile) != "" {
+		zones, err := util.PinnedPath(paths.DNSZonesFile, cfg.ZonesFile, "worker.paths.dns_zones_file")
+		if err != nil {
+			return err
+		}
+		cfg.ZonesFile = zones
+	}
+	if cfg.DhcpEnabled || strings.TrimSpace(cfg.PrefixesFile) != "" {
+		prefixes, err := util.PinnedPath(paths.DNSPrefixesFile, cfg.PrefixesFile, "worker.paths.dns_prefixes_file")
+		if err != nil {
+			return err
+		}
+		cfg.PrefixesFile = prefixes
+	}
+	return nil
 }
 
 // Get all devices from factum database

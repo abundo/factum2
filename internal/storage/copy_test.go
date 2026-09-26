@@ -29,6 +29,12 @@ func TestPullCommands(t *testing.T) {
 	if _, err := PullCommands("openroadm", "http", "x", "y"); err == nil {
 		t.Fatal("openroadm should fail")
 	}
+	if _, err := PullCommands("eos", "http", "http://10.0.0.5/a", "flash:x\nreload"); err == nil {
+		t.Fatal("newline in destination must fail")
+	}
+	if _, err := PullCommands("eos", "http", "http://10.0.0.5/a bin", "flash:x"); err == nil {
+		t.Fatal("space in source must fail")
+	}
 }
 
 func TestSourceURL(t *testing.T) {

@@ -19,10 +19,9 @@
 // to participate in.
 //
 // An agent never executes a command line received from the primary
-// directly - only the name is used to look up a predefined command, and an
-// instance only ever runs commands from its own ConfigWorker.Commands
-// allowlist, so a forged or replayed message can at most trigger one of the
-// commands the operator already defined for that instance.
+// directly. The name selects a ConfigWorker.Commands entry. Extra argv is
+// accepted only when that entry lists it in AllowArgs, so a forged message
+// cannot append flags the operator did not permit.
 package worker
 
 import (

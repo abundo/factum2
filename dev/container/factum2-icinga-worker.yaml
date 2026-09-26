@@ -10,6 +10,10 @@ worker:
     token: lab-icinga-worker-token
     tls_cert: /etc/factum2/certs/hub.crt
     tls_key: /etc/factum2/certs/hub.key
+    paths:
+        icinga_hosts_file: /factum/hosts.conf
+        icinga_users_file: /factum/users.conf
+        icinga_certs_file: /factum/certs.conf
     commands:
         icinga:
             cmd: /opt/factum2/factum2-icinga

@@ -224,9 +224,11 @@ firewall step, not something the process unbinds.
   service - currently just `DefaultDomain` (`Settings.DefaultDomain`, edited
   in the admin UI's Factum tab, not the DNS tab - it's also needed by
   Icinga/LibreNMS/Oxidized/Prometheus sync, matching factum device names against
-  fully-qualified DNS names). `util.NewCommonConfig(settings)` builds it;
-  every `web.ApiXxxConfig` handler embeds it in its response via that
-  helper, and every `util.ConfigXxx` runtime type embeds it too. A tool
+  fully-qualified DNS names). `util.NewCommonConfig(settings)` builds it
+  without SMTP credentials. `util.WithSMTP` adds the relay, and only
+  `GET /api/icinga-config` (factum2-icinga-notifications) does that.
+  Every `web.ApiXxxConfig` handler embeds `NewCommonConfig` in its response,
+  and every `util.ConfigXxx` runtime type embeds it too. A tool
   that needs nothing service-specific can
   fetch just this from `GET /api/common-config` (`web.ApiCommonConfig`) —
   `drivers.NewDriverName` does. A `factum2-worker start` host only needs
@@ -599,10 +601,15 @@ sends the same `command` envelope, just through a different
 wait, or persist a job/task record.
 
 An agent only ever executes commands from its own `worker.commands` map,
-looked up by name — the command line arriving over the wire is never used
-to build a shell command directly, so a forged/compromised message can at
-most select one of the commands the operator defined for that instance,
-not run arbitrary code. Keep this indirection intact when touching
+looked up by name. The command line arriving over the wire is never used
+to build a shell command. Extra argv is appended only when that entry's
+`allow_args` lists the token (`--path=*` allows the flag plus one value).
+An empty `allow_args` rejects every wire argument. `worker.paths` pins
+the lego binary and the DNS/Oxidized/Prometheus/Icinga output files; a
+worker writes or executes a database path only when it matches the pin.
+Hub config routes are also limited to the command names in the worker's
+hello (`AllowHubAPIForRoles`), so a DNS worker cannot fetch device-sync
+or NetBox credentials. Keep this indirection intact when touching
 `internal/worker` or `internal/util/config.go`'s `ConfigWorkerCommand`.
 `runCommand` (`hub_agent.go`) uses the `Worker`'s own process-lifetime
 context (`w.runCtx`, set once by `Start`), not a per-connection context, so

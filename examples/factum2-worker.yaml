@@ -61,9 +61,28 @@ worker:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync-delta", "--job"]
     # Software repository (factum2-storage start is a separate unit).
+    # copy's argv arrives from the primary; list every token it may append.
     # storage:
     #   cmd: /opt/factum2/factum2-storage
     #   args: []
+    #   allow_args: ["copy", "-n=*", "--path=*", "--protocol=*", "--job", "--destination=*"]
+
+  # Output paths and the lego binary are pinned here. The same values in
+  # the primary's Settings are accepted only when they match. A worker
+  # refuses a database path that is not listed.
+  # paths:
+  #   lego_bin: /usr/bin/lego
+  #   lego_yaml: /var/lib/lego/.lego.yaml
+  #   lego_env: /var/lib/lego/.env
+  #   lego_storage: /var/lib/lego/storage
+  #   dns_dest_file: /etc/dnsmgr2/records
+  #   dns_zones_file: /etc/dnsmgr2/zones.yaml
+  #   dns_prefixes_file: /etc/dnsmgr2/prefixes.yaml
+  #   oxidized_dest_file: /etc/oxidized/router.db
+  #   prometheus_dest_file: /etc/prometheus/targets.json
+  #   icinga_hosts_file: /etc/icinga2/conf.d/factum/hosts.conf
+  #   icinga_users_file: /etc/icinga2/conf.d/factum/users.conf
+  #   icinga_certs_file: /etc/icinga2/conf.d/factum/certs.conf
 
 # Optional unix API for factum2-storage start (default
 # /run/factum2-storage/api.sock). Device HTTP/TFTP/SFTP binds are in the

@@ -43,7 +43,7 @@ func main() {
 				Short: "Sync Prometheus snmp_exporter targets with factum",
 				RunFuncE: func(p *SyncParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					client, err := prometheus.NewFactumPrometheusClient(&p.Config.Factum)
+					client, err := prometheus.NewFactumPrometheusClient(&p.Config)
 					if err != nil {
 						return err
 					}

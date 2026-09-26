@@ -3,6 +3,7 @@ package web
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v5"
@@ -12,9 +13,9 @@ import (
 // cookie that RequireAPIAuth/JWTCookieMiddleware read back on later requests.
 // rememberMe selects the longer rememberTTL so the session survives more than
 // a day; otherwise the cookie and JWT last sessionTTL.
-func setAuthCookie(c *echo.Context, userID uint, rememberMe bool) error {
+func setAuthCookie(c *echo.Context, userID uint, tokenVersion int, rememberMe bool) error {
 	ttl := authTTL(rememberMe)
-	tokenString, err := generateJWT(userID, ttl)
+	tokenString, err := generateJWT(userID, tokenVersion, ttl)
 	if err != nil {
 		return err
 	}
@@ -58,9 +59,15 @@ type LoginRequest struct {
 // ApiLogin authenticates the SPA: on success it issues the "token" cookie
 // via setAuthCookie; on failure it returns a JSON error body with a 401.
 func (ctrl *Controller) ApiLogin(c *echo.Context) error {
+	if !allowAuthAttempt("login:"+clientIP(c), 20, time.Minute) {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "too many requests"})
+	}
 	var req LoginRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if req.Username != "" && !allowAuthAttempt("login-user:"+strings.ToLower(req.Username), 10, time.Minute) {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "too many requests"})
 	}
 	if req.Username == "" || req.Password == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "username and password are required"})
@@ -76,7 +83,7 @@ func (ctrl *Controller) ApiLogin(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]any{"error": "invalid username or password"})
 	}
 
-	if err := setAuthCookie(c, user.ID, req.RememberMe); err != nil {
+	if err := setAuthCookie(c, user.ID, user.TokenVersion, req.RememberMe); err != nil {
 		slog.Warn("Could not create a JWT token for", "user", req.Username)
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed to create session"})
 	}

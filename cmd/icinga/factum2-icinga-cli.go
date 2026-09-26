@@ -107,7 +107,7 @@ func main() {
 				Short: "Sync Icinga with factum",
 				RunFuncE: func(p *SyncParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					factumIcingaClient, err := icinga.NewFactumIcingaClient(&p.Config.Factum)
+					factumIcingaClient, err := icinga.NewFactumIcingaClient(&p.Config)
 					if err != nil {
 						return err
 					}

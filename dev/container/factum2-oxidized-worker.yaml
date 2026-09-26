@@ -10,6 +10,8 @@ worker:
     token: lab-oxidized-worker-token
     tls_cert: /etc/factum2/certs/hub.crt
     tls_key: /etc/factum2/certs/hub.key
+    paths:
+        oxidized_dest_file: /home/oxidized/.config/oxidized/router.db
     commands:
         oxidized:
             cmd: /opt/factum2/factum2-oxidized

@@ -223,8 +223,15 @@ func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<
 		return
 	}
 
+	extra, err := filterWireArgs(predefined.AllowArgs, cmdMsg.Args)
+	if err != nil {
+		logger.Error("rejected wire arguments", "err", err)
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
+		return
+	}
+
 	logger.Info("running command")
-	args := append(append([]string{}, predefined.Args...), cmdMsg.Args...)
+	args := append(append([]string{}, predefined.Args...), extra...)
 	cmd := exec.CommandContext(ctx, predefined.Cmd, args...)
 
 	stdout, err := cmd.StdoutPipe()

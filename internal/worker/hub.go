@@ -341,6 +341,30 @@ func NewRemoteManager(db *gorm.DB) *RemoteManager {
 	}
 }
 
+// SetNodeRoles records the command names a connected worker advertised.
+// Hello sets these on the live connection. Tests use it so a hub RPC for
+// a role-gated config has a caller role.
+func (m *RemoteManager) SetNodeRoles(node string, roles []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nc := m.conns[node]
+	if nc == nil {
+		nc = &nodeConn{}
+		m.conns[node] = nc
+	}
+	nc.roles = append([]string(nil), roles...)
+}
+
+func (m *RemoteManager) nodeRoles(node string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nc := m.conns[node]
+	if nc == nil {
+		return nil
+	}
+	return append([]string(nil), nc.roles...)
+}
+
 // SetAPIHandler attaches the primary's Echo router for in-process hub RPC.
 // Must be called after routes are registered and before Run, so a connected
 // worker never observes a nil handler.
@@ -1239,7 +1263,7 @@ func (m *RemoteManager) handleHubRequest(nodeCtx context.Context, node string, n
 		return
 	}
 
-	if !AllowHubAPI(req.Method, cleanedPath) {
+	if !AllowHubAPIForRoles(req.Method, cleanedPath, m.nodeRoles(node)) {
 		slog.Error("worker hub: path not allowed", "node", node, "method", req.Method, "path", cleanedPath)
 		send(ResponseMsg{ID: req.ID, Status: http.StatusForbidden, Body: json.RawMessage(`{"error":"path not allowed over hub"}`)})
 		return

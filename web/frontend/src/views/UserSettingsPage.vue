@@ -11,6 +11,7 @@ const savingPassword = ref(false)
 const passwordSubmitted = ref(false)
 
 const profile = reactive({ username: '', name: '', email: '', mobile: '' })
+const profilePassword = ref('')
 const passwordForm = reactive({ current_password: '', new_password: '', confirm_password: '' })
 const showCurrentPassword = ref(false)
 const showNewPassword = ref(false)
@@ -37,8 +38,14 @@ function loadProfile() {
 
 function saveProfile() {
   savingProfile.value = true
-  updateMe({ name: profile.name, email: profile.email, mobile: profile.mobile })
+  updateMe({
+    name: profile.name,
+    email: profile.email,
+    mobile: profile.mobile,
+    current_password: profilePassword.value,
+  })
     .then((data) => {
+      profilePassword.value = ''
       Object.assign(profile, data)
       toast.add({
         color: 'success',
@@ -138,6 +145,17 @@ onMounted(loadProfile)
           <div>
             <label for="mobile" class="block font-bold mb-3">Mobile</label>
             <UInput id="mobile" v-model="profile.mobile" class="w-full" />
+          </div>
+          <div>
+            <label for="profile_current_password" class="block font-bold mb-3">Current password</label>
+            <UInput
+              id="profile_current_password"
+              v-model="profilePassword"
+              type="password"
+              class="w-full"
+              autocomplete="current-password"
+            />
+            <p class="text-sm text-muted mt-2">Required when you change the email address.</p>
           </div>
           <div>
             <UButton label="Save" icon="i-lucide-check" :loading="savingProfile" @click="saveProfile" />

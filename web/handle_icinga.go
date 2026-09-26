@@ -54,7 +54,7 @@ func (ctrl *Controller) ApiIcingaConfig(c *echo.Context) error {
 		})
 	}
 	return c.JSON(http.StatusOK, IcingaConfigResponse{
-		CommonConfig: util.NewCommonConfig(settings),
+		CommonConfig: util.WithSMTP(util.NewCommonConfig(settings), settings),
 		URL:          settings.IcingaApiURL,
 		Username:     settings.IcingaApiUser,
 		Password:     settings.IcingaApiPass,

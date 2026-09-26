@@ -227,12 +227,33 @@ type ConfigLibrenms struct {
 
 // ConfigWorkerCommand is one predefined command a worker agent is allowed
 // to run. Agents only ever execute commands looked up by name from this
-// map - the command arriving over the hub connection is never used to
-// build a shell command directly, so a compromised/forged message can at
-// most pick one of these predefined commands.
+// map. Args are the operator's argv. AllowArgs lists extra tokens the hub
+// may append: an exact token ("--job", "copy") or a flag that takes the
+// next token as its value ("--path=*"). Empty AllowArgs rejects every
+// wire argument.
 type ConfigWorkerCommand struct {
-	Cmd  string   `boa:"configonly" yaml:"cmd"`
-	Args []string `boa:"configonly" yaml:"args"`
+	Cmd       string   `boa:"configonly" yaml:"cmd"`
+	Args      []string `boa:"configonly" yaml:"args"`
+	AllowArgs []string `boa:"configonly" yaml:"allow_args" optional:"true"`
+}
+
+// ConfigWorkerPaths pins binaries and output files this host will run or
+// write. The primary still stores the same paths in Settings; a worker
+// uses a path only when it matches the pin here. Empty means that writer
+// refuses the database value.
+type ConfigWorkerPaths struct {
+	LegoBin            string `boa:"configonly" yaml:"lego_bin" optional:"true"`
+	LegoYaml           string `boa:"configonly" yaml:"lego_yaml" optional:"true"`
+	LegoEnv            string `boa:"configonly" yaml:"lego_env" optional:"true"`
+	LegoStorage        string `boa:"configonly" yaml:"lego_storage" optional:"true"`
+	DNSDestFile        string `boa:"configonly" yaml:"dns_dest_file" optional:"true"`
+	DNSZonesFile       string `boa:"configonly" yaml:"dns_zones_file" optional:"true"`
+	DNSPrefixesFile    string `boa:"configonly" yaml:"dns_prefixes_file" optional:"true"`
+	OxidizedDestFile   string `boa:"configonly" yaml:"oxidized_dest_file" optional:"true"`
+	PrometheusDestFile string `boa:"configonly" yaml:"prometheus_dest_file" optional:"true"`
+	IcingaHostsFile    string `boa:"configonly" yaml:"icinga_hosts_file" optional:"true"`
+	IcingaUsersFile    string `boa:"configonly" yaml:"icinga_users_file" optional:"true"`
+	IcingaCertsFile    string `boa:"configonly" yaml:"icinga_certs_file" optional:"true"`
 }
 
 type ConfigWorker struct {
@@ -258,6 +279,10 @@ type ConfigWorker struct {
 	// commands it has both defined here and activated via Roles - there is
 	// no separate addressing by node name.
 	Commands map[string]ConfigWorkerCommand `boa:"configonly" yaml:"commands"`
+
+	// Paths pins executables and output files this host will accept from
+	// the primary. See ConfigWorkerPaths.
+	Paths ConfigWorkerPaths `boa:"configonly" yaml:"paths" optional:"true"`
 
 	// Listen is the bind address (e.g. ":8443") for this agent's hub
 	// listener (internal/worker.runHubListener), which the primary's

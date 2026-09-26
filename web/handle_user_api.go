@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/abundo/factum2/internal/certs"
 	"github.com/abundo/factum2/internal/dns"
@@ -132,6 +133,9 @@ func (ctrl *Controller) ApiUserUpdate(c *echo.Context) error {
 	user.Mobile = dto.Mobile
 
 	if dto.Password != "" {
+		if len(dto.Password) < minPasswordLength {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("password must be at least %d characters", minPasswordLength)})
+		}
 		hash, err := HashPassword(dto.Password)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed to hash password"})
@@ -146,7 +150,11 @@ func (ctrl *Controller) ApiUserUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	user.Roles = roles
-
+	if dto.Password != "" {
+		if err := ctrl.bumpTokenVersion(&user); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+	}
 	return c.JSON(http.StatusOK, toUserDTO(user))
 }
 
@@ -248,11 +256,21 @@ func (ctrl *Controller) ApiMeUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
 	}
 
+	if !strings.EqualFold(strings.TrimSpace(user.Email), strings.TrimSpace(req.Email)) {
+		if err := ctrl.verifyCurrentPassword(&user, req.CurrentPassword); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+	}
+
 	user.Name = req.Name
 	user.Email = req.Email
 	user.Mobile = req.Mobile
 
+	passwordChanged := false
 	if req.NewPassword != "" {
+		if len(req.NewPassword) < minPasswordLength {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("password must be at least %d characters", minPasswordLength)})
+		}
 		if user.PasswordHash == ldapSentinelPassword {
 			if err := ctrl.changeLDAPUserPassword(&user, req.CurrentPassword, req.NewPassword); err != nil {
 				return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -269,15 +287,48 @@ func (ctrl *Controller) ApiMeUpdate(c *echo.Context) error {
 			}
 			user.PasswordHash = hash
 		}
+		passwordChanged = true
 	}
 
 	if err := ctrl.DB.Save(&user).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	if passwordChanged {
+		if err := ctrl.bumpTokenVersion(&user); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+	}
 	// user was re-fetched without preloading Roles; current (from the auth
 	// middleware) already has it and this endpoint never changes roles.
 	user.Roles = current.Roles
 	return c.JSON(http.StatusOK, toUserDTO(user))
+}
+
+func (ctrl *Controller) verifyCurrentPassword(user *models.User, current string) error {
+	if current == "" {
+		return fmt.Errorf("current password is required")
+	}
+	if user.PasswordHash == ldapSentinelPassword {
+		settings, err := util.GetOrCreateSettings(ctrl.DB)
+		if err != nil {
+			return err
+		}
+		if settings.LdapEnabled == nil || !*settings.LdapEnabled {
+			return fmt.Errorf("LDAP authentication is disabled; contact your administrator")
+		}
+		ok, _, err := ldapAuthenticate(ldapauth.ConfigFromSettings(settings), user.Username, current)
+		if err != nil {
+			return fmt.Errorf("failed to verify current password: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("current password is incorrect")
+		}
+		return nil
+	}
+	if !CheckPasswordHash(current, user.PasswordHash) {
+		return fmt.Errorf("current password is incorrect")
+	}
+	return nil
 }
 
 // changeLDAPUserPassword handles ApiMeUpdate's self-service "change

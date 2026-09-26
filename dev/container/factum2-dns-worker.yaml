@@ -11,6 +11,14 @@ worker:
     token: lab-dns-worker-token
     tls_cert: /etc/factum2/certs/hub.crt
     tls_key: /etc/factum2/certs/hub.key
+    paths:
+        lego_bin: /usr/local/bin/lego
+        lego_yaml: /var/lib/lego/.lego.yaml
+        lego_env: /var/lib/lego/.env
+        lego_storage: /var/lib/lego/storage
+        dns_dest_file: /etc/dnsmgr2/records
+        dns_zones_file: /etc/dnsmgr2/zones.yaml
+        dns_prefixes_file: /etc/dnsmgr2/prefixes.yaml
     commands:
         dns:
             cmd: /opt/factum2/factum2-dns

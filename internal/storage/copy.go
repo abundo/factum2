@@ -104,6 +104,9 @@ func PullCommands(platform, protocol, src, dest string) ([]string, error) {
 	if src == "" || dest == "" {
 		return nil, fmt.Errorf("source and destination are required")
 	}
+	if !safeDeviceCLI(src) || !safeDeviceCLI(dest) {
+		return nil, fmt.Errorf("source and destination must be a single device CLI token")
+	}
 	switch platform {
 	case "eos":
 		return []string{"copy " + src + " " + dest}, nil
@@ -267,6 +270,23 @@ func readSCPAck(r io.Reader) error {
 	}
 	msg, _ := io.ReadAll(r)
 	return fmt.Errorf("scp: %s%s", string(b[:]), string(msg))
+}
+
+func safeDeviceCLI(s string) bool {
+	if s == "" || len(s) > 512 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-' || r == ':' || r == '/' || r == '@' || r == '+' || r == '%':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func shellQuote(s string) string {

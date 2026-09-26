@@ -10,6 +10,8 @@ worker:
     token: lab-prometheus-worker-token
     tls_cert: /etc/factum2/certs/hub.crt
     tls_key: /etc/factum2/certs/hub.key
+    paths:
+        prometheus_dest_file: /etc/prometheus/targets.json
     commands:
         prometheus:
             cmd: /opt/factum2/factum2-prometheus

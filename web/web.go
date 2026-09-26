@@ -96,6 +96,15 @@ func GUI(p *GuiParams) error {
 
 	// Middleware
 	e.Use(middleware.RequestLogger())
+	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
+		LimitBytes: 4 << 20,
+		Skipper: func(c *echo.Context) bool {
+			req := c.Request()
+			// Software upload is streamed in chunks. A global cap would
+			// reject an image before the first chunk is stored.
+			return req.Method == http.MethodPut && req.URL.Path == "/api/software/files"
+		},
+	}))
 	if !devMode {
 		e.Use(middleware.Recover())
 	}

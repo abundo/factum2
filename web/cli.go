@@ -84,6 +84,10 @@ func createAdminUser(db *gorm.DB, password string) error {
 	if res.RowsAffected > 0 {
 		existingUser := users[0]
 		existingUser.PasswordHash = hashedPassword
+		existingUser.TokenVersion++
+		if existingUser.TokenVersion < 1 {
+			existingUser.TokenVersion = 1
+		}
 		if err := db.Save(&existingUser).Error; err != nil {
 			slog.Error("cannot update admin user password", "err", err)
 			return err

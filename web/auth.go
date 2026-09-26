@@ -63,14 +63,18 @@ func authTTL(rememberMe bool) time.Duration {
 }
 
 func GenerateJWT(userID uint) (string, error) {
-	return generateJWT(userID, sessionTTL)
+	return generateJWT(userID, 1, sessionTTL)
 }
 
-func generateJWT(userID uint, ttl time.Duration) (string, error) {
+func generateJWT(userID uint, tokenVersion int, ttl time.Duration) (string, error) {
+	if tokenVersion < 1 {
+		tokenVersion = 1
+	}
 	claims := jwt.MapClaims{
-		"user_id": userID,
-		"exp":     time.Now().Add(ttl).Unix(),
-		"iat":     time.Now().Unix(),
+		"user_id":       userID,
+		"token_version": tokenVersion,
+		"exp":           time.Now().Add(ttl).Unix(),
+		"iat":           time.Now().Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -136,16 +140,57 @@ func (ctrl *Controller) RequireAPIAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 
 		claims, _ := token.Claims.(jwt.MapClaims)
-		userID := claims["user_id"]
+		userID, ok := claimUint(claims["user_id"])
+		if !ok {
+			return c.JSON(http.StatusUnauthorized, map[string]any{"error": "invalid token"})
+		}
+		tokenVersion, ok := claimUint(claims["token_version"])
+		if !ok {
+			return c.JSON(http.StatusUnauthorized, map[string]any{"error": "invalid token"})
+		}
 
 		var user models.User
 		if err := ctrl.DB.Preload("Roles").First(&user, userID).Error; err != nil {
 			return c.JSON(http.StatusUnauthorized, map[string]any{"error": "user no longer exists"})
 		}
+		if user.TokenVersion != int(tokenVersion) {
+			return c.JSON(http.StatusUnauthorized, map[string]any{"error": "invalid token"})
+		}
 		c.Set("auth_method", "session")
 		c.Set("user", user)
 
 		return next(c)
+	}
+}
+
+func (ctrl *Controller) bumpTokenVersion(user *models.User) error {
+	res := ctrl.DB.Model(user).Update("token_version", gorm.Expr("token_version + ?", 1))
+	if res.Error != nil {
+		return res.Error
+	}
+	user.TokenVersion++
+	return nil
+}
+
+func claimUint(v any) (uint, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n < 1 || n != float64(uint(n)) {
+			return 0, false
+		}
+		return uint(n), true
+	case int:
+		if n < 1 {
+			return 0, false
+		}
+		return uint(n), true
+	case uint:
+		if n < 1 {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
 	}
 }
 
@@ -390,18 +435,6 @@ func syncLDAPRoles(db *gorm.DB, user *models.User, settings *models.Settings, gr
 	}
 	user.Roles = roles
 	return nil
-}
-
-// GetCurrentUser retrieves the authenticated user from the context.
-// Returns nil if the user is not authenticated or not found in the context.
-func GetCurrentUser(DB *gorm.DB, c *echo.Context) *models.User {
-	userID := c.Get("user_id")
-
-	var user *models.User
-	if DB.Preload("Roles").First(&user, userID).Error != nil {
-		return nil
-	}
-	return user
 }
 
 // GetUserByID fetches a user by ID, preloading roles

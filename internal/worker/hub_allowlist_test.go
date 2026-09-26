@@ -97,6 +97,34 @@ func TestNormalizeHubPath(t *testing.T) {
 	}
 }
 
+func TestAllowHubAPIForRoles(t *testing.T) {
+	t.Parallel()
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/dns-config", []string{"dns"}) {
+		t.Fatal("dns role should read dns-config")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/device-sync-config", []string{"dns", "icinga"}) {
+		t.Fatal("dns/icinga must not read device-sync credentials")
+	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/device-sync-config", []string{"storage"}) {
+		t.Fatal("storage copy needs device-sync credentials")
+	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/netbox-config", []string{"librenms"}) {
+		t.Fatal("librenms sync reads the netbox token")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/icinga-config", nil) {
+		t.Fatal("icinga-config requires the icinga role")
+	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/common-config", []string{"dns"}) {
+		t.Fatal("common-config stays available to every worker")
+	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/device/name/r1/impact", []string{"icinga"}) {
+		t.Fatal("icinga notifications need name impact")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/device/name/r1/impact", []string{"dns"}) {
+		t.Fatal("dns must not read device impact")
+	}
+}
+
 func TestHubAPISyncAllRegisteredBeforeTarget(t *testing.T) {
 	t.Parallel()
 	allIdx, targetIdx := -1, -1

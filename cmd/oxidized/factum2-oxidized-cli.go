@@ -48,7 +48,7 @@ func main() {
 				Short: "Get a single device from oxidized's router.db",
 				RunFuncE: func(p *NameParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					ox, err := oxidized.RemoteClient(&p.Config.Factum)
+					ox, err := oxidized.RemoteClient(&p.Config)
 					if err != nil {
 						return err
 					}
@@ -65,7 +65,7 @@ func main() {
 				Short: "Get all devices from oxidized's router.db",
 				RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					ox, err := oxidized.RemoteClient(&p.Config.Factum)
+					ox, err := oxidized.RemoteClient(&p.Config)
 					if err != nil {
 						return err
 					}
@@ -82,7 +82,7 @@ func main() {
 				Short: "Fetch a device's last stored configuration from oxidized",
 				RunFuncE: func(p *NameParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					ox, err := oxidized.RemoteClient(&p.Config.Factum)
+					ox, err := oxidized.RemoteClient(&p.Config)
 					if err != nil {
 						return err
 					}
@@ -99,7 +99,7 @@ func main() {
 				Short: "Ask oxidized to reload its router.db",
 				RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					ox, err := oxidized.RemoteClient(&p.Config.Factum)
+					ox, err := oxidized.RemoteClient(&p.Config)
 					if err != nil {
 						return err
 					}
@@ -112,7 +112,7 @@ func main() {
 				Short: "Sync Oxidized with factum",
 				RunFuncE: func(p *SyncParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
-					factumOxidizedClient, err := oxidized.NewFactumOxidizedClient(&p.Config.Factum)
+					factumOxidizedClient, err := oxidized.NewFactumOxidizedClient(&p.Config)
 					if err != nil {
 						return err
 					}

@@ -339,7 +339,7 @@ func (ctrl *Controller) ApiMaintenanceNotify(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	smtp := util.NewCommonConfig(settings)
+	smtp := util.WithSMTP(util.NewCommonConfig(settings), settings)
 	from := settings.EmailSender
 
 	sent := 0

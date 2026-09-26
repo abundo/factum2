@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type FactumModel struct {
@@ -13,12 +15,22 @@ type FactumModel struct {
 // User represents an application user
 type User struct {
 	FactumModel
-	Username     string  `gorm:"uniqueIndex;not null"  json:"username"`
-	PasswordHash string  `gorm:"not null" json:"-"`
-	Name         string  `gorm:"not null" json:"name"`
-	Email        string  `json:"email"`
-	Mobile       string  `json:"mobile"`
+	Username     string `gorm:"uniqueIndex;not null"  json:"username"`
+	PasswordHash string `gorm:"not null" json:"-"`
+	Name         string `gorm:"not null" json:"name"`
+	Email        string `json:"email"`
+	Mobile       string `json:"mobile"`
+	// TokenVersion is embedded in the session JWT. Password changes
+	// increment it so a previously issued cookie stops working.
+	TokenVersion int     `gorm:"not null;default:1" json:"-"`
 	Roles        []*Role `gorm:"many2many:user_roles;;constraint:OnDelete:CASCADE;" json:"-"`
+}
+
+func (u *User) BeforeCreate(_ *gorm.DB) error {
+	if u.TokenVersion < 1 {
+		u.TokenVersion = 1
+	}
+	return nil
 }
 
 // PasswordResetToken backs the forgot-password flow (web.ApiForgotPassword/
@@ -355,11 +367,8 @@ type Settings struct {
 	// PublicBaseURL is the externally-reachable origin (e.g.
 	// "https://factum.example.com") used to build absolute links in
 	// outgoing email, currently just the password-reset link
-	// (web.ApiForgotPassword). If left blank, the reset handler falls back
-	// to deriving an origin from the incoming request instead - fine for
-	// simple setups, but a deployment behind a reverse proxy should set
-	// this explicitly rather than trusting Host/X-Forwarded-* headers for
-	// something that ends up in an email.
+	// (web.ApiForgotPassword). Required: the reset handler does not fall
+	// back to the request Host, which the caller of forgot-password can set.
 	PublicBaseURL string `gorm:"column:public_base_url" form:"public_base_url" json:"public_base_url"`
 	// DefaultDomain is shared by every downstream sync target
 	// (DNS/Icinga/LibreNMS/Oxidized/Prometheus), not just DNS - it's the

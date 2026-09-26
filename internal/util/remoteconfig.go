@@ -49,19 +49,27 @@ type CommonConfig struct {
 	EmailSender string `json:"email_sender"`
 }
 
-// NewCommonConfig builds a CommonConfig from the Settings row. Every
-// web.ApiXxxConfig handler uses this instead of repeating the same lines.
+// NewCommonConfig builds a CommonConfig from the Settings row. SMTP
+// credentials are not included: only a config the caller actually uses to
+// send mail should call WithSMTP. Every web.ApiXxxConfig handler embeds
+// this instead of repeating the same lines.
 func NewCommonConfig(settings *models.Settings) CommonConfig {
 	return CommonConfig{
 		DefaultDomain: settings.DefaultDomain,
-
-		SmtpHost:    settings.SmtpHost,
-		SmtpPort:    settings.SmtpPort,
-		SmtpUser:    settings.SmtpUser,
-		SmtpPass:    settings.SmtpPass,
-		SmtpTLSMode: settings.SmtpTLSMode,
-		EmailSender: settings.EmailSender,
+		EmailSender:   settings.EmailSender,
 	}
+}
+
+// WithSMTP adds the shared mail relay to cfg. factum2-icinga-notifications
+// is the consumer; other workers must not receive the SMTP password.
+func WithSMTP(cfg CommonConfig, settings *models.Settings) CommonConfig {
+	cfg.SmtpHost = settings.SmtpHost
+	cfg.SmtpPort = settings.SmtpPort
+	cfg.SmtpUser = settings.SmtpUser
+	cfg.SmtpPass = settings.SmtpPass
+	cfg.SmtpTLSMode = settings.SmtpTLSMode
+	cfg.EmailSender = settings.EmailSender
+	return cfg
 }
 
 // FactumHTTP picks a client for Factum API calls. The local worker unix

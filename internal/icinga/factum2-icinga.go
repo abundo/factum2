@@ -58,17 +58,41 @@ type FactumIcingaClient struct {
 // from the primary over REST - config.Icinga is never used, since
 // factum2-icinga typically runs on a different host than the primary and has
 // no local icinga config of its own (see util.ConfigIcinga's doc comment).
-func NewFactumIcingaClient(config *util.ConfigFactum) (*FactumIcingaClient, error) {
+func NewFactumIcingaClient(root *util.ConfigAgentRoot) (*FactumIcingaClient, error) {
 	client := new(FactumIcingaClient)
-	client.Config = config
+	client.Config = &root.Factum
 
-	icingaConfig, err := FetchRemoteConfig(config)
+	icingaConfig, err := FetchRemoteConfig(&root.Factum)
 	if err != nil {
+		return nil, err
+	}
+	if err := pinIcingaPaths(icingaConfig, root.Worker.Paths); err != nil {
 		return nil, err
 	}
 	client.IcingaConfig = icingaConfig
 	client.Icinga = NewIcingaClient(*icingaConfig)
 	return client, nil
+}
+
+func pinIcingaPaths(cfg *util.ConfigIcinga, paths util.ConfigWorkerPaths) error {
+	var err error
+	if cfg.HostsFile, err = pinIcingaFile(paths.IcingaHostsFile, cfg.HostsFile, "worker.paths.icinga_hosts_file"); err != nil {
+		return err
+	}
+	if cfg.UsersFile, err = pinIcingaFile(paths.IcingaUsersFile, cfg.UsersFile, "worker.paths.icinga_users_file"); err != nil {
+		return err
+	}
+	if cfg.CertsFile, err = pinIcingaFile(paths.IcingaCertsFile, cfg.CertsFile, "worker.paths.icinga_certs_file"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func pinIcingaFile(local, remote, name string) (string, error) {
+	if strings.TrimSpace(remote) == "" && strings.TrimSpace(local) == "" {
+		return "", nil
+	}
+	return util.PinnedPath(local, remote, name)
 }
 
 // createConfFile creates a new config file, with a warning header saying

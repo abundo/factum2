@@ -26,14 +26,19 @@ type FactumPrometheusClient struct {
 // since factum2-prometheus typically runs on a different host than the
 // primary and has no local prometheus config of its own (see
 // util.ConfigPrometheus's doc comment).
-func NewFactumPrometheusClient(config *util.ConfigFactum) (*FactumPrometheusClient, error) {
+func NewFactumPrometheusClient(root *util.ConfigAgentRoot) (*FactumPrometheusClient, error) {
 	client := new(FactumPrometheusClient)
-	client.Config = config
+	client.Config = &root.Factum
 
-	prometheusConfig, err := FetchRemoteConfig(config)
+	prometheusConfig, err := FetchRemoteConfig(&root.Factum)
 	if err != nil {
 		return nil, err
 	}
+	dest, err := util.PinnedPath(root.Worker.Paths.PrometheusDestFile, prometheusConfig.DestFile, "worker.paths.prometheus_dest_file")
+	if err != nil {
+		return nil, err
+	}
+	prometheusConfig.DestFile = dest
 	client.PrometheusConfig = prometheusConfig
 	client.Prometheus = NewPrometheusClient(*prometheusConfig)
 	return client, nil

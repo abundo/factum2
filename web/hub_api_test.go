@@ -52,6 +52,7 @@ func TestHubAPILibrenmsConfigMatchesHandler(t *testing.T) {
 		return c.JSON(http.StatusOK, map[string]string{"ok": "yes"})
 	}, ctrl.RequireAPIAuth, ctrl.RequireAdmin)
 	rm.SetAPIHandler(e)
+	rm.SetNodeRoles("node1", []string{"librenms"})
 
 	c, rec := jsonRequest(t, http.MethodGet, "/api/librenms-config", nil, nil, nil)
 	if err := ctrl.ApiLibrenmsConfig(c); err != nil {
@@ -199,6 +200,7 @@ func TestHubAPIPendingDeletesRoundTrip(t *testing.T) {
 		return c.JSON(http.StatusOK, map[string]string{"ok": "yes"})
 	}, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	rm.SetAPIHandler(e)
+	rm.SetNodeRoles("node1", []string{"librenms"})
 
 	hub := func(id, method, path string, body json.RawMessage) worker.ResponseMsg {
 		t.Helper()

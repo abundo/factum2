@@ -8,6 +8,8 @@ package oxidized
 //
 
 import (
+	"strings"
+
 	"github.com/abundo/factum2/internal/util"
 )
 
@@ -49,10 +51,25 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigOxidized, e
 
 // RemoteClient is the FetchRemoteConfig + NewOxidizedClient convenience
 // most callers want.
-func RemoteClient(factumConfig *util.ConfigFactum) (*oxidizedClient, error) {
-	cfg, err := FetchRemoteConfig(factumConfig)
+func RemoteClient(root *util.ConfigAgentRoot) (*oxidizedClient, error) {
+	cfg, err := FetchRemoteConfig(&root.Factum)
 	if err != nil {
 		return nil, err
 	}
+	if err := pinDest(cfg, root.Worker.Paths); err != nil {
+		return nil, err
+	}
 	return NewOxidizedClient(*cfg), nil
+}
+
+func pinDest(cfg *util.ConfigOxidized, paths util.ConfigWorkerPaths) error {
+	if strings.TrimSpace(cfg.DestFile) == "" && strings.TrimSpace(paths.OxidizedDestFile) == "" {
+		return nil
+	}
+	dest, err := util.PinnedPath(paths.OxidizedDestFile, cfg.DestFile, "worker.paths.oxidized_dest_file")
+	if err != nil {
+		return err
+	}
+	cfg.DestFile = dest
+	return nil
 }

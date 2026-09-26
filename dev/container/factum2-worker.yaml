@@ -27,3 +27,4 @@ worker:
         storage:
             cmd: /opt/factum2/factum2-storage
             args: []
+            allow_args: ["copy", "-n=*", "--path=*", "--protocol=*", "--job", "--destination=*"]
