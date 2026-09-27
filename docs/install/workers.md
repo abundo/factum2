@@ -21,6 +21,37 @@ to operators and to NetBox's webhook, via a
 
 `/hub` is WSS only. There is no `ws://` fallback.
 
+## SSH login for upgrades
+
+`install.py` on the primary upgrades each enabled worker over SSH as
+`factum` (`--ssh-user` / `$SSH_USER`), not as root. Root login is
+refused. Copies into `/opt/factum2` and `/etc`, `systemctl`, and
+`groupadd` run with `sudo -n` (no password prompt).
+
+Once on each worker, using an admin login that can create the account:
+
+```sh
+getent group factum >/dev/null || sudo groupadd --system factum
+id factum >/dev/null 2>&1 || sudo useradd --create-home --home-dir /home/factum --gid factum --shell /bin/bash factum
+sudo install -m 700 -d /home/factum/.ssh
+sudo install -m 600 /dev/null /home/factum/.ssh/authorized_keys
+# primary's deploy key (the key install.py will use; often root on the primary)
+sudo tee -a /home/factum/.ssh/authorized_keys
+sudo chown -R factum:factum /home/factum/.ssh
+sudo install -m 440 /path/to/factum2-install.sudoers /etc/sudoers.d/factum2-install
+sudo visudo -cf /etc/sudoers.d/factum2-install
+```
+
+The sudoers file is `examples/factum2-install.sudoers` in the repo and
+the release tarball, and
+`/usr/share/doc/factum2/factum2-install.sudoers` in the deb. It is
+root-equivalent (`NOPASSWD: ALL`) so upgrades stay non-interactive.
+`PermitRootLogin` can stay off. Check from the primary:
+
+```sh
+ssh -o BatchMode=yes -o ConnectTimeout=10 factum@worker-host sudo -n true
+```
+
 ## 1. Binary and group
 
 Prefer re-running `/etc/factum2/install.py` on the primary: it copies

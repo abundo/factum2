@@ -206,13 +206,12 @@ To push a build onto the primary and every enabled worker node (replaces
 then SSHs to every enabled `worker_nodes` row from **this** machine — the
 host part of `address` (`host:port` or `[ipv6]:port`; loopback is skipped).
 `--primary-only` skips that hop. SSH is `ssh -o BatchMode=yes -o
-ConnectTimeout=10` as `--ssh-user` / `$SSH_USER` (default `root`).
+ConnectTimeout=10` as `--ssh-user` / `$SSH_USER` (default `factum`).
 BatchMode never prompts, so each of those hosts needs key-based login
-already working. Remote commands run as that user with no `sudo`, so it
-must be able to write `/opt/factum2`, `/etc/factum2`, and
-`/etc/systemd/system`, and to run `groupadd` / `systemctl` — `root` in
-practice. A remote `--source HOST` needs the same login on the primary
-as well.
+already working. The login is not root (`--ssh-user root` is refused
+when any remote worker is in the run). Privileged steps (`mkdir` under
+`/opt/factum2` and `/etc`, `rsync`, `systemctl`, `groupadd`) run with
+`sudo -n`. A remote `--source HOST` uses the same login on the primary.
 
 On this machine (the host that runs `install.py`):
 
@@ -220,18 +219,24 @@ On this machine (the host that runs `install.py`):
 # once: ed25519 key (skip if you already have one)
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 
-# each worker (and the primary, if you pass --source HOST)
-ssh-copy-id -i ~/.ssh/id_ed25519.pub root@worker-host
+# once on each worker (and the primary, if you pass --source HOST)
+ssh worker-host 'getent group factum >/dev/null || sudo groupadd --system factum'
+ssh worker-host 'id factum >/dev/null 2>&1 || sudo useradd --create-home --home-dir /home/factum --gid factum --shell /bin/bash factum'
+ssh-copy-id -i ~/.ssh/id_ed25519.pub factum@worker-host
+scp examples/factum2-install.sudoers worker-host:/tmp/factum2-install.sudoers
+ssh worker-host 'sudo install -m 440 /tmp/factum2-install.sudoers /etc/sudoers.d/factum2-install && sudo visudo -cf /etc/sudoers.d/factum2-install && rm /tmp/factum2-install.sudoers'
 # accept the host key on first connect; BatchMode fails if it is unknown
-ssh -o BatchMode=yes -o ConnectTimeout=10 root@worker-host true
+ssh -o BatchMode=yes -o ConnectTimeout=10 factum@worker-host sudo -n true
 ```
 
-If the private key has a passphrase, load it first (`ssh-add`); BatchMode
-cannot prompt for it. On the worker, `sshd` must allow key login as root
-(`PermitRootLogin prohibit-password` and `PubkeyAuthentication yes` in
-`sshd_config`, then reload `ssh`/`sshd`). When the installer runs on the
-primary itself (production GitHub-release path below), the deploy key
-lives there instead of on a developer workstation.
+Those first `ssh worker-host` lines need some login that can create the
+user (a break-glass admin, not root SSH from then on). `sshd` can keep
+`PermitRootLogin no`. `PubkeyAuthentication yes` must stay on. If the
+private key has a passphrase, load it first (`ssh-add`); BatchMode
+cannot prompt for it. When the installer runs on the primary itself
+(production GitHub-release path below), the deploy key is the one that
+process uses — often root's key on the primary — and that public key
+belongs in `factum`'s `authorized_keys` on each worker.
 
 On a production primary with no source tree, put the installer in
 `/etc/factum2` and pick a published GitHub release (see [README.md §

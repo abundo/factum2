@@ -65,6 +65,9 @@ from typing import Iterable, Sequence
 REPO_DIR = Path(__file__).resolve().parent
 REPO_DEFAULT = "abundo/factum2"
 INSTALL_DIR_DEFAULT = "/opt/factum2"
+# Remote upgrades SSH as this user. Root login is refused for workers;
+# privileged commands on the far side run with sudo -n.
+SSH_USER_DEFAULT = "factum"
 CONFIG_PATH_DEFAULT = "/etc/factum2/factum2.yaml"
 ETC_FACTUM2 = Path("/etc/factum2")
 HUB_CERT_PATH = ETC_FACTUM2 / "hub.crt"
@@ -90,7 +93,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 18
+INSTALLER_VERSION = 19
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -888,7 +891,7 @@ def run_db_sql(
     sql: str,
     *,
     target_host: str = "localhost",
-    ssh_user: str = "root",
+    ssh_user: str = SSH_USER_DEFAULT,
 ) -> list[str]:
     """Run one SQL statement using db.* from factum2.yaml. Returns text rows."""
     db = yaml_section(config_path, "db")
@@ -960,6 +963,11 @@ done
 echo "psql not found and no compose file in $dir ({names})" >&2
 exit 1
 """
+    # A non-root login needs sudo so `docker compose exec` works. stdin is
+    # the script, not a password (`sudo -n` never reads one).
+    remote_exec = ["bash", "-s"]
+    if ssh_user != "root":
+        remote_exec = ["sudo", "-n", "--", "bash", "-s"]
     return subprocess.run(
         [
             "ssh",
@@ -968,8 +976,7 @@ exit 1
             "-o",
             "ConnectTimeout=10",
             ssh_user_host(ssh_user, target_host),
-            "bash",
-            "-s",
+            *remote_exec,
         ],
         check=False,
         capture_output=True,
@@ -982,7 +989,7 @@ def query_worker_addresses(
     config_path: Path,
     *,
     target_host: str = "localhost",
-    ssh_user: str = "root",
+    ssh_user: str = SSH_USER_DEFAULT,
 ) -> list[str]:
     try:
         return run_db_sql(
@@ -1048,7 +1055,34 @@ def scp_url(user: str, host: str, path: Path | str) -> str:
     return f"{ssh_user_host(user, host)}:{path}"
 
 
-def ssh_cmd(user: str, host: str, remote: str) -> list[str]:
+def require_unprivileged_ssh(user: str) -> None:
+    """Worker upgrades must not log in as root."""
+    if user == "root":
+        raise InstallError(
+            "refusing SSH login as root. Worker upgrades log in as "
+            f"{SSH_USER_DEFAULT} (override with --ssh-user or SSH_USER) and "
+            "run privileged commands with sudo -n. On each worker, create "
+            "that user, authorize the primary's SSH key, and grant passwordless "
+            "sudo (examples/factum2-install.sudoers). See docs/install/workers.md."
+        )
+
+
+def privileged_remote(user: str, remote: str) -> str:
+    """Shell command to run remote as root without an SSH root login.
+
+    Root stays accepted for a remote primary (`--source HOST` as root).
+    Workers never get here as root: require_unprivileged_ssh runs first.
+    """
+    if user == "root":
+        return remote
+    return "sudo -n -- bash -c " + _shell_quote(remote)
+
+
+def ssh_cmd(
+    user: str, host: str, remote: str, *, privileged: bool = False
+) -> list[str]:
+    if privileged:
+        remote = privileged_remote(user, remote)
     return [
         "ssh",
         "-o",
@@ -1058,6 +1092,49 @@ def ssh_cmd(user: str, host: str, remote: str) -> list[str]:
         ssh_user_host(user, host),
         remote,
     ]
+
+
+def _sudo_hint(text: str) -> str:
+    if "sudo -n" not in text and "sudo:" not in text:
+        return ""
+    return (
+        "; passwordless sudo is required for this login "
+        "(examples/factum2-install.sudoers)"
+    )
+
+
+def _remote_sudo_failed(stderr: bytes | str | None) -> bool:
+    if not stderr:
+        return False
+    text = stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
+    return "sudo:" in text
+
+
+def rsync_argv(src: str, user: str, host: str, dest: str) -> list[str]:
+    cmd = [
+        "rsync",
+        "-a",
+        "-c",
+        "-e",
+        "ssh -o BatchMode=yes -o ConnectTimeout=10",
+    ]
+    if user != "root":
+        # Remote rsync runs as root so it can write /opt/factum2.
+        cmd.extend(["--rsync-path", "sudo -n rsync"])
+    cmd.extend(["--", src, scp_url(user, host, dest)])
+    return cmd
+
+
+def remote_install_script(
+    tmp: str, dest: str, mode: str, owner_group: str | None
+) -> str:
+    parts = ["install", "-m", mode]
+    if owner_group:
+        owner, group = owner_group.split(":", 1)
+        parts.extend(["-o", owner, "-g", group])
+    parts.extend([tmp, dest])
+    install_cmd = " ".join(_shell_quote(p) for p in parts)
+    return install_cmd + " && rm -f " + _shell_quote(tmp)
 
 
 def refuse_install_without_workers(
@@ -1318,12 +1395,24 @@ def read_host_file(
             return None
         return proc.stdout
     proc = subprocess.run(
-        ssh_cmd(ssh_user, target_host, f"cat {_shell_quote(str(path))}"),
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            f"cat {_shell_quote(str(path))}",
+            privileged=True,
+        ),
         check=False,
         capture_output=True,
         timeout=15,
     )
     if proc.returncode != 0:
+        # sudo failing must not look like a missing hub CA (that would
+        # generate a new CA and break workers that still trust the old one).
+        if _remote_sudo_failed(proc.stderr):
+            err = proc.stderr.decode(errors="replace").strip()
+            raise InstallError(
+                f"{target_host}: cannot read {path}: {err}{_sudo_hint(err)}"
+            )
         return None
     return proc.stdout
 
@@ -1363,29 +1452,22 @@ def write_host_file(
             return
         run(
             ssh_cmd(
-                ssh_user, target_host, f"mkdir -p {_shell_quote(str(dest.parent))}"
+                ssh_user,
+                target_host,
+                f"mkdir -p {_shell_quote(str(dest.parent))}",
+                privileged=True,
             ),
             dry_run=False,
         )
-        run(
-            [
-                "scp",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=10",
-                tmp_name,
-                scp_url(ssh_user, target_host, dest),
-            ],
+        copy_to_remote(
+            Path(tmp_name),
+            dest,
+            user=ssh_user,
+            host=target_host,
             dry_run=False,
+            mode=mode,
+            owner_group=owner_group,
         )
-        remote = f"chmod {mode} {_shell_quote(str(dest))}"
-        if owner_group:
-            remote += (
-                f" && chown {owner_group} {_shell_quote(str(dest))} "
-                f"|| chown root:root {_shell_quote(str(dest))}"
-            )
-        run(ssh_cmd(ssh_user, target_host, remote), dry_run=False)
     finally:
         if fd >= 0:
             os.close(fd)
@@ -1586,7 +1668,9 @@ def run(
     log(f"    $ {printable}")
     proc = subprocess.run(cmd, check=False, text=True, cwd=cwd)
     if check and proc.returncode != 0:
-        raise InstallError(f"command failed ({proc.returncode}): {printable}")
+        raise InstallError(
+            f"command failed ({proc.returncode}): {printable}{_sudo_hint(printable)}"
+        )
     return proc
 
 
@@ -1594,6 +1678,91 @@ def _shell_quote(s: str) -> str:
     if re.fullmatch(r"[-A-Za-z0-9_./:=+@]+", s):
         return s
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _scp_to(local: Path | str, user: str, host: str, dest: str) -> list[str]:
+    return [
+        "scp",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        str(local),
+        scp_url(user, host, dest),
+    ]
+
+
+def copy_to_remote(
+    local: Path,
+    dest: Path | str,
+    *,
+    user: str,
+    host: str,
+    dry_run: bool,
+    mode: str | None = None,
+    owner_group: str | None = None,
+) -> None:
+    """Copy one file to dest on host.
+
+    A non-root login cannot scp straight into /opt or /etc. The file lands
+    in a /tmp path that login owns, then `sudo -n install` moves it.
+    """
+    dest_s = str(dest)
+    detail = ""
+    if mode:
+        detail += f" mode {mode}"
+    if owner_group:
+        detail += f" owner {owner_group}"
+    if dry_run:
+        log(f"    [dry-run] copy {local.name} -> {ssh_user_host(user, host)}:{dest_s}{detail}")
+        return
+    if user == "root":
+        run(_scp_to(local, user, host, dest_s), dry_run=False)
+        bits: list[str] = []
+        if mode:
+            bits.append(f"chmod {_shell_quote(mode)} {_shell_quote(dest_s)}")
+        if owner_group:
+            bits.append(
+                f"chown {_shell_quote(owner_group)} {_shell_quote(dest_s)} "
+                f"|| chown root:root {_shell_quote(dest_s)}"
+            )
+        if bits:
+            run(ssh_cmd(user, host, " && ".join(bits)), dry_run=False)
+        return
+    proc = subprocess.run(
+        ssh_cmd(user, host, "mktemp /tmp/factum2-install.XXXXXXXX"),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if proc.returncode != 0 or _remote_sudo_failed(proc.stderr):
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise InstallError(f"{host}: mktemp failed: {err}{_sudo_hint(err)}")
+    lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    tmp_remote = lines[-1] if lines else ""
+    if not tmp_remote.startswith("/tmp/factum2-install."):
+        raise InstallError(f"{host}: unexpected mktemp path {tmp_remote!r}")
+    try:
+        run(_scp_to(local, user, host, tmp_remote), dry_run=False)
+        run(
+            ssh_cmd(
+                user,
+                host,
+                remote_install_script(tmp_remote, dest_s, mode or "644", owner_group),
+                privileged=True,
+            ),
+            dry_run=False,
+        )
+    finally:
+        try:
+            subprocess.run(
+                ssh_cmd(user, host, "rm -f " + _shell_quote(tmp_remote)),
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 def sha256_file(path: Path) -> str:
@@ -1795,7 +1964,7 @@ def write_version_file(
     dry_run: bool,
     *,
     target_host: str = "localhost",
-    ssh_user: str = "root",
+    ssh_user: str = SSH_USER_DEFAULT,
 ) -> None:
     dest = install_dir / "VERSION"
     if dry_run:
@@ -1812,17 +1981,13 @@ def write_version_file(
                 dry_run=False,
             )
         else:
-            run(
-                [
-                    "scp",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=10",
-                    tmp_path,
-                    scp_url(ssh_user, target_host, dest),
-                ],
+            copy_to_remote(
+                Path(tmp_path),
+                dest,
+                user=ssh_user,
+                host=target_host,
                 dry_run=False,
+                mode="644",
             )
     finally:
         os.unlink(tmp_path)
@@ -1866,13 +2031,23 @@ def read_installed_unit(
             return None
         return proc.stdout
     proc = subprocess.run(
-        ssh_cmd(ssh_user, target_host, f"cat {_shell_quote(str(dest))}"),
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            f"cat {_shell_quote(str(dest))}",
+            privileged=True,
+        ),
         check=False,
         capture_output=True,
         text=True,
         timeout=15,
     )
     if proc.returncode != 0:
+        if _remote_sudo_failed(proc.stderr):
+            err = (proc.stderr or "").strip()
+            raise InstallError(
+                f"{target_host}: cannot read {dest}: {err}{_sudo_hint(err)}"
+            )
         return None
     return proc.stdout
 
@@ -1942,6 +2117,7 @@ def ensure_factum_group(
             ssh_user,
             target_host,
             "getent group factum >/dev/null 2>&1 || groupadd -r factum",
+            privileged=True,
         ),
         dry_run=dry_run,
     )
@@ -1976,7 +2152,7 @@ def ensure_nagios_in_factum_group(
             return
         run(sudo_prefix() + ["sh", "-c", remote])
         return
-    run(ssh_cmd(ssh_user, target_host, remote), dry_run=dry_run)
+    run(ssh_cmd(ssh_user, target_host, remote, privileged=True), dry_run=dry_run)
 
 
 def copy_unit_file(
@@ -1991,17 +2167,13 @@ def copy_unit_file(
     if is_local_host(target_host):
         run(sudo_prefix() + ["cp", str(src), str(dest)], dry_run=dry_run)
         return
-    run(
-        [
-            "scp",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=10",
-            str(src),
-            scp_url(ssh_user, target_host, dest),
-        ],
+    copy_to_remote(
+        src,
+        dest,
+        user=ssh_user,
+        host=target_host,
         dry_run=dry_run,
+        mode="644",
     )
 
 
@@ -2078,11 +2250,21 @@ def migrate_database(
     quoted_bin = _shell_quote(str(web_bin))
     quoted_cfg = _shell_quote(str(config_path))
     run(
-        ssh_cmd(ssh_user, target_host, f"systemctl stop {web_unit} || true"),
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            f"systemctl stop {web_unit} || true",
+            privileged=True,
+        ),
         dry_run=dry_run,
     )
     run(
-        ssh_cmd(ssh_user, target_host, f"{quoted_bin} -f {quoted_cfg} migrate"),
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            f"{quoted_bin} -f {quoted_cfg} migrate",
+            privileged=True,
+        ),
         dry_run=dry_run,
     )
 
@@ -2115,7 +2297,10 @@ def systemd_reload_enable_restart(
             continue
         parts.append(f"systemctl restart {unit}")
     log(f"==> Reloading systemd on {where} ({', '.join(units)})")
-    run(ssh_cmd(ssh_user, target_host, " && ".join(parts)), dry_run=dry_run)
+    run(
+        ssh_cmd(ssh_user, target_host, " && ".join(parts), privileged=True),
+        dry_run=dry_run,
+    )
 
 
 def install_primary(
@@ -2126,7 +2311,7 @@ def install_primary(
     dry_run: bool,
     *,
     target_host: str = "localhost",
-    ssh_user: str = "root",
+    ssh_user: str = SSH_USER_DEFAULT,
     assume_yes: bool = False,
     config_path: Path = CONFIG_PATH_DEFAULT,
     hub_tls: HubTLSMaterial | None = None,
@@ -2160,20 +2345,24 @@ def install_primary(
             shutil.rmtree(staging, ignore_errors=True)
         write_version_file(install_dir, tag, dry_run=False)
     else:
-        run(ssh_cmd(ssh_user, target_host, f"mkdir -p {install_dir}"), dry_run=False)
+        run(
+            ssh_cmd(
+                ssh_user,
+                target_host,
+                f"mkdir -p {_shell_quote(str(install_dir))}",
+                privileged=True,
+            ),
+            dry_run=False,
+        )
         staging = _stage_binaries(binaries_dir)
         try:
             run(
-                [
-                    "rsync",
-                    "-a",
-                    "-c",
-                    "-e",
-                    "ssh -o BatchMode=yes -o ConnectTimeout=10",
-                    "--",
+                rsync_argv(
                     str(staging) + "/",
-                    scp_url(ssh_user, target_host, str(install_dir) + "/"),
-                ],
+                    ssh_user,
+                    target_host,
+                    str(install_dir) + "/",
+                ),
                 dry_run=False,
             )
         finally:
@@ -2252,14 +2441,28 @@ def install_worker(
     assume_yes: bool = False,
     hub_tls: HubTLSMaterial | None = None,
 ) -> None:
+    require_unprivileged_ssh(ssh_user)
     binaries = find_binaries(binaries_dir)
     log(f"==> Updating remote worker {host} ({len(binaries)} binaries)")
-    run(ssh_cmd(ssh_user, host, f"mkdir -p {install_dir}"), dry_run=dry_run)
+    run(
+        ssh_cmd(
+            ssh_user,
+            host,
+            f"mkdir -p {_shell_quote(str(install_dir))}",
+            privileged=True,
+        ),
+        dry_run=dry_run,
+    )
     # Stop first so rsync is not replacing a mapped executable, and so the
     # subsequent restart cannot keep the previous buildinfo stamp in memory.
     log(f"    stopping {WORKER_UNIT} on {host}")
     run(
-        ssh_cmd(ssh_user, host, f"systemctl stop {WORKER_UNIT} || true"),
+        ssh_cmd(
+            ssh_user,
+            host,
+            f"systemctl stop {WORKER_UNIT} || true",
+            privileged=True,
+        ),
         dry_run=dry_run,
     )
 
@@ -2267,16 +2470,7 @@ def install_worker(
     try:
         src = (str(staging) + "/") if staging else str(binaries_dir) + "/"
         run(
-            [
-                "rsync",
-                "-a",
-                "-c",
-                "-e",
-                "ssh -o BatchMode=yes -o ConnectTimeout=10",
-                "--",
-                src,
-                scp_url(ssh_user, host, str(install_dir) + "/"),
-            ],
+            rsync_argv(src, ssh_user, host, str(install_dir) + "/"),
             dry_run=dry_run,
         )
     finally:
@@ -2328,18 +2522,21 @@ def install_worker(
         if tpl.is_file():
             log(f"    copying icinga-notification-email.tpl example to {host}")
             run(
-                [
-                    "scp",
-                    "-o",
-                    "BatchMode=yes",
-                    str(tpl),
-                    scp_url(
-                        ssh_user,
-                        host,
-                        "/etc/factum2/icinga-notification-email-example.tpl",
-                    ),
-                ],
+                ssh_cmd(
+                    ssh_user,
+                    host,
+                    "mkdir -p /etc/factum2",
+                    privileged=True,
+                ),
                 dry_run=dry_run,
+            )
+            copy_to_remote(
+                tpl,
+                "/etc/factum2/icinga-notification-email-example.tpl",
+                user=ssh_user,
+                host=host,
+                dry_run=dry_run,
+                mode="644",
             )
 
     systemd_reload_enable_restart(
@@ -3058,7 +3255,8 @@ Modes:
 
 Environment:
   GITHUB_TOKEN / GH_TOKEN   token for private repos (else `gh auth token`)
-  SSH_USER                  ssh user for a remote primary and workers (default: root)
+  SSH_USER                  ssh login for a remote primary and workers (default: factum).
+                            Not root. Privileged remote commands use sudo -n.
 
 Examples:
   /etc/factum2/install.py
@@ -3086,7 +3284,15 @@ Examples:
         type=Path,
         help="factum2.yaml (db credentials for worker_nodes lookup)",
     )
-    p.add_argument("--ssh-user", default=os.environ.get("SSH_USER", "root"))
+    p.add_argument(
+        "--ssh-user",
+        default=os.environ.get("SSH_USER", SSH_USER_DEFAULT),
+        help=(
+            "SSH login for a remote primary and for workers "
+            f"(default: {SSH_USER_DEFAULT}, or $SSH_USER). "
+            "Root is refused for workers; privileged commands use sudo -n."
+        ),
+    )
     p.add_argument("--list", action="store_true", help="print GitHub releases and exit")
     p.add_argument(
         "--install", metavar="TAG", help="GitHub tag to install, or 'latest'"
@@ -3169,28 +3375,54 @@ def fetch_config(
         if not config_path.is_file():
             raise InstallError(f"Config file not found: {config_path}")
         return config_path, None
+    quoted = _shell_quote(str(config_path))
     probe = subprocess.run(
-        ssh_cmd(ssh_user, target_host, f"test -f {config_path}"),
+        ssh_cmd(
+            ssh_user,
+            target_host,
+            f"test -f {quoted}",
+            privileged=ssh_user != "root",
+        ),
         check=False,
         capture_output=True,
         text=True,
     )
+    if _remote_sudo_failed(probe.stderr):
+        err = (probe.stderr or "").strip()
+        raise InstallError(
+            f"{target_host}: cannot read {config_path}: {err}{_sudo_hint(err)}"
+        )
     if probe.returncode != 0:
         raise InstallError(f"Config file not found on {target_host}: {config_path}")
     fd, name = tempfile.mkstemp(prefix="factum2-yaml-")
     os.close(fd)
     tmp = Path(name)
-    run(
-        [
-            "scp",
-            "-o",
-            "BatchMode=yes",
-            "-q",
-            scp_url(ssh_user, target_host, config_path),
-            str(tmp),
-        ],
-        dry_run=False,
+    if ssh_user == "root":
+        run(
+            [
+                "scp",
+                "-o",
+                "BatchMode=yes",
+                "-q",
+                scp_url(ssh_user, target_host, config_path),
+                str(tmp),
+            ],
+            dry_run=False,
+        )
+        return tmp, tmp
+    proc = subprocess.run(
+        ssh_cmd(ssh_user, target_host, f"cat {quoted}", privileged=True),
+        check=False,
+        capture_output=True,
+        timeout=15,
     )
+    if proc.returncode != 0 or _remote_sudo_failed(proc.stderr):
+        err = (proc.stderr or b"").decode(errors="replace").strip()
+        tmp.unlink(missing_ok=True)
+        raise InstallError(
+            f"{target_host}: cannot read {config_path}: {err}{_sudo_hint(err)}"
+        )
+    tmp.write_bytes(proc.stdout)
     return tmp, tmp
 
 
@@ -3400,6 +3632,7 @@ def main_source(args: argparse.Namespace) -> int:
 
         if workers:
             log("==> Enabled remote workers: " + ", ".join(workers))
+            require_unprivileged_ssh(args.ssh_user)
         elif args.primary_only:
             log("==> Skipping remote workers (--primary-only)")
             log("    warning: hub handshake requires matching versions on remotes")
@@ -3626,6 +3859,7 @@ def main_release(args: argparse.Namespace) -> int:
     log(f"==> Selected {selected.tag} ({format_date(selected.published_at)})")
     if workers:
         log("==> Enabled remote workers: " + ", ".join(workers))
+        require_unprivileged_ssh(args.ssh_user)
     elif args.primary_only:
         log("==> Skipping remote workers (--primary-only)")
         log("    warning: hub handshake requires matching versions on remotes")

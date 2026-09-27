@@ -1,0 +1,7 @@
+# Passwordless sudo for the login install.py uses on workers (default: factum).
+# Upgrades are non-interactive (ssh BatchMode), so sudo must not prompt.
+# install.py runs `sudo -n` for systemctl, rsync, and a shell for the
+# remaining install steps. That is root-equivalent. The gain is that sshd
+# can keep PermitRootLogin off; this key is not a root login.
+factum ALL=(root) NOPASSWD: ALL
+Defaults:factum !requiretty

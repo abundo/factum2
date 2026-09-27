@@ -69,7 +69,9 @@ running, applies schema migrations, then installs systemd units:
   (also copies `factum2-driver.service` and `factum2-storage.service` but
   does not enable them)
 - **each enabled worker node:** `factum2-worker.service` (and the same
-  opt-in `factum2-driver.service` / `factum2-storage.service`)
+  opt-in `factum2-driver.service` / `factum2-storage.service`). The
+  primary SSHs as `factum`, not root; that login needs a key and
+  passwordless sudo ([Worker nodes](workers.md))
 
 ## 4. First admin user
 

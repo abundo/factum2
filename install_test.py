@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import os
 import re
 import shutil
 import subprocess
@@ -260,6 +261,101 @@ class ScpUrlTests(unittest.TestCase):
         )
 
 
+class SshUserTests(unittest.TestCase):
+    def test_default_ssh_user_is_not_root(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SSH_USER", None)
+            args = install.parse_args(["--list"])
+        self.assertEqual(args.ssh_user, "factum")
+
+    def test_ssh_user_env(self) -> None:
+        with patch.dict(os.environ, {"SSH_USER": "deploy"}):
+            args = install.parse_args(["--list"])
+        self.assertEqual(args.ssh_user, "deploy")
+
+    def test_root_login_is_refused(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.require_unprivileged_ssh("root")
+        self.assertIn("root", str(ctx.exception))
+        self.assertIn("factum", str(ctx.exception))
+        install.require_unprivileged_ssh("factum")
+
+    def test_worker_install_refuses_root_before_any_ssh(self) -> None:
+        def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("SSH should not run")
+
+        with patch.object(install.subprocess, "run", fail_if_called):
+            with self.assertRaises(install.InstallError):
+                install.install_worker(
+                    "worker.example",
+                    "root",
+                    Path("/no/such/build"),
+                    Path("/no/such/examples"),
+                    Path("/opt/factum2"),
+                    True,
+                    tag="v1.2.3",
+                )
+
+    def test_privileged_remote_uses_sudo_not_root_login(self) -> None:
+        import shlex
+
+        remote = install.privileged_remote(
+            "factum", "echo 'nagios user not found'"
+        )
+        parts = shlex.split(remote)
+        self.assertEqual(parts[:5], ["sudo", "-n", "--", "bash", "-c"])
+        self.assertEqual(parts[5], "echo 'nagios user not found'")
+        self.assertNotIn("root@", remote)
+
+    def test_root_remote_is_unchanged(self) -> None:
+        script = "systemctl restart factum2-worker.service"
+        self.assertEqual(install.privileged_remote("root", script), script)
+
+    def test_ssh_cmd_privileged_targets_factum(self) -> None:
+        cmd = install.ssh_cmd(
+            "factum",
+            "dns1.example.com",
+            "systemctl restart factum2-worker.service",
+            privileged=True,
+        )
+        self.assertEqual(cmd[0], "ssh")
+        self.assertIn("factum@dns1.example.com", cmd)
+        self.assertNotIn("root@dns1.example.com", cmd)
+        self.assertIn("sudo -n -- bash -c", cmd[-1])
+        self.assertIn("systemctl restart factum2-worker.service", cmd[-1])
+
+    def test_uname_is_not_sudo(self) -> None:
+        cmd = install.ssh_cmd("factum", "dns1.example.com", "uname -m")
+        self.assertEqual(cmd[-1], "uname -m")
+
+    def test_rsync_path_is_sudo_for_factum(self) -> None:
+        argv = install.rsync_argv(
+            "/tmp/bins/", "factum", "dns1.example.com", "/opt/factum2/"
+        )
+        self.assertIn("--rsync-path", argv)
+        self.assertIn("sudo -n rsync", argv)
+        self.assertIn("factum@dns1.example.com:/opt/factum2/", argv)
+        self.assertNotIn("root@dns1.example.com:/opt/factum2/", argv)
+
+    def test_rsync_as_root_has_no_sudo(self) -> None:
+        argv = install.rsync_argv(
+            "/tmp/bins/", "root", "dns1.example.com", "/opt/factum2/"
+        )
+        self.assertNotIn("--rsync-path", argv)
+        self.assertIn("root@dns1.example.com:/opt/factum2/", argv)
+
+    def test_remote_install_script(self) -> None:
+        script = install.remote_install_script(
+            "/tmp/factum2-install.abc",
+            "/etc/factum2/hub.key",
+            "640",
+            "root:factum",
+        )
+        self.assertIn("install -m 640 -o root -g factum", script)
+        self.assertIn("/etc/factum2/hub.key", script)
+        self.assertIn("rm -f /tmp/factum2-install.abc", script)
+
+
 class RefuseInstallWithoutWorkersTests(unittest.TestCase):
     def test_ok_when_lookup_succeeded(self) -> None:
         install.refuse_install_without_workers(None, primary_only=False)
@@ -382,6 +478,7 @@ class PsqlPasswordArgvTests(unittest.TestCase):
         cmd = captured["cmd"]
         assert isinstance(cmd, list)
         self.assertEqual(cmd[-2:], ["bash", "-s"])
+        self.assertIn("root@primary.example", cmd)
         self.assertNotIn("--", cmd)
         joined = " ".join(str(part) for part in cmd)
         self.assertNotIn(self._DB["pass"], joined)
@@ -397,6 +494,35 @@ class PsqlPasswordArgvTests(unittest.TestCase):
         decoded = [base64.b64decode(b).decode() for b in blobs]
         self.assertIn(self._DB["pass"], decoded)
         self.assertIn("select 1;", decoded)
+
+    def test_factum_login_uses_sudo_and_hides_password(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install._psql_remote(
+                self._DB,
+                "select 1;",
+                target_host="primary.example",
+                ssh_user="factum",
+            )
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        self.assertIn("factum@primary.example", cmd)
+        self.assertNotIn("root@primary.example", cmd)
+        self.assertEqual(cmd[-5:], ["sudo", "-n", "--", "bash", "-s"])
+        joined = " ".join(str(part) for part in cmd)
+        self.assertNotIn(self._DB["pass"], joined)
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict)
+        script = kwargs["input"]
+        assert isinstance(script, str)
+        self.assertNotIn(self._DB["pass"], script)
 
     def test_compose_password_not_in_docker_argv(self) -> None:
         captured: dict[str, object] = {}

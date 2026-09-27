@@ -102,7 +102,10 @@ applies schema migrations (`factum2-web migrate`, when that tag has the
 command), then installs systemd units:
 
 - **this host (primary):** `factum2-web.service` and `factum2-worker.service`
-- **each enabled worker node:** `factum2-worker.service`
+- **each enabled worker node:** `factum2-worker.service`. The primary
+  SSHs as `factum` (not root); that account needs the primary's deploy
+  key and passwordless sudo
+  ([docs/install/workers.md](docs/install/workers.md))
 
 A unit that is not on disk yet is installed and `systemctl enable --now`'d.
 If the file is already there and matches this release, it is left alone
