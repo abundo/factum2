@@ -7,8 +7,9 @@ product.
 
 Factum ships **no built-in service types** and **no seeded translation CLI**.
 ELINE, ELAN, POLARIX, and similar names are only examples of definitions you
-create in Catalog. Import/export of definition packages and an L3VPN product
-are follow-ups.
+create in Catalog. The Config page can export and import a definition with
+its CLI objects, macros, and parameter objects as one JSON file. An L3VPN
+product is still a follow-up.
 
 Related:
 
@@ -565,6 +566,9 @@ attach-only; Detach never deletes the DCIM row.
 - [ ] Unrealize keeps the commercial row; Lime delete still 403s.
 - [ ] `sros-md` has its own CLI object or can inherit `sros`.
 - [ ] No new Go types, no new `cmd/`, no built-in product package.
+- [ ] To copy the definition to another Factum, Config → Export with
+      **Include related objects**, then Import that file. See
+      [user/config.md](user/config.md).
 
 When the CLI cannot express the service, that is a **driver** gap
 (`internal/drivers/README-DRIVERS.md`), not a cfgmgmt one.
@@ -588,6 +592,8 @@ When the CLI cannot express the service, that is a **driver** gap
 | GET/POST | `/api/config/variables` | Variable definition catalog |
 | GET/PUT | `/api/config/assignments` | Values on a parameter node |
 | GET/POST | `/api/config/macros` | Named `{{include}}` snippets |
+| POST | `/api/config/bundle/export` | JSON bundle of definitions, CLI, macros, parameter objects |
+| POST | `/api/config/bundle/import` | Upsert that bundle (one transaction) |
 | POST | `/api/config/render` | Preview device or service |
 | GET | `/api/service` | Commercial list. `q`, optional `category` (omit = all rows) |
 | PUT | `/api/service/:id/type` | Set definition + fields + `connection_type_id` (incl. Lime) |

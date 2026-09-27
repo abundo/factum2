@@ -97,6 +97,13 @@ export function putConnectionTypeImage(typeId, ctId, body, contentType) {
   )
 }
 
+export function exportConfigBundle(payload) {
+  return http.post('/config/bundle/export', payload).then((res) => res.data)
+}
+export function importConfigBundle(payload) {
+  return http.post('/config/bundle/import', payload).then((res) => res.data)
+}
+
 export function listMacros() {
   return http.get('/config/macros').then((res) => res.data ?? [])
 }

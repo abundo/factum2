@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AttachServiceDialog: typeof import('./src/components/AttachServiceDialog.vue')['default']
     BuildInfo: typeof import('./src/components/BuildInfo.vue')['default']
+    ConfigBundleDialog: typeof import('./src/components/ConfigBundleDialog.vue')['default']
     ConfigNodeInspector: typeof import('./src/components/ConfigNodeInspector.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
     ConnectionDeviceNode: typeof import('./src/components/dcim/ConnectionDeviceNode.vue')['default']

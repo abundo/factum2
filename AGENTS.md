@@ -136,6 +136,10 @@ Translation CLI lives under `_catalog/cli/<definition>/<platform>`;
 baseline CLI is a child of `global` or a site/device, never `_catalog`.
 How to design one:
 [docs/cfgmgmt-service-design.md](docs/cfgmgmt-service-design.md).
+A JSON bundle (`POST /api/config/bundle/export` and `/import`, Config →
+Export / Import) moves a service definition together with its translation
+CLI, macros, the variable definitions those templates read, and parameter
+objects that assign them.
 Architecture of the tree (parameter / CLI / service / resource objects):
 [docs/cfgmgmt-tree-objects.md](docs/cfgmgmt-tree-objects.md). Product
 design:

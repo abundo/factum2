@@ -471,6 +471,8 @@ func GUI(p *GuiParams) error {
 	cfg.POST("/macros", ctrl.ApiConfigMacroCreate, ctrl.RequireWrite)
 	cfg.PUT("/macros/:id", ctrl.ApiConfigMacroUpdate, ctrl.RequireWrite)
 	cfg.DELETE("/macros/:id", ctrl.ApiConfigMacroDelete, ctrl.RequireWrite)
+	cfg.POST("/bundle/export", ctrl.ApiConfigBundleExport, ctrl.RequireRead)
+	cfg.POST("/bundle/import", ctrl.ApiConfigBundleImport, ctrl.RequireWrite)
 	cfg.GET("/templates", ctrl.ApiConfigLegacyGone, ctrl.RequireRead)
 	cfg.GET("/templates/:id", ctrl.ApiConfigLegacyGone, ctrl.RequireRead)
 	cfg.POST("/templates", ctrl.ApiConfigLegacyGone, ctrl.RequireWrite)

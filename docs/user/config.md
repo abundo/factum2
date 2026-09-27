@@ -85,6 +85,31 @@ here. CLI objects are added from the tree (translation under
 `_catalog/cli/<type>/<platform>`). Adding a capacity product is a
 catalog definition plus CLI objects, not a new Go package.
 
+## Export and import
+
+**Export** and **Import** on the Config page move definitions as one JSON
+file (`factum2-config`). Check a service definition such as ELINE and leave
+**Include related objects** on to take:
+
+- its translation CLI objects (`_catalog/cli/<type>/<platform>`, and any
+  CLI object whose service type is that definition)
+- macros those templates `include`, including nested includes
+- variable definitions the templates read, and any variable assigned on an
+  exported parameter object
+- parameter objects that assign those variables
+
+You can also check CLI objects, macros, and parameter objects on their own.
+
+Import matches by definition name, macro name, variable name, CLI path (or
+service type + platform), and parameter path. It updates those objects.
+Features, connection types, and assignments **on the objects in the file**
+are replaced. Other definitions stay. Missing folders on a path are created.
+A device or service named in the path must already be attached in the tree.
+
+Secret values are left out unless **Include secret values** is checked. On
+import, an omitted secret keeps the value already stored. A new required
+secret with no value fails the import; the whole file is one transaction.
+
 ## How a push uses this
 
 1. The [service](services.md) has a **service type** and endpoints

@@ -37,6 +37,7 @@ import {
   putServiceEndpoints,
   updateServiceType as updateServiceRowType,
 } from '@/api/services'
+import ConfigBundleDialog from '@/components/ConfigBundleDialog.vue'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
@@ -62,6 +63,8 @@ const filter = ref('')
 const saving = ref(false)
 const tab = ref('tree')
 const catalogOpen = ref(false)
+const bundleOpen = ref(false)
+const bundleMode = ref('export')
 const catalogTab = ref('types')
 const selected = ref(null)
 const reloadKey = ref(0)
@@ -1574,6 +1577,21 @@ async function loadScopesIndex() {
   }
 }
 
+const scopeList = computed(() => Object.values(scopesById.value))
+
+function openBundle(mode) {
+  bundleMode.value = mode
+  bundleOpen.value = true
+}
+
+function onBundleImported() {
+  reloadKey.value += 1
+  loadScopesIndex()
+  loadTypes()
+  loadMacros()
+  loadVariables()
+}
+
 function onInspectorSaved() {
   draftEndpoint.value = null
   reloadKey.value += 1
@@ -1619,6 +1637,21 @@ onBeforeUnmount(() => {
           color="neutral"
           label="New service"
           @click="openCreateService(null)"
+        />
+        <UButton
+          icon="i-lucide-download"
+          variant="outline"
+          color="neutral"
+          label="Export"
+          @click="openBundle('export')"
+        />
+        <UButton
+          v-if="authStore.canWrite"
+          icon="i-lucide-upload"
+          variant="outline"
+          color="neutral"
+          label="Import"
+          @click="openBundle('import')"
         />
         <UButton
           icon="i-lucide-library"
@@ -1781,6 +1814,17 @@ onBeforeUnmount(() => {
       </template>
     </UTabs>
   </div>
+
+  <ConfigBundleDialog
+    :open="bundleOpen"
+    :mode="bundleMode"
+    :can-write="authStore.canWrite"
+    :service-types="serviceTypes"
+    :macros="macros"
+    :scopes="scopeList"
+    @update:open="(v) => (bundleOpen = v)"
+    @imported="onBundleImported"
+  />
 
   <USlideover v-model:open="catalogOpen" title="Catalog" :ui="{ content: 'max-w-3xl w-full' }">
     <template #body>

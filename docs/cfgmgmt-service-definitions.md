@@ -959,7 +959,7 @@ Expected load: lab/dev; occupancy scan of hundreds of endpoints is fine. Latency
 
 None. Implementer choices are in **Key Decisions** (goose vs Seed, rename cascade in PR 1, unrealize, list items / `resource` on items, `service_id` 0, connection-type DELETE→UPDATE→INSERT, `/eline` 410, `PrepareELINEApply` removal, same-device peers, picker `category` omit=all, SVG dropped, resource parents exclude service, last-write-wins, `.FieldMeta`, middleware).
 
-Follow-ups already listed as non-goals: import/export package, L3VPN definition, drop `builtin` column, remove leftover `ELINEApplier` driver path, occupancy table, SVG if ever needed.
+Follow-ups already listed as non-goals: L3VPN definition, drop `builtin` column, remove leftover `ELINEApplier` driver path, occupancy table, SVG if ever needed. Definition import/export is the Config page JSON bundle (`POST /api/config/bundle/export` and `/import`).
 
 ## Risks
 
