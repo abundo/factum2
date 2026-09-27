@@ -56,9 +56,11 @@ type NBDevice struct {
 	// keys this package also copies onto typed Cf* fields. Callers that
 	// need an instance-specific field not modelled here read it from here.
 	CustomFields map[string]any `json:"custom_fields"`
-	LibrenmsID   uint           `json:"librenms_id"`
-	Interfaces   []NBInterface  `json:"interfaces"` // gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	Tags         []NBTag        `json:"tags"`
+	// LibrenmsID is filled from the destination custom field, with the
+	// legacy librenms_id / librenms_device_id fields as fallback.
+	LibrenmsID uint          `json:"librenms_id"`
+	Interfaces []NBInterface `json:"interfaces"` // gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	Tags       []NBTag       `json:"tags"`
 }
 
 type NBInterface struct {

@@ -140,7 +140,10 @@ type NetboxCustomFields struct {
 	MonitorLibrenms *bool  `json:"monitor_librenms"`
 	Parents         string `json:"parents"`
 	ConnectMethod   string `json:"connection_method"`
-	LibrenmsID      int    `json:"librenms_id"`
+	// LibrenmsID is the legacy integer custom field. Matching uses
+	// LibrenmsDeviceID, which reads destination first and this field
+	// only when destination has no librenms pair.
+	LibrenmsID int `json:"librenms_id"`
 	// All is the raw custom_fields object, including keys that also have
 	// typed fields above. Callers that need an instance-specific field
 	// this package does not model read it from All (or from
@@ -383,7 +386,7 @@ func (nb *NetboxClient) parseDevices(devices []JSONDevice, vm bool) ([]*NBDevice
 		dbdevice.CfSourceID = device.ID
 		dbdevice.CfParents = device.CF.Parents
 		dbdevice.CustomFields = device.CF.All
-		dbdevice.LibrenmsID = uint(device.CF.LibrenmsID)
+		dbdevice.LibrenmsID = LibrenmsDeviceID(device.CF.All)
 		dbdevice.Tags = netboxTagsToNBTags(device.Tags)
 
 		for _, jintf := range device.Interfaces {

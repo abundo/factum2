@@ -57,6 +57,9 @@ type Device struct {
 	// re-resolve without calling NetBox.
 	OpticalKindCF string `json:"optical_kind_cf" gorm:"type:varchar(32)"`
 
+	// LibrenmsID is the LibreNMS device id taken from the NetBox destination
+	// custom field (librenms:<id>). Sync also accepts the legacy
+	// librenms_id and librenms_device_id fields until those are removed.
 	LibrenmsID uint `json:"librenms_id"`
 
 	// Custom fields

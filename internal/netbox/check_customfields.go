@@ -72,6 +72,9 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 			description: "If true the device will be monitored by LibreNMS"},
 		{name: "monitor_grafana", objectTypes: device, typ: cfTypeBoolean,
 			description: "If true the device will be scraped by Prometheus via snmp_exporter"},
+		{name: "destination", objectTypes: []string{"dcim.device", "virtualization.virtualmachine"}, typ: cfTypeText,
+			label: "Destination", group: "sync",
+			description: "Ids of this device in downstream systems, as space-separated system:id pairs (librenms:42 zabbix:7). A JSON object is also accepted. Each integration updates only its own id."},
 		{name: "parents", objectTypes: device, typ: cfTypeText,
 			description: "Comma-separated list of parents. If all parents are down, no alarms will be generated for this device"},
 		{name: "role", objectTypes: []string{"dcim.interface"}, typ: cfTypeSelect,
@@ -96,15 +99,6 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 			typ:         cfTypeInteger,
 			group:       "sync",
 			description: "Identifies the element in BECS",
-		})
-	}
-	if settingOn(s.LibrenmsEnabled) {
-		specs = append(specs, cfSpec{
-			name:        "librenms_id",
-			objectTypes: []string{"dcim.device", "virtualization.virtualmachine"},
-			typ:         cfTypeInteger,
-			group:       "sync",
-			description: "Identifies the element in LibreNMS",
 		})
 	}
 	if settingOn(s.OpticalEnabled) {

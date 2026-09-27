@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/jobevent"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 )
 
 // factumWebhookPath is the path Netbox must POST to (see web.ApiNetboxWebhook).
@@ -484,9 +484,6 @@ func skippedCustomFields(s *models.Settings) []skippedCF {
 	var out []skippedCF
 	if !settingOn(s.BecsEnabled) {
 		out = append(out, skippedCF{name: "becs_oid", reason: "BECS source is disabled"})
-	}
-	if !settingOn(s.LibrenmsEnabled) {
-		out = append(out, skippedCF{name: "librenms_id", reason: "LibreNMS destination is disabled"})
 	}
 	if !settingOn(s.OpticalEnabled) {
 		out = append(out, skippedCF{name: "optical_role", reason: "optical is disabled"})

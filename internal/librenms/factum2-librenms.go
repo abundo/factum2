@@ -28,15 +28,16 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/joho/godotenv"
 )
 
@@ -272,15 +273,6 @@ func (fl *FactumLibrenmsClient) syncInterfaces(librenmsDevice *LibrenmsDevice, f
 	return nil
 }
 
-// UpdateNetbox updates the given device (or, if device.VM is set, virtual
-// machine) in Netbox with the flat field changes in data.
-func (fl *FactumLibrenmsClient) UpdateNetbox(device *models.Device, data map[string]any) error {
-	if device.VM {
-		return fl.Netbox.UpdateVM(device.NetboxID, data)
-	}
-	return fl.Netbox.UpdateDevice(device.NetboxID, data)
-}
-
 // Get a device from Librenms. Try name as IP address first, then as string
 // def get_device_from_librenms_device(devices, librenms_device):
 func (fl *FactumLibrenmsClient) getDeviceFromLibrenmsDevice(factumDevices *models.Device, librenmsDevice *LibrenmsDevice) (*LibrenmsDevice, error) {
@@ -302,16 +294,16 @@ func (fl *FactumLibrenmsClient) getDeviceFromLibrenmsDevice(factumDevices *model
 }
 
 // getFactumDeviceForLibrenmsDevice correlates a librenms device back to its
-// factum device. The primary match is the librenms_id netbox custom field
-// (factumDevice.LibrenmsID), stamped on creation. It falls back to a
-// hostname match for devices librenms already knows about but that haven't
-// been (re)linked that way yet (e.g. devices added before librenms_id
-// existed): librenms always stores an FQDN in hostname, while factum device
-// names are often short, so the factum name is FQDN-ified with the default
-// domain before comparing.
+// factum device. The primary match is the LibreNMS id factum copied from
+// the NetBox destination custom field (factumDevice.LibrenmsID), stamped
+// on creation. It falls back to a hostname match for devices librenms
+// already knows about but that have not been linked that way yet: librenms
+// always stores an FQDN in hostname, while factum device names are often
+// short, so the factum name is FQDN-ified with the default domain before
+// comparing.
 // The final fallback matches on primary IPv4: createDevice creates new
 // librenms devices with hostname set to the IP, not the FQDN, so if the
-// netbox update that stamps librenms_id afterwards fails (logged but not
+// netbox update that stamps destination afterwards fails (logged but not
 // retried until the next run's backfill), neither match above would see
 // the device on the next run - Sync would then try to create it a second
 // time. Matching on IP closes that gap, and also catches librenms devices
@@ -338,10 +330,6 @@ func (fl *FactumLibrenmsClient) getFactumDeviceForLibrenmsDevice(librenmsDevice 
 		}
 	}
 	return nil
-}
-
-type NetboxUpdateData struct {
-	CustomerFields map[string]string `json:"custom_fields"`
 }
 
 // createDevice creates a device in Librenms, trying each configured SNMP
@@ -535,15 +523,11 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		}
 		created++
 
-		// Store the librenms device_id in netbox, so future syncs can
-		// match this device via getFactumDeviceForLibrenmsDevice.
-		data := map[string]any{
-			"custom_fields": map[string]any{
-				"librenms_id": librenmsDeviceID,
-			},
-		}
-		if err := fl.UpdateNetbox(factumDevice, data); err != nil {
-			reporter.Emit(jobevent.Error, "cannot update netbox custom field librenms_id for %s: %s", factumDevice.Name, err)
+		// Store the librenms device id in the NetBox destination field
+		// (librenms:<id>), leaving every other system's id in place, so
+		// future syncs can match this device.
+		if err := fl.Netbox.SetDestinationID(factumDevice.VM, factumDevice.NetboxID, netboxtool.DestinationLibrenms, strconv.Itoa(librenmsDeviceID)); err != nil {
+			reporter.Emit(jobevent.Error, "cannot update netbox destination for %s: %s", factumDevice.Name, err)
 		} else {
 			factumDevice.LibrenmsID = uint(librenmsDeviceID)
 		}
@@ -567,19 +551,18 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		}
 
 		// factumDevice.LibrenmsID is normally stamped in netbox at
-		// creation time (see createDevice above), but devices matched
+		// creation time (see the create pass above), but devices matched
 		// here via the hostname/IP fallbacks in
 		// getFactumDeviceForLibrenmsDevice never went through that path,
-		// so backfill it now that the match is known.
+		// so backfill the destination field now that the match is known.
+		// SetDestinationID reads the current value and rewrites only the
+		// librenms pair.
 		if factumDevice.LibrenmsID == 0 {
-			reporter.Emit(jobevent.Info, "%s, %s: stamping netbox librenms_id=%d", librenmsDevice.Hostname, librenmsDevice.Display, librenmsDevice.DeviceID)
-			data := map[string]any{
-				"custom_fields": map[string]any{
-					"librenms_id": librenmsDevice.DeviceID,
-				},
-			}
-			if err := fl.UpdateNetbox(factumDevice, data); err != nil {
-				reporter.Emit(jobevent.Error, "%s: cannot update netbox custom field librenms_id: %s", librenmsDevice.Hostname, err)
+			reporter.Emit(jobevent.Info, "%s, %s: stamping netbox destination librenms=%d", librenmsDevice.Hostname, librenmsDevice.Display, librenmsDevice.DeviceID)
+			if err := fl.Netbox.SetDestinationID(factumDevice.VM, factumDevice.NetboxID, netboxtool.DestinationLibrenms, strconv.Itoa(librenmsDevice.DeviceID)); err != nil {
+				reporter.Emit(jobevent.Error, "%s: cannot update netbox destination: %s", librenmsDevice.Hostname, err)
+			} else {
+				factumDevice.LibrenmsID = uint(librenmsDevice.DeviceID)
 			}
 		}
 

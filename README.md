@@ -386,8 +386,15 @@ select field with no choices. Missing `alarm_destination` /
 `alarm_timeperiod` are created with seed choices (example addresses and
 SLA windows) and those lists are never updated if the field already
 exists. `connection_method` gets a `ssh`/`telnet` choice set.
-Integration fields (`becs_oid`, `librenms_id`, `optical_role`) are
-only created when that source/destination is enabled. Creating a webhook
+Integration fields (`becs_oid`, `optical_role`) are
+only created when that source or feature is enabled. `destination` is
+created on devices and virtual machines and stores every downstream
+system's id in one text value, for example `librenms:42 zabbix:7`
+(a JSON object is accepted too). Each integration updates only its own
+id. `librenms_id` is no longer created. Copy existing `librenms_id` and
+`librenms_device_id` values with `examples/netbox_migrate_destination_field.py`
+(pipe it into `manage.py nbshell`), then delete those fields in the
+NetBox UI. Creating a webhook
 requires `PublicBaseURL` and the webhook secret in Settings; the secret
 is write-only in NetBox, so a verify-only check only confirms factum has
 one configured. Exits non-zero if anything required cannot be fixed.

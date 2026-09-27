@@ -202,6 +202,7 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("monitor_icinga", "boolean", dev)
 	add("monitor_librenms", "boolean", dev)
 	add("monitor_grafana", "boolean", dev)
+	add("destination", "text", []string{"dcim.device", "virtualization.virtualmachine"})
 	add("parents", "text", dev)
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
@@ -352,27 +353,36 @@ func TestCheckDB_BecsOIDOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestCheckDB_LibrenmsIDOnlyWhenEnabled(t *testing.T) {
+func TestCheckDB_DestinationField(t *testing.T) {
 	fields := allDeviceCFs()
+	delete(fields, "destination")
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
 		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
-	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
-		t.Fatalf("librenms_id must be skipped when LibreNMS is off: %v", err)
-	}
-
-	s.LibrenmsEnabled = boolPtr(true)
 	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
-		t.Fatal("missing librenms_id must fail without --update")
+		t.Fatal("missing destination must fail without --update")
+	}
+	if api.fields["destination"] != nil {
+		t.Fatal("must not create destination without --update")
 	}
 	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
-		t.Fatalf("librenms_id should be created with --update: %v", err)
+		t.Fatalf("destination should be created with --update: %v", err)
 	}
-	if api.fields["librenms_id"] == nil {
-		t.Fatal("expected librenms_id to be created")
+	got := api.fields["destination"]
+	if got == nil {
+		t.Fatal("expected destination to be created")
+	}
+	if got.Type != "text" {
+		t.Fatalf("destination type = %q, want text", got.Type)
+	}
+	if !contains(got.ObjectTypes, "dcim.device") || !contains(got.ObjectTypes, "virtualization.virtualmachine") {
+		t.Fatalf("destination object_types = %v", got.ObjectTypes)
+	}
+	if api.fields["librenms_id"] != nil {
+		t.Fatal("librenms_id must not be created; destination holds librenms:<id>")
 	}
 }
 
@@ -469,7 +479,7 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	if contains(got, "becs_oid") || contains(got, "librenms_id") || contains(got, "optical_role") {
 		t.Fatalf("conditional fields present when flags off: %v", got)
 	}
-	for _, want := range []string{"source", "orgno", "additional_name", "monitor_grafana"} {
+	for _, want := range []string{"source", "orgno", "additional_name", "monitor_grafana", "destination"} {
 		if !contains(got, want) {
 			t.Errorf("always-on field %s missing: %v", want, got)
 		}
@@ -479,10 +489,13 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	s.LibrenmsEnabled = boolPtr(true)
 	s.OpticalEnabled = boolPtr(true)
 	got = names(requiredCustomFields(s))
-	for _, want := range []string{"becs_oid", "librenms_id", "optical_role", "source"} {
+	for _, want := range []string{"becs_oid", "optical_role", "source", "destination"} {
 		if !contains(got, want) {
 			t.Errorf("missing %s when flags on: %v", want, got)
 		}
+	}
+	if contains(got, "librenms_id") {
+		t.Errorf("librenms_id must not be a required field: %v", got)
 	}
 }
 
