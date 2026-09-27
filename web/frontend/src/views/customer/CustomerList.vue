@@ -6,6 +6,7 @@ import {
   createCustomer,
   deleteCustomer,
   getCustomer,
+  getCustomerContacts,
   getCustomers,
   updateCustomer,
 } from '@/api/customers'
@@ -50,6 +51,7 @@ const editingId = ref(null)
 const customerSource = ref('')
 const customerLoading = ref(false)
 const customerError = ref(null)
+const relatedContacts = ref([])
 const saving = ref(false)
 const deleteDialog = ref(false)
 const deleting = ref(false)
@@ -90,6 +92,7 @@ function openNew() {
   editingId.value = null
   customerSource.value = 'factum'
   form.value = emptyForm()
+  relatedContacts.value = []
   customerError.value = null
   customerLoading.value = false
   detailDialog.value = true
@@ -100,10 +103,11 @@ function showDetail(row) {
   editingId.value = row.id
   customerSource.value = row.source ?? ''
   form.value = emptyForm()
+  relatedContacts.value = []
   customerError.value = null
   customerLoading.value = true
-  getCustomer(row.id)
-    .then((data) => {
+  Promise.all([getCustomer(row.id), getCustomerContacts(row.id)])
+    .then(([data, contacts]) => {
       editingId.value = data.id
       customerSource.value = data.source ?? ''
       form.value = {
@@ -115,6 +119,9 @@ function showDetail(row) {
         country: data.country ?? '',
         organization_number: data.organization_number ?? '',
       }
+      relatedContacts.value = [...(contacts ?? [])].sort((a, b) =>
+        (a.name ?? '').localeCompare(b.name ?? ''),
+      )
     })
     .catch(() => {
       customerError.value = 'Failed to load customer.'
@@ -177,6 +184,10 @@ function performDelete() {
     .finally(() => {
       deleting.value = false
     })
+}
+
+function telHref(phone) {
+  return `tel:${phone.trim().replace(/[^\d+]/g, '')}`
 }
 
 function sourceBadgeColor(source) {
@@ -275,52 +286,81 @@ onMounted(loadCustomers)
 
       <UAlert v-else-if="customerError" color="error" variant="subtle" :title="customerError" />
 
-      <div v-else class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
-        <label for="name" class="font-bold">Name</label>
-        <UInput id="name" v-model="form.name" :disabled="readOnly" class="w-full" />
+      <div v-else>
+        <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
+          <label for="name" class="font-bold">Name</label>
+          <UInput id="name" v-model="form.name" :disabled="readOnly" class="w-full" />
 
-        <label for="postal_address1" class="font-bold">Postal address 1</label>
-        <UInput
-          id="postal_address1"
-          v-model="form.postal_address1"
-          :disabled="readOnly"
-          class="w-full"
-        />
+          <label for="postal_address1" class="font-bold">Postal address 1</label>
+          <UInput
+            id="postal_address1"
+            v-model="form.postal_address1"
+            :disabled="readOnly"
+            class="w-full"
+          />
 
-        <label for="postal_address2" class="font-bold">Postal address 2</label>
-        <UInput
-          id="postal_address2"
-          v-model="form.postal_address2"
-          :disabled="readOnly"
-          class="w-full"
-        />
+          <label for="postal_address2" class="font-bold">Postal address 2</label>
+          <UInput
+            id="postal_address2"
+            v-model="form.postal_address2"
+            :disabled="readOnly"
+            class="w-full"
+          />
 
-        <label for="postalzipcode" class="font-bold">Zip code</label>
-        <UInput
-          id="postalzipcode"
-          v-model="form.postalzipcode"
-          :disabled="readOnly"
-          class="w-full"
-        />
+          <label for="postalzipcode" class="font-bold">Zip code</label>
+          <UInput
+            id="postalzipcode"
+            v-model="form.postalzipcode"
+            :disabled="readOnly"
+            class="w-full"
+          />
 
-        <label for="postalcity" class="font-bold">City</label>
-        <UInput id="postalcity" v-model="form.postalcity" :disabled="readOnly" class="w-full" />
+          <label for="postalcity" class="font-bold">City</label>
+          <UInput id="postalcity" v-model="form.postalcity" :disabled="readOnly" class="w-full" />
 
-        <label for="country" class="font-bold">Country</label>
-        <UInput id="country" v-model="form.country" :disabled="readOnly" class="w-full" />
+          <label for="country" class="font-bold">Country</label>
+          <UInput id="country" v-model="form.country" :disabled="readOnly" class="w-full" />
 
-        <label for="organization_number" class="font-bold">Org.no</label>
-        <UInput
-          id="organization_number"
-          v-model="form.organization_number"
-          :disabled="readOnly"
-          class="w-full"
-        />
+          <label for="organization_number" class="font-bold">Org.no</label>
+          <UInput
+            id="organization_number"
+            v-model="form.organization_number"
+            :disabled="readOnly"
+            class="w-full"
+          />
 
-        <template v-if="!isCreate">
-          <label for="source" class="font-bold">Source</label>
-          <UInput id="source" :model-value="customerSource" disabled class="w-full" />
-        </template>
+          <template v-if="!isCreate">
+            <label for="source" class="font-bold">Source</label>
+            <UInput id="source" :model-value="customerSource" disabled class="w-full" />
+          </template>
+        </div>
+
+        <div v-if="!isCreate" class="mt-6 border-t border-default pt-4">
+          <p class="font-bold mb-2">Contacts</p>
+          <p v-if="relatedContacts.length === 0" class="text-sm text-muted-color">
+            No contacts linked to this customer.
+          </p>
+          <ul v-else class="flex flex-col gap-3">
+            <li v-for="contact in relatedContacts" :key="contact.id">
+              <div class="font-medium">{{ contact.name || '—' }}</div>
+              <div class="text-sm text-muted-color">
+                <a
+                  v-if="contact.email?.trim()"
+                  :href="`mailto:${contact.email.trim()}`"
+                  class="text-primary hover:underline"
+                  >{{ contact.email.trim() }}</a
+                >
+                <span v-else>—</span>
+                <span v-if="contact.phone?.trim()">
+                  ·
+                  <a :href="telHref(contact.phone)" class="text-primary hover:underline">{{
+                    contact.phone.trim()
+                  }}</a>
+                </span>
+              </div>
+            </li>
+          </ul>
+        </div>
       </div>
     </template>
 

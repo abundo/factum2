@@ -19,3 +19,7 @@ export function updateCustomer(id, payload) {
 export function deleteCustomer(id) {
   return http.delete(`/customer/${id}`).then((res) => res.data)
 }
+
+export function getCustomerContacts(id) {
+  return http.get(`/customer/${id}/contacts`).then((res) => res.data)
+}
