@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -412,12 +412,31 @@ func TestSyncContactsToNetbox_NoLinksSkipsRoleLookup(t *testing.T) {
 }
 
 func TestCustomFieldSpecs_SourceIncludesContact(t *testing.T) {
+	var found bool
 	for _, spec := range customFieldSpecs(&models.Settings{}) {
-		if spec.name != "source" && spec.name != "source_id" {
+		if spec.name == "source_id" {
+			t.Fatal("source_id custom field must not be created; source holds <system>:<id>")
+		}
+		if spec.name != "source" {
 			continue
 		}
+		found = true
 		if !contains(spec.objectTypes, "tenancy.tenant") || !contains(spec.objectTypes, "tenancy.contact") {
 			t.Errorf("%s objectTypes = %v, want tenant and contact", spec.name, spec.objectTypes)
+		}
+	}
+	if !found {
+		t.Fatal("source custom field missing from specs")
+	}
+}
+
+func TestSourceCustomFieldValue(t *testing.T) {
+	for _, got := range []map[string]any{contactCustomFields("12"), tenantCustomFields("12")} {
+		if got["source"] != "factum:12" {
+			t.Errorf("source = %#v, want factum:12", got["source"])
+		}
+		if _, ok := got["source_id"]; ok {
+			t.Errorf("source_id is still written: %#v", got)
 		}
 	}
 }

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -73,13 +73,14 @@ type restContact struct {
 }
 
 func (r restContact) toNBContact() *NBContact {
+	system, id := netboxtool.ParseSourceRef(customFieldString(r.CustomFields, "source"))
 	return &NBContact{
 		NetboxID:   r.ID,
 		Name:       r.Name,
 		Email:      r.Email,
 		Phone:      r.Phone,
-		CfSource:   customFieldString(r.CustomFields, "source"),
-		CfSourceID: customFieldString(r.CustomFields, "source_id"),
+		CfSource:   system,
+		CfSourceID: id,
 	}
 }
 
@@ -258,8 +259,7 @@ func contactClaimable(c *NBContact, sourceID string, liveIDs map[string]struct{}
 
 func contactCustomFields(sourceID string) map[string]any {
 	return map[string]any{
-		"source":    "factum",
-		"source_id": sourceID,
+		"source": netboxtool.FormatSourceRef("factum", sourceID),
 	}
 }
 
@@ -294,9 +294,9 @@ func adoptByEmail(idx *contactIndex, email, sourceID string) *NBContact {
 }
 
 // ensureContact creates or updates the Netbox contact for factum contact
-// against idx. Matching order: custom-field source_id, then a unique
-// claimable email, then create. Name is not used as a match key — Netbox
-// does not unique-constrain contact names.
+// against idx. Matching order: id from the "source" custom field, then a
+// unique claimable email, then create. Name is not used as a match key —
+// Netbox does not unique-constrain contact names.
 func ensureContact(nb contactAPI, contact models.Contact, idx *contactIndex) (*NBContact, contactSyncAction, error) {
 	sourceID := strconv.FormatUint(uint64(contact.ID), 10)
 	name := strings.TrimSpace(contact.Name)
@@ -353,11 +353,11 @@ func ensureContact(nb contactAPI, contact models.Contact, idx *contactIndex) (*N
 }
 
 // syncContactsToNetbox creates/updates a Netbox contact for every factum
-// contact, matched via custom fields source="factum" and
-// source_id=<contact.ID> (factum's own primary key, the same keying as
-// customer→tenant sync). Contacts that already exist in Netbox under the
-// same email but without those custom fields are adopted rather than
-// POSTed. A name-only match is never used. Contacts are never deleted
+// contact, matched via the custom field source="factum:<contact.ID>"
+// (factum's own primary key, the same keying as customer→tenant sync).
+// Contacts that already exist in Netbox under the same email but without
+// that custom field are adopted rather than POSTed. A name-only match is
+// never used. Contacts are never deleted
 // here: a contact removed from factum leaves its Netbox row untouched.
 //
 // CustomerContact join rows become tenancy.ContactAssignment rows on the

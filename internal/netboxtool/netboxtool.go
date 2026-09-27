@@ -931,12 +931,10 @@ func (nb *NetboxClient) GetManufacturer(name string, id int) (*NetboxManufacture
 // ---------------------------------------------------------------------------
 
 // TenantCustomFields holds the subset of a tenant's custom_fields this
-// package knows about: "source"/"source_id" identify which external
-// system (and which record within it, e.g. a CRM customer id) a tenant
-// was synced from.
+// package knows about. "source" is "<system>:<id>" (see FormatSourceRef),
+// for example "factum:42" or "becs:17".
 type TenantCustomFields struct {
-	Source   string `json:"source"`
-	SourceID string `json:"source_id"`
+	Source string `json:"source"`
 }
 
 // JSONTenant is a tenancy.Tenant row, fetched via GraphQL (see
@@ -957,12 +955,13 @@ type JSONTenants struct {
 func parseTenants(tenants []JSONTenant) []*NBTenant {
 	dbtenants := make([]*NBTenant, 0, len(tenants))
 	for _, t := range tenants {
+		system, sourceID := ParseSourceRef(t.CF.Source)
 		dbtenants = append(dbtenants, &NBTenant{
 			NetboxID:   t.ID,
 			Name:       t.Name,
 			Slug:       t.Slug,
-			CfSource:   t.CF.Source,
-			CfSourceID: t.CF.SourceID,
+			CfSource:   system,
+			CfSourceID: sourceID,
 		})
 	}
 	return dbtenants
@@ -1034,13 +1033,12 @@ type netboxTenantListREST struct {
 	} `json:"results"`
 }
 
-// GetTenant looks up the single tenant whose custom fields match
-// source/sourceID (see TenantCustomFields), via a server-side filtered
-// REST call instead of GetTenants' full-table fetch - the point being
-// O(1) instead of O(tenant count) for a caller that only ever wants one
-// row. Returns nil, nil (not an error) if no tenant matches.
+// GetTenant looks up the single tenant whose "source" custom field is
+// FormatSourceRef(source, sourceID), via a server-side filtered REST call
+// instead of GetTenants' full-table fetch. Returns nil, nil (not an
+// error) if no tenant matches.
 func (nb *NetboxClient) GetTenant(source, sourceID string) (*NBTenant, error) {
-	endpoint := "/api/tenancy/tenants/?cf_source=" + url.QueryEscape(source) + "&cf_source_id=" + url.QueryEscape(sourceID)
+	endpoint := "/api/tenancy/tenants/?cf_source=" + url.QueryEscape(FormatSourceRef(source, sourceID))
 	var page netboxTenantListREST
 	if err := nb.restGet(endpoint, &page); err != nil {
 		return nil, err
@@ -1049,12 +1047,13 @@ func (nb *NetboxClient) GetTenant(source, sourceID string) (*NBTenant, error) {
 		return nil, nil
 	}
 	t := page.Results[0]
+	system, id := ParseSourceRef(t.CF.Source)
 	return &NBTenant{
 		NetboxID:   t.ID,
 		Name:       t.Name,
 		Slug:       t.Slug,
-		CfSource:   t.CF.Source,
-		CfSourceID: t.CF.SourceID,
+		CfSource:   system,
+		CfSourceID: id,
 	}, nil
 }
 

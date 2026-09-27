@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 // cfSpec is the desired extras.CustomField shape. Check creates the field
@@ -75,7 +75,7 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 		{name: "parents", objectTypes: device, typ: cfTypeText,
 			description: "Comma-separated list of parents. If all parents are down, no alarms will be generated for this device"},
 		{name: "role", objectTypes: []string{"dcim.interface"}, typ: cfTypeSelect,
-			description: "Interface role used by LibreNMS alerting filters",
+			description:       "Interface role used by LibreNMS alerting filters",
 			choicesCreateOnly: true,
 			choices: [][2]string{
 				{"uplink", "uplink"},
@@ -86,11 +86,8 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 		{name: "orgno", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Organisationnr"},
 		{name: "source", objectTypes: []string{"tenancy.tenant", "tenancy.contact"}, typ: cfTypeText,
-			label: "Source system", group: "sync",
-			description: "Identifies where the data comes from"},
-		{name: "source_id", objectTypes: []string{"tenancy.tenant", "tenancy.contact"}, typ: cfTypeText,
-			label: "Source system ID", group: "sync",
-			description: "ID of the data in the source system"},
+			label: "Source", group: "sync",
+			description: "Origin of this object as <system>:<id>, for example factum:42 or becs:17"},
 	}
 	if settingOn(s.BecsEnabled) {
 		specs = append(specs, cfSpec{

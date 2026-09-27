@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -505,10 +505,12 @@ func tenantFieldsFromChanges(changes map[string]any) tenantCF {
 		return cf
 	}
 	if s, ok := raw["source"].(string); ok {
-		cf.source = s
+		cf.source, cf.sourceID = netboxtool.ParseSourceRef(s)
 	}
-	if s, ok := raw["source_id"].(string); ok {
-		cf.sourceID = s
+	if _, ok := raw["source_id"]; ok {
+		// The combined "source" field replaced source_id. A write that
+		// still sends the old key would keep the legacy field alive.
+		cf.sourceID = "unexpected-source_id"
 	}
 	return cf
 }

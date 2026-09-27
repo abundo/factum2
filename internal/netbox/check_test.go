@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 type fakeCheckAPI struct {
@@ -206,7 +206,6 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
 	add("source", "text", []string{"tenancy.tenant", "tenancy.contact"})
-	add("source_id", "text", []string{"tenancy.tenant", "tenancy.contact"})
 	return out
 }
 
@@ -447,7 +446,6 @@ func TestCheckDB_OpticalKindAliasSatisfiesOpticalRole(t *testing.T) {
 func TestCheckDB_SourceMissingContactObjectType(t *testing.T) {
 	fields := allDeviceCFs()
 	fields["source"].ObjectTypes = []string{"tenancy.tenant"}
-	fields["source_id"].ObjectTypes = []string{"tenancy.tenant"}
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
 		rules:  []*NBEventRule{fullRule()},
@@ -455,16 +453,13 @@ func TestCheckDB_SourceMissingContactObjectType(t *testing.T) {
 	}
 	s := baseSettings()
 	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
-		t.Fatal("missing tenancy.contact on source/source_id must fail without --update")
+		t.Fatal("missing tenancy.contact on source must fail without --update")
 	}
 	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
 		t.Fatalf("should add tenancy.contact with --update: %v", err)
 	}
 	if !contains(api.fields["source"].ObjectTypes, "tenancy.contact") {
 		t.Fatalf("source object_types = %v, want tenancy.contact added", api.fields["source"].ObjectTypes)
-	}
-	if !contains(api.fields["source_id"].ObjectTypes, "tenancy.contact") {
-		t.Fatalf("source_id object_types = %v, want tenancy.contact added", api.fields["source_id"].ObjectTypes)
 	}
 }
 
@@ -474,7 +469,7 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	if contains(got, "becs_oid") || contains(got, "librenms_id") || contains(got, "optical_role") {
 		t.Fatalf("conditional fields present when flags off: %v", got)
 	}
-	for _, want := range []string{"source", "source_id", "orgno", "additional_name", "monitor_grafana"} {
+	for _, want := range []string{"source", "orgno", "additional_name", "monitor_grafana"} {
 		if !contains(got, want) {
 			t.Errorf("always-on field %s missing: %v", want, got)
 		}
@@ -484,7 +479,7 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	s.LibrenmsEnabled = boolPtr(true)
 	s.OpticalEnabled = boolPtr(true)
 	got = names(requiredCustomFields(s))
-	for _, want := range []string{"becs_oid", "librenms_id", "optical_role", "source", "source_id"} {
+	for _, want := range []string{"becs_oid", "librenms_id", "optical_role", "source"} {
 		if !contains(got, want) {
 			t.Errorf("missing %s when flags on: %v", want, got)
 		}

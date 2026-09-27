@@ -34,7 +34,7 @@ func TestContactClient_GetContacts(t *testing.T) {
 				"name": "Ada Lovelace",
 				"email": "ada@example.com",
 				"phone": "1",
-				"custom_fields": {"source": "factum", "source_id": "12"}
+				"custom_fields": {"source": "factum:12"}
 			}]
 		}`))
 	})
@@ -68,7 +68,7 @@ func TestContactClient_CreateContact(t *testing.T) {
 			t.Fatalf("payload = %s", body)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":7,"name":"Ada","email":"ada@example.com","phone":"","custom_fields":{"source":"factum","source_id":"3"}}`))
+		_, _ = w.Write([]byte(`{"id":7,"name":"Ada","email":"ada@example.com","phone":"","custom_fields":{"source":"factum:3"}}`))
 	})
 	got, err := nb.CreateContact("Ada", map[string]any{
 		"email":         "ada@example.com",

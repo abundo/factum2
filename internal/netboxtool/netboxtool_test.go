@@ -25,8 +25,8 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *NetboxClient {
 func TestGetTenant_Found(t *testing.T) {
 	nb := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/tenancy/tenants/", r.URL.Path)
-		assert.Equal(t, "inventory", r.URL.Query().Get("cf_source"))
-		assert.Equal(t, "42", r.URL.Query().Get("cf_source_id"))
+		assert.Equal(t, "inventory:42", r.URL.Query().Get("cf_source"))
+		assert.Empty(t, r.URL.Query().Get("cf_source_id"))
 		assert.Equal(t, "Token test-token", r.Header.Get("Authorization"))
 
 		w.Header().Set("Content-Type", "application/json")
@@ -36,7 +36,7 @@ func TestGetTenant_Found(t *testing.T) {
 					"id": 7,
 					"name": "Acme",
 					"slug": "acme",
-					"custom_fields": {"source": "inventory", "source_id": "42"}
+					"custom_fields": {"source": "inventory:42"}
 				}
 			]
 		}`))
