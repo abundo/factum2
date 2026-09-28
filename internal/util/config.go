@@ -304,6 +304,10 @@ type ConfigWorker struct {
 	// DefaultHubSocket / FACTUM_WORKER_API_SOCKET; "none"/"0" is invalid
 	// for factum2-worker start (fail closed). Not a route on worker.listen.
 	APISocket string `boa:"configonly" yaml:"api_socket" optional:"true"`
+	// RadiusState is the on-disk copy of the RADIUS policy, including
+	// directory and NAS secrets. Empty uses /var/lib/factum2/radius/cache.json.
+	// The worker keeps answering from this file while factum2 is down.
+	RadiusState string `boa:"configonly" yaml:"radius_state" optional:"true"`
 }
 
 type ConfigWeb struct {

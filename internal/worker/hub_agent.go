@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/abundo/factum2/internal/buildinfo"
+	"github.com/abundo/factum2/internal/radius"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/gorilla/websocket"
 )
@@ -220,6 +221,12 @@ func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<
 	if !ok {
 		logger.Error("rejected unknown command")
 		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: "unknown command"})
+		return
+	}
+
+	if cmdMsg.Command == radius.Role {
+		logger.Info("radius listens in-process")
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: 0})
 		return
 	}
 

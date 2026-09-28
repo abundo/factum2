@@ -60,6 +60,10 @@ worker:
     netbox-delta:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync-delta", "--job"]
+    # RADIUS for switch and router login. The name starts an in-process UDP
+    # listener; cmd is not executed. Policy is Admin → AAA → RADIUS.
+    # radius:
+    #   cmd: /bin/true
     # Software repository (factum2-storage start is a separate unit).
     # copy's argv arrives from the primary; list every token it may append.
     # storage:

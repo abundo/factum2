@@ -99,6 +99,9 @@ unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
 ## AAA
 
 - **Users** / **Roles** — local accounts; `admin` cannot be deleted
-- **Authentication** — local and LDAP (AD or generic), bind mode, TLS
+- **Authentication** — local and LDAP (AD or generic), bind mode, TLS.
+  RADIUS network login uses this same directory
 - **Authorization** — map LDAP group DNs to Factum roles, plus a default
   role for users who match no group
+- **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
+  device roles. See [RADIUS](radius.md)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/abundo/factum2/internal/certs"
 	"github.com/abundo/factum2/internal/mail"
+	"github.com/abundo/factum2/internal/radius"
 	"github.com/abundo/factum2/internal/storage"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -28,6 +29,10 @@ func (ctrl *Controller) ApiSettingsGet(c *echo.Context) error {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if settings.RadiusReply == nil {
+		text := radius.DefaultReply
+		settings.RadiusReply = &text
 	}
 	return c.JSON(http.StatusOK, settings)
 }
@@ -52,6 +57,21 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	if err := validateBranding(settings.BrandLogo, settings.BrandText); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	if err := radius.ValidateListen(settings.RadiusListen); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if settings.RadiusReply != nil {
+		if err := radius.ValidateReply(*settings.RadiusReply); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+	}
+	account := strings.TrimSpace(settings.RadiusMachineAccount)
+	domain := strings.TrimSpace(settings.RadiusMachineDomain)
+	if (account == "") != (settings.RadiusMachinePassword == "") {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "MS-CHAPv2 needs both a computer account and its password"})
+	}
+	settings.RadiusMachineAccount = account
+	settings.RadiusMachineDomain = domain
 
 	if err := ctrl.DB.Save(settings).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})

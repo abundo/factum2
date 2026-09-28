@@ -112,3 +112,14 @@ that runs `/opt/factum2/factum2-storage` (no args). Do not put
 Full detail, including the unix-socket ACL and `FACTUM_WORKER_API_SOCKET`,
 is in the
 [repository README](https://github.com/abundo/factum2/blob/main/README.md#installing-a-worker-node).
+
+## RADIUS
+
+A worker that should answer switch and router logins needs a `radius`
+entry in `worker.commands`. The command line is not executed. The name
+starts a UDP listener (default `:1812`) that binds to the directory
+configured in the GUI and allows a user only when an LDAP group is mapped
+to that device's NetBox role. Policy is edited under Admin → AAA → RADIUS.
+The worker keeps the last copy on disk, so logins continue while the
+primary is down. Open UDP 1812 from the management network to this host.
+The primary still dials out to `/hub`; the switches dial in to 1812.

@@ -411,6 +411,47 @@ func Authenticate(cfg Config, username, password string) (bool, *UserInfo, error
 	return true, info, nil
 }
 
+// LookupGroups searches for username with the service account and returns
+// memberOf. It does not check a password. found is false when no entry
+// matches. Callers that already proved the password another way (MS-CHAPv2
+// against Active Directory) use this for the device-role check.
+func LookupGroups(cfg Config, username string) (groups []string, found bool, err error) {
+	if strings.TrimSpace(username) == "" {
+		return nil, false, nil
+	}
+	conn, err := connect(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Close()
+	if err := bindService(conn, cfg); err != nil {
+		return nil, false, err
+	}
+	filter := fmt.Sprintf(cfg.UserFilter, ldap.EscapeFilter(username))
+	attrs := []string{"dn"}
+	if cfg.AttrGroups != "" {
+		attrs = append(attrs, cfg.AttrGroups)
+	}
+	req := ldap.NewSearchRequest(
+		cfg.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
+		filter, attrs, nil,
+	)
+	res, err := conn.Search(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("ldap: user search failed: %w", err)
+	}
+	if len(res.Entries) == 0 {
+		return nil, false, nil
+	}
+	if len(res.Entries) > 1 {
+		return nil, false, fmt.Errorf("ldap: user filter %q matched %d entries, expected 1 - check ldap_user_filter", filter, len(res.Entries))
+	}
+	if cfg.AttrGroups == "" {
+		return nil, true, nil
+	}
+	return res.Entries[0].GetEqualFoldAttributeValues(cfg.AttrGroups), true, nil
+}
+
 // LookupByEmail searches for a directory entry whose AttrEmail attribute
 // matches email, binding as the same read-only service account
 // Authenticate/Browse use. Unlike Authenticate, it never verifies a

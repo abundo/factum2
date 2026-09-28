@@ -123,6 +123,15 @@ func TestAllowHubAPIForRoles(t *testing.T) {
 	if AllowHubAPIForRoles(http.MethodGet, "/api/device/name/r1/impact", []string{"dns"}) {
 		t.Fatal("dns must not read device impact")
 	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/radius-config", []string{"radius"}) {
+		t.Fatal("radius workers fetch radius-config")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/radius-config", []string{"dns"}) {
+		t.Fatal("dns must not read radius secrets")
+	}
+	if !AllowHubAPIForRoles(http.MethodPost, "/api/radius-events", []string{"radius"}) {
+		t.Fatal("radius workers ship the login log")
+	}
 }
 
 func TestHubAPISyncAllRegisteredBeforeTarget(t *testing.T) {

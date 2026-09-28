@@ -391,6 +391,12 @@ const router = createRouter({
           component: () => import('@/views/admin/AuthorizationSettings.vue'),
         },
         {
+          path: '/admin/radius',
+          name: 'admin-radius',
+          meta: { requiresAdmin: true },
+          component: () => import('@/views/admin/RadiusPage.vue'),
+        },
+        {
           path: '/doc/:slug?',
           name: 'documentation',
           meta: { title: 'Documentation' },

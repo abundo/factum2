@@ -103,6 +103,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return w.runHubListener(ctx) })
 	g.Go(func() error { return w.runLocalAPI(ctx) })
+	g.Go(func() error { return w.runRadius(ctx) })
 	return g.Wait()
 }
 

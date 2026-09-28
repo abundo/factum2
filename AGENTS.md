@@ -422,6 +422,19 @@ DeviceSyncAuth. `worker.commands.storage` advertises the role; the daemon
 is a separate systemd unit (`examples/factum2-storage.service`), not a
 `worker.commands` entry. Feature flag `Settings.StorageEnabled`.
 
+**RADIUS (`internal/radius`):** a worker with `worker.commands` key
+`radius` listens for Access-Request (PAP + Message-Authenticator) and
+binds to LDAP itself, using the Authentication settings and the second
+directory host for dial failover. It does not proxy the login through
+factum2. A user is accepted only when `memberOf` matches a
+`RadiusPolicy` for the NetBox role of the device identified by NAS-IP /
+source address (`RadiusClient` holds the shared secret). An all-devices
+policy is the admin group. Unknown, disabled, or unmapped devices are
+rejected. `GET /api/radius-config` (radius role only) is cached at
+`worker.radius_state` (default `/var/lib/factum2/radius/cache.json`);
+accept/reject lines POST to `/api/radius-events` and spool locally if the
+hub is down. GUI: Admin → AAA → RADIUS.
+
 ### Web backend (`web/`)
 
 Echo (`labstack/echo/v4`) HTTP server, one big router built in `web/web.go`.

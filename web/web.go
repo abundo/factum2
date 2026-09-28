@@ -268,6 +268,8 @@ func GUI(p *GuiParams) error {
 	api.GET("/device-sync-config", ctrl.ApiDeviceSyncConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/common-config", ctrl.ApiCommonConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/storage-config", ctrl.ApiStorageConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.GET("/radius-config", ctrl.ApiRadiusConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.POST("/radius-events", ctrl.ApiRadiusEvents, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 
 	softg := api.Group("/software", ctrl.RequireAPIAuth, ctrl.RequireStorageEnabled)
 	softg.GET("/files", ctrl.ApiSoftwareList, ctrl.RequireRead)
@@ -541,6 +543,18 @@ func GUI(p *GuiParams) error {
 	adminApi.GET("/worker-nodes/:id/token", ctrl.ApiWorkerNodeToken)
 	adminApi.PUT("/worker-nodes/:id", ctrl.ApiWorkerNodeUpdate)
 	adminApi.POST("/worker-nodes", ctrl.ApiWorkerNodeCreate)
+
+	adminApi.GET("/radius/clients", ctrl.ApiRadiusClients)
+	adminApi.GET("/radius/clients/:id/secret", ctrl.ApiRadiusClientSecret)
+	adminApi.POST("/radius/clients", ctrl.ApiRadiusClientCreate)
+	adminApi.PUT("/radius/clients/:id", ctrl.ApiRadiusClientUpdate)
+	adminApi.DELETE("/radius/clients/:id", ctrl.ApiRadiusClientDelete)
+	adminApi.GET("/radius/policies", ctrl.ApiRadiusPolicies)
+	adminApi.POST("/radius/policies", ctrl.ApiRadiusPolicyCreate)
+	adminApi.PUT("/radius/policies/:id", ctrl.ApiRadiusPolicyUpdate)
+	adminApi.DELETE("/radius/policies/:id", ctrl.ApiRadiusPolicyDelete)
+	adminApi.GET("/radius/device-roles", ctrl.ApiRadiusDeviceRoles)
+	adminApi.GET("/radius/events", ctrl.ApiRadiusEvents)
 
 	// ----- API device-sync credentials -----
 	// The admin-editable list of per-device login credentials

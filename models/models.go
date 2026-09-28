@@ -682,6 +682,20 @@ type Settings struct {
 	// this Settings row or its admin API, since they're far more powerful
 	// than the read-only LdapBindDN/LdapBindPassword service account above.
 	LdapAllowPasswordChange *bool `gorm:"column:ldap_allow_password_change" form:"ldap_allow_password_change" json:"ldap_allow_password_change"`
+
+	// RADIUS network login. The worker binds to the LDAP settings above;
+	// these fields only turn the listener on and set its UDP address.
+	// Clients and group-to-role rows are RadiusClient and RadiusPolicy.
+	RadiusEnabled *bool  `gorm:"column:radius_enabled" form:"radius_enabled" json:"radius_enabled"`
+	RadiusListen  string `gorm:"column:radius_listen;type:varchar(64)" form:"radius_listen" json:"radius_listen"`
+	// RadiusReply is the Access-Accept attribute text. Nil means the
+	// built-in vendor set. An empty string sends no extra attributes.
+	RadiusReply *string `gorm:"column:radius_reply;type:text" form:"radius_reply" json:"radius_reply"`
+	// RADIUS MS-CHAPv2 (MikroTik login) is checked with this Active
+	// Directory computer account. Empty disables MS-CHAPv2.
+	RadiusMachineAccount  string `gorm:"column:radius_machine_account;type:varchar(64)" form:"radius_machine_account" json:"radius_machine_account"`
+	RadiusMachinePassword string `gorm:"column:radius_machine_password;type:text" form:"radius_machine_password" json:"radius_machine_password"`
+	RadiusMachineDomain   string `gorm:"column:radius_machine_domain;type:varchar(64)" form:"radius_machine_domain" json:"radius_machine_domain"`
 }
 
 // LibrenmsPendingDelete is one LibreNMS device that sync has quarantined
