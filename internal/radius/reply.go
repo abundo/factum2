@@ -10,7 +10,8 @@ import (
 
 // DefaultReply is sent on Access-Accept until an administrator saves a
 // different set. Devices ignore vendor attributes that are not theirs.
-// Each line is one attribute. A leading # is a comment. =, := and += all
+// Each line is one attribute. A leading # skips the line. A # after the
+// value, outside quotes, is a comment and is not sent. =, := and += all
 // add one attribute, so a repeated name is a second copy (FreeRADIUS +=).
 // An unknown name can be written as 26.<vendor>.<type> = value.
 const DefaultReply = `# Smartoptics (vendor 30826, attribute 1, string)
@@ -128,6 +129,7 @@ func EncodeReply(text string) ([]byte, error) {
 }
 
 func encodeReplyLine(line string) ([]byte, error) {
+	line = stripInlineComment(line)
 	name, value, err := splitReply(line)
 	if err != nil {
 		return nil, err
@@ -144,6 +146,23 @@ func encodeReplyLine(line string) ([]byte, error) {
 		return appendAttr(nil, def.typ, val), nil
 	}
 	return appendVSA(def.vendor, def.typ, val), nil
+}
+
+// stripInlineComment drops a # comment that is outside quotes. A # inside
+// a quoted value is part of the value.
+func stripInlineComment(line string) string {
+	inQuote := false
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '"':
+			inQuote = !inQuote
+		case '#':
+			if !inQuote && (i == 0 || unicode.IsSpace(rune(line[i-1]))) {
+				return strings.TrimSpace(line[:i])
+			}
+		}
+	}
+	return line
 }
 
 func splitReply(line string) (name, value string, err error) {

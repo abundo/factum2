@@ -158,9 +158,9 @@ onBeforeUnmount(destroyTree)
     :open="visible"
     title="Browse directory"
     :ui="{
-      overlay: 'z-[80]',
+      overlay: 'ldap-browser-layer',
       content:
-        'z-[80] w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh] sm:max-w-none flex flex-col bg-default',
+        'ldap-browser-layer w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh] sm:max-w-none flex flex-col bg-default',
       body: 'flex flex-1 min-h-0 flex-col overflow-hidden bg-default',
       header: 'bg-default',
       footer: 'bg-default',
@@ -183,3 +183,10 @@ onBeforeUnmount(destroyTree)
     </template>
   </UModal>
 </template>
+
+<style>
+/* Form dialogs use the default modal layer. This browser opens on top of them. */
+.ldap-browser-layer {
+  z-index: 200 !important;
+}
+</style>

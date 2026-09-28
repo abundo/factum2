@@ -1,6 +1,6 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   createRadiusClient,
   createRadiusPolicy,
@@ -15,8 +15,10 @@ import {
   updateRadiusPolicy,
 } from '@/api/radius'
 import FormModal from '@/components/FormModal.vue'
+import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { useSettings } from '@/composables/useSettings'
+import { parseReply, serializeReply } from '@/utils/radiusReply'
 
 const toast = useToast()
 const { settings, loading, saving, forbidden, loadError, save } = useSettings()
@@ -46,6 +48,11 @@ const policyDialog = ref(false)
 const policy = ref({})
 const policySubmitted = ref(false)
 const policySaving = ref(false)
+const browserVisible = ref(false)
+
+const replyRows = ref([])
+let replySeq = 1
+let hydratingReply = false
 
 const clientColumns = [
   { id: 'actions', header: '' },
@@ -75,6 +82,209 @@ function onRadiusToggle(val) {
   settings.radius_enabled = val
   if (val && !settings.radius_listen) settings.radius_listen = ':1812'
 }
+
+function stampReply(rows) {
+  return rows.map((row) => ({ ...row, id: replySeq++ }))
+}
+
+function blankReply(commentOnly) {
+  return {
+    id: replySeq++,
+    enabled: !commentOnly,
+    name: '',
+    op: '=',
+    value: '',
+    quoted: false,
+    comment: '',
+  }
+}
+
+function addReply() {
+  replyRows.value.push(blankReply(false))
+}
+
+function addReplyComment() {
+  const row = blankReply(true)
+  row.enabled = false
+  replyRows.value.push(row)
+}
+
+function removeReply(index) {
+  replyRows.value.splice(index, 1)
+}
+
+const replyColumns = [
+  {
+    id: 'drag',
+    header: '',
+    meta: { class: { th: 'w-7', td: 'w-7 text-center' } },
+  },
+  {
+    id: 'enabled',
+    header: 'Send',
+    meta: { class: { th: 'w-14 text-center', td: 'w-14 text-center' } },
+  },
+  { accessorKey: 'name', header: 'Attribute' },
+  { accessorKey: 'value', header: 'Value' },
+  { accessorKey: 'comment', header: 'Comment' },
+  {
+    id: 'actions',
+    header: '',
+    meta: { class: { th: 'w-10', td: 'w-10 text-center' } },
+  },
+]
+
+const replyCellUi = {
+  root: 'w-full',
+  base: 'rounded-none h-8 px-2',
+}
+
+const replyTableUi = {
+  root: 'w-full overflow-visible',
+  base: 'table-fixed w-full min-w-full',
+  thead: 'sticky top-0 z-10 bg-elevated',
+  tbody: 'divide-y-0',
+  separator: 'hidden',
+  th: 'px-2 py-1.5 text-xs font-medium bg-elevated',
+  td: 'p-0 min-w-0',
+}
+
+const replyTableMeta = {
+  class: {
+    tr: (row) => (row.original.name.trim() && !row.original.enabled ? 'opacity-60' : ''),
+  },
+}
+
+function replyRowId(row) {
+  return String(row.id)
+}
+
+const DRAG_THRESHOLD_PX = 4
+let dragFrom = null
+let dragMoved = false
+let dragStartY = 0
+let dropLine = null
+
+function replyRowElements() {
+  return [...document.querySelectorAll('.radius-reply-table [data-slot="tbody"] [data-slot="tr"]')]
+}
+
+function gapFromY(clientY) {
+  const rows = replyRowElements()
+  for (let i = 0; i < rows.length; i++) {
+    const box = rows[i].getBoundingClientRect()
+    if (clientY < box.top + box.height / 2) return i
+  }
+  return rows.length
+}
+
+function ensureDropLine() {
+  if (dropLine) return
+  dropLine = document.createElement('div')
+  dropLine.className = 'radius-reply-drop-line'
+  document.body.appendChild(dropLine)
+}
+
+function paintSource(index) {
+  replyRowElements().forEach((el, i) => {
+    el.classList.toggle('radius-reply-dragging', i === index)
+  })
+}
+
+function paintDrop(clientY) {
+  const rows = replyRowElements()
+  const table = document.querySelector('.radius-reply-table')
+  if (!rows.length || !table || !dropLine) return
+  const gap = gapFromY(clientY)
+  const edge =
+    gap <= 0
+      ? rows[0].getBoundingClientRect().top
+      : rows[Math.min(gap, rows.length) - 1].getBoundingClientRect().bottom
+  const box = table.getBoundingClientRect()
+  dropLine.style.opacity = '1'
+  dropLine.style.width = `${box.width}px`
+  dropLine.style.transform = `translate(${box.left}px, ${edge - 1}px)`
+}
+
+function endReplyDrag() {
+  window.removeEventListener('pointermove', onReplyDragMove, true)
+  window.removeEventListener('pointerup', onReplyDragUp, true)
+  window.removeEventListener('pointercancel', onReplyDragUp, true)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  replyRowElements().forEach((el) => el.classList.remove('radius-reply-dragging'))
+  if (dropLine) dropLine.style.opacity = '0'
+  dragFrom = null
+  dragMoved = false
+}
+
+function onReplyDragMove(event) {
+  if (dragFrom == null) return
+  if (!dragMoved && Math.abs(event.clientY - dragStartY) < DRAG_THRESHOLD_PX) return
+  if (!dragMoved) {
+    dragMoved = true
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+    ensureDropLine()
+  }
+  event.preventDefault()
+  paintSource(dragFrom)
+  paintDrop(event.clientY)
+}
+
+function onReplyDragUp(event) {
+  const from = dragFrom
+  const gap = dragMoved ? gapFromY(event.clientY) : -1
+  const to = gap > from ? gap - 1 : gap
+  endReplyDrag()
+  if (from == null || gap < 0 || from === to) return
+  const next = replyRows.value.slice()
+  const [item] = next.splice(from, 1)
+  next.splice(to, 0, item)
+  replyRows.value = next
+}
+
+function onReplyDragDown(index, event) {
+  if (loading.value || event.button !== 0) return
+  event.preventDefault()
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+  dragFrom = index
+  dragMoved = false
+  dragStartY = event.clientY
+  window.addEventListener('pointermove', onReplyDragMove, { passive: false, capture: true })
+  window.addEventListener('pointerup', onReplyDragUp, true)
+  window.addEventListener('pointercancel', onReplyDragUp, true)
+}
+
+function onReplyName(row, value) {
+  const wasEmpty = !row.name.trim()
+  row.name = value
+  if (wasEmpty && value.trim()) row.enabled = true
+}
+
+// Sync, not the default pre flush: the grid must not write back while the
+// stored text is being copied into the rows.
+watch(
+  () => settings.radius_reply,
+  (text) => {
+    const stored = (text ?? '').replace(/\s+$/, '')
+    if (serializeReply(replyRows.value) === stored) return
+    hydratingReply = true
+    replyRows.value = stampReply(parseReply(stored))
+    hydratingReply = false
+  },
+  { flush: 'sync' },
+)
+
+watch(
+  replyRows,
+  () => {
+    if (hydratingReply || loading.value) return
+    const text = serializeReply(replyRows.value)
+    if ((settings.radius_reply ?? '') !== text) settings.radius_reply = text
+  },
+  { deep: true, flush: 'sync' },
+)
 
 function loadClients() {
   clientsError.value = null
@@ -194,6 +404,10 @@ function openPolicy() {
   policyDialog.value = true
 }
 
+function onGroupDnSelected(dn) {
+  policy.value.group_dn = dn
+}
+
 function editPolicy(row) {
   policy.value = {
     ...row,
@@ -276,6 +490,12 @@ onMounted(() => {
   loadEvents()
   loadRoles()
 })
+
+onBeforeUnmount(() => {
+  endReplyDrag()
+  dropLine?.remove()
+  dropLine = null
+})
 </script>
 
 <template>
@@ -289,88 +509,204 @@ onMounted(() => {
     <h4 class="m-0 mb-4">RADIUS</h4>
     <UTabs v-model="tab" :items="tabs" @update:model-value="onTab">
       <template #service>
-        <div class="flex flex-col gap-6 py-4 max-w-3xl">
-          <div class="flex items-center gap-2">
-            <USwitch
-              :model-value="!!settings.radius_enabled"
-              id="radius_enabled"
-              @update:model-value="onRadiusToggle"
-            />
-            <label for="radius_enabled" class="font-bold">RADIUS login</label>
-          </div>
-          <small class="text-muted-color -mt-4">
-            Workers with a <code>radius</code> command listen for switch and router logins and bind
-            to the directory configured under Authentication. factum2 is not on that path: each
-            worker keeps the last policy on disk and keeps answering while this server is down.
-          </small>
-          <div>
-            <label for="radius_listen" class="block font-bold mb-3">Listen address</label>
-            <UInput
-              id="radius_listen"
-              v-model="settings.radius_listen"
-              placeholder=":1812"
-              class="w-full"
-              :disabled="loading"
-            />
-            <small class="text-muted-color"
-              >UDP address on every RADIUS worker. Default is :1812.</small
-            >
-          </div>
-          <div>
-            <label for="radius_machine_account" class="block font-bold mb-3"
-              >AD computer account</label
-            >
-            <UInput
-              id="radius_machine_account"
-              v-model="settings.radius_machine_account"
-              placeholder="FACTUM-RADIUS$"
-              class="w-full"
-              :disabled="loading"
-            />
-            <small class="text-muted-color">
-              Used only for MikroTik MS-CHAPv2. Create a computer account in Active Directory and
-              put its name here, with the trailing $. Leave empty to refuse MS-CHAPv2. PAP logins do
-              not use it. OpenLDAP cannot check MS-CHAPv2.
+        <div class="flex flex-col gap-6 py-4">
+          <div class="flex flex-col gap-6 max-w-3xl">
+            <div class="flex items-center gap-2">
+              <USwitch
+                :model-value="!!settings.radius_enabled"
+                id="radius_enabled"
+                @update:model-value="onRadiusToggle"
+              />
+              <label for="radius_enabled" class="font-bold">RADIUS login</label>
+            </div>
+            <small class="text-muted-color -mt-4">
+              Workers with a <code>radius</code> command listen for switch and router logins and
+              bind to the directory configured under Authentication. factum2 is not on that path:
+              each worker keeps the last policy on disk and keeps answering while this server is
+              down.
             </small>
+            <div>
+              <label for="radius_listen" class="block font-bold mb-3">Listen address</label>
+              <UInput
+                id="radius_listen"
+                v-model="settings.radius_listen"
+                placeholder=":1812"
+                class="w-full"
+                :disabled="loading"
+              />
+              <small class="text-muted-color"
+                >UDP address on every RADIUS worker. Default is :1812.</small
+              >
+            </div>
+            <div>
+              <label for="radius_machine_account" class="block font-bold mb-3"
+                >AD computer account</label
+              >
+              <UInput
+                id="radius_machine_account"
+                v-model="settings.radius_machine_account"
+                placeholder="FACTUM-RADIUS$"
+                class="w-full"
+                :disabled="loading"
+              />
+              <small class="text-muted-color">
+                Used only for MikroTik MS-CHAPv2. Create a computer account in Active Directory and
+                put its name here, with the trailing $. Leave empty to refuse MS-CHAPv2. PAP logins
+                do not use it. OpenLDAP cannot check MS-CHAPv2.
+              </small>
+            </div>
+            <div>
+              <label for="radius_machine_password" class="block font-bold mb-3"
+                >Computer account password</label
+              >
+              <PasswordInput
+                id="radius_machine_password"
+                v-model="settings.radius_machine_password"
+                :disabled="loading"
+              />
+            </div>
+            <div>
+              <label for="radius_machine_domain" class="block font-bold mb-3">AD domain</label>
+              <UInput
+                id="radius_machine_domain"
+                v-model="settings.radius_machine_domain"
+                placeholder="CORP"
+                class="w-full"
+                :disabled="loading"
+              />
+              <small class="text-muted-color">
+                NetBIOS domain of the computer account. Empty uses the DNS domain from the LDAP base
+                DN.
+              </small>
+            </div>
           </div>
           <div>
-            <label for="radius_machine_password" class="block font-bold mb-3"
-              >Computer account password</label
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+              <span class="font-bold">Accept attributes</span>
+              <UButton
+                label="Add attribute"
+                icon="i-lucide-plus"
+                color="neutral"
+                size="sm"
+                :disabled="loading"
+                @click="addReply"
+              />
+              <UButton
+                label="Add comment"
+                icon="i-lucide-message-square-plus"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :disabled="loading"
+                @click="addReplyComment"
+              />
+            </div>
+            <div
+              class="radius-reply-table w-full rounded-md ring ring-default overflow-auto max-h-[min(32rem,calc(100dvh-16rem))]"
             >
-            <PasswordInput
-              id="radius_machine_password"
-              v-model="settings.radius_machine_password"
-              :disabled="loading"
-            />
-          </div>
-          <div>
-            <label for="radius_machine_domain" class="block font-bold mb-3">AD domain</label>
-            <UInput
-              id="radius_machine_domain"
-              v-model="settings.radius_machine_domain"
-              placeholder="CORP"
-              class="w-full"
-              :disabled="loading"
-            />
-            <small class="text-muted-color">
-              NetBIOS domain of the computer account. Empty uses the DNS domain from the LDAP base
-              DN.
-            </small>
-          </div>
-          <div>
-            <label for="radius_reply" class="block font-bold mb-3">Accept attributes</label>
-            <UTextarea
-              id="radius_reply"
-              v-model="settings.radius_reply"
-              :rows="16"
-              class="w-full font-mono text-sm"
-              :disabled="loading"
-            />
+              <UTable
+                :data="replyRows"
+                :columns="replyColumns"
+                :get-row-id="replyRowId"
+                :ui="replyTableUi"
+                :meta="replyTableMeta"
+                :watch-options="{ deep: false }"
+                empty="No attributes. An accepted login gets none until you add a row."
+              >
+                <template #drag-cell="{ row }">
+                  <span
+                    class="inline-flex items-center justify-center size-8 text-muted cursor-grab active:cursor-grabbing select-none touch-none"
+                    :class="loading && 'pointer-events-none'"
+                    title="Drag to reorder"
+                    aria-label="Drag to reorder"
+                    @pointerdown="onReplyDragDown(row.index, $event)"
+                  >
+                    <UIcon name="i-lucide-grip-vertical" class="size-3.5 pointer-events-none" />
+                  </span>
+                </template>
+                <template #enabled-cell="{ row }">
+                  <div class="flex items-center justify-center h-8">
+                    <UCheckbox
+                      v-model="row.original.enabled"
+                      :disabled="loading || !row.original.name.trim()"
+                      :aria-label="`Send ${row.original.name || 'row ' + (row.index + 1)}`"
+                    />
+                  </div>
+                </template>
+                <template #name-cell="{ row }">
+                  <UInput
+                    :model-value="row.original.name"
+                    placeholder="Service-Type"
+                    class="w-full font-mono"
+                    variant="none"
+                    color="neutral"
+                    size="xs"
+                    :ui="replyCellUi"
+                    :disabled="loading"
+                    @update:model-value="(value) => onReplyName(row.original, value)"
+                  />
+                </template>
+                <template #value-cell="{ row }">
+                  <UInput
+                    v-model="row.original.value"
+                    placeholder="NAS-Prompt-User"
+                    class="w-full font-mono"
+                    variant="none"
+                    color="neutral"
+                    size="xs"
+                    :ui="replyCellUi"
+                    :disabled="loading || !row.original.name.trim()"
+                  />
+                </template>
+                <template #comment-cell="{ row }">
+                  <UInput
+                    v-model="row.original.comment"
+                    placeholder="Comment"
+                    class="w-full"
+                    variant="none"
+                    color="neutral"
+                    size="xs"
+                    :ui="replyCellUi"
+                    :disabled="loading"
+                  />
+                </template>
+                <template #actions-header>
+                  <div class="flex items-center justify-center">
+                    <UButton
+                      type="button"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-plus"
+                      :disabled="loading"
+                      aria-label="Add attribute"
+                      title="Add attribute"
+                      @click="addReply"
+                    />
+                  </div>
+                </template>
+                <template #actions-cell="{ row }">
+                  <div class="flex items-center justify-center h-8">
+                    <UButton
+                      type="button"
+                      size="xs"
+                      color="error"
+                      variant="ghost"
+                      icon="i-lucide-trash"
+                      :disabled="loading"
+                      aria-label="Remove row"
+                      @click="removeReply(row.index)"
+                    />
+                  </div>
+                </template>
+              </UTable>
+            </div>
             <small class="text-muted-color">
               Added to every Access-Accept. A switch uses the attributes it knows and ignores the
-              rest. One attribute per line. <code>#</code> comments a line out. Repeat a name to
-              send it twice. <code>26.&lt;vendor&gt;.&lt;type&gt; = "text"</code> sends an attribute
-              that is not in the built-in list. Clear the box and save to send none.
+              rest. Turn off Send to keep a row without sending it. Comments are stored with the row
+              and are not sent. A comment row has no attribute. Repeat a name to send it twice.
+              <code>26.&lt;vendor&gt;.&lt;type&gt;</code> sends an attribute that is not in the
+              built-in list. Remove every row and save to send none.
             </small>
           </div>
           <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="save" />
@@ -573,13 +909,22 @@ onMounted(() => {
       <div class="flex flex-col gap-6">
         <div>
           <label for="group-dn" class="block font-bold mb-3">Group DN</label>
-          <UInput
-            id="group-dn"
-            v-model.trim="policy.group_dn"
-            placeholder="CN=wdm-ops,OU=Groups,DC=example,DC=com"
-            class="w-full"
-            autofocus
-          />
+          <div class="flex gap-2">
+            <UInput
+              id="group-dn"
+              v-model.trim="policy.group_dn"
+              placeholder="CN=wdm-ops,OU=Groups,DC=example,DC=com"
+              class="w-full"
+              autofocus
+            />
+            <UButton
+              icon="i-lucide-network"
+              label="Browse"
+              variant="outline"
+              color="neutral"
+              @click="browserVisible = true"
+            />
+          </div>
           <small v-if="policySubmitted && !policy.group_dn?.trim()" class="text-red-500"
             >Group DN is required.</small
           >
@@ -614,4 +959,73 @@ onMounted(() => {
       <UButton label="Save" icon="i-lucide-check" :loading="policySaving" @click="savePolicy" />
     </template>
   </FormModal>
+
+  <LdapTreeBrowser v-model:visible="browserVisible" @select="onGroupDnSelected" />
 </template>
+
+<style>
+.radius-reply-drop-line {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  height: 3px;
+  pointer-events: none;
+  border-radius: 9999px;
+  background: var(--ui-primary);
+  box-shadow: 0 0 0 1px var(--ui-bg);
+  opacity: 0;
+  will-change: transform, width;
+}
+.radius-reply-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  background: var(--ui-primary);
+  box-shadow: 0 0 0 1px var(--ui-bg);
+  transform: translateY(-50%);
+}
+.radius-reply-dragging > td,
+.radius-reply-dragging > [data-slot='td'] {
+  opacity: 0.4;
+  background: color-mix(in oklab, var(--ui-primary) 8%, transparent) !important;
+}
+.radius-reply-dragging > td:first-child,
+.radius-reply-dragging > [data-slot='td']:first-child {
+  box-shadow: inset 2px 0 0 var(--ui-primary);
+}
+.radius-reply-table {
+  overscroll-behavior: contain;
+}
+.radius-reply-table [data-slot='th'],
+.radius-reply-table [data-slot='td'] {
+  border-inline-end: 1px solid var(--ui-border-accented);
+}
+.radius-reply-table [data-slot='th']:last-child,
+.radius-reply-table [data-slot='td']:last-child {
+  border-inline-end: 0;
+}
+.radius-reply-table [data-slot='tbody'] [data-slot='tr']:not(:last-child) [data-slot='td'] {
+  border-block-end: 1px solid var(--ui-border-accented);
+}
+.radius-reply-table [data-slot='thead'] [data-slot='th'] {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--ui-bg-elevated);
+  border-block-end: 1px solid var(--ui-border-accented);
+}
+.radius-reply-table [data-slot='td']:hover {
+  background: color-mix(in oklab, var(--ui-bg-elevated) 70%, transparent);
+}
+.radius-reply-table [data-slot='td']:focus-within {
+  position: relative;
+  z-index: 1;
+  background: var(--ui-bg);
+  box-shadow: inset 0 0 0 2px var(--ui-primary);
+}
+</style>

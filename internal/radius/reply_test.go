@@ -94,6 +94,29 @@ func TestReplyRoundTripKeepsMessageAuthenticator(t *testing.T) {
 	}
 }
 
+func TestReplyInlineCommentIsNotSent(t *testing.T) {
+	plain := "Smartoptics-Userrole1 = \"admin\"\nService-Type = NAS-Prompt-User\n"
+	commented := "Smartoptics-Userrole1 = \"admin\" # vendor note\n# Service-Type = Administrative-User\nService-Type = NAS-Prompt-User # prompt\n"
+	a, err := EncodeReply(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := EncodeReply(commented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatalf("comment changed the attributes\nplain %x\ncommented %x", a, b)
+	}
+	raw, err := EncodeReply(`Cisco-AVPair = "shell:priv-lvl=15 #keep"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("shell:priv-lvl=15 #keep")) {
+		t.Fatalf("quoted hash was stripped: %q", raw)
+	}
+}
+
 func TestUnknownReplyAttribute(t *testing.T) {
 	if err := ValidateReply(`Not-A-Real-Attribute = "x"`); err == nil {
 		t.Fatal("accepted an unknown attribute")
