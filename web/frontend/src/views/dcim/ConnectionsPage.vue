@@ -49,16 +49,28 @@ function defaultView() {
 
 const view = ref(defaultView())
 
+function uniqueDeviceIds(ids) {
+  const seen = new Set()
+  const out = []
+  for (const raw of ids) {
+    const id = Number(raw) || 0
+    if (id && seen.has(id)) continue
+    if (id) seen.add(id)
+    out.push(id)
+  }
+  return out.length ? out : [0]
+}
+
 function readDeviceIds() {
   const raw = route.query.devices
   if (typeof raw === 'string') {
     const ids = raw.split(',').map((part) => (part ? Number(part) : 0))
-    if (ids.length) return ids
+    if (ids.length) return uniqueDeviceIds(ids)
   }
   const ids = []
   if (route.query.a) ids.push(Number(route.query.a))
   if (route.query.b) ids.push(Number(route.query.b))
-  return ids.length ? ids : [0]
+  return uniqueDeviceIds(ids)
 }
 
 const deviceIds = ref(readDeviceIds())
@@ -195,7 +207,7 @@ function setView(next) {
 }
 
 function onDeviceIds(ids) {
-  deviceIds.value = ids.length ? ids : [0]
+  deviceIds.value = uniqueDeviceIds(ids)
   if (view.value === 'pair') router.replace({ query: pairQuery(route.query) })
 }
 

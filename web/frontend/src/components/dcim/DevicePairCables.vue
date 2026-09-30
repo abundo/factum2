@@ -55,9 +55,16 @@ function emitIds(ids) {
   emit('update:deviceIds', ids.length ? ids : [0])
 }
 
+function deviceChoices(index) {
+  const taken = new Set(columns.value.filter((id, i) => id && i !== index))
+  return props.deviceItems.filter((item) => !taken.has(item.id))
+}
+
 function setDevice(index, id) {
+  const nextId = id || 0
+  if (nextId && columns.value.some((existing, i) => i !== index && existing === nextId)) return
   const next = columns.value.slice()
-  next[index] = id || 0
+  next[index] = nextId
   emitIds(next)
 }
 
@@ -73,6 +80,8 @@ function follow(index, iface) {
   const peer = iface.connection?.peer_device_id
   if (!peer) return
   if (columns.value[index + 1] === peer) return
+  const existing = columns.value.indexOf(peer)
+  if (existing !== -1 && existing <= index) return
   emitIds([...columns.value.slice(0, index + 1), peer])
 }
 
@@ -599,7 +608,7 @@ watch(drawnCables, () => nextTick(measure))
           <div class="flex items-center gap-0.5">
             <USelectMenu
               :model-value="deviceId || undefined"
-              :items="deviceItems"
+              :items="deviceChoices(index)"
               value-key="id"
               label-key="name"
               placeholder="Device…"
