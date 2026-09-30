@@ -10,6 +10,7 @@ import {
 } from '@/api/oxidized'
 import {
   apiError,
+  formatOxidizedAge,
   formatOxidizedTime,
   nodeKey,
   nodeMatches,
@@ -61,10 +62,17 @@ const diffError = ref(null)
 const versionColumns = [
   { id: 'pick', header: '' },
   { accessorKey: 'date', header: 'Date' },
+  { id: 'age', header: 'Age' },
   { accessorKey: 'author', header: 'Author' },
   { accessorKey: 'message', header: 'Message' },
   { accessorKey: 'oid', header: 'Commit' },
 ]
+
+function versionOptionLabel(version) {
+  const when = version.date || version.time
+  const oid = (version.oid || '').slice(0, 8)
+  return `${formatOxidizedTime(when)} · ${formatOxidizedAge(when)} (${oid})`
+}
 
 function resetContent() {
   tab.value = 'config'
@@ -316,7 +324,7 @@ const diffLines = computed(() => {
                   v-model="oidNew"
                   :items="
                     versions.map((v) => ({
-                      label: `${formatOxidizedTime(v.date || v.time)} (${v.oid.slice(0, 8)})`,
+                      label: versionOptionLabel(v),
                       value: v.oid,
                     }))
                   "
@@ -330,7 +338,7 @@ const diffLines = computed(() => {
                   :items="[
                     { label: 'Previous commit', value: PARENT_OID },
                     ...versions.map((v) => ({
-                      label: `${formatOxidizedTime(v.date || v.time)} (${v.oid.slice(0, 8)})`,
+                      label: versionOptionLabel(v),
                       value: v.oid,
                     })),
                   ]"
@@ -360,6 +368,9 @@ const diffLines = computed(() => {
               </template>
               <template #date-cell="{ row }">
                 {{ formatOxidizedTime(row.original.date || row.original.time) }}
+              </template>
+              <template #age-cell="{ row }">
+                {{ formatOxidizedAge(row.original.date || row.original.time) }}
               </template>
               <template #author-cell="{ row }">
                 {{ row.original.author?.name || '—' }}
