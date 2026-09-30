@@ -51,6 +51,9 @@ func writeRecordsWithZones(w io.Writer, domain string, devices []*models.Device,
 			continue
 		}
 		d := recordsJSONDomain{Name: name}
+		nsRecs := templateNameserverRecords(name, zone.Nameservers)
+		d.Records = append(d.Records, nsRecs...)
+		recordCount += len(nsRecs)
 		if domain != "" && strings.EqualFold(name, domain) {
 			recs := deviceRecordsJSON(domain, devices)
 			d.Records = append(d.Records, recs...)
@@ -140,6 +143,40 @@ func isReverseZoneType(typ string) bool {
 	default:
 		return false
 	}
+}
+
+// templateNameserverRecords emits one apex NS per hostname, then an A or
+// AAAA for each address whose hostname belongs in zone. An address on a
+// nameserver outside the zone is not written here.
+func templateNameserverRecords(zone string, rows []ConfigDNSNameserver) []recordsJSONRecord {
+	var out []recordsJSONRecord
+	seen := make(map[string]struct{}, len(rows))
+	var glue []recordsJSONRecord
+	for _, row := range rows {
+		host := strings.TrimSpace(row.Hostname)
+		if host == "" {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSuffix(host, "."))
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			out = append(out, recordsJSONRecord{Name: "@", Type: "NS", Value: nameserverRdata(host)})
+		}
+		addr := strings.TrimSpace(row.Address)
+		if addr == "" {
+			continue
+		}
+		ip, rrtype, ok := parseRecord(addr)
+		if !ok {
+			continue
+		}
+		owner := dnsNameRelative(host, zone, true)
+		if owner == "" {
+			continue
+		}
+		glue = append(glue, recordsJSONRecord{Name: owner, Type: rrtype, Value: ip})
+	}
+	return append(out, glue...)
 }
 
 func zoneRecordsJSON(recs []ConfigDNSRecord) []recordsJSONRecord {

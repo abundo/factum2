@@ -73,14 +73,32 @@ func TestParseZoneRecordsRejectsBadA(t *testing.T) {
 }
 
 func TestParseTemplateNameservers(t *testing.T) {
-	ns, err := ParseTemplateNameservers([]string{" ns1.example.com. ", "ns2.example.com."})
+	ns, err := ParseTemplateNameservers([]models.DnsTemplateNameserverDTO{
+		{Hostname: " ns1.example.com. ", Address: "192.0.2.53"},
+		{Hostname: "ns1.example.com.", Address: "2001:db8::53"},
+		{Hostname: "ns2.example.com."},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ns) != 2 || ns[0].Hostname != "ns1.example.com." || ns[1].Rank != 1 {
+	if len(ns) != 3 || ns[0].Hostname != "ns1.example.com." || ns[0].Address != "192.0.2.53" || ns[2].Rank != 2 {
 		t.Fatalf("%+v", ns)
+	}
+	if ns[1].Address != "2001:db8::53" {
+		t.Fatalf("address = %q", ns[1].Address)
 	}
 	if _, err := ParseTemplateNameservers(nil); err == nil {
 		t.Fatal("expected error for empty nameservers")
+	}
+	if _, err := ParseTemplateNameservers([]models.DnsTemplateNameserverDTO{
+		{Hostname: "ns1.example.com.", Address: "not-an-ip"},
+	}); err == nil {
+		t.Fatal("expected error for bad address")
+	}
+	if _, err := ParseTemplateNameservers([]models.DnsTemplateNameserverDTO{
+		{Hostname: "ns1.example.com.", Address: "192.0.2.53"},
+		{Hostname: "NS1.Example.COM.", Address: "::ffff:192.0.2.53"},
+	}); err == nil {
+		t.Fatal("expected error for duplicate address")
 	}
 }

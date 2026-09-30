@@ -36,11 +36,17 @@ type ConfigDHCPPrefix struct {
 	DnsServers []string `json:"dns_servers"`
 }
 
+type ConfigDNSNameserver struct {
+	Hostname string `json:"hostname"`
+	Address  string `json:"address,omitempty"`
+}
+
 type ConfigDNSZone struct {
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	DnsTemplate string            `json:"dns_template"`
-	Records     []ConfigDNSRecord `json:"records"`
+	Name        string                `json:"name"`
+	Type        string                `json:"type"`
+	DnsTemplate string                `json:"dns_template"`
+	Nameservers []ConfigDNSNameserver `json:"nameservers,omitempty"`
+	Records     []ConfigDNSRecord     `json:"records"`
 }
 
 type ConfigDNSRecord struct {

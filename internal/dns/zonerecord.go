@@ -3,8 +3,10 @@ package dns
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 
+	"github.com/abundo/dnsmgr2/dnsmgr"
 	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
@@ -209,22 +211,65 @@ func ZoneRecordsDTO(recs []models.DnsZoneRecord) []models.DnsZoneRecordDTO {
 	return out
 }
 
-func ParseTemplateNameservers(hosts []string) ([]models.DnsTemplateNameserver, error) {
-	out := make([]models.DnsTemplateNameserver, 0, len(hosts))
-	for i, h := range hosts {
-		host := strings.TrimSpace(h)
+func ParseTemplateNameservers(rows []models.DnsTemplateNameserverDTO) ([]models.DnsTemplateNameserver, error) {
+	out := make([]models.DnsTemplateNameserver, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		host := strings.TrimSpace(row.Hostname)
 		if host == "" {
 			return nil, fmt.Errorf("nameserver hostname is required")
 		}
+		if err := dnsmgr.VerifyDnsname(host); err != nil {
+			return nil, fmt.Errorf("nameserver hostname: %w", err)
+		}
+		addr, err := normalizeNameserverAddress(row.Address)
+		if err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(strings.TrimSuffix(host, ".")) + "\n" + addr
+		if _, ok := seen[key]; ok {
+			if addr == "" {
+				return nil, fmt.Errorf("nameserver %s is listed more than once without an address", host)
+			}
+			return nil, fmt.Errorf("nameserver %s address %s is listed more than once", host, addr)
+		}
+		seen[key] = struct{}{}
 		out = append(out, models.DnsTemplateNameserver{
-			Rank:     uint(i),
+			Rank:     uint(len(out)),
 			Hostname: host,
+			Address:  addr,
 		})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("at least one nameserver is required")
 	}
 	return out, nil
+}
+
+// normalizeNameserverAddress accepts an empty string or one IPv4 or IPv6
+// address. The stored form is the canonical address (IPv4-mapped IPv6 is
+// written as IPv4).
+func normalizeNameserverAddress(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return "", fmt.Errorf("nameserver address must be an IPv4 or IPv6 address")
+	}
+	return addr.Unmap().String(), nil
+}
+
+// nameserverRdata is the NS rdata for a template hostname. A name that
+// already contains a dot is absolute; a single label stays relative to the
+// zone that uses the template.
+func nameserverRdata(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.HasSuffix(host, ".") || !strings.Contains(host, ".") {
+		return host
+	}
+	return host + "."
 }
 
 func ReplaceTemplateNameservers(tx *gorm.DB, templateID uint, ns []models.DnsTemplateNameserver) error {

@@ -501,6 +501,57 @@ function commentLine(text) {
   return t.startsWith(';') ? t : `; ${t}`
 }
 
+function nameserverRdata(hostname) {
+  const host = (hostname || '').trim()
+  if (!host || host.endsWith('.') || !host.includes('.')) return host
+  return `${host}.`
+}
+
+// Owner name for an in-zone nameserver address, or '' when the hostname
+// is outside origin. A single label is relative to origin.
+function glueOwner(hostname, origin) {
+  const n = stripDot(hostname)
+  const o = stripDot(origin)
+  if (!n) return ''
+  if (!o) return n.includes('.') ? '' : n
+  if (n.toLowerCase() === o.toLowerCase()) return '@'
+  const suffix = `.${o}`
+  if (n.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return n.slice(0, n.length - suffix.length)
+  }
+  if (!n.includes('.')) return n
+  return ''
+}
+
+function addressType(address) {
+  return String(address).includes(':') ? 'AAAA' : 'A'
+}
+
+/**
+ * Apex NS records (one per hostname) plus A/AAAA for addresses whose
+ * hostname is inside origin. The same hostname on several rows shares one NS.
+ */
+export function nameserverRecords(nameservers, origin) {
+  const seen = new Set()
+  const ns = []
+  const glue = []
+  for (const row of nameservers || []) {
+    const hostname = (typeof row === 'string' ? row : row?.hostname || '').trim()
+    const address = (typeof row === 'string' ? '' : row?.address || '').trim()
+    if (!hostname) continue
+    const key = stripDot(hostname).toLowerCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      ns.push({ name: '@', type: 'NS', value: nameserverRdata(hostname) })
+    }
+    if (!address) continue
+    const owner = glueOwner(hostname, origin)
+    if (!owner) continue
+    glue.push({ name: owner, type: addressType(address), value: address })
+  }
+  return [...ns, ...glue]
+}
+
 /**
  * Serialize table rows (and optional SOA / NS from the product) to a BIND zone file.
  */
@@ -535,9 +586,8 @@ export function formatZoneFile({
     lines.push(`${indent}${soa.expire ?? 1209600}\t; expire`)
     lines.push(`${indent}${soa.ttl ?? 3600}\t; minimum`)
     lines.push(`${indent})`)
-    for (const ns of nameservers || []) {
-      if (!ns) continue
-      lines.push(formatRRLine({ name: '@', type: 'NS', value: ensureDot(ns) }))
+    for (const rr of nameserverRecords(nameservers, zone)) {
+      lines.push(formatRRLine(rr))
     }
     lines.push('')
   }

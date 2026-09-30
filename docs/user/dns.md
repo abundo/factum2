@@ -18,13 +18,22 @@ for devices, then applying BIND/Kea through the dnsmgr2 library).
 | Page | Role |
 | --- | --- |
 | **SOA templates** | MNAME, RNAME, refresh/retry/expire/minimum. Serial is not stored; dnsmgr2 assigns `YYYYMMDDnn` on sync. |
-| **DNS templates** | Named `dns_template`: which SOA, default TTL, NS hostnames, optional DNSSEC policy |
+| **DNS templates** | Named `dns_template`: which SOA, default TTL, NS hostnames with an optional IPv4 or IPv6 address, optional DNSSEC policy |
 | **DNSSEC policies** | BIND `dnssec-policy` name and key/signature timings. dnsmgr2 writes the **name** into `named.conf` (`dnssec-policy "…"`). |
 | **Zones** | Name, type (`forward` / `reverse4` / `reverse6`), DNS template, records |
 
-A zone's SOA and apex NS come from its DNS template. The record editor
-is for everything else (A, AAAA, MX, TXT, …). Leave TTL empty to use the
+A zone's SOA and apex NS come from its DNS template. Each nameserver row
+is a hostname and an optional IPv4 or IPv6 address. Add another row with
+the same hostname for another address. The zone file and the JSON records
+file get one apex NS per hostname, plus an A or AAAA when that hostname
+is inside the zone. An address on a nameserver outside the zone is kept
+on the template and is not written into the zone. The record editor is
+for everything else (A, AAAA, MX, TXT, …). Leave TTL empty to use the
 template default.
+
+The dnsmgr2 zone template still writes its own NS list into the zone
+file. Nameservers from the Factum DNS template are additional records in
+the JSON records file, so the same hostname in both places appears twice.
 
 ## DHCP
 

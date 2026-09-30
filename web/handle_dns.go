@@ -67,6 +67,7 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSZone, error) {
 	var zoneRows []models.DnsZone
 	if err := db.Preload("DnsTemplate").
+		Preload("DnsTemplate.Nameservers", func(tx *gorm.DB) *gorm.DB { return tx.Order("rank") }).
 		Preload("Records", func(tx *gorm.DB) *gorm.DB { return tx.Order("rank") }).
 		Order("name").Find(&zoneRows).Error; err != nil {
 		return nil, err
@@ -84,10 +85,15 @@ func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSZone, error) {
 				MAC:         r.MAC,
 			})
 		}
+		ns := make([]dns.ConfigDNSNameserver, 0, len(z.DnsTemplate.Nameservers))
+		for _, n := range z.DnsTemplate.Nameservers {
+			ns = append(ns, dns.ConfigDNSNameserver{Hostname: n.Hostname, Address: n.Address})
+		}
 		zones = append(zones, dns.ConfigDNSZone{
 			Name:        z.Name,
 			Type:        z.Type,
 			DnsTemplate: z.DnsTemplate.Name,
+			Nameservers: ns,
 			Records:     recs,
 		})
 	}

@@ -45,11 +45,11 @@ type dnsPolicyBody struct {
 }
 
 type dnsTemplateBody struct {
-	Name           string   `json:"name"`
-	SOATemplateID  uint     `json:"soa_template_id"`
-	DefaultTTL     uint     `json:"default_ttl"`
-	DNSSECPolicyID *uint    `json:"dnssec_policy_id"`
-	Nameservers    []string `json:"nameservers"`
+	Name           string                            `json:"name"`
+	SOATemplateID  uint                              `json:"soa_template_id"`
+	DefaultTTL     uint                              `json:"default_ttl"`
+	DNSSECPolicyID *uint                             `json:"dnssec_policy_id"`
+	Nameservers    []models.DnsTemplateNameserverDTO `json:"nameservers"`
 }
 
 type dnsZoneBody struct {
@@ -61,9 +61,9 @@ type dnsZoneBody struct {
 }
 
 func dnsTemplateJSON(t *models.DnsTemplate) models.DnsTemplateDTO {
-	ns := make([]string, 0, len(t.Nameservers))
+	ns := make([]models.DnsTemplateNameserverDTO, 0, len(t.Nameservers))
 	for _, n := range t.Nameservers {
-		ns = append(ns, n.Hostname)
+		ns = append(ns, models.DnsTemplateNameserverDTO{Hostname: n.Hostname, Address: n.Address})
 	}
 	policyID := t.DNSSECPolicyID
 	policyName := ""

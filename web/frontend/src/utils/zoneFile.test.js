@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseZoneFile } from './zoneFile.js'
+import { formatZoneFile, parseZoneFile } from './zoneFile.js'
 
 test('skips SOA and apex NS, keeps the rest', () => {
   const parsed = parseZoneFile(
@@ -74,6 +74,32 @@ www A 192.0.2.1
   assert.equal(parsed.unsupported.length, 1)
   assert.equal(parsed.unsupported[0].type, '$GENERATE')
   assert.match(parsed.unsupported[0].message, /Line 2: unsupported type \$GENERATE/)
+})
+
+test('nameserver rows become one NS and in-zone A or AAAA', () => {
+  const text = formatZoneFile({
+    origin: 'example.com',
+    soa: {
+      mname: 'ns1.example.com.',
+      rname: 'hostmaster.example.com.',
+      serial: 1,
+      refresh: 1,
+      retry: 1,
+      expire: 1,
+      ttl: 1,
+    },
+    nameservers: [
+      { hostname: 'ns1.example.com.', address: '192.0.2.53' },
+      { hostname: 'ns1.example.com.', address: '2001:db8::53' },
+      { hostname: 'ns2.other.net.', address: '192.0.2.54' },
+    ],
+    records: [],
+  })
+  assert.equal((text.match(/NS\s+ns1\.example\.com\./g) || []).length, 1)
+  assert.match(text, /NS\s+ns2\.other\.net\./)
+  assert.match(text, /^ns1\s+A\s+192\.0\.2\.53$/m)
+  assert.match(text, /^ns1\s+AAAA\s+2001:db8::53$/m)
+  assert.doesNotMatch(text, /192\.0\.2\.54/)
 })
 
 test('parse errors still throw', () => {

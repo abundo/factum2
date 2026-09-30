@@ -92,6 +92,41 @@ func TestWriteRecordsWithZonesMergesDefaultDomain(t *testing.T) {
 	}
 }
 
+func TestWriteRecordsWithZonesIncludesNameserverAddresses(t *testing.T) {
+	var buf strings.Builder
+	n, err := writeRecordsWithZones(&buf, "example.com", nil, []ConfigDNSZone{
+		{
+			Name: "example.com",
+			Type: "forward",
+			Nameservers: []ConfigDNSNameserver{
+				{Hostname: "ns1.example.com.", Address: "192.0.2.53"},
+				{Hostname: "ns1.example.com.", Address: "2001:db8::53"},
+				{Hostname: "ns2.other.net.", Address: "192.0.2.54"},
+				{Hostname: "ns2.other.net."},
+			},
+			Records: []ConfigDNSRecord{
+				{Name: "www", Type: "A", Value: "192.0.2.10"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseRecordsJSON(t, []byte(buf.String()))
+	if n != 5 {
+		t.Fatalf("wrote %d records, want 5\n%s", n, buf.String())
+	}
+	if !recordsJSONEqual(got.Domains[0].Records, []recordsJSONRecord{
+		{Name: "@", Type: "NS", Value: "ns1.example.com."},
+		{Name: "@", Type: "NS", Value: "ns2.other.net."},
+		{Name: "ns1", Type: "A", Value: "192.0.2.53"},
+		{Name: "ns1", Type: "AAAA", Value: "2001:db8::53"},
+		{Name: "www", Type: "A", Value: "192.0.2.10"},
+	}) {
+		t.Fatalf("records = %#v", got.Domains[0].Records)
+	}
+}
+
 func TestWriteRecordsWithZonesSkipsReverse(t *testing.T) {
 	var buf strings.Builder
 	n, err := writeRecordsWithZones(&buf, "example.com", nil, []ConfigDNSZone{

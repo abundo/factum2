@@ -248,7 +248,7 @@ function saveAndSync() {
                 </UFormField>
                 <UFormField
                   label="DNS template"
-                  hint="NS and SOA records come from this template."
+                  hint="NS, SOA, and in-zone nameserver addresses come from this template."
                   class="sm:col-span-2"
                 >
                   <USelect
@@ -302,7 +302,9 @@ function saveAndSync() {
                 <div>
                   <div class="text-sm font-medium mb-1">Nameservers</div>
                   <ul v-if="selectedNameservers.length" class="text-sm font-mono">
-                    <li v-for="ns in selectedNameservers" :key="ns">{{ ns }}</li>
+                    <li v-for="(ns, i) in selectedNameservers" :key="i">
+                      {{ ns.hostname }}<span v-if="ns.address"> {{ ns.address }}</span>
+                    </li>
                   </ul>
                   <p v-else class="text-muted-color text-sm">—</p>
                 </div>
@@ -313,8 +315,9 @@ function saveAndSync() {
           <template #records>
             <div class="pt-4">
               <p class="text-muted-color text-sm mb-3">
-                Leave TTL empty to use the template default. SOA and apex NS come from the DNS
-                template and are skipped on import.
+                Leave TTL empty to use the template default. SOA, apex NS, and in-zone
+                nameserver addresses come from the DNS template. SOA and apex NS are skipped
+                on import.
               </p>
               <ZoneRecordsTable v-model="form.records" :disabled="!canWrite">
                 <template #leading-actions>

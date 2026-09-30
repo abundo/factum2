@@ -82,7 +82,11 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dns/templates", dnsTemplateBody{
 		Name: "default_dns", SOATemplateID: soa.ID, DefaultTTL: 900,
 		DNSSECPolicyID: &policyID,
-		Nameservers:    []string{"ns1.example.com.", "ns2.example.com."},
+		Nameservers: []models.DnsTemplateNameserverDTO{
+			{Hostname: "ns1.example.com.", Address: "192.0.2.53"},
+			{Hostname: "ns1.example.com.", Address: "2001:db8::53"},
+			{Hostname: "ns2.example.com."},
+		},
 	}, nil, nil)
 	if err := ctrl.ApiDnsTemplateCreate(c); err != nil {
 		t.Fatalf("create template: %v", err)
@@ -94,8 +98,11 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &tmpl); err != nil {
 		t.Fatalf("decode template: %v", err)
 	}
-	if tmpl.SOATemplate != "default" || tmpl.DNSSECPolicy != "dnssec-policy" || len(tmpl.Nameservers) != 2 {
+	if tmpl.SOATemplate != "default" || tmpl.DNSSECPolicy != "dnssec-policy" || len(tmpl.Nameservers) != 3 {
 		t.Fatalf("unexpected template: %+v", tmpl)
+	}
+	if tmpl.Nameservers[0].Address != "192.0.2.53" || tmpl.Nameservers[1].Address != "2001:db8::53" || tmpl.Nameservers[2].Address != "" {
+		t.Fatalf("nameservers = %+v", tmpl.Nameservers)
 	}
 
 	ttl := uint(300)
@@ -162,6 +169,9 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	if !cfg.ZonesEnabled || len(cfg.Zones) != 1 || cfg.Zones[0].Name != "example.com" {
 		t.Fatalf("unexpected dns-config: %+v", cfg)
 	}
+	if len(cfg.Zones[0].Nameservers) != 3 || cfg.Zones[0].Nameservers[1].Address != "2001:db8::53" {
+		t.Fatalf("dns-config nameservers = %+v", cfg.Zones[0].Nameservers)
+	}
 
 	c, rec = jsonRequest(t, http.MethodDelete, "/api/dns/zones/"+itoa(zone.ID), nil, []string{"id"}, []string{itoa(zone.ID)})
 	if err := ctrl.ApiDnsZoneDelete(c); err != nil {
@@ -191,7 +201,7 @@ func TestDnsZoneBadRecord(t *testing.T) {
 	var soa models.DnsSOATemplate
 	json.Unmarshal(rec.Body.Bytes(), &soa)
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dns/templates", dnsTemplateBody{
-		Name: "t", SOATemplateID: soa.ID, Nameservers: []string{"ns."},
+		Name: "t", SOATemplateID: soa.ID, Nameservers: []models.DnsTemplateNameserverDTO{{Hostname: "ns."}},
 	}, nil, nil)
 	if err := ctrl.ApiDnsTemplateCreate(c); err != nil {
 		t.Fatal(err)
@@ -220,7 +230,7 @@ func TestDnsZoneRecordMAC(t *testing.T) {
 	var soa models.DnsSOATemplate
 	json.Unmarshal(rec.Body.Bytes(), &soa)
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dns/templates", dnsTemplateBody{
-		Name: "t", SOATemplateID: soa.ID, Nameservers: []string{"ns."},
+		Name: "t", SOATemplateID: soa.ID, Nameservers: []models.DnsTemplateNameserverDTO{{Hostname: "ns."}},
 	}, nil, nil)
 	if err := ctrl.ApiDnsTemplateCreate(c); err != nil {
 		t.Fatal(err)
