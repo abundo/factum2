@@ -191,7 +191,7 @@ onMounted(loadDeviceSyncAuths)
       <div v-else class="flex flex-col gap-6">
         <UFormField
           label="Enabled"
-          hint="Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are shared with the Netbox tab under Sources settings; per-device login credentials are managed below."
+          help="Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are shared with the Netbox tab under Sources settings; per-device login credentials are managed below."
         >
           <USwitch v-model="settings.device_sync_enabled" />
         </UFormField>
@@ -221,7 +221,7 @@ onMounted(loadDeviceSyncAuths)
         </UFormField>
         <UFormField
           label="Netbox VLAN group"
-          hint="Single global Netbox VLAN Group every synced VLAN is created in, along with each interface's untagged/tagged VLAN assignment. Leave empty to disable VLAN sync."
+          help="Single global Netbox VLAN Group every synced VLAN is created in, along with each interface's untagged/tagged VLAN assignment. Leave empty to disable VLAN sync."
         >
           <UInput
             v-model="settings.device_sync_vlan_group_name"
