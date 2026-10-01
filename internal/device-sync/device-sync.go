@@ -1195,7 +1195,25 @@ func (ds *DeviceSync) loadInventoryMaps() {
 	}
 }
 
+// sourceEnabled reports whether this run may write source. A nil
+// ServiceSources allow-list means every implemented source. An empty
+// slice means none, which also suppresses the ELINE→evpl fallback.
+func (ds *DeviceSync) sourceEnabled(source string) bool {
+	if ds.cfg == nil || ds.cfg.ServiceSources == nil {
+		return true
+	}
+	for _, s := range *ds.cfg.ServiceSources {
+		if s == source {
+			return true
+		}
+	}
+	return false
+}
+
 func (ds *DeviceSync) netboxType(source string) string {
+	if !ds.sourceEnabled(source) {
+		return ""
+	}
 	if ds.inventoryMaps != nil {
 		if t, ok := ds.inventoryMaps[source]; ok {
 			return t
@@ -1358,8 +1376,11 @@ func (ds *DeviceSync) syncInventoryL2(pair *devicePair) {
 // without loading service types. Production runs go through syncInventoryL2.
 func (ds *DeviceSync) syncELINEs(pair *devicePair) {
 	t := ds.netboxType(models.SyncSourceELINE)
-	if t == "" {
+	if t == "" && ds.sourceEnabled(models.SyncSourceELINE) {
 		t = models.NetboxTypeEVPL
+	}
+	if t == "" {
+		return
 	}
 	ds.syncL2Attachments(pair, t, elineAttachments(pair.config))
 }

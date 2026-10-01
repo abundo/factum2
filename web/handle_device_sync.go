@@ -22,12 +22,15 @@ type DeviceSyncAuthEntry struct {
 // parses - keep the JSON tags in sync with that type.
 type DeviceSyncConfigResponse struct {
 	util.CommonConfig
-	VRFInGlobal   []string                       `json:"vrf_in_global"`
-	DeviceStates  []string                       `json:"device_states"`
-	DeviceIgnore  []string                       `json:"device_ignore"`
-	VlanGroupName string                         `json:"vlan_group_name"`
-	InventoryMaps map[string]string              `json:"inventory_maps"`
-	Auth          map[string]DeviceSyncAuthEntry `json:"auth"`
+	VRFInGlobal   []string          `json:"vrf_in_global"`
+	DeviceStates  []string          `json:"device_states"`
+	DeviceIgnore  []string          `json:"device_ignore"`
+	VlanGroupName string            `json:"vlan_group_name"`
+	InventoryMaps map[string]string `json:"inventory_maps"`
+	// ServiceSources is nil when Settings.DeviceSyncServiceSources is nil
+	// (every implemented source). An empty slice means sync no services.
+	ServiceSources *[]string                      `json:"service_sources"`
+	Auth           map[string]DeviceSyncAuthEntry `json:"auth"`
 }
 
 // splitLines splits a newline-separated Settings field (see
@@ -42,6 +45,20 @@ func splitLines(s string) []string {
 		}
 	}
 	return out
+}
+
+// serviceSourceList converts Settings.DeviceSyncServiceSources into the
+// REST allow-list. Nil stays nil (sync every implemented source). An empty
+// string becomes an empty slice so device-sync can tell "unset" from "none".
+func serviceSourceList(raw *string) *[]string {
+	if raw == nil {
+		return nil
+	}
+	lines := splitLines(*raw)
+	if lines == nil {
+		lines = []string{}
+	}
+	return &lines
 }
 
 // ApiDeviceSyncConfig returns everything factum2-device-sync-cli needs to
@@ -73,13 +90,14 @@ func (ctrl *Controller) ApiDeviceSyncConfig(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, DeviceSyncConfigResponse{
-		CommonConfig:  util.NewCommonConfig(settings),
-		VRFInGlobal:   splitLines(settings.DeviceSyncVRFInGlobal),
-		DeviceStates:  splitLines(settings.DeviceSyncDeviceStates),
-		DeviceIgnore:  splitLines(settings.DeviceSyncDeviceIgnore),
-		VlanGroupName: settings.DeviceSyncVlanGroupName,
-		InventoryMaps: cfgmgmt.InventoryMaps(types),
-		Auth:          auth,
+		CommonConfig:   util.NewCommonConfig(settings),
+		VRFInGlobal:    splitLines(settings.DeviceSyncVRFInGlobal),
+		DeviceStates:   splitLines(settings.DeviceSyncDeviceStates),
+		DeviceIgnore:   splitLines(settings.DeviceSyncDeviceIgnore),
+		VlanGroupName:  settings.DeviceSyncVlanGroupName,
+		InventoryMaps:  cfgmgmt.InventoryMaps(types),
+		ServiceSources: serviceSourceList(settings.DeviceSyncServiceSources),
+		Auth:           auth,
 	})
 }
 

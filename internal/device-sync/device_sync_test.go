@@ -1873,6 +1873,72 @@ func TestLoadInventoryMapsFromConfig(t *testing.T) {
 	}
 }
 
+func TestNetboxTypeDisabledSourceSkipsELINEFallback(t *testing.T) {
+	none := []string{}
+	onlyELAN := []string{models.SyncSourceELAN}
+	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), &util.ConfigDeviceSync{
+		InventoryMaps: map[string]string{
+			models.SyncSourceELINE: models.NetboxTypeEVPL,
+			models.SyncSourceELAN:  models.NetboxTypeVPLS,
+			models.SyncSourceL3VPN: models.NetboxTypeVRF,
+		},
+		ServiceSources: &onlyELAN,
+	})
+	ds.loadInventoryMaps()
+	if ds.netboxType(models.SyncSourceELINE) != "" {
+		t.Errorf("eline = %q, want empty when not allowed", ds.netboxType(models.SyncSourceELINE))
+	}
+	if ds.netboxType(models.SyncSourceELAN) != models.NetboxTypeVPLS {
+		t.Errorf("elan = %q, want vpls", ds.netboxType(models.SyncSourceELAN))
+	}
+	if ds.netboxType(models.SyncSourceL3VPN) != "" {
+		t.Errorf("l3vpn = %q, want empty when not allowed", ds.netboxType(models.SyncSourceL3VPN))
+	}
+
+	ds.cfg.ServiceSources = &none
+	if ds.netboxType(models.SyncSourceELINE) != "" {
+		t.Errorf("eline = %q, want empty when no services are allowed", ds.netboxType(models.SyncSourceELINE))
+	}
+}
+
+func TestSyncInventoryL2SkipsDisabledELINE(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	none := []string{models.SyncSourceELAN}
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{ServiceSources: &none})
+	ds.inventoryMaps = map[string]string{models.SyncSourceELINE: models.NetboxTypeEVPL}
+
+	dc := drivers.NewDeviceConfig()
+	dc.ELINEs["CN00570"] = &drivers.ELINE{
+		Name:  "CN00570",
+		Conn1: &drivers.Interface{Name: "Ethernet1"},
+		Conn2: &drivers.Pseudowire{PWID: 570},
+	}
+	ds.syncInventoryL2(&devicePair{
+		nbDevice: &models.Device{
+			Name:       "r1",
+			Interfaces: []models.Interface{{NetboxID: 11, Name: "Ethernet1"}},
+		},
+		config: dc,
+	})
+	if len(fake.createdL2VPNs) != 0 {
+		t.Errorf("createdL2VPNs = %d, want 0 when eline is disabled", len(fake.createdL2VPNs))
+	}
+}
+
+func TestSyncVRFsSkipsDisabledL3VPN(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	onlyELINE := []string{models.SyncSourceELINE}
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), &util.ConfigDeviceSync{ServiceSources: &onlyELINE})
+	ds.inventoryMaps = map[string]string{models.SyncSourceL3VPN: models.NetboxTypeVRF}
+
+	dc := drivers.NewDeviceConfig()
+	dc.L3VPNs["POLARIX"] = &drivers.L3VPN{Name: "POLARIX", VRF: &drivers.VRF{Name: "POLARIX"}}
+	ds.syncVRFs(&devicePair{nbDevice: &models.Device{Name: "r1"}, config: dc})
+	if len(fake.createdVRFs) != 0 {
+		t.Errorf("createdVRFs = %d, want 0 when l3vpn is disabled", len(fake.createdVRFs))
+	}
+}
+
 func TestLoadInventoryMapsFallbackWhenEmpty(t *testing.T) {
 	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), nil)
 	ds.loadInventoryMaps()

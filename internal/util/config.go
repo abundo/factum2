@@ -184,7 +184,11 @@ type ConfigDeviceSync struct {
 	// types (ELINE→evpl, ELAN→vpls, L3VPN→vrf). Empty means device-sync
 	// falls back to ELINE→evpl only.
 	InventoryMaps map[string]string
-	Auth          map[string]ConfigDeviceSyncAuth
+	// ServiceSources is the allow-list of sync sources to write
+	// (eline, elan, l3vpn). Nil means every implemented source. An empty
+	// slice means write no services, including the ELINE fallback.
+	ServiceSources *[]string
+	Auth           map[string]ConfigDeviceSyncAuth
 }
 
 // ConfigLibrenms is a runtime-only DTO, not part of ConfigRoot - same

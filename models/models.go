@@ -621,6 +621,11 @@ type Settings struct {
 	// created in, along with each interface's untagged/tagged VLAN
 	// assignment. Empty disables VLAN/interface-VLAN sync entirely.
 	DeviceSyncVlanGroupName string `gorm:"column:device_sync_vlan_group_name;type:varchar(255)" form:"device_sync_vlan_group_name" json:"device_sync_vlan_group_name"`
+	// DeviceSyncServiceSources is the allow-list of on-device service
+	// collections device-sync may write (eline, elan, l3vpn), one name per
+	// line. Nil means every implemented source. An empty string means none.
+	// The NetBox object kind still comes from the cfgmgmt service type.
+	DeviceSyncServiceSources *string `gorm:"column:device_sync_service_sources;type:text" form:"device_sync_service_sources" json:"device_sync_service_sources"`
 
 	// LDAP / Active Directory authentication + authorization. Connection
 	// fields are edited from the admin "Authentication" page,

@@ -40,6 +40,54 @@ const deleting = ref(false)
 const sorting = ref([{ id: 'name', desc: false }])
 const { search, filtered } = useSearch(auths, (row) => valuesText(row.id, row.name, row.username))
 
+// Ids match models.SyncSource* and the device-sync allow-list. A null
+// setting means every source; an empty string means none.
+const serviceSources = [
+  {
+    id: 'eline',
+    label: 'ELINE',
+    help: 'Syncs on-device ELINE services into NetBox as L2VPNs. The NetBox type comes from the ELINE service type, or EVPL when that mapping is missing. Off skips new writes and leaves existing NetBox objects in place.',
+  },
+  {
+    id: 'elan',
+    label: 'ELAN',
+    help: "Syncs on-device ELAN services into NetBox as L2VPNs. Uses the ELAN service type's NetBox type, usually VPLS. Off skips new writes and leaves existing NetBox objects in place.",
+  },
+  {
+    id: 'l3vpn',
+    label: 'L3VPN',
+    help: 'Syncs on-device L3VPN services into NetBox as VRFs. Requires the L3VPN service type to map sync source l3vpn to NetBox type vrf. Off skips new writes and leaves existing NetBox objects in place.',
+  },
+]
+
+function enabledSourceSet() {
+  const raw = settings.device_sync_service_sources
+  if (raw == null) {
+    return new Set(serviceSources.map((s) => s.id))
+  }
+  return new Set(
+    String(raw)
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
+}
+
+function serviceEnabled(id) {
+  return enabledSourceSet().has(id)
+}
+
+function setServiceEnabled(id, on) {
+  const enabled = enabledSourceSet()
+  if (on) {
+    enabled.add(id)
+  } else {
+    enabled.delete(id)
+  }
+  const ids = serviceSources.filter((s) => enabled.has(s.id)).map((s) => s.id)
+  settings.device_sync_service_sources = ids.length === serviceSources.length ? null : ids.join('\n')
+}
+
 const columns = [
   { id: 'actions', header: '' },
   { accessorKey: 'id', header: 'ID' },
@@ -194,6 +242,17 @@ onMounted(loadDeviceSyncAuths)
           help="Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are shared with the Netbox tab under Sources settings; per-device login credentials are managed below."
         >
           <USwitch v-model="settings.device_sync_enabled" />
+        </UFormField>
+        <UFormField
+          v-for="svc in serviceSources"
+          :key="svc.id"
+          :label="svc.label"
+          :help="svc.help"
+        >
+          <USwitch
+            :model-value="serviceEnabled(svc.id)"
+            @update:model-value="setServiceEnabled(svc.id, $event)"
+          />
         </UFormField>
         <UFormField label="VRFs allocated in the global table">
           <UTextarea
