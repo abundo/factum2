@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
-import { getRackElevation, placeDevice, unmountDevice } from '@/api/racks'
+import { deleteRack, getRackElevation, placeDevice, unmountDevice } from '@/api/racks'
+import { useConfirm } from '@/composables/useConfirm'
 import RackElevation from '@/components/dcim/RackElevation.vue'
 import { useAuthStore } from '@/stores/auth'
 import { snapOffsetToWholeU, TICKS_PER_U } from '@/utils/dcimGeometry'
@@ -13,6 +14,7 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const canWrite = computed(() => authStore.canWrite)
 
 const loading = ref(true)
@@ -22,6 +24,7 @@ const face = ref('front')
 const selected = ref(null)
 const placeForm = ref({ device_id: undefined, offset_u: 1, face: 'front' })
 const saving = ref(false)
+const deleting = ref(false)
 
 const rack = computed(() => elevation.value?.rack || {})
 const importedHint = computed(() => {
@@ -108,6 +111,18 @@ function unmount() {
     })
 }
 
+async function removeRack() {
+  if (!rack.value?.id || rack.value.read_only) return
+  if (!(await confirmDelete(`rack ${rack.value.name}`))) return
+  deleting.value = true
+  deleteRack(rack.value.id)
+    .then(() => router.push('/dcim/racks'))
+    .catch((err) => toast.add({ color: 'error', title: 'Delete failed', description: errMsg(err) }))
+    .finally(() => {
+      deleting.value = false
+    })
+}
+
 function occupancyColor(pct, unknown) {
   if (unknown) return 'warning'
   if (pct >= 80) return 'error'
@@ -139,6 +154,16 @@ onMounted(load)
         />
       </div>
       <div class="flex items-center gap-2">
+        <UButton
+          v-if="canWrite && rack.id && !rack.read_only"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          size="sm"
+          :loading="deleting"
+          @click="removeRack"
+        />
         <UButton
           label="Connections"
           icon="i-lucide-share-2"

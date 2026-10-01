@@ -1,8 +1,10 @@
 <script setup>
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { getJobs, getJobTaskEvents } from '@/api/jobs'
+import SearchInput from '@/components/SearchInput.vue'
 import { formatDateTime, formatTime } from '@/utils/datetime'
 import { jobDuration, jobStatus } from '@/utils/job'
+import { matchesWords, searchWords, useSearch, valuesText } from '@/utils/search'
 
 const props = defineProps({
   job: { type: Object, default: null },
@@ -43,6 +45,20 @@ const eventColumns = [
   { accessorKey: 'message', header: 'Message' },
   { id: 'time', header: 'Time' },
 ]
+
+const { search: eventSearch, words: eventWords } = useSearch(
+  () => eventsByTaskId[activeTaskId.value] ?? [],
+  (row) => valuesText(row.level, row.message, formatTime(row.at)),
+)
+
+function visibleEvents(taskId) {
+  const list = eventsByTaskId[taskId] ?? []
+  const words = eventWords.value.length ? eventWords.value : searchWords(eventSearch.value)
+  if (!words.length) return list
+  return list.filter((row) =>
+    matchesWords(valuesText(row.level, row.message, formatTime(row.at)), words),
+  )
+}
 
 function eventColor(level) {
   switch (level) {
@@ -181,6 +197,7 @@ onUnmounted(stopPolling)
 <template>
   <UModal
     v-model:open="open"
+    :dismissible="false"
     :title="liveJob ? `Job #${liveJob.id} - ${formatDateTime(liveJob.started_at)}` : ''"
     :ui="{ content: 'w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh]' }"
   >
@@ -195,6 +212,7 @@ onUnmounted(stopPolling)
           Duration {{ jobDuration(liveJob) }}
         </span>
       </div>
+      <SearchInput v-model="eventSearch" class="mb-3 max-w-xs" />
       <UTabs
         v-if="liveJob"
         :items="tabItems"
@@ -211,10 +229,14 @@ onUnmounted(stopPolling)
               class="mb-4"
             />
             <UTable
-              :data="eventsByTaskId[item.value] ?? []"
+              :data="visibleEvents(item.value)"
               :columns="eventColumns"
               :loading="!!eventsLoadingByTaskId[item.value]"
-              empty="No events reported for this subjob."
+              :empty="
+                eventSearch && (eventsByTaskId[item.value] ?? []).length
+                  ? 'Nothing matches the search.'
+                  : 'No events reported for this subjob.'
+              "
             >
               <template #level-cell="{ row }">
                 <UBadge

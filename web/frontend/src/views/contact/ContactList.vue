@@ -13,19 +13,31 @@ import {
 import { getCustomers } from '@/api/customers'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'ContactList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 
 const contacts = ref([])
 const customers = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(contacts, (row) =>
+  valuesText(
+    row.name,
+    row.company,
+    row.email,
+    row.phone,
+    row.notify_maintenance ? 'yes' : 'no',
+    row.source,
+  ),
+)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -52,7 +64,6 @@ const selectedCustomers = ref([])
 const contactLoading = ref(false)
 const contactError = ref(null)
 const saving = ref(false)
-const deleteDialog = ref(false)
 const deleting = ref(false)
 
 const isCreate = computed(() => editingId.value === null)
@@ -159,21 +170,20 @@ function save() {
     })
 }
 
-function confirmDelete() {
-  deleteDialog.value = true
-}
-
-function performDelete() {
+async function performDelete() {
   if (!editingId.value) return
+  const ok = await confirmDelete(
+    `contact ${form.value.name || 'this contact'}`,
+    'This cannot be undone. Linked customers are kept; only the contact and its customer links are removed.',
+  )
+  if (!ok) return
   deleting.value = true
   deleteContact(editingId.value)
     .then(() => {
-      deleteDialog.value = false
       detailDialog.value = false
       loadContacts()
     })
     .catch((err) => {
-      deleteDialog.value = false
       toast.add({
         color: 'error',
         title: 'Delete failed',
@@ -208,16 +218,15 @@ onMounted(loadContacts)
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="contacts"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No contacts found.'"
+      :empty="error || (search && contacts.length ? 'Nothing matches the search.' : 'No contacts found.')"
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -272,7 +281,6 @@ onMounted(loadContacts)
     :source="{ form, selectedCustomers }"
     :loading="contactLoading"
     :title="dialogTitle"
-    :ui="{ content: 'sm:max-w-lg' }"
   >
     <template #body>
       <div v-if="contactLoading" class="flex justify-center p-4">
@@ -281,82 +289,60 @@ onMounted(loadContacts)
 
       <UAlert v-else-if="contactError" color="error" variant="subtle" :title="contactError" />
 
-      <div v-else class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
-        <label for="name" class="font-bold">Name</label>
-        <UInput id="name" v-model="form.name" :disabled="fieldsReadOnly" class="w-full" />
-
-        <label for="email" class="font-bold">Email</label>
-        <UInput id="email" v-model="form.email" :disabled="fieldsReadOnly" class="w-full" />
-
-        <label for="phone" class="font-bold">Phone</label>
-        <UInput id="phone" v-model="form.phone" :disabled="fieldsReadOnly" class="w-full" />
-
-        <span class="font-bold">Notify</span>
-        <div class="flex items-center gap-2">
-          <USwitch v-model="form.notify_maintenance" :disabled="notifyReadOnly" />
-          <span>Notify on maintenance</span>
-        </div>
-
-        <span class="font-bold self-start mt-2">Customers</span>
-        <USelectMenu
-          v-model="selectedCustomers"
-          multiple
-          value-key="id"
-          label-key="name"
-          :items="customers"
-          :disabled="fieldsReadOnly"
-          placeholder="Link customers"
-          class="w-full"
-        />
-
-        <template v-if="!isCreate">
-          <label for="source" class="font-bold">Source</label>
-          <UInput id="source" :model-value="contactSource" disabled class="w-full" />
-        </template>
+      <div v-else class="flex flex-col gap-4">
+        <UFormField label="Name">
+          <UInput v-model="form.name" :disabled="fieldsReadOnly" class="w-full" />
+        </UFormField>
+        <UFormField label="Email">
+          <UInput v-model="form.email" :disabled="fieldsReadOnly" class="w-full" />
+        </UFormField>
+        <UFormField label="Phone">
+          <UInput v-model="form.phone" :disabled="fieldsReadOnly" class="w-full" />
+        </UFormField>
+        <UFormField label="Notify">
+          <div class="flex items-center gap-2">
+            <USwitch v-model="form.notify_maintenance" :disabled="notifyReadOnly" />
+            <span>Notify on maintenance</span>
+          </div>
+        </UFormField>
+        <UFormField label="Customers">
+          <USelectMenu
+            v-model="selectedCustomers"
+            multiple
+            value-key="id"
+            label-key="name"
+            :items="customers"
+            :disabled="fieldsReadOnly"
+            placeholder="Link customers"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField v-if="!isCreate" label="Source">
+          <UInput :model-value="contactSource" disabled class="w-full" />
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <div class="flex w-full justify-between">
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
         <UButton
           v-if="!isCreate && isLocal && canWrite"
           label="Delete"
-          icon="i-lucide-trash-2"
-          variant="outline"
+          icon="i-lucide-trash"
           color="error"
-          @click="confirmDelete"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
         />
-        <div class="flex gap-2 ms-auto">
-          <UButton
-            v-if="canSave"
-            :label="isCreate ? 'Create' : 'Save'"
-            :loading="saving"
-            :disabled="!form.name.trim() || saving"
-            @click="save"
-          />
-          <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
-        </div>
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canSave"
+          :label="isCreate ? 'Create' : 'Save'"
+          :loading="saving"
+          :disabled="!form.name.trim() || saving"
+          @click="save"
+        />
       </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Delete contact" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <p>
-        Delete contact <strong>{{ form.name || 'this contact' }}</strong
-        >? This cannot be undone. Linked customers are kept; only the contact and its customer links
-        are removed.
-      </p>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton
-        label="Delete"
-        icon="i-lucide-trash-2"
-        color="error"
-        :loading="deleting"
-        @click="performDelete"
-      />
-    </template>
-  </UModal>
 </template>

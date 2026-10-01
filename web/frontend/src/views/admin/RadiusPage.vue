@@ -17,10 +17,14 @@ import {
 import FormModal from '@/components/FormModal.vue'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
+import SearchInput from '@/components/SearchInput.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useSettings } from '@/composables/useSettings'
 import { parseReply, serializeReply } from '@/utils/radiusReply'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 const { settings, loading, saving, forbidden, loadError, save } = useSettings()
 
 const tab = ref('service')
@@ -43,11 +47,13 @@ const clientDialog = ref(false)
 const client = ref({})
 const clientSubmitted = ref(false)
 const clientSaving = ref(false)
+const clientDeleting = ref(false)
 
 const policyDialog = ref(false)
 const policy = ref({})
 const policySubmitted = ref(false)
 const policySaving = ref(false)
+const policyDeleting = ref(false)
 const browserVisible = ref(false)
 
 const replyRows = ref([])
@@ -384,10 +390,16 @@ function saveClient() {
     })
 }
 
-function removeClient(row) {
-  if (!window.confirm(`Remove RADIUS client ${row.name}?`)) return
-  deleteRadiusClient(row.id)
-    .then(() => loadClients())
+async function removeClient() {
+  if (!client.value.id) return
+  const name = client.value.name?.trim() || 'client'
+  if (!(await confirmDelete(`RADIUS client ${name}`))) return
+  clientDeleting.value = true
+  deleteRadiusClient(client.value.id)
+    .then(() => {
+      clientDialog.value = false
+      loadClients()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -395,6 +407,9 @@ function removeClient(row) {
         description: err.response?.data?.error ?? 'Failed to remove client.',
         duration: 4000,
       })
+    })
+    .finally(() => {
+      clientDeleting.value = false
     })
 }
 
@@ -458,10 +473,16 @@ function savePolicy() {
     })
 }
 
-function removePolicy(row) {
-  if (!window.confirm(`Remove ${row.group_dn}?`)) return
-  deleteRadiusPolicy(row.id)
-    .then(() => loadPolicies())
+async function removePolicy() {
+  if (!policy.value.id) return
+  const name = policy.value.group_dn?.trim() || 'group rule'
+  if (!(await confirmDelete(`group rule ${name}`))) return
+  policyDeleting.value = true
+  deleteRadiusPolicy(policy.value.id)
+    .then(() => {
+      policyDialog.value = false
+      loadPolicies()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -469,6 +490,9 @@ function removePolicy(row) {
         description: err.response?.data?.error ?? 'Failed to remove group rule.',
         duration: 4000,
       })
+    })
+    .finally(() => {
+      policyDeleting.value = false
     })
 }
 
@@ -483,6 +507,25 @@ function when(value) {
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString()
 }
+
+const { search: clientSearch, filtered: filteredClients } = useSearch(clients, (row) =>
+  valuesText(row.name, row.address, row.enabled ? 'Yes' : 'No'),
+)
+const { search: policySearch, filtered: filteredPolicies } = useSearch(policies, (row) =>
+  valuesText(row.group_dn, accessLabel(row)),
+)
+const { search: eventSearch, filtered: filteredEvents } = useSearch(events, (row) =>
+  valuesText(
+    when(row.reported_at),
+    row.username,
+    row.device_name,
+    row.device_role,
+    row.nas_ip,
+    row.result,
+    row.reason,
+    row.worker,
+  ),
+)
 
 onMounted(() => {
   loadClients()
@@ -747,24 +790,24 @@ onBeforeUnmount(() => {
             :title="clientsError"
             class="mb-4"
           />
-          <UTable :data="clients" :columns="clientColumns" :empty="'No RADIUS clients yet.'">
+          <SearchInput v-model="clientSearch" class="mb-3 max-w-xs" />
+          <UTable
+            :data="filteredClients"
+            :columns="clientColumns"
+            :empty="
+              clientSearch && clients.length
+                ? 'Nothing matches the search.'
+                : 'No RADIUS clients yet.'
+            "
+          >
             <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="editClient(row.original)"
-                />
-                <UButton
-                  icon="i-lucide-trash"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="removeClient(row.original)"
-                />
-              </div>
+              <UButton
+                icon="i-lucide-pencil"
+                variant="outline"
+                color="neutral"
+                size="sm"
+                @click="editClient(row.original)"
+              />
             </template>
             <template #enabled-cell="{ row }">
               <UBadge
@@ -798,24 +841,22 @@ onBeforeUnmount(() => {
             :title="policiesError"
             class="mb-4"
           />
-          <UTable :data="policies" :columns="policyColumns" :empty="'No group rules yet.'">
+          <SearchInput v-model="policySearch" class="mb-3 max-w-xs" />
+          <UTable
+            :data="filteredPolicies"
+            :columns="policyColumns"
+            :empty="
+              policySearch && policies.length ? 'Nothing matches the search.' : 'No group rules yet.'
+            "
+          >
             <template #actions-cell="{ row }">
-              <div class="flex gap-1">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="editPolicy(row.original)"
-                />
-                <UButton
-                  icon="i-lucide-trash"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="removePolicy(row.original)"
-                />
-              </div>
+              <UButton
+                icon="i-lucide-pencil"
+                variant="outline"
+                color="neutral"
+                size="sm"
+                @click="editPolicy(row.original)"
+              />
             </template>
             <template #access-cell="{ row }">
               {{ accessLabel(row.original) }}
@@ -843,7 +884,14 @@ onBeforeUnmount(() => {
             :title="eventsError"
             class="mb-4"
           />
-          <UTable :data="events" :columns="eventColumns" :empty="'No login attempts yet.'">
+          <SearchInput v-model="eventSearch" class="mb-3 max-w-xs" />
+          <UTable
+            :data="filteredEvents"
+            :columns="eventColumns"
+            :empty="
+              eventSearch && events.length ? 'Nothing matches the search.' : 'No login attempts yet.'
+            "
+          >
             <template #when-cell="{ row }">
               {{ when(row.original.reported_at) }}
             </template>
@@ -863,15 +911,13 @@ onBeforeUnmount(() => {
   <FormModal v-model:open="clientDialog" :source="client" title="RADIUS client">
     <template #body>
       <div class="flex flex-col gap-6">
-        <div>
-          <label for="client-name" class="block font-bold mb-3">Name</label>
+        <UFormField label="Name">
           <UInput id="client-name" v-model.trim="client.name" class="w-full" autofocus />
           <small v-if="clientSubmitted && !client.name?.trim()" class="text-red-500"
             >Name is required.</small
           >
-        </div>
-        <div>
-          <label for="client-address" class="block font-bold mb-3">Address</label>
+        </UFormField>
+        <UFormField label="Address">
           <UInput
             id="client-address"
             v-model.trim="client.address"
@@ -881,9 +927,8 @@ onBeforeUnmount(() => {
           <small v-if="clientSubmitted && !client.address?.trim()" class="text-red-500"
             >Address is required.</small
           >
-        </div>
-        <div>
-          <label for="client-secret" class="block font-bold mb-3">Shared secret</label>
+        </UFormField>
+        <UFormField label="Shared secret">
           <PasswordInput id="client-secret" v-model="client.secret" />
           <small v-if="clientSubmitted && !client.id && !client.secret" class="text-red-500"
             >Secret is required.</small
@@ -891,24 +936,33 @@ onBeforeUnmount(() => {
           <small v-else-if="client.id" class="text-muted-color"
             >Leave blank to keep the current secret.</small
           >
-        </div>
-        <div class="flex items-center gap-3">
+        </UFormField>
+        <UFormField label="Enabled">
           <USwitch v-model="client.enabled" id="client-enabled" />
-          <label for="client-enabled" class="font-bold">Enabled</label>
-        </div>
+        </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="clientDialog = false" />
-      <UButton label="Save" icon="i-lucide-check" :loading="clientSaving" @click="saveClient" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="client.id"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="clientDeleting"
+          @click="removeClient"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="clientSaving" @click="saveClient" />
+      </div>
     </template>
   </FormModal>
 
   <FormModal v-model:open="policyDialog" :source="policy" title="LDAP group">
     <template #body>
       <div class="flex flex-col gap-6">
-        <div>
-          <label for="group-dn" class="block font-bold mb-3">Group DN</label>
+        <UFormField label="Group DN">
           <div class="flex gap-2">
             <UInput
               id="group-dn"
@@ -928,14 +982,11 @@ onBeforeUnmount(() => {
           <small v-if="policySubmitted && !policy.group_dn?.trim()" class="text-red-500"
             >Group DN is required.</small
           >
-        </div>
-        <div class="flex items-center gap-3">
+        </UFormField>
+        <UFormField label="All devices" hint="Administrators who may log in to every role.">
           <USwitch v-model="policy.all_devices" id="all-devices" />
-          <label for="all-devices" class="font-bold">All devices</label>
-        </div>
-        <small class="text-muted-color -mt-4">Administrators who may log in to every role.</small>
-        <div v-if="!policy.all_devices">
-          <label for="roles" class="block font-bold mb-3">Device roles</label>
+        </UFormField>
+        <UFormField v-if="!policy.all_devices" label="Device roles">
           <UTextarea
             id="roles"
             v-model="policy.rolesText"
@@ -951,12 +1002,23 @@ onBeforeUnmount(() => {
             class="text-red-500 block"
             >Enter a role, or allow all devices.</small
           >
-        </div>
+        </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="policyDialog = false" />
-      <UButton label="Save" icon="i-lucide-check" :loading="policySaving" @click="savePolicy" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="policy.id"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="policyDeleting"
+          @click="removePolicy"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="policySaving" @click="savePolicy" />
+      </div>
     </template>
   </FormModal>
 

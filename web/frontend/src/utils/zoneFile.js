@@ -4,6 +4,7 @@ import {
   ZONE_RECORD_TYPES,
   isCommentRecord,
   isDomainRecord,
+  recordKey,
 } from './zoneRecords.js'
 
 const CLASS_RE = /^(IN|CH|HS|CS|CLASS\d+)$/i
@@ -284,7 +285,7 @@ export function tokenizeZoneLine(line) {
 
 function toRecordRow({ name, ttl, type, value, description = '', mac = '' }) {
   return {
-    _key: crypto.randomUUID(),
+    _key: recordKey(),
     name,
     ttl: ttl && ttl > 0 ? ttl : null,
     type,
@@ -296,7 +297,7 @@ function toRecordRow({ name, ttl, type, value, description = '', mac = '' }) {
 
 function toCommentRow(text) {
   return {
-    _key: crypto.randomUUID(),
+    _key: recordKey(),
     name: ';',
     ttl: null,
     type: COMMENT_TYPE,

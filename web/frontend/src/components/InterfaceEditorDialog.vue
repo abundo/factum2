@@ -16,11 +16,13 @@ const props = defineProps({
   kind: { type: String, default: 'device' },
   writable: { type: Boolean, default: true },
   saving: { type: Boolean, default: false },
+  deleting: { type: Boolean, default: false },
   editing: { type: Boolean, default: false },
   canWrite: { type: Boolean, default: true },
+  canDelete: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['save'])
+const emit = defineEmits(['save', 'delete'])
 
 const fieldsLocked = computed(() => props.editing && !props.writable)
 const showDeviceFields = computed(() => props.kind === 'device')
@@ -63,7 +65,7 @@ watch(open, (isOpen) => {
 </script>
 
 <template>
-  <FormModal v-model:open="open" :source="form" :title="title" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="open" :source="form" :title="title">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name" :description="nameDescription">
@@ -93,15 +95,26 @@ watch(open, (isOpen) => {
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="open = false" />
-      <UButton
-        v-if="canWrite && writable"
-        :label="createLabel"
-        icon="i-lucide-check"
-        :loading="saving"
-        @click="emit('save')"
-      />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="canDelete"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="emit('delete')"
+        />
+        <UButton label="Cancel" icon="i-lucide-x" variant="ghost" class="ms-auto" @click="close" />
+        <UButton
+          v-if="canWrite && writable"
+          :label="createLabel"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="emit('save')"
+        />
+      </div>
     </template>
   </FormModal>
 </template>

@@ -12,8 +12,11 @@ import {
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 
 const mappings = ref([])
 const roles = ref([])
@@ -28,10 +31,7 @@ const submitted = ref(false)
 const saving = ref(false)
 const browserVisible = ref(false)
 const savingDefaultRole = ref(false)
-const deleteDialog = ref(false)
-const mappingToDelete = ref(null)
-
-const globalFilter = ref('')
+const deleting = ref(false)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -45,6 +45,10 @@ const defaultRoleOptions = computed(() => [{ label: 'None', value: null }, ...ro
 function roleName(roleId) {
   return roles.value.find((r) => r.id === roleId)?.name ?? '(unknown role)'
 }
+
+const { search, filtered } = useSearch(mappings, (row) =>
+  valuesText(row.group_dn, roleName(row.role_id)),
+)
 
 function loadMappings() {
   loading.value = true
@@ -90,11 +94,6 @@ function editMapping(row) {
   mappingDialog.value = true
 }
 
-function hideDialog() {
-  mappingDialog.value = false
-  submitted.value = false
-}
-
 function onGroupDnSelected(dn) {
   mapping.value.group_dn = dn
 }
@@ -136,13 +135,11 @@ function saveMapping() {
     })
 }
 
-function confirmDelete(row) {
-  mappingToDelete.value = row
-  deleteDialog.value = true
-}
-
-function performDelete() {
-  deleteLdapRoleMapping(mappingToDelete.value.id)
+async function performDelete() {
+  if (!mapping.value?.id) return
+  if (!(await confirmDelete(`mapping ${mapping.value.group_dn}`))) return
+  deleting.value = true
+  deleteLdapRoleMapping(mapping.value.id)
     .then(() => {
       toast.add({
         color: 'success',
@@ -150,6 +147,7 @@ function performDelete() {
         description: 'Mapping deleted',
         duration: 3000,
       })
+      mappingDialog.value = false
       loadMappings()
     })
     .catch((err) => {
@@ -161,8 +159,7 @@ function performDelete() {
       })
     })
     .finally(() => {
-      deleteDialog.value = false
-      mappingToDelete.value = null
+      deleting.value = false
     })
 }
 
@@ -235,39 +232,29 @@ onMounted(() => {
       <div class="flex items-center justify-between mb-6">
         <h4 class="m-0 font-semibold text-lg">LDAP/AD group -&gt; role mappings</h4>
         <div class="flex items-center gap-2">
-          <SearchInput v-model="globalFilter" class="w-64" />
+          <SearchInput v-model="search" class="w-64" />
           <UButton label="New" icon="i-lucide-plus" color="neutral" @click="openNew" />
         </div>
       </div>
 
       <UTable
-        v-model:global-filter="globalFilter"
-        :data="mappings"
+        :data="filtered"
         :columns="columns"
         :loading="loading"
-        :empty="error ?? 'No mappings found.'"
+        :empty="error || (search && mappings.length ? 'Nothing matches the search.' : 'No mappings found.')"
         class="max-h-[calc(100vh-480px)]"
       >
         <template #group_dn-header="{ column }">
           <SortableColumnHeader :column="column" label="Group DN" />
         </template>
         <template #actions-cell="{ row }">
-          <div class="flex gap-2">
-            <UButton
-              icon="i-lucide-pencil"
-              variant="outline"
-              color="neutral"
-              size="sm"
-              @click="editMapping(row.original)"
-            />
-            <UButton
-              icon="i-lucide-trash-2"
-              variant="outline"
-              color="error"
-              size="sm"
-              @click="confirmDelete(row.original)"
-            />
-          </div>
+          <UButton
+            icon="i-lucide-pencil"
+            variant="outline"
+            color="neutral"
+            size="sm"
+            @click="editMapping(row.original)"
+          />
         </template>
         <template #role-cell="{ row }">
           <UBadge :label="roleName(row.original.role_id)" variant="subtle" />
@@ -276,14 +263,12 @@ onMounted(() => {
     </div>
   </template>
 
-  <FormModal v-model:open="mappingDialog" :source="mapping" title="Group Mapping Details" :ui="{ content: 'sm:max-w-md' }">
+  <FormModal v-model:open="mappingDialog" :source="mapping" title="Group Mapping Details">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="group_dn" class="block font-bold mb-3">Group DN</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Group DN">
           <div class="flex gap-2">
             <UInput
-              id="group_dn"
               v-model.trim="mapping.group_dn"
               :color="submitted && !mapping.group_dn?.trim() ? 'error' : undefined"
               :highlight="submitted && !mapping.group_dn?.trim()"
@@ -302,11 +287,9 @@ onMounted(() => {
           <small v-if="submitted && !mapping.group_dn?.trim()" class="text-red-500"
             >Group DN is required.</small
           >
-        </div>
-        <div>
-          <label for="role_id" class="block font-bold mb-3">Role</label>
+        </UFormField>
+        <UFormField label="Role">
           <USelect
-            id="role_id"
             v-model="mapping.role_id"
             :items="roleOptions"
             :color="submitted && !mapping.role_id ? 'error' : undefined"
@@ -314,31 +297,26 @@ onMounted(() => {
             class="w-full"
           />
           <small v-if="submitted && !mapping.role_id" class="text-red-500">Role is required.</small>
-        </div>
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveMapping" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="mapping.id"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveMapping" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Confirm" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <div class="flex items-center gap-4">
-        <UIcon name="i-lucide-triangle-alert" class="size-8 text-warning" />
-        <span v-if="mappingToDelete"
-          >Delete mapping for <b>{{ mappingToDelete.group_dn }}</b
-          >?</span
-        >
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="No" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton label="Yes" icon="i-lucide-check" color="error" @click="performDelete" />
-    </template>
-  </UModal>
 
   <LdapTreeBrowser v-model:visible="browserVisible" @select="onGroupDnSelected" />
 </template>

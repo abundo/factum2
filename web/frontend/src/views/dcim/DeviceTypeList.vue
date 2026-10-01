@@ -17,14 +17,17 @@ import DcimDetailDialog from '@/components/DcimDetailDialog.vue'
 import InterfaceEditorDialog from '@/components/InterfaceEditorDialog.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 import { expandInterfaceNames } from '@/utils/interfaceNames'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'DeviceTypeList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const { load: loadInterfaceTypes, typeLabel } = useInterfaceTypes()
 
 const items = ref([])
@@ -32,7 +35,6 @@ const manufacturers = ref([])
 const platforms = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'model', desc: false }])
 
 const columns = [
@@ -88,10 +90,6 @@ const detailTitle = computed(() => {
   return `${mfr} ${detailType.value.model}`.trim()
 })
 
-function isLocal(row) {
-  return row.source !== 'netbox'
-}
-
 function sourceBadgeColor(source) {
   if (source === 'factum') return 'success'
   return 'neutral'
@@ -112,6 +110,17 @@ const platformById = computed(() => {
   const map = new Map()
   for (const p of platforms.value) map.set(p.id, p)
   return map
+})
+const { search, filtered } = useSearch(items, (row) => {
+  const plat = platformById.value.get(row.platform_id)
+  return valuesText(
+    manufacturerById.value.get(row.manufacturer_id),
+    row.model,
+    plat ? `${plat.name} ${plat.slug}` : '',
+    row.slug,
+    row.vm ? 'VM' : '',
+    row.source,
+  )
 })
 
 function emptyTypeForm() {
@@ -249,8 +258,10 @@ function saveDetail() {
     })
 }
 
-function removeDetail() {
+async function removeDetail() {
   if (!editingId.value) return
+  const name = form.value.model || detailType.value?.model || ''
+  if (!(await confirmDelete(`device type ${name}`))) return
   deleting.value = true
   deleteDeviceType(editingId.value)
     .then(() => {
@@ -355,10 +366,16 @@ async function saveTemplate() {
   }
 }
 
-function removeTemplate(row) {
+async function removeTemplate() {
+  const row = templates.value.find((t) => t.id === templateEditingId.value)
+  if (!row) return
+  if (!(await confirmDelete(`interface template ${row.name}`))) return
   templateDeleting.value = true
   deleteDeviceTypeInterface(row.id)
-    .then(() => loadTemplates())
+    .then(() => {
+      templateFormOpen.value = false
+      loadTemplates()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -370,6 +387,10 @@ function removeTemplate(row) {
       templateDeleting.value = false
     })
 }
+
+const { search: templateSearch, filtered: filteredTemplates } = useSearch(templates, (row) =>
+  valuesText(row.name, typeLabel(row.type), row.label, row.description, row.source),
+)
 
 const templateColumns = [
   { id: 'actions', header: '' },
@@ -401,16 +422,17 @@ onMounted(() => {
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="items"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No device types found.'"
+      :empty="
+        error || (search && items.length ? 'Nothing matches the search.' : 'No device types found.')
+      "
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -457,12 +479,7 @@ onMounted(() => {
     </UTable>
   </div>
 
-  <FormModal
-    v-model:open="createDialog"
-    :source="form"
-    title="New device type"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
+  <FormModal v-model:open="createDialog" :source="form" title="New device type">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Manufacturer">
@@ -484,15 +501,17 @@ onMounted(() => {
         <UCheckbox v-model="form.full_depth" label="Full depth (blocks front and rear)" />
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="createDialog = false" />
-      <UButton
-        v-if="canWrite"
-        label="Create"
-        icon="i-lucide-check"
-        :loading="saving"
-        @click="saveNew"
-      />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canWrite"
+          label="Create"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="saveNew"
+        />
+      </div>
     </template>
   </FormModal>
 
@@ -515,75 +534,76 @@ onMounted(() => {
       </div>
     </template>
     <template #overview>
-      <div class="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-y-3 gap-x-3">
-        <label class="font-bold whitespace-nowrap">Manufacturer</label>
-        <USelect
-          v-if="canWrite && editingLocal"
-          v-model="form.manufacturer_id"
-          :items="manufacturerItems"
-          class="w-full"
-        />
-        <UInput
-          v-else
-          :model-value="manufacturerById.get(form.manufacturer_id) || ''"
-          disabled
-          class="w-full"
-        />
-
-        <label class="font-bold whitespace-nowrap">Model</label>
-        <UInput v-model="form.model" class="w-full" :disabled="!(canWrite && editingLocal)" />
-
-        <label class="font-bold whitespace-nowrap">Platform</label>
-        <USelect
-          v-if="canWrite && editingLocal"
-          v-model="form.platform_id"
-          :items="platformItems"
-          class="w-full"
-        />
-        <UInput
-          v-else
-          :model-value="
-            platformById.get(form.platform_id)
-              ? `${platformById.get(form.platform_id).name} (${platformById.get(form.platform_id).slug})`
-              : '—'
-          "
-          disabled
-          class="w-full"
-        />
-
-        <label class="font-bold whitespace-nowrap">Slug</label>
-        <UInput
-          v-model="form.slug"
-          class="w-full font-mono"
-          :disabled="!(canWrite && editingLocal)"
-        />
-
-        <label class="font-bold whitespace-nowrap">Height (U)</label>
-        <UInput
-          v-model="form.height_u"
-          class="w-full"
-          :disabled="!(canWrite && editingLocal)"
-          placeholder="unknown"
-        />
-
-        <label class="font-bold whitespace-nowrap">VM</label>
-        <UCheckbox
-          v-model="form.vm"
-          label="This device type is a virtual machine"
-          :disabled="!(canWrite && editingLocal)"
-        />
-
-        <label class="font-bold whitespace-nowrap">Full depth</label>
-        <UCheckbox
-          v-model="form.full_depth"
-          label="Blocks both faces"
-          :disabled="!(canWrite && editingLocal)"
-        />
+      <div class="flex flex-col gap-4">
+        <UFormField label="Manufacturer">
+          <USelect
+            v-if="canWrite && editingLocal"
+            v-model="form.manufacturer_id"
+            :items="manufacturerItems"
+            class="w-full"
+          />
+          <UInput
+            v-else
+            :model-value="manufacturerById.get(form.manufacturer_id) || ''"
+            disabled
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Model">
+          <UInput v-model="form.model" class="w-full" :disabled="!(canWrite && editingLocal)" />
+        </UFormField>
+        <UFormField label="Platform">
+          <USelect
+            v-if="canWrite && editingLocal"
+            v-model="form.platform_id"
+            :items="platformItems"
+            class="w-full"
+          />
+          <UInput
+            v-else
+            :model-value="
+              platformById.get(form.platform_id)
+                ? `${platformById.get(form.platform_id).name} (${platformById.get(form.platform_id).slug})`
+                : '—'
+            "
+            disabled
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Slug">
+          <UInput
+            v-model="form.slug"
+            class="w-full font-mono"
+            :disabled="!(canWrite && editingLocal)"
+          />
+        </UFormField>
+        <UFormField label="Height (U)">
+          <UInput
+            v-model="form.height_u"
+            class="w-full"
+            :disabled="!(canWrite && editingLocal)"
+            placeholder="unknown"
+          />
+        </UFormField>
+        <UFormField label="VM">
+          <UCheckbox
+            v-model="form.vm"
+            label="This device type is a virtual machine"
+            :disabled="!(canWrite && editingLocal)"
+          />
+        </UFormField>
+        <UFormField label="Full depth">
+          <UCheckbox
+            v-model="form.full_depth"
+            label="Blocks both faces"
+            :disabled="!(canWrite && editingLocal)"
+          />
+        </UFormField>
       </div>
     </template>
     <template #interfaces>
       <div class="flex flex-col h-full min-h-0">
-        <div class="flex flex-wrap items-end gap-2 mb-4 shrink-0">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4 shrink-0">
           <UButton
             v-if="canWrite"
             label="New"
@@ -592,13 +612,18 @@ onMounted(() => {
             color="neutral"
             @click="openNewTemplate"
           />
+          <SearchInput v-model="templateSearch" />
         </div>
         <UTable
           v-model:sorting="templateSorting"
-          :data="templates"
+          :data="filteredTemplates"
           :columns="templateColumns"
+          :empty="
+            templateSearch && templates.length
+              ? 'Nothing matches the search.'
+              : 'No interface templates on this device type.'
+          "
           :loading="templatesLoading"
-          :empty="'No interface templates on this device type.'"
           sticky
           class="flex-1 min-h-0 overflow-y-auto"
         >
@@ -613,47 +638,38 @@ onMounted(() => {
             <span class="whitespace-nowrap">{{ typeLabel(row.original.type) }}</span>
           </template>
           <template #actions-cell="{ row }">
-            <div class="flex gap-1">
-              <UButton
-                icon="i-lucide-pencil"
-                variant="ghost"
-                color="neutral"
-                size="sm"
-                title="Edit interface"
-                @click="openEditTemplate(row.original)"
-              />
-              <UButton
-                v-if="canWrite && isLocal(row.original)"
-                icon="i-lucide-trash"
-                variant="ghost"
-                color="error"
-                size="sm"
-                :loading="templateDeleting"
-                @click="removeTemplate(row.original)"
-              />
-            </div>
+            <UButton
+              icon="i-lucide-pencil"
+              variant="ghost"
+              color="neutral"
+              size="sm"
+              title="Edit interface"
+              @click="openEditTemplate(row.original)"
+            />
           </template>
         </UTable>
       </div>
     </template>
-    <template #footer>
-      <UButton
-        v-if="canWrite && editingLocal"
-        label="Delete"
-        icon="i-lucide-trash"
-        color="error"
-        variant="ghost"
-        :loading="deleting"
-        @click="removeDetail"
-      />
-      <UButton
-        v-if="canWrite && editingLocal"
-        label="Save"
-        icon="i-lucide-check"
-        :loading="saving"
-        @click="saveDetail"
-      />
-      <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="canWrite && editingLocal"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="removeDetail"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canWrite && editingLocal"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="saveDetail"
+        />
+      </div>
     </template>
   </DcimDetailDialog>
 
@@ -664,8 +680,11 @@ onMounted(() => {
     kind="template"
     :writable="templateEditingLocal"
     :saving="templateSaving"
+    :deleting="templateDeleting"
     :editing="!!templateEditingId"
     :can-write="canWrite"
+    :can-delete="!!templateEditingId && canWrite && templateEditingLocal"
     @save="saveTemplate"
+    @delete="removeTemplate"
   />
 </template>

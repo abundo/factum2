@@ -3,8 +3,12 @@ import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, ref } from 'vue'
 import draggable from 'vuedraggable'
 import { createLink, deleteLink, getAdminLinks, reorderLinks, updateLink } from '@/api/links'
+import SearchInput from '@/components/SearchInput.vue'
+import { useConfirm } from '@/composables/useConfirm'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 
 const MAX_ICON_BYTES = 300 * 1024
 
@@ -18,8 +22,10 @@ const link = ref({})
 const iconFile = ref(null)
 const submitted = ref(false)
 const saving = ref(false)
-const deleteDialog = ref(false)
-const linkToDelete = ref(null)
+const deleting = ref(false)
+const { search, filtered } = useSearch(links, (row) =>
+  valuesText(row.group, row.name, row.url, row.open_in_new_tab ? 'new tab' : ''),
+)
 
 const groupOptions = computed(() => [...new Set(links.value.map((l) => l.group).filter(Boolean))])
 
@@ -55,11 +61,6 @@ function editLink(row) {
   iconFile.value = null
   submitted.value = false
   linkDialog.value = true
-}
-
-function hideDialog() {
-  linkDialog.value = false
-  submitted.value = false
 }
 
 function onIconFileChange(file) {
@@ -121,13 +122,11 @@ function saveLink() {
     })
 }
 
-function confirmDelete(row) {
-  linkToDelete.value = row
-  deleteDialog.value = true
-}
-
-function performDelete() {
-  deleteLink(linkToDelete.value.id)
+async function performDelete() {
+  if (!link.value?.id) return
+  if (!(await confirmDelete(`link ${link.value.name}`))) return
+  deleting.value = true
+  deleteLink(link.value.id)
     .then(() => {
       toast.add({
         color: 'success',
@@ -135,6 +134,7 @@ function performDelete() {
         description: 'Link deleted',
         duration: 3000,
       })
+      linkDialog.value = false
       loadLinks()
     })
     .catch((err) => {
@@ -146,8 +146,7 @@ function performDelete() {
       })
     })
     .finally(() => {
-      deleteDialog.value = false
-      linkToDelete.value = null
+      deleting.value = false
     })
 }
 
@@ -176,9 +175,12 @@ onMounted(loadLinks)
   </div>
   <template v-else>
     <div class="card">
-      <div class="flex items-center justify-between mb-2">
-        <h4 class="m-0 font-semibold text-lg">Dashboard links</h4>
-        <UButton label="New" icon="i-lucide-plus" color="neutral" @click="openNew" />
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div class="flex items-center gap-2">
+          <h4 class="m-0 font-semibold text-lg">Dashboard links</h4>
+          <UButton label="New" icon="i-lucide-plus" color="neutral" @click="openNew" />
+        </div>
+        <SearchInput v-model="search" class="w-64" />
       </div>
       <p class="text-muted-color mb-4">
         Shortcuts shown on the dashboard, grouped by "Group". Drag the handle to reorder.
@@ -187,9 +189,14 @@ onMounted(loadLinks)
       <div v-if="loading" class="text-muted-color py-4">Loading...</div>
       <div v-else-if="error" class="text-muted-color py-4">{{ error }}</div>
       <div v-else-if="!links.length" class="text-muted-color py-4">No links found.</div>
+      <div v-else-if="search && !filtered.length" class="text-muted-color py-4">
+        Nothing matches the search.
+      </div>
       <draggable
         v-else
-        v-model="links"
+        :model-value="filtered"
+        :disabled="!!search"
+        @update:model-value="(rows) => (links = rows)"
         item-key="id"
         handle=".drag-handle"
         tag="div"
@@ -227,22 +234,13 @@ onMounted(loadLinks)
               />
             </div>
             <div class="table-cell align-middle py-3">
-              <div class="flex gap-2">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="outline"
-                  color="neutral"
-                  size="sm"
-                  @click="editLink(element)"
-                />
-                <UButton
-                  icon="i-lucide-trash-2"
-                  variant="outline"
-                  color="error"
-                  size="sm"
-                  @click="confirmDelete(element)"
-                />
-              </div>
+              <UButton
+                icon="i-lucide-pencil"
+                variant="outline"
+                color="neutral"
+                size="sm"
+                @click="editLink(element)"
+              />
             </div>
           </div>
         </template>
@@ -250,13 +248,11 @@ onMounted(loadLinks)
     </div>
   </template>
 
-  <FormModal v-model:open="linkDialog" :source="link" title="Link Details" :ui="{ content: 'sm:max-w-md' }">
+  <FormModal v-model:open="linkDialog" :source="link" title="Link Details">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="group" class="block font-bold mb-3">Group</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Group">
           <UInput
-            id="group"
             v-model.trim="link.group"
             list="link-group-options"
             :color="submitted && !link.group?.trim() ? 'error' : undefined"
@@ -268,42 +264,29 @@ onMounted(loadLinks)
           <datalist id="link-group-options">
             <option v-for="g in groupOptions" :key="g" :value="g" />
           </datalist>
-          <small v-if="submitted && !link.group?.trim()" class="text-red-500"
-            >Group is required.</small
-          >
-        </div>
-        <div>
-          <label for="name" class="block font-bold mb-3">Name</label>
+          <small v-if="submitted && !link.group?.trim()" class="text-red-500">Group is required.</small>
+        </UFormField>
+        <UFormField label="Name">
           <UInput
-            id="name"
             v-model.trim="link.name"
             :color="submitted && !link.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !link.name?.trim()"
             class="w-full"
           />
-          <small v-if="submitted && !link.name?.trim()" class="text-red-500"
-            >Name is required.</small
-          >
-        </div>
-        <div>
-          <label for="url" class="block font-bold mb-3">URL</label>
+          <small v-if="submitted && !link.name?.trim()" class="text-red-500">Name is required.</small>
+        </UFormField>
+        <UFormField label="URL">
           <UInput
-            id="url"
             v-model.trim="link.url"
             placeholder="https://example.com"
             :color="submitted && !link.url?.trim() ? 'error' : undefined"
             :highlight="submitted && !link.url?.trim()"
             class="w-full"
           />
-          <small v-if="submitted && !link.url?.trim()" class="text-red-500"
-            >URL is required.</small
-          >
-        </div>
-        <div>
-          <UCheckbox v-model="link.open_in_new_tab" label="Open in new tab" />
-        </div>
-        <div>
-          <label class="block font-bold mb-3">Icon (optional)</label>
+          <small v-if="submitted && !link.url?.trim()" class="text-red-500">URL is required.</small>
+        </UFormField>
+        <UCheckbox v-model="link.open_in_new_tab" label="Open in new tab" />
+        <UFormField label="Icon (optional)">
           <div class="flex items-center gap-3">
             <img
               v-if="link.icon"
@@ -328,29 +311,24 @@ onMounted(loadLinks)
               @click="removeIcon"
             />
           </div>
-        </div>
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveLink" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="link.id"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveLink" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Confirm" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <div class="flex items-center gap-4">
-        <UIcon name="i-lucide-triangle-alert" class="size-8 text-warning" />
-        <span v-if="linkToDelete"
-          >Delete link <b>{{ linkToDelete.name }}</b
-          >?</span
-        >
-      </div>
-    </template>
-    <template #footer>
-      <UButton label="No" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton label="Yes" icon="i-lucide-check" color="error" @click="performDelete" />
-    </template>
-  </UModal>
 </template>

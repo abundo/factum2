@@ -1,6 +1,9 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
+import { useConfirm } from '@/composables/useConfirm'
+import { useFormGuard } from '@/composables/useFormGuard'
+import { wideModal } from '@/utils/form'
 import {
   createConnection,
   deleteConnection,
@@ -18,6 +21,7 @@ const props = defineProps({
 const emit = defineEmits(['update:deviceIds'])
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 
 const stage = ref(null)
 const scroller = ref(null)
@@ -146,9 +150,12 @@ function isValidDrop(iface, index) {
 }
 
 function handleClass(iface, index, dir) {
-  const drop = isValidDrop(iface, index) && (!iface.connection || dir === cableSide(iface, index) || !iface.connection)
+  const drop =
+    isValidDrop(iface, index) &&
+    (!iface.connection || dir === cableSide(iface, index) || !iface.connection)
   const hot = drop && hoverKey.value === portKey(index, iface.id, dir)
-  const mine = pending.value && pending.value.fromIndex === index && pending.value.fromId === iface.id
+  const mine =
+    pending.value && pending.value.fromIndex === index && pending.value.fromId === iface.id
   const connectedHere = cableSide(iface, index) === dir
   const parts = [
     'relative z-10 size-5 shrink-0 rounded-full border-2 shadow-sm transition-transform touch-none',
@@ -315,7 +322,10 @@ function overflowAncestors(el) {
   while (n && n !== document.documentElement) {
     const style = getComputedStyle(n)
     const oy = style.overflowY
-    if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && n.scrollHeight > n.clientHeight + 1) {
+    if (
+      (oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
+      n.scrollHeight > n.clientHeight + 1
+    ) {
       out.push(n)
     }
     n = n.parentElement
@@ -390,7 +400,10 @@ function onPointerMove(e) {
   if (handle) {
     showRingTip(
       e,
-      findIface(Number(handle.getAttribute('data-col')), Number(handle.getAttribute('data-iface-id'))),
+      findIface(
+        Number(handle.getAttribute('data-col')),
+        Number(handle.getAttribute('data-iface-id')),
+      ),
     )
   } else {
     ringTip.value = null
@@ -485,7 +498,9 @@ function connectPorts(fromId, toId, reconnectId) {
     : createConnection(payload)
   req
     .then(() => load())
-    .catch((err) => toast.add({ color: 'error', title: 'Could not save cable', description: errMsg(err) }))
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Could not save cable', description: errMsg(err) }),
+    )
 }
 
 function labelFor(id) {
@@ -497,8 +512,25 @@ function selectCable(c) {
   syncEditFrom(c)
 }
 
-function closeSelected() {
+const cableGuardOpen = ref(false)
+const cableForm = computed(() => ({
+  label: editLabel.value,
+  a: editA.value,
+  b: editB.value,
+}))
+const { close: closeCable } = useFormGuard(cableForm, cableGuardOpen, () => {
   selected.value = null
+})
+
+watch(selected, async (cable) => {
+  cableGuardOpen.value = false
+  if (!cable) return
+  await nextTick()
+  cableGuardOpen.value = true
+})
+
+function closeSelected() {
+  closeCable()
 }
 
 function saveSelected() {
@@ -514,7 +546,9 @@ function saveSelected() {
       selected.value = null
       return load()
     })
-    .catch((err) => toast.add({ color: 'error', title: 'Could not change cable', description: errMsg(err) }))
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Could not change cable', description: errMsg(err) }),
+    )
     .finally(() => {
       saving.value = false
     })
@@ -528,20 +562,21 @@ function removeCable(cable) {
       if (selected.value?.id === cable.id) selected.value = null
       return load()
     })
-    .catch((err) => toast.add({ color: 'error', title: 'Could not remove cable', description: errMsg(err) }))
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Could not remove cable', description: errMsg(err) }),
+    )
     .finally(() => {
       saving.value = false
     })
 }
 
-function removeSelected() {
-  removeCable(selected.value)
-}
-
-function removeCableAt(index, iface) {
-  if (!iface?.connection || !isAdjacentCable(iface, index)) return
-  const cable = findCable(iface.connection.id)
-  if (cable) removeCable(cable)
+async function removeSelected() {
+  const cable = selected.value
+  if (!cable || !props.canWrite) return
+  const name =
+    (cable.label || '').trim() || `${cable.device_a_name || 'A'} – ${cable.device_b_name || 'B'}`
+  if (!(await confirmDelete(`cable ${name}`))) return
+  removeCable(cable)
 }
 
 function ifaceItems(deviceId) {
@@ -578,8 +613,8 @@ watch(drawnCables, () => nextTick(measure))
       <p class="text-muted text-sm m-0">
         Physical interfaces only. Point at a port circle to see where it connects, and click a
         connected circle to open that device in the next column. Drag between circles on
-        neighbouring devices to create a cable, or click one free port then the other. Click a
-        cable line to change it, or use the trash control to remove it.
+        neighbouring devices to create a cable, or click one free port then the other. Click a cable
+        line to change or remove it.
       </p>
       <UButton
         label="Add device"
@@ -626,7 +661,9 @@ watch(drawnCables, () => nextTick(measure))
               @click="removeColumn(index)"
             />
           </div>
-          <div v-if="loading && deviceId && !deviceAt(index)" class="text-xs text-muted">Loading…</div>
+          <div v-if="loading && deviceId && !deviceAt(index)" class="text-xs text-muted">
+            Loading…
+          </div>
           <div v-else-if="deviceAt(index)" class="flex flex-col">
             <div
               v-for="iface in portsAt(index)"
@@ -652,34 +689,12 @@ watch(drawnCables, () => nextTick(measure))
                 @pointerleave="ringTip = null"
                 @pointerdown="startDrag($event, iface, index, 'left')"
               />
-              <UButton
-                v-if="canWrite && iface.connection && cableSide(iface, index) === 'left'"
-                icon="i-lucide-trash"
-                variant="ghost"
-                color="error"
-                size="xs"
-                :loading="saving"
-                title="Remove cable"
-                @pointerdown.stop
-                @click.stop="removeCableAt(index, iface)"
-              />
               <div class="min-w-0 flex-1 leading-tight">
                 <div class="truncate font-mono text-xs">{{ iface.name }}</div>
                 <div v-if="iface.description" class="truncate text-[10px] text-muted">
                   {{ iface.description }}
                 </div>
               </div>
-              <UButton
-                v-if="canWrite && iface.connection && cableSide(iface, index) === 'right'"
-                icon="i-lucide-trash"
-                variant="ghost"
-                color="error"
-                size="xs"
-                :loading="saving"
-                title="Remove cable"
-                @pointerdown.stop
-                @click.stop="removeCableAt(index, iface)"
-              />
               <button
                 v-if="showHandle(iface, index, 'right')"
                 type="button"
@@ -695,7 +710,9 @@ watch(drawnCables, () => nextTick(measure))
                 @pointerdown="startDrag($event, iface, index, 'right')"
               />
             </div>
-            <div v-if="!portsAt(index).length" class="text-xs text-muted">No physical interfaces.</div>
+            <div v-if="!portsAt(index).length" class="text-xs text-muted">
+              No physical interfaces.
+            </div>
           </div>
           <div v-else-if="!deviceId" class="text-xs text-muted">Select a device.</div>
         </div>
@@ -748,8 +765,9 @@ watch(drawnCables, () => nextTick(measure))
 
     <UModal
       :open="!!selected"
+      :dismissible="false"
       title="Cable"
-      :ui="{ content: 'sm:max-w-md' }"
+      :ui="wideModal"
       @update:open="(v) => !v && closeSelected()"
     >
       <template v-if="selected" #body>
@@ -787,16 +805,25 @@ watch(drawnCables, () => nextTick(measure))
           <p v-else class="text-muted">You need write permission to change this cable.</p>
         </div>
       </template>
-      <template v-if="selectedWritable" #footer>
-        <UButton label="Cancel" variant="ghost" @click="closeSelected" />
-        <UButton
-          label="Remove cable"
-          color="error"
-          variant="outline"
-          :loading="saving"
-          @click="removeSelected"
-        />
-        <UButton label="Save" :loading="saving" @click="saveSelected" />
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton
+            v-if="selectedWritable"
+            label="Delete"
+            icon="i-lucide-trash"
+            color="error"
+            variant="ghost"
+            :loading="saving"
+            @click="removeSelected"
+          />
+          <UButton
+            :label="selectedWritable ? 'Cancel' : 'Close'"
+            variant="ghost"
+            class="ms-auto"
+            @click="closeSelected"
+          />
+          <UButton v-if="selectedWritable" label="Save" :loading="saving" @click="saveSelected" />
+        </div>
       </template>
     </UModal>
   </div>

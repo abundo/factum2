@@ -1,7 +1,8 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { getMe, updateMe } from '@/api/me'
+import { usePageForm } from '@/composables/useFormGuard'
 
 const toast = useToast()
 
@@ -16,6 +17,18 @@ const passwordForm = reactive({ current_password: '', new_password: '', confirm_
 const showCurrentPassword = ref(false)
 const showNewPassword = ref(false)
 const showConfirmPassword = ref(false)
+
+const pageForm = computed(() => ({
+  username: profile.username,
+  name: profile.name,
+  email: profile.email,
+  mobile: profile.mobile,
+  profilePassword: profilePassword.value,
+  current_password: passwordForm.current_password,
+  new_password: passwordForm.new_password,
+  confirm_password: passwordForm.confirm_password,
+}))
+const { mark } = usePageForm(pageForm)
 
 function loadProfile() {
   loading.value = true
@@ -33,6 +46,7 @@ function loadProfile() {
     })
     .finally(() => {
       loading.value = false
+      mark()
     })
 }
 
@@ -47,6 +61,7 @@ function saveProfile() {
     .then((data) => {
       profilePassword.value = ''
       Object.assign(profile, data)
+      mark()
       toast.add({
         color: 'success',
         title: 'Successful',
@@ -98,6 +113,7 @@ function changePassword() {
       passwordForm.new_password = ''
       passwordForm.confirm_password = ''
       passwordSubmitted.value = false
+      mark()
       toast.add({
         color: 'success',
         title: 'Successful',
@@ -130,24 +146,19 @@ onMounted(loadProfile)
           <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
         </div>
         <div v-else class="flex flex-col gap-6">
-          <div>
-            <label for="username" class="block font-bold mb-3">Username</label>
+          <UFormField label="Username">
             <UInput id="username" v-model="profile.username" disabled class="w-full" />
-          </div>
-          <div>
-            <label for="name" class="block font-bold mb-3">Name</label>
+          </UFormField>
+          <UFormField label="Name">
             <UInput id="name" v-model="profile.name" class="w-full" />
-          </div>
-          <div>
-            <label for="email" class="block font-bold mb-3">Email</label>
+          </UFormField>
+          <UFormField label="Email">
             <UInput id="email" v-model="profile.email" class="w-full" />
-          </div>
-          <div>
-            <label for="mobile" class="block font-bold mb-3">Mobile</label>
+          </UFormField>
+          <UFormField label="Mobile">
             <UInput id="mobile" v-model="profile.mobile" class="w-full" />
-          </div>
-          <div>
-            <label for="profile_current_password" class="block font-bold mb-3">Current password</label>
+          </UFormField>
+          <UFormField label="Current password" hint="Required when you change the email address.">
             <UInput
               id="profile_current_password"
               v-model="profilePassword"
@@ -155,8 +166,7 @@ onMounted(loadProfile)
               class="w-full"
               autocomplete="current-password"
             />
-            <p class="text-sm text-muted mt-2">Required when you change the email address.</p>
-          </div>
+          </UFormField>
           <div>
             <UButton label="Save" icon="i-lucide-check" :loading="savingProfile" @click="saveProfile" />
           </div>
@@ -168,8 +178,7 @@ onMounted(loadProfile)
       <div class="card">
         <div class="font-semibold text-xl mb-4">Change password</div>
         <div class="flex flex-col gap-6">
-          <div>
-            <label for="current_password" class="block font-bold mb-3">Current password</label>
+          <UFormField label="Current password">
             <UInput
               id="current_password"
               v-model="passwordForm.current_password"
@@ -189,9 +198,8 @@ onMounted(loadProfile)
                 />
               </template>
             </UInput>
-          </div>
-          <div>
-            <label for="new_password" class="block font-bold mb-3">New password</label>
+          </UFormField>
+          <UFormField label="New password">
             <UInput
               id="new_password"
               v-model="passwordForm.new_password"
@@ -211,9 +219,8 @@ onMounted(loadProfile)
                 />
               </template>
             </UInput>
-          </div>
-          <div>
-            <label for="confirm_password" class="block font-bold mb-3">Confirm new password</label>
+          </UFormField>
+          <UFormField label="Confirm new password">
             <UInput
               id="confirm_password"
               v-model="passwordForm.confirm_password"
@@ -239,7 +246,7 @@ onMounted(loadProfile)
                 />
               </template>
             </UInput>
-          </div>
+          </UFormField>
           <div>
             <UButton
               label="Change password"

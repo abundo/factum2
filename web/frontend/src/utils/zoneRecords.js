@@ -84,9 +84,17 @@ export function joinRdataFields(fields) {
     .trim()
 }
 
+// Some Chromium builds (the lab sidecar) have no crypto.randomUUID.
+export function recordKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 export function emptyZoneRecord() {
   return {
-    _key: crypto.randomUUID(),
+    _key: recordKey(),
     name: '',
     ttl: null,
     type: 'A',
@@ -98,7 +106,7 @@ export function emptyZoneRecord() {
 
 export function emptyCommentRecord() {
   return {
-    _key: crypto.randomUUID(),
+    _key: recordKey(),
     name: ';',
     ttl: null,
     type: COMMENT_TYPE,
@@ -109,7 +117,7 @@ export function emptyCommentRecord() {
 
 export function emptyDomainRecord() {
   return {
-    _key: crypto.randomUUID(),
+    _key: recordKey(),
     name: '',
     ttl: null,
     type: DOMAIN_TYPE,
@@ -162,7 +170,7 @@ export function fromApiRecord(row) {
   const comment = isCommentRecord({ type })
   const domain = isDomainRecord({ type })
   return attachRecordOrigin({
-    _key: row.id != null ? `id-${row.id}` : crypto.randomUUID(),
+    _key: row.id != null ? `id-${row.id}` : recordKey(),
     name: comment ? ';' : row.name || '',
     ttl: comment || domain ? null : (row.ttl ?? null),
     type,

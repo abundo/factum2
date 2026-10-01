@@ -1,9 +1,6 @@
 <template>
   <div class="space-y-2">
-    <div
-      v-if="!disabled || $slots.actions || $slots['leading-actions']"
-      class="flex flex-wrap gap-2"
-    >
+    <div class="flex flex-wrap items-center gap-2">
       <slot name="leading-actions" />
       <UButton
         v-if="!disabled"
@@ -36,6 +33,7 @@
         {{ t('zoneRecords.addDomain') }}
       </UButton>
       <slot name="actions" />
+      <SearchInput v-model="recordSearch" class="ms-auto w-56" />
     </div>
     <UContextMenu :items="contextItems" :disabled="disabled">
       <div
@@ -46,18 +44,19 @@
       >
         <UTable
           sticky="header"
-          :data="records"
+          :data="filteredRecords"
           :columns="columns"
           :get-row-id="getRowId"
           :ui="tableUi"
           :meta="tableMeta"
-          :empty="t('zoneRecords.empty')"
+          :empty="recordEmpty"
           :watch-options="{ deep: false }"
         >
           <template #drag-cell="{ row }">
             <span
-              v-if="isDraftRow(row.index)"
+              v-if="isDraftRow(recordIndex(row))"
               class="inline-flex items-center justify-center size-8 text-muted"
+              :data-record-index="recordIndex(row)"
               :title="t('zoneRecords.add')"
               :aria-label="t('zoneRecords.add')"
             >
@@ -66,6 +65,7 @@
             <span
               v-else-if="isDomainRecord(row.original)"
               class="inline-flex items-center justify-center size-8 text-muted"
+              :data-record-index="recordIndex(row)"
               :title="t('zoneRecords.domain')"
               :aria-label="t('zoneRecords.domain')"
             >
@@ -77,7 +77,8 @@
               :title="t('zoneRecords.drag')"
               :aria-label="t('zoneRecords.drag')"
               :class="disabled && 'pointer-events-none'"
-              @pointerdown="onPointerDown(row.index, $event)"
+              :data-record-index="recordIndex(row)"
+              @pointerdown="onPointerDown(recordIndex(row), $event)"
             >
               <UIcon name="i-lucide-grip-vertical" class="size-3.5 pointer-events-none" />
             </span>
@@ -346,14 +347,14 @@
           <template #actions-cell="{ row }">
             <div class="flex items-center justify-center h-8">
               <UButton
-                v-if="!disabled && !isDraftRow(row.index)"
+                v-if="!disabled && !isDraftRow(recordIndex(row))"
                 type="button"
                 size="xs"
                 color="error"
                 variant="ghost"
                 icon="i-lucide-trash"
                 :aria-label="t('zoneRecords.remove')"
-                @click="removeAt(row.index)"
+                @click="removeAt(recordIndex(row))"
               />
             </div>
           </template>
@@ -367,6 +368,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import DhcpLeasePicker from '@/components/DhcpLeasePicker.vue'
+import SearchInput from '@/components/SearchInput.vue'
+import { useSearch, valuesText } from '@/utils/search'
 import {
   COMMENT_TYPE,
   emptyCommentRecord,
@@ -434,6 +437,22 @@ const records = defineModel({ type: Array, default: () => [] })
 const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
+
+const {
+  search: recordSearch,
+  words: recordWords,
+  filtered: matchedRecords,
+} = useSearch(records, (row) => valuesText(row.name, row.ttl, row.type, row.value))
+const filteredRecords = computed(() => matchedRecords.value)
+const recordEmpty = computed(() =>
+  recordWords.value.length && records.value.length
+    ? 'Nothing matches the search.'
+    : t('zoneRecords.empty'),
+)
+
+function recordIndex(row) {
+  return records.value.indexOf(row.original)
+}
 
 const tableWrap = ref(null)
 
@@ -736,7 +755,7 @@ function setRowType(row, type) {
     row.original.ttl = null
     row.original.description = ''
     row.original.mac = ''
-    focusCell(row.index, 'value')
+    focusCell(recordIndex(row), 'value')
   } else if (type !== COMMENT_TYPE && prev === COMMENT_TYPE) {
     if (row.original.name === ';') row.original.name = ''
   }
@@ -985,7 +1004,9 @@ function appendDraftRow() {
 
 function focusCell(rowIndex, col) {
   nextTick(() => {
-    const tr = tableRows()[rowIndex]
+    const wrap = wrapEl()
+    const mark = wrap?.querySelector(`[data-record-index="${rowIndex}"]`)
+    const tr = mark?.closest('tr')
     if (!tr) return
     const root = tr.querySelector(`[data-record-col="${col}"]`)
     const el = root?.querySelector('input, textarea') || root?.querySelector('button')
@@ -996,6 +1017,7 @@ function focusCell(rowIndex, col) {
 
 function addRow() {
   if (props.disabled) return
+  recordSearch.value = ''
   const list = records.value
   const lastIndex = list.length - 1
   if (lastIndex >= 0 && isDraftRow(lastIndex)) {
@@ -1033,6 +1055,7 @@ function insertCommentAt(index) {
 
 function addComment() {
   if (props.disabled) return
+  recordSearch.value = ''
   const list = records.value
   const lastIndex = list.length - 1
   insertCommentAt(lastIndex >= 0 && isDraftRow(lastIndex) ? lastIndex : list.length)
@@ -1051,6 +1074,7 @@ function insertDomainAt(index) {
 
 function addDomain() {
   if (props.disabled) return
+  recordSearch.value = ''
   const list = records.value
   const lastIndex = list.length - 1
   insertDomainAt(lastIndex >= 0 && isDraftRow(lastIndex) ? lastIndex : list.length)
@@ -1078,18 +1102,25 @@ function captureMenuRow(event) {
     menuRowIndex = -1
     return
   }
-  menuRowIndex = tableRows().indexOf(tr)
+  const mark = tr.querySelector('[data-record-index]')
+  menuRowIndex = mark ? Number(mark.getAttribute('data-record-index')) : -1
 }
 
 function onCellKeydown(event, row, col) {
   if (event.key !== 'Enter' || event.isComposing) return
   event.preventDefault()
-  const next = row.index + 1
-  if (next >= records.value.length) {
+  const colName = col === 'description' ? 'name' : col
+  const visible = filteredRecords.value
+  const pos = visible.indexOf(row.original)
+  const nextRec = pos >= 0 ? visible[pos + 1] : null
+  if (!nextRec) {
     if (isBlankRecord(row.original)) return
+    recordSearch.value = ''
     appendDraftRow()
+    focusCell(records.value.length - 1, colName)
+    return
   }
-  focusCell(next, col === 'description' ? 'name' : col)
+  focusCell(records.value.indexOf(nextRec), colName)
 }
 
 function removeAt(index) {
@@ -1432,7 +1463,7 @@ function onResizeUp() {
 }
 
 function onPointerDown(index, event) {
-  if (props.disabled || event.button !== 0) return
+  if (props.disabled || recordWords.value.length || event.button !== 0) return
   if (isDraftRow(index) || isDomainRecord(records.value[index])) return
   event.preventDefault()
   event.currentTarget.setPointerCapture?.(event.pointerId)

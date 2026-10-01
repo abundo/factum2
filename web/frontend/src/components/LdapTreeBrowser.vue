@@ -156,6 +156,7 @@ onBeforeUnmount(destroyTree)
 <template>
   <UModal
     :open="visible"
+    :dismissible="false"
     title="Browse directory"
     :ui="{
       overlay: 'ldap-browser-layer',

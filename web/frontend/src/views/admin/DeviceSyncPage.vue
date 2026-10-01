@@ -11,9 +11,12 @@ import {
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useSettings } from '@/composables/useSettings'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 
 const {
   settings,
@@ -32,11 +35,10 @@ const auth = ref({})
 const submitted = ref(false)
 const saving = ref(false)
 
-const deleteDialog = ref(false)
-const authToDelete = ref(null)
+const deleting = ref(false)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(auths, (row) => valuesText(row.id, row.name, row.username))
 
 const columns = [
   { id: 'actions', header: '' },
@@ -90,11 +92,6 @@ function editDeviceSyncAuth(row) {
     })
 }
 
-function hideDialog() {
-  authDialog.value = false
-  submitted.value = false
-}
-
 function saveDeviceSyncAuth() {
   submitted.value = true
 
@@ -135,13 +132,11 @@ function saveDeviceSyncAuth() {
     })
 }
 
-function confirmDelete(row) {
-  authToDelete.value = row
-  deleteDialog.value = true
-}
-
-function performDelete() {
-  deleteDeviceSyncAuth(authToDelete.value.id)
+async function performDelete() {
+  if (!auth.value?.id) return
+  if (!(await confirmDelete(`credentials ${auth.value.name}`))) return
+  deleting.value = true
+  deleteDeviceSyncAuth(auth.value.id)
     .then(() => {
       toast.add({
         color: 'success',
@@ -149,6 +144,7 @@ function performDelete() {
         description: 'Credentials deleted',
         duration: 3000,
       })
+      authDialog.value = false
       loadDeviceSyncAuths()
     })
     .catch((err) => {
@@ -160,8 +156,7 @@ function performDelete() {
       })
     })
     .finally(() => {
-      deleteDialog.value = false
-      authToDelete.value = null
+      deleting.value = false
     })
 }
 
@@ -194,64 +189,46 @@ onMounted(loadDeviceSyncAuths)
       </div>
 
       <div v-else class="flex flex-col gap-6">
-        <div class="flex items-center gap-2">
-          <USwitch v-model="settings.device_sync_enabled" id="device_sync_enabled" />
-          <label for="device_sync_enabled" class="font-bold">Enabled</label>
-        </div>
-        <p class="text-muted-color text-sm -mt-3">
-          Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are
-          shared with the Netbox tab under Sources settings; per-device login credentials are
-          managed below.
-        </p>
-        <div>
-          <label for="device_sync_vrf_in_global" class="block font-bold mb-3"
-            >VRFs allocated in the global table</label
-          >
+        <UFormField
+          label="Enabled"
+          hint="Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are shared with the Netbox tab under Sources settings; per-device login credentials are managed below."
+        >
+          <USwitch v-model="settings.device_sync_enabled" />
+        </UFormField>
+        <UFormField label="VRFs allocated in the global table">
           <UTextarea
-            id="device_sync_vrf_in_global"
             v-model="settings.device_sync_vrf_in_global"
             :rows="4"
             placeholder="One VRF name per line"
             class="w-full"
           />
-        </div>
-        <div>
-          <label for="device_sync_device_states" class="block font-bold mb-3"
-            >Netbox device states to sync</label
-          >
+        </UFormField>
+        <UFormField label="Netbox device states to sync">
           <UTextarea
-            id="device_sync_device_states"
             v-model="settings.device_sync_device_states"
             :rows="4"
             placeholder="One state per line, e.g. Active"
             class="w-full"
           />
-        </div>
-        <div>
-          <label for="device_sync_device_ignore" class="block font-bold mb-3">Ignore devices</label>
+        </UFormField>
+        <UFormField label="Ignore devices">
           <UTextarea
-            id="device_sync_device_ignore"
             v-model="settings.device_sync_device_ignore"
             :rows="4"
             placeholder="One device name per line"
             class="w-full"
           />
-        </div>
-        <div>
-          <label for="device_sync_vlan_group_name" class="block font-bold mb-3"
-            >Netbox VLAN group</label
-          >
+        </UFormField>
+        <UFormField
+          label="Netbox VLAN group"
+          hint="Single global Netbox VLAN Group every synced VLAN is created in, along with each interface's untagged/tagged VLAN assignment. Leave empty to disable VLAN sync."
+        >
           <UInput
-            id="device_sync_vlan_group_name"
             v-model="settings.device_sync_vlan_group_name"
             placeholder="e.g. Global VLANs"
             class="w-full"
           />
-          <p class="text-muted-color text-sm mt-2">
-            Single global Netbox VLAN Group every synced VLAN is created in, along with each
-            interface's untagged/tagged VLAN assignment. Leave empty to disable VLAN sync.
-          </p>
-        </div>
+        </UFormField>
       </div>
     </div>
 
@@ -261,7 +238,7 @@ onMounted(loadDeviceSyncAuths)
           <h4 class="m-0">Credentials</h4>
           <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
         </div>
-        <SearchInput v-model="globalFilter" />
+        <SearchInput v-model="search" />
       </div>
       <p class="text-muted-color text-sm mb-4">
         Login credentials used to connect directly to devices: device-sync, service
@@ -272,11 +249,13 @@ onMounted(loadDeviceSyncAuths)
 
       <UTable
         v-model:sorting="sorting"
-        v-model:global-filter="globalFilter"
-        :data="auths"
+        :data="filtered"
         :columns="columns"
         :loading="loading"
-        :empty="error ?? 'No device sync credentials found.'"
+        :empty="
+          error ||
+          (search && auths.length ? 'Nothing matches the search.' : 'No device sync credentials found.')
+        "
         :virtualize="{ estimateSize: 46 }"
         class="max-h-[calc(100vh-380px)]"
       >
@@ -289,39 +268,23 @@ onMounted(loadDeviceSyncAuths)
         </template>
 
         <template #actions-cell="{ row }">
-          <div class="flex gap-2">
-            <UButton
-              icon="i-lucide-pencil"
-              variant="outline"
-              color="neutral"
-              size="sm"
-              @click="editDeviceSyncAuth(row.original)"
-            />
-            <UButton
-              icon="i-lucide-trash-2"
-              variant="outline"
-              color="error"
-              size="sm"
-              @click="confirmDelete(row.original)"
-            />
-          </div>
+          <UButton
+            icon="i-lucide-pencil"
+            variant="outline"
+            color="neutral"
+            size="sm"
+            @click="editDeviceSyncAuth(row.original)"
+          />
         </template>
       </UTable>
     </div>
   </template>
 
-  <FormModal
-    v-model:open="authDialog"
-    :source="auth"
-    title="Device Sync Credentials"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
+  <FormModal v-model:open="authDialog" :source="auth" title="Device Sync Credentials">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="name" class="block font-bold mb-3">Name</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
           <UInput
-            id="name"
             v-model.trim="auth.name"
             :color="submitted && !auth.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !auth.name?.trim()"
@@ -329,40 +292,32 @@ onMounted(loadDeviceSyncAuths)
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !auth.name?.trim()" class="text-red-500"
-            >Name is required.</small
-          >
-        </div>
-        <div>
-          <label for="username" class="block font-bold mb-3">Username</label>
-          <UInput id="username" v-model="auth.username" class="w-full" />
-        </div>
-        <div>
-          <label for="password" class="block font-bold mb-3">Password</label>
-          <PasswordInput id="password" v-model="auth.password" class="w-full" />
-          <small v-if="auth.id" class="text-muted-color"
-            >Leave blank to keep the current password.</small
-          >
-        </div>
+          <small v-if="submitted && !auth.name?.trim()" class="text-red-500">Name is required.</small>
+        </UFormField>
+        <UFormField label="Username">
+          <UInput v-model="auth.username" class="w-full" />
+        </UFormField>
+        <UFormField label="Password">
+          <PasswordInput v-model="auth.password" class="w-full" />
+          <small v-if="auth.id" class="text-muted-color">Leave blank to keep the current password.</small>
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveDeviceSyncAuth" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="auth.id"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveDeviceSyncAuth" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Confirm" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <span v-if="authToDelete"
-        >Delete credentials for <b>{{ authToDelete.name }}</b
-        >?</span
-      >
-    </template>
-    <template #footer>
-      <UButton label="No" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton label="Yes" icon="i-lucide-check" color="error" @click="performDelete" />
-    </template>
-  </UModal>
 </template>

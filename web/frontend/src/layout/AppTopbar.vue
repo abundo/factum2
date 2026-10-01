@@ -5,6 +5,7 @@ import { useLayout } from '@/layout/composables/layout'
 import { useLogPanel } from '@/layout/composables/logPanel'
 import { useAuthStore } from '@/stores/auth'
 import { useBranding } from '@/composables/useBranding'
+import { confirmDiscard } from '@/composables/useFormGuard'
 import CustomBranding from '@/components/CustomBranding.vue'
 
 const { layoutState, toggleDarkMode, toggleMobileMenu } = useLayout()
@@ -13,7 +14,8 @@ const authStore = useAuthStore()
 const router = useRouter()
 const { branding } = useBranding()
 
-function logout() {
+async function logout() {
+  if (!(await confirmDiscard())) return
   authStore.logout().then(() => router.push('/login'))
 }
 

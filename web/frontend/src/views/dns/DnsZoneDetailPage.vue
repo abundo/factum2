@@ -1,10 +1,18 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import { usePageForm } from '@/composables/useFormGuard'
 import ZoneRecordsTable from '@/components/ZoneRecordsTable.vue'
-import { getDnsZone, listDnsTemplates, listSOATemplates, updateDnsZone } from '@/api/dns'
+import {
+  deleteDnsZone,
+  getDnsZone,
+  listDnsTemplates,
+  listSOATemplates,
+  updateDnsZone,
+} from '@/api/dns'
 import { triggerSync } from '@/api/jobs'
 import { fromApiRecord, toApiRecords, validateZoneRecords } from '@/utils/zoneRecords'
 import { formatZoneFile, parseZoneFile } from '@/utils/zoneFile'
@@ -14,10 +22,13 @@ defineOptions({ name: 'DnsZoneDetailPage' })
 
 const toast = useToast()
 const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const { append: appendLog } = useLogPanel()
 const loaded = ref(false)
 const saving = ref(false)
+const deleting = ref(false)
 const importInput = ref(null)
 const templates = ref([])
 const soas = ref([])
@@ -28,6 +39,7 @@ const form = reactive({
   records: [],
   comment: '',
 })
+const { mark } = usePageForm(form)
 
 const canWrite = computed(() => authStore.canWrite)
 const activeTab = ref('records')
@@ -95,6 +107,7 @@ onMounted(async () => {
     form.dns_template_id = z.dns_template_id
     form.records = (z.records || []).map(fromApiRecord)
     form.comment = z.comment || ''
+    mark()
     loaded.value = true
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to load zone'), color: 'error' })
@@ -197,6 +210,7 @@ async function save({ sync = false } = {}) {
     form.dns_template_id = data.dns_template_id
     form.comment = data.comment || ''
     form.type = data.type || form.type
+    mark()
     if (!sync) {
       toast.add({ title: 'Zone saved', color: 'success' })
       return
@@ -224,6 +238,21 @@ async function save({ sync = false } = {}) {
 function saveAndSync() {
   return save({ sync: true })
 }
+
+async function remove() {
+  if (!canWrite.value || deleting.value) return
+  if (!(await confirmDelete(`zone ${form.name}`))) return
+  deleting.value = true
+  try {
+    await deleteDnsZone(route.params.id)
+    mark()
+    router.push('/dns/zones')
+  } catch (err) {
+    toast.add({ title: errMsg(err, 'Failed to delete zone'), color: 'error' })
+  } finally {
+    deleting.value = false
+  }
+}
 </script>
 
 <template>
@@ -239,7 +268,16 @@ function saveAndSync() {
           <template #info>
             <div class="space-y-4 pt-4">
               <div v-if="canWrite" class="flex flex-wrap gap-2">
-                <UButton type="submit" :loading="saving">Save</UButton>
+                <UButton
+                  type="button"
+                  color="error"
+                  variant="ghost"
+                  icon="i-lucide-trash"
+                  label="Delete"
+                  :loading="deleting"
+                  @click="remove"
+                />
+                <UButton class="ms-auto" type="submit" :loading="saving">Save</UButton>
                 <UButton type="button" :loading="saving" @click="saveAndSync">Save+sync</UButton>
               </div>
               <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2">

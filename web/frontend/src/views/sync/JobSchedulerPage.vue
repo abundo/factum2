@@ -4,13 +4,16 @@ import { useToast } from '@nuxt/ui/composables'
 import { createSchedule, deleteSchedule, getSchedules, updateSchedule } from '@/api/schedules'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/datetime'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'JobSchedulerPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 
 const targetInfo = {
   all: { label: 'All jobs' },
@@ -50,7 +53,6 @@ const targetItems = Object.entries(targetInfo).map(([value, info]) => ({
 const schedules = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
 
 const columns = [
@@ -76,7 +78,6 @@ const form = ref(emptyForm())
 const editingId = ref(null)
 const submitted = ref(false)
 const saving = ref(false)
-const deleteDialog = ref(false)
 const deleting = ref(false)
 const customCron = ref(false)
 
@@ -136,6 +137,19 @@ function scheduleLabel(cron) {
   return cronLabelByValue[cron] ?? cron
 }
 
+const { search, filtered } = useSearch(schedules, (row) =>
+  valuesText(
+    row.name,
+    targetLabel(row.target),
+    scheduleLabel(row.cron),
+    row.cron,
+    row.enabled ? 'Yes' : 'No',
+    formatRun(row.last_run_at),
+    formatRun(row.next_run_at),
+    row.last_error,
+  ),
+)
+
 function formatRun(value) {
   if (!value) {
     return '—'
@@ -191,11 +205,6 @@ function editSchedule(row) {
   dialog.value = true
 }
 
-function hideDialog() {
-  dialog.value = false
-  submitted.value = false
-}
-
 function save() {
   submitted.value = true
   if (!form.value.name?.trim() || !form.value.targets?.length || !form.value.cron?.trim()) {
@@ -236,18 +245,18 @@ function save() {
     })
 }
 
-function confirmDelete() {
-  deleteDialog.value = true
-}
-
-function performDelete() {
+async function performDelete() {
   if (!editingId.value) {
     return
   }
+  const ok = await confirmDelete(
+    `schedule ${form.value.name || 'this schedule'}`,
+    'Jobs already running are not cancelled.',
+  )
+  if (!ok) return
   deleting.value = true
   deleteSchedule(editingId.value)
     .then(() => {
-      deleteDialog.value = false
       dialog.value = false
       toast.add({
         color: 'success',
@@ -296,7 +305,7 @@ onUnmounted(() => {
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <p class="text-muted-color mb-4">
@@ -307,11 +316,10 @@ onUnmounted(() => {
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="schedules"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No schedules yet.'"
+      :empty="error || (search && schedules.length ? 'Nothing matches the search.' : 'No schedules yet.')"
       :virtualize="{ estimateSize: 46 }"
       class="max-h-[calc(100vh-380px)]"
     >
@@ -374,28 +382,24 @@ onUnmounted(() => {
     v-model:open="dialog"
     :source="form"
     :title="isCreate ? 'New schedule' : 'Edit schedule'"
-    :ui="{ content: 'sm:max-w-lg' }"
   >
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="sched-name" class="block font-bold mb-3">Name</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
           <UInput
-            id="sched-name"
             v-model.trim="form.name"
             :color="submitted && !form.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !form.name?.trim()"
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !form.name?.trim()" class="text-red-500"
-            >Name is required.</small
-          >
-        </div>
-        <div>
-          <label for="sched-target" class="block font-bold mb-3">Jobs</label>
+          <small v-if="submitted && !form.name?.trim()" class="text-red-500">Name is required.</small>
+        </UFormField>
+        <UFormField
+          label="Jobs"
+          hint="Pick one or more. They run one at a time, sources before destinations. All jobs is every enabled sync and is not combined with other jobs. Housekeeping is not included in All jobs."
+        >
           <USelectMenu
-            id="sched-target"
             :model-value="form.targets"
             :items="targetItems"
             value-key="value"
@@ -408,84 +412,53 @@ onUnmounted(() => {
           <small v-if="submitted && !form.targets?.length" class="text-red-500">
             Select at least one job.
           </small>
-          <small v-else class="text-muted-color">
-            Pick one or more. They run one at a time, sources before destinations. All jobs is every
-            enabled sync and is not combined with other jobs. Housekeeping is not included in All
-            jobs.
-          </small>
-        </div>
-        <div>
-          <label for="sched-preset" class="block font-bold mb-3">Repeat</label>
+        </UFormField>
+        <UFormField label="Repeat">
           <USelect
-            id="sched-preset"
             v-model="cronPreset"
             :items="cronPresets"
             value-key="value"
             label-key="label"
             class="w-full"
           />
-        </div>
-        <div>
-          <label for="sched-cron" class="block font-bold mb-3">Cron expression</label>
+        </UFormField>
+        <UFormField
+          label="Cron expression"
+          hint="Five fields: minute hour day-of-month month day-of-week. Descriptors like @hourly and @every 15m also work."
+        >
           <UInput
-            id="sched-cron"
             v-model.trim="form.cron"
             :disabled="cronPreset !== 'custom'"
             :color="submitted && !form.cron?.trim() ? 'error' : undefined"
             class="w-full font-mono"
           />
-          <small class="text-muted-color">
-            Five fields: minute hour day-of-month month day-of-week. Descriptors like @hourly and
-            @every 15m also work.
-          </small>
-        </div>
-        <div class="flex items-center gap-3">
-          <USwitch v-model="form.enabled" id="sched-enabled" />
-          <label for="sched-enabled" class="font-bold">Enabled</label>
-        </div>
+        </UFormField>
+        <UFormField label="Enabled">
+          <USwitch v-model="form.enabled" />
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <div class="flex w-full justify-between">
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
         <UButton
           v-if="!isCreate && canWrite"
           label="Delete"
-          icon="i-lucide-trash-2"
-          variant="outline"
+          icon="i-lucide-trash"
           color="error"
-          @click="confirmDelete"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
         />
-        <div class="flex gap-2 ms-auto">
-          <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-          <UButton
-            v-if="canWrite"
-            label="Save"
-            icon="i-lucide-check"
-            :loading="saving"
-            @click="save"
-          />
-        </div>
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canWrite"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="save"
+        />
       </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Delete schedule" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <p>
-        Delete schedule <strong>{{ form.name || 'this schedule' }}</strong
-        >? Jobs already running are not cancelled.
-      </p>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton
-        label="Delete"
-        icon="i-lucide-trash-2"
-        color="error"
-        :loading="deleting"
-        @click="performDelete"
-      />
-    </template>
-  </UModal>
 </template>

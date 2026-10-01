@@ -2,30 +2,38 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import SearchInput from '@/components/SearchInput.vue'
 import {
   createSOATemplate,
   deleteSOATemplate,
   listSOATemplates,
   updateSOATemplate,
 } from '@/api/dns'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'DnsSOATemplatesPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const items = ref([])
 const dialog = ref(false)
 const saving = ref(false)
+const deleting = ref(false)
 const editing = ref(null)
 const form = reactive(emptyForm())
 
 const columns = [
+  { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'mname', header: 'MNAME' },
   { accessorKey: 'rname', header: 'RNAME' },
   { accessorKey: 'ttl', header: 'TTL' },
-  { id: 'actions', header: '' },
 ]
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(row.name, row.mname, row.rname, row.ttl),
+)
 
 function emptyForm() {
   return {
@@ -89,13 +97,18 @@ async function save() {
   }
 }
 
-async function remove(row) {
-  if (!confirm(`Delete SOA template ${row.name}?`)) return
+async function remove() {
+  if (!editing.value) return
+  if (!(await confirmDelete(`SOA template ${editing.value.name}`))) return
+  deleting.value = true
   try {
-    await deleteSOATemplate(row.id)
+    await deleteSOATemplate(editing.value.id)
+    dialog.value = false
     await load()
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to delete SOA template'), color: 'error' })
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -118,35 +131,32 @@ onMounted(load)
         @click="openCreate"
       />
     </div>
-    <UTable :data="items" :columns="columns">
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
+    <UTable
+      :data="filtered"
+      :columns="columns"
+      :empty="search && items.length ? 'Nothing matches the search.' : 'No SOA templates found.'"
+    >
       <template #actions-cell="{ row }">
-        <div class="flex gap-2 justify-end">
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-pencil"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-trash"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          v-if="authStore.canWrite"
+          size="sm"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-pencil"
+          @click="openEdit(row.original)"
+        />
       </template>
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>{{ editing ? 'Edit SOA template' : 'New SOA template' }}</template>
-        <form class="space-y-3" @submit.prevent="save">
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="editing ? 'Edit SOA template' : 'New SOA template'"
+  >
+    <template #body>
+      <form id="soa-template-form" class="space-y-3" @submit.prevent="save">
           <UFormField label="Name">
             <UInput v-model="form.name" class="w-full" required />
           </UFormField>
@@ -172,14 +182,30 @@ onMounted(load)
               <UInput v-model.number="form.expire" type="number" class="w-full" />
             </UFormField>
           </div>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
-            >
-            <UButton type="submit" :loading="saving">Save</UButton>
-          </div>
-        </form>
-      </UCard>
+      </form>
+    </template>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editing && authStore.canWrite"
+          color="error"
+          variant="ghost"
+          icon="i-lucide-trash"
+          label="Delete"
+          type="button"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton
+          class="ms-auto"
+          color="neutral"
+          variant="ghost"
+          type="button"
+          @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="soa-template-form" :loading="saving">Save</UButton>
+      </div>
     </template>
   </FormModal>
 </template>

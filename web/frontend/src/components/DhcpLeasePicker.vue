@@ -4,6 +4,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { listDhcpLeases } from '@/api/dns'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useSearch, valuesText } from '@/utils/search'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const emit = defineEmits(['select'])
@@ -11,7 +12,6 @@ const emit = defineEmits(['select'])
 const toast = useToast()
 const leases = ref([])
 const loading = ref(false)
-const filter = ref('')
 const selectedKey = ref('')
 const table = ref(null)
 const sorting = ref([{ id: 'ip', desc: false }])
@@ -52,6 +52,16 @@ const listedLeases = computed(() =>
     ...row,
     familyLabel: familyLabel(row.family),
   })),
+)
+const {
+  search: filter,
+  words: leaseWords,
+  filtered: filteredLeases,
+} = useSearch(listedLeases, (row) => valuesText(row.mac, row.ip, row.hostname, row.familyLabel))
+const leaseEmpty = computed(() =>
+  leaseWords.value.length && listedLeases.value.length
+    ? 'Nothing matches the search.'
+    : 'No DHCP leases with a MAC address.',
 )
 
 function onSelect(_e, row) {
@@ -119,7 +129,12 @@ watch(
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Select DHCP lease" :ui="{ content: 'sm:max-w-4xl' }">
+  <UModal
+    v-model:open="open"
+    :dismissible="false"
+    title="Select DHCP lease"
+    :ui="{ content: 'sm:max-w-4xl' }"
+  >
     <template #body>
       <div class="flex flex-col gap-2 min-w-0">
         <div class="flex items-center justify-between gap-2">
@@ -132,13 +147,12 @@ watch(
         <UTable
           ref="table"
           v-model:sorting="sorting"
-          v-model:global-filter="filter"
-          :data="listedLeases"
+          :data="filteredLeases"
           :columns="columns"
           :loading="loading"
           :row-selection="rowSelection"
           :get-row-id="leaseKey"
-          empty="No DHCP leases with a MAC address."
+          :empty="leaseEmpty"
           sticky
           class="max-h-[50vh]"
           :ui="pickerTableUi"

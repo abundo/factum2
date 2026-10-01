@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
 import { getForest, updateNamespace, updatePrefix, updateVrf } from '@/api/ipam'
 import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
+import { confirmDiscard, usePageForm } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
@@ -13,8 +14,9 @@ const toast = useToast()
 
 const props = defineProps({
   reloadKey: { type: Number, default: 0 },
+  allowDelete: { type: Boolean, default: false },
 })
-const emit = defineEmits(['contextmenu', 'select'])
+const emit = defineEmits(['contextmenu', 'select', 'delete'])
 
 const TREE_WIDTH_KEY = 'factum:ipam-tree-width'
 const TREE_WIDTH_DEFAULT = 800
@@ -36,6 +38,7 @@ function loadColWidths() {
 const el = ref(null)
 const selected = ref(null)
 const form = ref({})
+const pageForm = usePageForm(form)
 const saving = ref(false)
 const treeWidth = ref(loadTreeWidth())
 const treeResizing = ref(false)
@@ -204,9 +207,7 @@ function fillForm(node) {
       dhcp_gateway: node.dhcp_gateway ?? '',
       dhcp_dns_servers: node.dhcp_dns_servers ?? '',
     }
-    return
-  }
-  if (kind === 'namespace' || kind === 'vrf') {
+  } else if (kind === 'namespace' || kind === 'vrf') {
     form.value = {
       id: node.id,
       namespace_id: node.namespace_id,
@@ -216,13 +217,22 @@ function fillForm(node) {
       import_rt: node.import_rt ?? '',
       export_rt: node.export_rt ?? '',
     }
-    return
+  } else {
+    form.value = {}
   }
-  form.value = {}
+  pageForm.mark()
 }
 
-function onActivate(node) {
+async function onActivate(node) {
   const payload = selectedPayload(node)
+  // setActive back to the current row fires this again. Leave the form as it is.
+  if (selected.value?.key && payload?.key === selected.value.key) return
+  if (selected.value && pageForm.dirty()) {
+    if (!(await confirmDiscard())) {
+      tree?.findKey(selected.value.key)?.setActive()
+      return
+    }
+  }
   selected.value = payload
   fillForm(payload)
   emit('select', payload)
@@ -276,7 +286,10 @@ function saveSelected() {
   }
   saving.value = true
   req
-    .then(() => load(revealKeys))
+    .then(() => {
+      pageForm.mark()
+      return load(revealKeys)
+    })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Request failed.') }),
     )
@@ -507,12 +520,16 @@ function load(revealKeys) {
 
 function filter(q) {
   if (!tree) return
-  const s = (q ?? '').trim()
-  if (!s) {
+  const words = (q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) {
     tree.clearFilter()
     return
   }
-  tree.filterNodes(s, { mode: 'hide' })
+  // Keep the folders and prefixes above a match, and unfold them.
+  tree.filterNodes(
+    (node) => words.every((w) => (node.title ?? '').toLowerCase().includes(w)),
+    { mode: 'hide', autoExpand: true },
+  )
 }
 
 function expandAll() {
@@ -664,8 +681,22 @@ defineExpose({
               <UInput :model-value="selected.description || ''" disabled class="w-full" />
             </div>
           </template>
-          <div v-if="canSaveSelected" class="flex justify-end">
-            <UButton label="Save" :loading="saving" @click="saveSelected" />
+          <div v-if="allowDelete || canSaveSelected" class="flex w-full gap-2">
+            <UButton
+              v-if="allowDelete"
+              label="Delete"
+              icon="i-lucide-trash"
+              color="error"
+              variant="ghost"
+              @click="emit('delete')"
+            />
+            <UButton
+              v-if="canSaveSelected"
+              class="ms-auto"
+              label="Save"
+              :loading="saving"
+              @click="saveSelected"
+            />
           </div>
         </template>
       </div>

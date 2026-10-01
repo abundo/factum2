@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
+import { confirmDiscard } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -459,6 +460,14 @@ router.beforeEach((to) => {
   if (to.meta?.requiresStorage && !authStore.storageEnabled) {
     return { path: '/' }
   }
+})
+
+// Leaving a page with unsaved changes asks first. A query-only change stays
+// on the page. Login is skipped: logout already asked, and a session expiry
+// redirect should not sit on a second prompt.
+router.beforeEach(async (to, from) => {
+  if (to.name === 'login' || to.path === from.path) return
+  if (!(await confirmDiscard())) return false
 })
 
 export default router

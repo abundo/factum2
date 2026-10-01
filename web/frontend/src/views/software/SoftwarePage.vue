@@ -13,6 +13,7 @@ import {
   uploadSoftware,
 } from '@/api/software'
 import FormModal from '@/components/FormModal.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
 
@@ -20,6 +21,7 @@ defineOptions({ name: 'SoftwarePage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const canWrite = computed(() => authStore.canWrite)
 
 const el = ref(null)
@@ -37,7 +39,9 @@ const mkdirSaving = ref(false)
 const renameOpen = ref(false)
 const renameFrom = ref('')
 const renameTo = ref('')
+const renameIsDir = ref(false)
 const renameSaving = ref(false)
+const deleting = ref(false)
 
 const copyOpen = ref(false)
 const copyFrom = ref('')
@@ -291,6 +295,7 @@ function openRename() {
   if (!n) return
   renameFrom.value = n.path
   renameTo.value = n.name
+  renameIsDir.value = !!n.is_dir
   renameOpen.value = true
 }
 
@@ -312,17 +317,23 @@ function saveRename() {
     })
 }
 
-function remove() {
-  const n = selected.value
-  if (!n) return
-  if (!confirm(`Delete ${n.path}?`)) return
-  const parent = parentPath(n.path)
-  deleteSoftware(n.path)
+async function remove() {
+  if (!renameOpen.value || !renameFrom.value) return
+  const kind = renameIsDir.value ? 'folder' : 'file'
+  const name = renameTo.value.trim() || renameFrom.value
+  if (!(await confirmDelete(`${kind} ${name}`))) return
+  const parent = parentPath(renameFrom.value)
+  deleting.value = true
+  deleteSoftware(renameFrom.value)
     .then(() => {
+      renameOpen.value = false
       selected.value = null
       return refreshDir(parent)
     })
     .catch((err) => toast.add({ title: errMsg(err, 'Could not delete'), color: 'error' }))
+    .finally(() => {
+      deleting.value = false
+    })
 }
 
 function pickFiles() {
@@ -424,14 +435,6 @@ onBeforeUnmount(destroyTree)
           :disabled="!selectedIsNode"
           @click="openRename"
         />
-        <UButton
-          label="Delete"
-          icon="i-lucide-trash"
-          color="error"
-          variant="outline"
-          :disabled="!selectedIsNode"
-          @click="remove"
-        />
         <input ref="fileInput" type="file" class="hidden" multiple @change="onFiles" />
       </div>
     </div>
@@ -462,11 +465,13 @@ onBeforeUnmount(destroyTree)
         </UFormField>
       </form>
     </template>
-    <template #footer>
-      <UButton color="neutral" variant="ghost" type="button" @click="mkdirOpen = false"
-        >Cancel</UButton
-      >
-      <UButton type="submit" form="software-mkdir" :loading="mkdirSaving">Create</UButton>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="software-mkdir" :loading="mkdirSaving">Create</UButton>
+      </div>
     </template>
   </FormModal>
 
@@ -478,11 +483,22 @@ onBeforeUnmount(destroyTree)
         </UFormField>
       </form>
     </template>
-    <template #footer>
-      <UButton color="neutral" variant="ghost" type="button" @click="renameOpen = false"
-        >Cancel</UButton
-      >
-      <UButton type="submit" form="software-rename" :loading="renameSaving">Rename</UButton>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="software-rename" :loading="renameSaving">Rename</UButton>
+      </div>
     </template>
   </FormModal>
 
@@ -501,11 +517,13 @@ onBeforeUnmount(destroyTree)
         </UFormField>
       </form>
     </template>
-    <template #footer>
-      <UButton color="neutral" variant="ghost" type="button" @click="copyOpen = false"
-        >Cancel</UButton
-      >
-      <UButton type="submit" form="software-copy" :loading="copySaving">Copy</UButton>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="software-copy" :loading="copySaving">Copy</UButton>
+      </div>
     </template>
   </FormModal>
 </template>

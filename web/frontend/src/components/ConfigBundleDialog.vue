@@ -2,6 +2,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, ref, watch } from 'vue'
 import { exportConfigBundle, importConfigBundle } from '@/api/config'
+import { useFormGuard } from '@/composables/useFormGuard'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -90,6 +91,21 @@ const pickedCount = computed(
     pickedParameters.value.length,
 )
 
+const bundleOpen = computed({
+  get: () => props.open,
+  set: (v) => emit('update:open', v),
+})
+const bundleSource = computed(() => ({
+  related: related.value,
+  includeSecrets: includeSecrets.value,
+  types: pickedTypes.value,
+  cli: pickedCLI.value,
+  macros: pickedMacros.value,
+  parameters: pickedParameters.value,
+  file: importBody.value ? 'selected' : '',
+}))
+const { close: requestClose, onUpdateOpen } = useFormGuard(bundleSource, bundleOpen)
+
 const importSummary = computed(() => {
   const b = importBody.value
   if (!b || typeof b !== 'object') return null
@@ -123,7 +139,7 @@ watch(
 )
 
 function close() {
-  emit('update:open', false)
+  bundleOpen.value = false
 }
 
 function errMsg(err, fallback) {
@@ -260,9 +276,10 @@ async function doImport() {
 <template>
   <UModal
     :open="open"
+    :dismissible="false"
     :title="title"
     :ui="{ content: 'max-w-2xl w-full' }"
-    @update:open="(v) => emit('update:open', v)"
+    @update:open="onUpdateOpen"
   >
     <template #body>
       <div v-if="mode === 'export'" class="flex flex-col gap-4">
@@ -422,23 +439,25 @@ async function doImport() {
       <p v-if="error" class="text-error text-sm whitespace-pre-wrap mt-3 mb-0">{{ error }}</p>
     </template>
     <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="close" />
-      <UButton
-        v-if="mode === 'export'"
-        label="Export"
-        icon="i-lucide-download"
-        :disabled="!pickedCount"
-        :loading="saving"
-        @click="doExport"
-      />
-      <UButton
-        v-else-if="canWrite"
-        label="Import"
-        icon="i-lucide-upload"
-        :disabled="!importBody"
-        :loading="saving"
-        @click="doImport"
-      />
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="requestClose" />
+        <UButton
+          v-if="mode === 'export'"
+          label="Export"
+          icon="i-lucide-download"
+          :disabled="!pickedCount"
+          :loading="saving"
+          @click="doExport"
+        />
+        <UButton
+          v-else-if="canWrite"
+          label="Import"
+          icon="i-lucide-upload"
+          :disabled="!importBody"
+          :loading="saving"
+          @click="doImport"
+        />
+      </div>
     </template>
   </UModal>
 </template>

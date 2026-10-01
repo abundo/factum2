@@ -6,6 +6,8 @@ import { createSite, deleteSite, getSites, updateSite } from '@/api/sites'
 import FormModal from '@/components/FormModal.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SiteTree from '@/components/SiteTree.vue'
+import { useConfirm } from '@/composables/useConfirm'
+import { confirmDiscard, useUnsaved } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 
 defineOptions({ name: 'SitePage' })
@@ -13,14 +15,27 @@ defineOptions({ name: 'SitePage' })
 const toast = useToast()
 const router = useRouter()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const treeRef = ref(null)
 const filter = ref('')
 const selected = ref(null)
 const sites = ref([])
 const form = ref(emptyForm())
+const saved = ref('')
 const saving = ref(false)
 const dialog = ref(null)
-const confirm = ref(null)
+// The create dialog reuses `form`. Its own guard covers that case, so the
+// page only tracks the selected-site form.
+function formSnapshot() {
+  return JSON.stringify(form.value)
+}
+function markSaved() {
+  saved.value = formSnapshot()
+}
+function pageDirty() {
+  return dialog.value !== 'create' && saved.value !== '' && formSnapshot() !== saved.value
+}
+useUnsaved(pageDirty)
 const menu = ref({ open: false, x: 0, y: 0, node: null })
 
 const canWrite = computed(() => authStore.canWrite)
@@ -72,13 +87,18 @@ function itemsFor(node) {
   if (!canWrite.value) return items
   if (items.length) items.push({ id: 'sep' })
   items.push({ id: 'add', label: node ? 'Add child site' : 'Add site' })
-  if (node && node.source !== 'netbox') {
-    items.push({ id: 'sep2' }, { id: 'del', label: 'Delete', danger: true })
-  }
   return items
 }
 
-function onSelect(node) {
+async function onSelect(node) {
+  // setActive back onto the current site fires this again.
+  if (selected.value?.key && node?.key === selected.value.key) return
+  if (pageDirty()) {
+    if (!(await confirmDiscard())) {
+      treeRef.value?.selectKey(selected.value.key)
+      return
+    }
+  }
   selected.value = node
   fillForm(node)
 }
@@ -86,6 +106,7 @@ function onSelect(node) {
 function fillForm(node) {
   if (!node) {
     form.value = emptyForm()
+    markSaved()
     return
   }
   form.value = {
@@ -94,6 +115,7 @@ function fillForm(node) {
     latitude: node.latitude || '',
     longitude: node.longitude || '',
   }
+  markSaved()
 }
 
 function loadSites() {
@@ -127,14 +149,11 @@ function runMenu(id) {
   }
   if (id === 'add') {
     openCreate(node?.id ?? 0)
-    return
-  }
-  if (id === 'del' && node) {
-    confirm.value = { id: node.id, label: node.title }
   }
 }
 
-function openCreate(parentId = 0) {
+async function openCreate(parentId = 0) {
+  if (pageDirty() && !(await confirmDiscard())) return
   form.value = {
     name: '',
     parent_id: parentId || 0,
@@ -191,7 +210,10 @@ function saveSelected() {
   saving.value = true
   const revealKeys = selected.value.key ? treeRef.value?.keyPath(selected.value.key) : []
   updateSite(selected.value.id, payload)
-    .then(() => Promise.all([treeRef.value?.reload(revealKeys), loadSites()]))
+    .then(() => {
+      markSaved()
+      return Promise.all([treeRef.value?.reload(revealKeys), loadSites()])
+    })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Save failed.') }),
     )
@@ -200,13 +222,13 @@ function saveSelected() {
     })
 }
 
-function performDelete() {
-  const c = confirm.value
-  if (!c) return
+async function performDelete() {
+  if (!canSave.value || !selected.value?.id) return
+  const name = (form.value.name || selected.value.title || 'site').trim()
+  if (!(await confirmDelete(`site ${name}`))) return
   saving.value = true
-  deleteSite(c.id)
+  deleteSite(selected.value.id)
     .then(() => {
-      confirm.value = null
       selected.value = null
       fillForm(null)
       return Promise.all([treeRef.value?.reload(), loadSites()])
@@ -328,8 +350,16 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 @click="router.push({ path: '/dcim/connections', query: { site_id: selected.id } })"
               />
             </div>
-            <div v-if="canSave" class="flex justify-end">
-              <UButton label="Save" :loading="saving" @click="saveSelected" />
+            <div v-if="canSave" class="flex w-full gap-2">
+              <UButton
+                label="Delete"
+                icon="i-lucide-trash"
+                color="error"
+                variant="ghost"
+                :loading="saving"
+                @click="performDelete"
+              />
+              <UButton class="ms-auto" label="Save" :loading="saving" @click="saveSelected" />
             </div>
           </template>
         </div>
@@ -380,20 +410,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Add" :loading="saving" @click="saveCreate" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Add" :loading="saving" @click="saveCreate" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal :open="!!confirm" title="Delete" @update:open="(v) => !v && (confirm = null)">
-    <template #body>
-      Delete <strong>{{ confirm?.label }}</strong
-      >?
-    </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="confirm = null" />
-      <UButton label="Delete" color="error" :loading="saving" @click="performDelete" />
-    </template>
-  </UModal>
 </template>

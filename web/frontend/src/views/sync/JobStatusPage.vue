@@ -1,10 +1,12 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { getJobs, getWorkerStatus } from '@/api/jobs'
+import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import JobDetailModal from './JobDetailModal.vue'
 import { formatDateTime } from '@/utils/datetime'
 import { jobDuration, jobStatus, jobTasks } from '@/utils/job'
+import { useSearch, valuesText } from '@/utils/search'
 
 const REFRESH_INTERVAL_MS = 5000
 const AUTO_REFRESH_DURATION_MS = 60 * 60 * 1000
@@ -58,6 +60,20 @@ function formatLastSeen(value) {
   }
   return formatDateTime(value)
 }
+
+const { search: nodeSearch, filtered: filteredNodes } = useSearch(nodes, (row) =>
+  valuesText(
+    row.name,
+    row.address,
+    row.enabled ? 'Yes' : 'No',
+    row.connected ? 'Connected' : 'Disconnected',
+    row.hostname,
+    row.version,
+    row.roles,
+    formatLastSeen(row.last_seen),
+    row.last_error,
+  ),
+)
 
 const jobs = ref([])
 const jobsLoading = ref(true)
@@ -156,6 +172,18 @@ function jobWarningCount(job) {
   return jobTasks(job).reduce((sum, task) => sum + (task.warning_count || 0), 0)
 }
 
+const { search: jobSearch, filtered: filteredJobs } = useSearch(jobs, (row) =>
+  valuesText(
+    jobTargets(row),
+    row.triggered_by,
+    formatDateTime(row.started_at),
+    jobStatus(row).label,
+    jobDuration(row),
+    jobErrorCount(row),
+    jobWarningCount(row),
+  ),
+)
+
 const detailDialog = ref(false)
 const selectedJob = ref(null)
 
@@ -200,12 +228,16 @@ onUnmounted(() => {
       class="mb-4"
     />
 
+    <SearchInput v-model="nodeSearch" class="mb-3 max-w-xs" />
+
     <UTable
       v-model:sorting="nodeSorting"
-      :data="nodes"
+      :data="filteredNodes"
       :columns="nodeColumns"
       :loading="loading"
-      empty="No worker nodes configured."
+      :empty="
+        nodeSearch && nodes.length ? 'Nothing matches the search.' : 'No worker nodes configured.'
+      "
     >
       <template #name-header="{ column }">
         <SortableColumnHeader :column="column" label="Name" />
@@ -244,7 +276,10 @@ onUnmounted(() => {
   </div>
 
   <div class="card">
-    <div class="font-semibold text-xl mb-4">Recent jobs</div>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <div class="font-semibold text-xl">Recent jobs</div>
+      <SearchInput v-model="jobSearch" class="max-w-xs" />
+    </div>
 
     <UAlert
       v-if="jobsLoadError"
@@ -256,10 +291,10 @@ onUnmounted(() => {
 
     <UTable
       v-model:sorting="jobSorting"
-      :data="jobs"
+      :data="filteredJobs"
       :columns="jobColumns"
       :loading="jobsLoading"
-      empty="No jobs yet."
+      :empty="jobSearch && jobs.length ? 'Nothing matches the search.' : 'No jobs yet.'"
     >
       <template #started-header="{ column }">
         <SortableColumnHeader :column="column" label="Started" />

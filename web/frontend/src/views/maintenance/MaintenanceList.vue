@@ -11,7 +11,9 @@ import {
   updateMaintenance,
 } from '@/api/maintenance'
 import { getServices } from '@/api/services'
+import SearchInput from '@/components/SearchInput.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
 const authStore = useAuthStore()
@@ -111,6 +113,10 @@ function resourceSummary(row) {
   }
   return parts.join(', ') || row.resource_type || '—'
 }
+
+const { search, filtered } = useSearch(rows, (row) =>
+  valuesText(row.title, resourceSummary(row), row.starts_at, row.status),
+)
 
 function load() {
   loading.value = true
@@ -215,15 +221,17 @@ onMounted(load)
         @click="openCreate"
       />
     </div>
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
     <UTable
-      :data="rows"
+      :data="filtered"
       :loading="loading"
+      :empty="search && rows.length ? 'Nothing matches the search.' : 'No maintenance windows.'"
       :columns="[
+        { id: 'actions', header: '' },
         { accessorKey: 'title', header: 'Title' },
         { id: 'resource', header: 'Resources' },
         { accessorKey: 'starts_at', header: 'Starts' },
         { accessorKey: 'status', header: 'Status' },
-        { id: 'actions', header: '' },
       ]"
     >
       <template #resource-cell="{ row }">
@@ -231,23 +239,27 @@ onMounted(load)
       </template>
       <template #actions-cell="{ row }">
         <UButton
+          icon="i-lucide-pencil"
           size="sm"
           variant="outline"
           color="neutral"
-          label="Open"
+          aria-label="Open"
           @click="open(row.original)"
         />
       </template>
     </UTable>
   </div>
 
-  <FormModal v-model:open="createOpen" :source="form" title="New maintenance window" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal v-model:open="createOpen" :source="form" title="New maintenance window">
     <template #body>
       <div class="flex flex-col gap-3">
-        <UInput v-model="form.title" placeholder="Title" />
-        <UTextarea v-model="form.description" placeholder="Description" />
-        <div>
-          <div class="font-bold mb-1">Devices</div>
+        <UFormField label="Title">
+          <UInput v-model="form.title" class="w-full" />
+        </UFormField>
+        <UFormField label="Description">
+          <UTextarea v-model="form.description" class="w-full" />
+        </UFormField>
+        <UFormField label="Devices">
           <USelectMenu
             v-model="form.device_ids"
             :items="deviceItems"
@@ -257,9 +269,8 @@ onMounted(load)
             placeholder="Select devices"
             class="w-full"
           />
-        </div>
-        <div>
-          <div class="font-bold mb-1">Fibers</div>
+        </UFormField>
+        <UFormField label="Fibers">
           <USelectMenu
             v-model="form.fiber_keys"
             :items="fiberItems"
@@ -269,9 +280,8 @@ onMounted(load)
             placeholder="Select cables or dark-fiber services"
             class="w-full"
           />
-        </div>
-        <div>
-          <div class="font-bold mb-1">Wavelengths</div>
+        </UFormField>
+        <UFormField label="Wavelengths">
           <USelectMenu
             v-model="form.wavelength_ids"
             :items="wavelengthItems"
@@ -281,18 +291,26 @@ onMounted(load)
             placeholder="Select wavelength services"
             class="w-full"
           />
-        </div>
-        <label>Starts <UInput v-model="form.starts_at" type="datetime-local" /></label>
-        <label>Ends <UInput v-model="form.ends_at" type="datetime-local" /></label>
+        </UFormField>
+        <UFormField label="Starts">
+          <UInput v-model="form.starts_at" type="datetime-local" class="w-full" />
+        </UFormField>
+        <UFormField label="Ends">
+          <UInput v-model="form.ends_at" type="datetime-local" class="w-full" />
+        </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Create" :loading="saving" @click="save" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Create" :loading="saving" @click="save" />
+      </div>
     </template>
   </FormModal>
 
   <UModal
     :open="!!detail"
+    :dismissible="false"
     title="Maintenance"
     @update:open="
       (v) => {

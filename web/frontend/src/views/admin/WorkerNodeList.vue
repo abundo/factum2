@@ -10,6 +10,7 @@ import {
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
 
@@ -23,8 +24,10 @@ const node = ref({})
 const submitted = ref(false)
 const saving = ref(false)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(workerNodes, (row) =>
+  valuesText(row.id, row.name, row.address, row.enabled ? 'Yes' : 'No'),
+)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -83,11 +86,6 @@ function editWorkerNode(row) {
       // existing token, and Generate is right there if a fresh one is
       // wanted instead.
     })
-}
-
-function hideDialog() {
-  nodeDialog.value = false
-  submitted.value = false
 }
 
 function generateToken() {
@@ -155,16 +153,17 @@ onMounted(loadWorkerNodes)
         <h4 class="m-0">Worker nodes</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="workerNodes"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No worker nodes found.'"
+      :empty="
+        error || (search && workerNodes.length ? 'Nothing matches the search.' : 'No worker nodes found.')
+      "
       :virtualize="{ estimateSize: 46 }"
       class="max-h-[calc(100vh-380px)]"
     >
@@ -195,46 +194,32 @@ onMounted(loadWorkerNodes)
     </UTable>
   </div>
 
-  <FormModal v-model:open="nodeDialog" :source="node" title="Worker Node Details" :ui="{ content: 'sm:max-w-lg' }">
+  <FormModal v-model:open="nodeDialog" :source="node" title="Worker Node Details">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="name" class="block font-bold mb-3">Name</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
           <UInput
-            id="name"
             v-model.trim="node.name"
             :color="submitted && !node.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !node.name?.trim()"
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !node.name?.trim()" class="text-red-500"
-            >Name is required.</small
-          >
-        </div>
-        <div>
-          <label for="address" class="block font-bold mb-3">Address</label>
+          <small v-if="submitted && !node.name?.trim()" class="text-red-500">Name is required.</small>
+        </UFormField>
+        <UFormField label="Address" hint="Dialed as wss://host:port/hub. The hub certificate SAN must match this hostname or IP.">
           <UInput
-            id="address"
             v-model.trim="node.address"
             :color="submitted && !node.address?.trim() ? 'error' : undefined"
             :highlight="submitted && !node.address?.trim()"
             placeholder="host:port"
             class="w-full"
           />
-          <small v-if="submitted && !node.address?.trim()" class="text-red-500"
-            >Address is required.</small
-          >
-          <small v-else class="text-muted-color"
-            >Dialed as wss://host:port/hub. The hub certificate SAN must match this hostname or
-            IP.</small
-          >
-        </div>
-        <div>
-          <label for="token" class="block font-bold mb-3">Token</label>
+          <small v-if="submitted && !node.address?.trim()" class="text-red-500">Address is required.</small>
+        </UFormField>
+        <UFormField label="Token">
           <div class="flex gap-2">
             <PasswordInput
-              id="token"
               v-model="node.token"
               :color="submitted && !node.id && !node.token ? 'error' : undefined"
               :highlight="submitted && !node.id && !node.token"
@@ -250,45 +235,39 @@ onMounted(loadWorkerNodes)
               @click="generateToken"
             />
           </div>
-          <small v-if="submitted && !node.id && !node.token" class="text-red-500"
-            >Token is required.</small
+          <small v-if="submitted && !node.id && !node.token" class="text-red-500">Token is required.</small>
+          <small v-else-if="node.id" class="text-muted-color">Leave blank to keep the current token.</small>
+        </UFormField>
+        <UFormField label="Skip TLS certificate verification">
+          <USwitch v-model="node.tls_skip_verify" />
+          <small v-if="node.tls_skip_verify" class="text-amber-600"
+            >Encrypted, but a MITM with any certificate is accepted. Prefer pasting the worker's
+            certificate as TLS CA instead.</small
           >
-          <small v-else-if="node.id" class="text-muted-color"
-            >Leave blank to keep the current token.</small
-          >
-        </div>
-        <div class="flex items-center gap-3">
-          <USwitch v-model="node.tls_skip_verify" id="tls_skip_verify" />
-          <label for="tls_skip_verify" class="font-bold">Skip TLS certificate verification</label>
-        </div>
-        <small v-if="node.tls_skip_verify" class="text-amber-600 -mt-3"
-          >Encrypted, but a MITM with any certificate is accepted. Prefer pasting the worker's
-          certificate as TLS CA instead.</small
+        </UFormField>
+        <UFormField
+          v-if="!node.tls_skip_verify"
+          label="TLS CA certificate (PEM)"
+          hint="Optional. Trust this CA (or the worker's self-signed hub.crt) instead of the system pool. Leave empty to use system CAs."
         >
-        <div v-if="!node.tls_skip_verify">
-          <label for="tls_ca" class="block font-bold mb-3">TLS CA certificate (PEM)</label>
           <UTextarea
-            id="tls_ca"
             v-model="node.tls_ca"
             :rows="6"
             placeholder="-----BEGIN CERTIFICATE-----"
             class="w-full font-mono text-sm"
           />
-          <small class="text-muted-color"
-            >Optional. Trust this CA (or the worker's self-signed hub.crt) instead of the system
-            pool. Leave empty to use system CAs.</small
-          >
-        </div>
-        <div class="flex items-center gap-3">
-          <USwitch v-model="node.enabled" id="enabled" />
-          <label for="enabled" class="font-bold">Enabled</label>
-        </div>
+        </UFormField>
+        <UFormField label="Enabled">
+          <USwitch v-model="node.enabled" />
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveWorkerNode" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveWorkerNode" />
+      </div>
     </template>
   </FormModal>
 </template>

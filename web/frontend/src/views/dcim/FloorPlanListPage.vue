@@ -7,6 +7,7 @@ import { getSites } from '@/api/sites'
 import FormModal from '@/components/FormModal.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'FloorPlanListPage' })
 
@@ -20,7 +21,6 @@ const items = ref([])
 const sites = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const dialog = ref(false)
 const renameDialog = ref(false)
 const saving = ref(false)
@@ -37,11 +37,9 @@ function errMsg(err, fallback) {
 }
 
 const siteItems = computed(() => sites.value.map((s) => ({ label: s.name, value: s.id })))
-const filtered = computed(() => {
-  const q = globalFilter.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter((p) => `${p.name} ${p.site_id}`.toLowerCase().includes(q))
-})
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(row.name, row.width_mm, row.height_mm, row.revision),
+)
 
 function load() {
   loading.value = true
@@ -124,7 +122,7 @@ onMounted(load)
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
     <p class="text-muted text-sm mb-3">
       Floor drawings are stored in Factum. Moving a rack on a plan does not change its site.
@@ -154,7 +152,9 @@ onMounted(load)
           @click="openRename(p)"
         />
       </li>
-      <li v-if="!filtered.length" class="text-muted text-sm">No floor plans.</li>
+      <li v-if="!filtered.length" class="text-muted text-sm">
+        {{ search && items.length ? 'Nothing matches the search.' : 'No floor plans.' }}
+      </li>
     </ul>
   </div>
 
@@ -169,9 +169,11 @@ onMounted(load)
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = false" />
-      <UButton label="Create" :loading="saving" @click="save" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Create" :loading="saving" @click="save" />
+      </div>
     </template>
   </FormModal>
 
@@ -186,9 +188,11 @@ onMounted(load)
         />
       </UFormField>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="renameDialog = false" />
-      <UButton label="Rename" :loading="renaming" @click="saveRename" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Rename" :loading="renaming" @click="saveRename" />
+      </div>
     </template>
   </FormModal>
 </template>

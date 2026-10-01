@@ -3,7 +3,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
-import { createDnsZone, deleteDnsZone, listDnsTemplates, listDnsZones } from '@/api/dns'
+import SearchInput from '@/components/SearchInput.vue'
+import { createDnsZone, listDnsTemplates, listDnsZones } from '@/api/dns'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'DnsZonesPage' })
 
@@ -24,11 +26,15 @@ const typeItems = [
 ]
 
 const columns = [
+  { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'type', header: 'Type' },
   { accessorKey: 'dns_template', header: 'DNS template' },
-  { id: 'actions', header: '' },
 ]
+
+const { search, filtered } = useSearch(zones, (row) =>
+  valuesText(row.name, typeLabel(row.type), row.dns_template),
+)
 
 const templateItems = computed(() => templates.value.map((s) => ({ label: s.name, value: s.id })))
 
@@ -82,16 +88,6 @@ async function save() {
   }
 }
 
-async function remove(row) {
-  if (!confirm(`Delete zone ${row.name}?`)) return
-  try {
-    await deleteDnsZone(row.id)
-    await load()
-  } catch (err) {
-    toast.add({ title: errMsg(err, 'Failed to delete zone'), color: 'error' })
-  }
-}
-
 onMounted(load)
 </script>
 
@@ -113,10 +109,16 @@ onMounted(load)
         @click="openCreate"
       />
     </div>
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
     <div v-if="loading" class="flex justify-center p-4">
       <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
     </div>
-    <UTable v-else :data="zones" :columns="columns">
+    <UTable
+      v-else
+      :data="filtered"
+      :columns="columns"
+      :empty="search && zones.length ? 'Nothing matches the search.' : 'No zones found.'"
+    >
       <template #name-cell="{ row }">
         <RouterLink class="text-primary font-medium" :to="`/dns/zones/${row.original.id}`">
           {{ row.original.name }}
@@ -126,45 +128,42 @@ onMounted(load)
         {{ typeLabel(row.original.type) }}
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2 justify-end">
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-trash"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          size="sm"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-pencil"
+          aria-label="Edit zone"
+          @click="router.push(`/dns/zones/${row.original.id}`)"
+        />
       </template>
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>New zone</template>
-        <form class="space-y-3" @submit.prevent="save">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" required placeholder="example.com" />
-          </UFormField>
-          <UFormField label="Type">
-            <USelect v-model="form.type" :items="typeItems" class="w-full" />
-          </UFormField>
-          <UFormField
-            label="DNS template"
-            hint="NS and SOA records for the zone come from this template."
-          >
-            <USelect v-model="form.dns_template_id" :items="templateItems" class="w-full" />
-          </UFormField>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
-            >
-            <UButton type="submit" :loading="saving">Create</UButton>
-          </div>
-        </form>
-      </UCard>
+  <FormModal v-model:open="dialog" :source="form" title="New zone">
+    <template #body>
+      <form id="dns-zone-form" class="space-y-3" @submit.prevent="save">
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" required placeholder="example.com" />
+        </UFormField>
+        <UFormField label="Type">
+          <USelect v-model="form.type" :items="typeItems" class="w-full" />
+        </UFormField>
+        <UFormField
+          label="DNS template"
+          hint="NS and SOA records for the zone come from this template."
+        >
+          <USelect v-model="form.dns_template_id" :items="templateItems" class="w-full" />
+        </UFormField>
+      </form>
+    </template>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="dns-zone-form" :loading="saving">Create</UButton>
+      </div>
     </template>
   </FormModal>
 </template>

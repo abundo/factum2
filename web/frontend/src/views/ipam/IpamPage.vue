@@ -12,22 +12,33 @@ import {
 import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
 import IpamPrefixTree from '@/components/IpamPrefixTree.vue'
 import SearchInput from '@/components/SearchInput.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 
 defineOptions({ name: 'IpamPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const treeRef = ref(null)
 const filter = ref('')
 const saving = ref(false)
+const selected = ref(null)
 
 const menu = ref({ open: false, x: 0, y: 0, node: null })
 const dialog = ref(null)
 const form = ref({})
-const confirm = ref(null)
 
 const menuItems = computed(() => itemsFor(menu.value.node))
+
+const canDeleteSelected = computed(() => {
+  const node = selected.value
+  if (!node || !authStore.canWrite) return false
+  const kind = node.kind || node.type
+  if (kind === 'namespace' || kind === 'allocated') return true
+  if (kind === 'vrf') return node.source !== 'netbox' && !node.is_default
+  return false
+})
 
 function errMsg(err, fallback) {
   return err.response?.data?.error ?? fallback
@@ -57,25 +68,15 @@ function itemsFor(node) {
   items.push({ id: 'sep' })
   switch (kind) {
     case 'namespace':
-      items.push(
-        { id: 'add-prefix', label: 'Add prefix' },
-        { id: 'add-vrf', label: 'Add VRF' },
-        { id: 'sep2' },
-        { id: 'del-ns', label: 'Delete namespace', danger: true },
-      )
+      items.push({ id: 'add-prefix', label: 'Add prefix' }, { id: 'add-vrf', label: 'Add VRF' })
       break
     case 'vrf':
       items.push({ id: 'add-prefix', label: 'Add prefix' })
-      if (node.source !== 'netbox') {
-        items.push({ id: 'sep2' }, { id: 'del-vrf', label: 'Delete VRF', danger: true })
-      }
       break
     case 'allocated':
       items.push(
         { id: 'add-prefix', label: 'Add child prefix' },
         { id: 'edit-prefix', label: authStore.dhcpEnabled ? 'Edit prefix' : 'Edit description' },
-        { id: 'sep2' },
-        { id: 'del-prefix', label: 'Delete', danger: true },
       )
       break
     default:
@@ -86,6 +87,10 @@ function itemsFor(node) {
 
 function onContextMenu({ x, y, node }) {
   menu.value = { open: true, x, y, node }
+}
+
+function onSelect(node) {
+  selected.value = node
 }
 
 function openEditPrefix(node) {
@@ -148,37 +153,6 @@ async function runMenu(id, node = menu.value.node) {
   }
   if (id === 'edit-prefix') {
     openEditPrefix(node)
-    return
-  }
-  if (id === 'del-ns') {
-    confirm.value = { kind: 'ns', id: node.id, namespace_id: node.namespace_id, label: node.title }
-    return
-  }
-  if (id === 'del-vrf') {
-    if (node.is_default) {
-      toast.add({
-        color: 'warning',
-        title: 'Cannot delete default VRF',
-        description:
-          'Rename it if you want another name. Extra VRFs can be deleted once they have no prefixes.',
-      })
-      return
-    }
-    confirm.value = {
-      kind: 'vrf',
-      id: node.vrf_id || node.id,
-      namespace_id: node.namespace_id,
-      label: node.title,
-    }
-    return
-  }
-  if (id === 'del-prefix') {
-    confirm.value = {
-      kind: 'prefix',
-      id: node.prefix_id || node.id,
-      namespace_id: node.namespace_id,
-      label: node.title,
-    }
   }
 }
 
@@ -249,8 +223,28 @@ function saveDialog() {
     })
 }
 
-function performDelete() {
-  const c = confirm.value
+async function deleteSelected() {
+  const node = selected.value
+  if (!canDeleteSelected.value || !node) return
+  const kind = node.kind || node.type
+  let what = `prefix ${node.title}`
+  let detail = ''
+  const target = { kind: 'prefix', id: node.prefix_id || node.id, namespace_id: node.namespace_id }
+  if (kind === 'namespace') {
+    what = `namespace ${node.title}`
+    target.kind = 'ns'
+    target.id = node.id
+  } else if (kind === 'vrf') {
+    what = `VRF ${node.title}`
+    detail = 'This cannot be undone.'
+    target.kind = 'vrf'
+    target.id = node.vrf_id || node.id
+  }
+  if (!(await confirmDelete(what, detail))) return
+  performDelete(target)
+}
+
+function performDelete(c) {
   if (!c) return
   saving.value = true
   let req
@@ -259,12 +253,8 @@ function performDelete() {
   if (c.kind === 'prefix') req = deletePrefix(c.namespace_id, c.id)
   req
     .then(() => {
-      confirm.value = null
-      if (c.kind === 'ns') treeRef.value?.reload()
-      else {
-        // Parent is one level up; full reload is safest after delete.
-        treeRef.value?.reload()
-      }
+      selected.value = null
+      treeRef.value?.reload()
     })
     .catch((err) =>
       toast.add({ color: 'error', title: 'Error', description: errMsg(err, 'Delete failed.') }),
@@ -335,11 +325,19 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <p class="text-muted-color text-sm mb-3 shrink-0">
       Right-click empty space to add a prefix or VRF at the root (no namespace needed). Right-click a
       namespace for prefixes and extra VRFs in that space. VRF names are unique across all
-      namespaces. Right-click a VRF to delete it (once it has no prefixes). Prefixes under a VRF
-      cannot overlap the root or any other VRF. VRFs synced from NetBox appear at the root and are
-      read-only. Click a row to see details. Click [+] / [−] to expand or collapse.
+      namespaces. Select a namespace, VRF, or prefix and use Delete in its details. A default VRF, a NetBox VRF,
+      and a VRF that still has prefixes cannot be removed. Prefixes under a VRF cannot overlap the
+      root or any other VRF. VRFs synced from NetBox appear at the root and are read-only. Click a
+      row to see details. Click [+] / [−] to expand or collapse.
     </p>
-    <IpamPrefixTree ref="treeRef" class="min-h-0 flex-1" @contextmenu="onContextMenu" />
+    <IpamPrefixTree
+      ref="treeRef"
+      class="min-h-0 flex-1"
+      @contextmenu="onContextMenu"
+      :allow-delete="canDeleteSelected"
+      @select="onSelect"
+      @delete="deleteSelected"
+    />
   </div>
 
   <div
@@ -364,19 +362,19 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   >
     <template #body>
       <div class="flex flex-col gap-4">
-        <div>
-          <label class="block font-bold mb-2">Name</label>
-          <UInput v-model="form.name" autofocus />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Description</label>
-          <UInput v-model="form.description" />
-        </div>
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" autofocus />
+        </UFormField>
+        <UFormField label="Description">
+          <UInput v-model="form.description" class="w-full" />
+        </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -388,31 +386,28 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   >
     <template #body>
       <div class="flex flex-col gap-4">
-        <div>
-          <label class="block font-bold mb-2">Name</label>
-          <UInput v-model="form.name" autofocus />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Description</label>
-          <UInput v-model="form.description" />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">RD</label>
-          <UInput v-model="form.rd" placeholder="65000:1" />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Import route-target</label>
-          <UInput v-model="form.import_rt" placeholder="65000:1" />
-        </div>
-        <div>
-          <label class="block font-bold mb-2">Export route-target</label>
-          <UInput v-model="form.export_rt" placeholder="65000:1" />
-        </div>
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" autofocus />
+        </UFormField>
+        <UFormField label="Description">
+          <UInput v-model="form.description" class="w-full" />
+        </UFormField>
+        <UFormField label="RD">
+          <UInput v-model="form.rd" placeholder="65000:1" class="w-full" />
+        </UFormField>
+        <UFormField label="Import route-target">
+          <UInput v-model="form.import_rt" placeholder="65000:1" class="w-full" />
+        </UFormField>
+        <UFormField label="Export route-target">
+          <UInput v-model="form.export_rt" placeholder="65000:1" class="w-full" />
+        </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -425,26 +420,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <template #body>
       <IpamPrefixForm v-model="form" autofocus-prefix />
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Add" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Add" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal :open="!!confirm" title="Delete" @update:open="(v) => !v && (confirm = null)">
-    <template #body>
-      <span v-if="confirm?.kind === 'vrf'">
-        Delete VRF <strong>{{ confirm.label }}</strong
-        >? This cannot be undone.
-      </span>
-      <span v-else-if="confirm">
-        Delete <strong>{{ confirm.label }}</strong
-        >?
-      </span>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="confirm = null" />
-      <UButton label="Delete" color="error" :loading="saving" @click="performDelete" />
-    </template>
-  </UModal>
 </template>

@@ -276,7 +276,8 @@ function submit() {
   const def = selectedType.value
   const fields = { ...schemaValues.value }
   const realizeId = Number(fields.service_id) || 0
-  const putEps = (pk) => putServiceEndpoints(pk, { endpoints: endpointsBodyFor('new') }).then(() => getService(pk))
+  const putEps = (pk) =>
+    putServiceEndpoints(pk, { endpoints: endpointsBodyFor('new') }).then(() => getService(pk))
 
   if (realizeId > 0) {
     treeParentId()
@@ -349,7 +350,6 @@ function submit() {
     }"
     :loading="hydrating"
     title="Add service to interface"
-    :ui="{ content: 'sm:max-w-lg' }"
     @update:open="(v) => (open = v)"
   >
     <template #body>
@@ -371,7 +371,9 @@ function submit() {
             <small v-if="submitted && !selectedServiceId" class="text-red-500">
               Select a service.
             </small>
-            <small v-if="atMax" class="text-red-500">This service already has the maximum interfaces.</small>
+            <small v-if="atMax" class="text-red-500"
+              >This service already has the maximum interfaces.</small
+            >
           </div>
           <SchemaFields
             v-if="ifaceFields.length"
@@ -415,9 +417,11 @@ function submit() {
         </template>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="open = false" />
-      <UButton label="Attach" icon="i-lucide-link" :loading="saving" @click="submit" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Attach" icon="i-lucide-link" :loading="saving" @click="submit" />
+      </div>
     </template>
   </FormModal>
 </template>

@@ -7,6 +7,7 @@ import SearchInput from '@/components/SearchInput.vue'
 import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,8 +21,20 @@ const error = ref(null)
 const serviceDialogOpen = ref(false)
 const editingServiceId = ref(null)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'service_id', desc: false }])
+const { search, filtered } = useSearch(services, (row) =>
+  valuesText(
+    row.service_id,
+    row.agreement_status,
+    row.service_type,
+    row.bandwidth_mbps,
+    row.company,
+    row.deliverypoint1,
+    row.deliverypoint2,
+    row.product,
+    row.service,
+  ),
+)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -119,16 +132,15 @@ onMounted(() => {
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="services"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No services found.'"
+      :empty="error || (search && services.length ? 'Nothing matches the search.' : 'No services found.')"
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="max-h-[calc(100vh-380px)]"

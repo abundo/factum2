@@ -8,6 +8,7 @@
 //   press <key>
 //   wait-for <selector>
 //   screenshot [name]              .grok/skills/factum2-dev/.state/screenshots/
+//   viewport <width> <height>
 //   eval <js>
 //   console-errors
 //   quit
@@ -84,11 +85,22 @@ async function handle(line) {
       console.log('clicked', restText);
       break;
     case 'fill': {
-      const [selector, ...text] = rest;
-      await resolveLocator(selector).first().fill(text.join(' '));
+      // "fill <selector> -- <text>" so a selector may contain spaces.
+      const sep = restText.indexOf(' -- ');
+      const selector = sep === -1 ? rest[0] : restText.slice(0, sep);
+      const text = sep === -1 ? rest.slice(1).join(' ') : restText.slice(sep + 4);
+      await resolveLocator(selector).first().fill(text);
       console.log('filled', selector);
       break;
     }
+    case 'force-click':
+      await resolveLocator(restText).first().click({ force: true });
+      console.log('force-clicked', restText);
+      break;
+    case 'click-at':
+      await page.mouse.click(Number(rest[0]), Number(rest[1]));
+      console.log('clicked at', rest[0], rest[1]);
+      break;
     case 'press':
       await page.keyboard.press(arg1);
       console.log('pressed', arg1);
@@ -96,6 +108,10 @@ async function handle(line) {
     case 'wait-for':
       await resolveLocator(restText).first().waitFor();
       console.log('found', restText);
+      break;
+    case 'viewport':
+      await page.setViewportSize({ width: Number(rest[0]), height: Number(rest[1] || 900) });
+      console.log('viewport', rest[0], rest[1] || 900);
       break;
     case 'screenshot': {
       const name = arg1 || `shot-${Date.now()}`;

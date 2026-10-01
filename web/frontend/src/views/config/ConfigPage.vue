@@ -45,6 +45,8 @@ import SearchInput from '@/components/SearchInput.vue'
 import ServiceTypeFieldEditor from '@/components/ServiceTypeFieldEditor.vue'
 import ServiceInstanceForm from '@/components/ServiceInstanceForm.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import { useSearch, valuesText } from '@/utils/search'
 import { cfgmgmtMacroSchema, withCfgmgmtContext } from '@/utils/goTemplateSchemas'
 import {
   applySchemaDefaults,
@@ -58,6 +60,7 @@ defineOptions({ name: 'ConfigPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete, ask } = useConfirm()
 const treeRef = ref(null)
 const filter = ref('')
 const saving = ref(false)
@@ -96,6 +99,54 @@ const matrixVar = ref(null)
 const matrixRows = ref([])
 const serviceTypes = ref([])
 const macros = ref([])
+const {
+  search: variableSearch,
+  words: variableWords,
+  filtered: filteredVariables,
+} = useSearch(variables, (row) =>
+  valuesText(
+    row.name,
+    row.type,
+    row.required ? 'yes' : '',
+    row.secret ? 'yes' : '',
+    row.description,
+  ),
+)
+const variableEmpty = computed(() =>
+  variableWords.value.length && variables.value.length
+    ? 'Nothing matches the search.'
+    : 'No variables.',
+)
+const {
+  search: typeSearch,
+  words: typeWords,
+  filtered: filteredTypes,
+} = useSearch(serviceTypes, (row) =>
+  valuesText(row.name, row.description, row.sync_source, row.netbox_type),
+)
+const typeEmpty = computed(() =>
+  typeWords.value.length && serviceTypes.value.length
+    ? 'Nothing matches the search.'
+    : 'No service definitions.',
+)
+const {
+  search: macroSearch,
+  words: macroWords,
+  filtered: filteredMacros,
+} = useSearch(macros, (row) => valuesText(row.name))
+const macroEmpty = computed(() =>
+  macroWords.value.length && macros.value.length ? 'Nothing matches the search.' : 'No macros.',
+)
+const {
+  search: matrixSearch,
+  words: matrixWords,
+  filtered: filteredMatrix,
+} = useSearch(matrixRows, (row) =>
+  valuesText(row.device_name, row.interface_name, row.error, row.value, row.source_name),
+)
+const matrixEmpty = computed(() =>
+  matrixWords.value.length && matrixRows.value.length ? 'Nothing matches the search.' : 'No rows.',
+)
 const previewDeviceId = ref(null)
 const preview = ref(null)
 const previewOpen = ref(false)
@@ -593,18 +644,18 @@ async function runMenu(id) {
     return
   }
   if (id === 'remove-endpoint' && node) {
-    confirm.value = { kind: 'remove-endpoint', node, label: node.title }
+    runConfirmed({ kind: 'remove-endpoint', node, label: node.title })
     return
   }
   if (id === 'del' && node?.id) {
-    confirm.value = {
+    runConfirmed({
       kind: node.kind === 'service' ? 'detach-service' : 'scope',
       id: node.id,
       label: node.title,
-    }
+    })
   }
   if (id === 'detach' && node?.id) {
-    confirm.value = { kind: 'detach', id: node.id, label: node.title }
+    runConfirmed({ kind: 'detach', id: node.id, label: node.title })
   }
   if (id === 'delete-service' && node) {
     openDeleteService(node)
@@ -993,12 +1044,50 @@ function serviceRowIdOf(node) {
 function openDeleteService(node) {
   const serviceId = serviceRowIdOf(node)
   if (!serviceId) return
-  confirm.value = {
+  runConfirmed({
     kind: 'delete-service',
     id: node.id,
     serviceId,
     label: node.title,
+  })
+}
+
+async function runConfirmed(c) {
+  if (!c) return
+  let ok
+  if (c.kind === 'detach') {
+    ok = await ask({
+      title: 'Confirm detach',
+      message: `Detach ${c.label} from the tree?`,
+      detail: 'The device remains in inventory.',
+    })
+  } else if (c.kind === 'detach-service') {
+    ok = await ask({
+      title: 'Confirm detach',
+      message: `Detach ${c.label} from the tree?`,
+      detail: 'The service remains in inventory.',
+    })
+  } else if (c.kind === 'delete-service') {
+    ok = await confirmDelete(
+      c.label,
+      'This removes it from NetBox, unrealizes it from all involved devices, and deletes the inventory row. This cannot be undone.',
+    )
+  } else if (c.kind === 'remove-endpoint') {
+    ok = await confirmDelete(`endpoint ${c.label}`, 'This removes it from the service.')
+  } else if (c.kind === 'variable') {
+    ok = await confirmDelete(`variable ${c.label}`)
+  } else if (c.kind === 'type') {
+    ok = await confirmDelete(`service definition ${c.label}`)
+  } else if (c.kind === 'macro') {
+    ok = await confirmDelete(`macro ${c.label}`)
+  } else if (c.kind === 'assignment') {
+    ok = await confirmDelete(`assignment ${c.label}`)
+  } else {
+    ok = await confirmDelete(c.label || 'item')
   }
+  if (!ok) return
+  confirm.value = c
+  performDelete()
 }
 
 // Full teardown: drop NetBox objects, unrealize CLI on every involved
@@ -1048,6 +1137,14 @@ function performDelete() {
   req
     .then(() => {
       confirm.value = null
+      if (
+        c.kind === 'variable' ||
+        c.kind === 'type' ||
+        c.kind === 'macro' ||
+        c.kind === 'assignment'
+      ) {
+        dialog.value = null
+      }
       if (c.kind === 'delete-service') {
         toast.add({
           color: 'success',
@@ -1599,8 +1696,26 @@ function onInspectorSaved() {
   if (selected.value?.id) loadNodeDetails(selected.value)
 }
 
-function onDeleteAssignment(row) {
-  confirm.value = { kind: 'assignment', id: row.id, label: 'assignment' }
+function deleteEditedVariable() {
+  if (!form.value?.id) return
+  runConfirmed({ kind: 'variable', id: form.value.id, label: form.value.name })
+}
+
+function deleteEditedType() {
+  if (!form.value?.id) return
+  runConfirmed({ kind: 'type', id: form.value.id, label: form.value.name })
+}
+
+function deleteEditedMacro() {
+  if (!form.value?.id) return
+  runConfirmed({ kind: 'macro', id: form.value.id, label: form.value.name })
+}
+
+function deleteEditedAssignment() {
+  if (!form.value?.id) return
+  const name =
+    variables.value.find((v) => v.id === form.value.variable_def_id)?.name || 'assignment'
+  runConfirmed({ kind: 'assignment', id: form.value.id, label: name })
 }
 
 function onDocClick() {
@@ -1741,7 +1856,6 @@ onBeforeUnmount(() => {
               :can-write="authStore.canWrite"
               :draft-endpoint="draftEndpoint"
               @assign="openAssign"
-              @delete-assignment="onDeleteAssignment"
               @saved="onInspectorSaved"
               @delete-service="openDeleteService"
             />
@@ -1795,16 +1909,17 @@ onBeforeUnmount(() => {
               />
             </div>
             <UButton label="Load" :disabled="!matrixStart?.id || !matrixVar" @click="loadMatrix" />
+            <SearchInput v-model="matrixSearch" class="w-56" />
           </div>
           <UTable
-            :data="matrixRows"
+            :data="filteredMatrix"
             :columns="[
               { accessorKey: 'device_name', header: 'Device' },
               { accessorKey: 'interface_name', header: 'Interface' },
               { accessorKey: 'value', header: 'Value' },
               { accessorKey: 'source_name', header: 'Source' },
             ]"
-            empty="No rows."
+            :empty="matrixEmpty"
           >
             <template #value-cell="{ row }">
               {{ row.original.error || JSON.stringify(row.original.value) }}
@@ -1837,7 +1952,8 @@ onBeforeUnmount(() => {
             <p class="text-muted-color text-sm m-0">
               Typed knobs. Assign values on a parameter object in the tree.
             </p>
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-2">
+              <SearchInput v-model="variableSearch" class="w-56" />
               <UButton
                 v-if="authStore.canWrite"
                 icon="i-lucide-plus"
@@ -1846,39 +1962,27 @@ onBeforeUnmount(() => {
               />
             </div>
             <UTable
-              :data="variables"
+              :data="filteredVariables"
               :columns="[
+                { id: 'actions', header: '' },
                 { accessorKey: 'name', header: 'Name' },
                 { accessorKey: 'type', header: 'Type' },
                 { accessorKey: 'required', header: 'Required' },
                 { accessorKey: 'secret', header: 'Secret' },
                 { accessorKey: 'description', header: 'Description' },
-                { id: 'actions', header: '' },
               ]"
-              empty="No variables."
+              :empty="variableEmpty"
             >
               <template #required-cell="{ row }">{{ row.original.required ? 'yes' : '' }}</template>
               <template #secret-cell="{ row }">{{ row.original.secret ? 'yes' : '' }}</template>
               <template #actions-cell="{ row }">
-                <div class="flex gap-1">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    variant="outline"
-                    color="neutral"
-                    size="sm"
-                    @click="openVar(row.original)"
-                  />
-                  <UButton
-                    v-if="authStore.canWrite"
-                    icon="i-lucide-trash-2"
-                    variant="outline"
-                    color="error"
-                    size="sm"
-                    @click="
-                      confirm = { kind: 'variable', id: row.original.id, label: row.original.name }
-                    "
-                  />
-                </div>
+                <UButton
+                  icon="i-lucide-pencil"
+                  variant="outline"
+                  color="neutral"
+                  size="sm"
+                  @click="openVar(row.original)"
+                />
               </template>
             </UTable>
           </div>
@@ -1890,7 +1994,8 @@ onBeforeUnmount(() => {
               create a customer service. CLI for a definition lives under
               <code>_catalog/cli</code> in the tree.
             </p>
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-2">
+              <SearchInput v-model="typeSearch" class="w-56" />
               <UButton
                 v-if="authStore.canWrite"
                 icon="i-lucide-plus"
@@ -1899,36 +2004,24 @@ onBeforeUnmount(() => {
               />
             </div>
             <UTable
-              :data="serviceTypes"
+              :data="filteredTypes"
               :columns="[
+                { id: 'actions', header: '' },
                 { accessorKey: 'name', header: 'Name' },
                 { accessorKey: 'description', header: 'Description' },
                 { accessorKey: 'sync_source', header: 'Sync source' },
                 { accessorKey: 'netbox_type', header: 'NetBox type' },
-                { id: 'actions', header: '' },
               ]"
-              empty="No service definitions."
+              :empty="typeEmpty"
             >
               <template #actions-cell="{ row }">
-                <div class="flex gap-1">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    variant="outline"
-                    color="neutral"
-                    size="sm"
-                    @click="openType(row.original)"
-                  />
-                  <UButton
-                    v-if="authStore.canWrite"
-                    icon="i-lucide-trash-2"
-                    variant="outline"
-                    color="error"
-                    size="sm"
-                    @click="
-                      confirm = { kind: 'type', id: row.original.id, label: row.original.name }
-                    "
-                  />
-                </div>
+                <UButton
+                  icon="i-lucide-pencil"
+                  variant="outline"
+                  color="neutral"
+                  size="sm"
+                  @click="openType(row.original)"
+                />
               </template>
             </UTable>
           </div>
@@ -1940,7 +2033,8 @@ onBeforeUnmount(() => {
               <code v-pre>{{ include "name" }}</code>
               from a CLI feature.
             </p>
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-2">
+              <SearchInput v-model="macroSearch" class="w-56" />
               <UButton
                 v-if="authStore.canWrite"
                 icon="i-lucide-plus"
@@ -1949,33 +2043,21 @@ onBeforeUnmount(() => {
               />
             </div>
             <UTable
-              :data="macros"
+              :data="filteredMacros"
               :columns="[
-                { accessorKey: 'name', header: 'Name' },
                 { id: 'actions', header: '' },
+                { accessorKey: 'name', header: 'Name' },
               ]"
-              empty="No macros."
+              :empty="macroEmpty"
             >
               <template #actions-cell="{ row }">
-                <div class="flex gap-1">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    variant="outline"
-                    color="neutral"
-                    size="sm"
-                    @click="openMacro(row.original)"
-                  />
-                  <UButton
-                    v-if="authStore.canWrite"
-                    icon="i-lucide-trash-2"
-                    variant="outline"
-                    color="error"
-                    size="sm"
-                    @click="
-                      confirm = { kind: 'macro', id: row.original.id, label: row.original.name }
-                    "
-                  />
-                </div>
+                <UButton
+                  icon="i-lucide-pencil"
+                  variant="outline"
+                  color="neutral"
+                  size="sm"
+                  @click="openMacro(row.original)"
+                />
               </template>
             </UTable>
           </div>
@@ -2008,14 +2090,17 @@ onBeforeUnmount(() => {
       <label class="block font-bold mb-2">Name</label>
       <UInput v-model="form.name" autofocus @keydown.enter.prevent="saveDialog" />
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Rename" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Rename" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
   <UModal
     v-model:open="previewOpen"
+    :dismissible="false"
     title="Rendered config"
     :ui="{
       overlay: 'bg-elevated/80',
@@ -2045,9 +2130,11 @@ onBeforeUnmount(() => {
       <label class="block font-bold mb-2">Name</label>
       <UInput v-model="form.name" autofocus />
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2064,9 +2151,11 @@ onBeforeUnmount(() => {
         Assignments on this node apply to its parent and that parent's descendants.
       </p>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2083,9 +2172,11 @@ onBeforeUnmount(() => {
         Named CIDR pool. Prefix fields look up this name on the interface → device → ancestor chain.
       </p>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2113,9 +2204,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2135,9 +2228,11 @@ onBeforeUnmount(() => {
         placeholder="Select device"
       />
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Attach" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Attach" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2231,9 +2326,16 @@ onBeforeUnmount(() => {
         />
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton v-if="createStep === 'form'" label="Create" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton
+          v-if="createStep === 'form'"
+          label="Create"
+          :loading="saving"
+          @click="saveDialog"
+        />
+      </div>
     </template>
   </FormModal>
 
@@ -2253,9 +2355,11 @@ onBeforeUnmount(() => {
         placeholder="Select a CN/CI service"
       />
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Attach" :loading="saving" @click="saveDialog" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Attach" :loading="saving" @click="saveDialog" />
+      </div>
     </template>
   </FormModal>
 
@@ -2316,9 +2420,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveAssign" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="form.id && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="saving"
+          @click="deleteEditedAssignment"
+        />
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveAssign" />
+      </div>
     </template>
   </FormModal>
 
@@ -2326,7 +2441,6 @@ onBeforeUnmount(() => {
     :open="dialog === 'variable'"
     :source="form"
     title="Variable"
-    :ui="{ content: 'sm:max-w-md' }"
     @update:open="(v) => !v && (dialog = null)"
   >
     <template #body>
@@ -2375,9 +2489,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" type="button" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" type="button" @click="saveVariable" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="form.id && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="saving"
+          @click="deleteEditedVariable"
+        />
+        <UButton label="Cancel" variant="ghost" type="button" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" type="button" @click="saveVariable" />
+      </div>
     </template>
   </FormModal>
 
@@ -2496,9 +2621,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveType" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="form.id && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="saving"
+          @click="deleteEditedType"
+        />
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveType" />
+      </div>
     </template>
   </FormModal>
 
@@ -2532,47 +2668,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = null" />
-      <UButton label="Save" :loading="saving" @click="saveMacro" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="form.id && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="saving"
+          @click="deleteEditedMacro"
+        />
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Save" :loading="saving" @click="saveMacro" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal
-    :open="!!confirm"
-    :title="
-      confirm?.kind === 'detach' || confirm?.kind === 'detach-service'
-        ? 'Confirm detach'
-        : 'Confirm delete'
-    "
-    @update:open="(v) => !v && (confirm = null)"
-  >
-    <template #body>
-      <span v-if="confirm?.kind === 'detach'">
-        Detach {{ confirm?.label }} from the tree? The device remains in inventory.
-      </span>
-      <span v-else-if="confirm?.kind === 'detach-service'">
-        Detach {{ confirm?.label }} from the tree? The service remains in inventory.
-      </span>
-      <span v-else-if="confirm?.kind === 'delete-service'">
-        Delete {{ confirm?.label }}? This removes it from NetBox, unrealizes it from all involved
-        devices, and deletes the inventory row. This cannot be undone.
-      </span>
-      <span v-else-if="confirm?.kind === 'remove-endpoint'">
-        Remove endpoint {{ confirm?.label }} from the service?
-      </span>
-      <span v-else> Delete {{ confirm?.label }}? </span>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="confirm = null" />
-      <UButton
-        :label="
-          confirm?.kind === 'detach' || confirm?.kind === 'detach-service' ? 'Detach' : 'Delete'
-        "
-        color="error"
-        :loading="saving"
-        @click="performDelete"
-      />
-    </template>
-  </UModal>
 </template>

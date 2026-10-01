@@ -2,6 +2,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import SearchInput from '@/components/SearchInput.vue'
+import { useSearch, valuesText } from '@/utils/search'
 import {
   createCertificate,
   deleteCertificate,
@@ -15,23 +18,28 @@ defineOptions({ name: 'CertListPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const items = ref([])
 const accounts = ref([])
 const challenges = ref([])
 const dialog = ref(false)
 const saving = ref(false)
+const deleting = ref(false)
 const editing = ref(null)
 const form = reactive(emptyForm())
 
 const columns = [
+  { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'host', header: 'Host' },
   { id: 'domains', header: 'Domains' },
   { accessorKey: 'account', header: 'Account' },
   { accessorKey: 'challenge', header: 'Challenge' },
   { accessorKey: 'key_type', header: 'Key type' },
-  { id: 'actions', header: '' },
 ]
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(row.name, row.host, row.domains, row.account, row.challenge, row.key_type),
+)
 
 const accountItems = computed(() => accounts.value.map((a) => ({ label: a.name, value: a.id })))
 const challengeItems = computed(() => challenges.value.map((c) => ({ label: c.name, value: c.id })))
@@ -136,13 +144,18 @@ async function save() {
   }
 }
 
-async function remove(row) {
-  if (!confirm(`Delete certificate ${row.name}?`)) return
+async function remove() {
+  if (!editing.value) return
+  if (!(await confirmDelete(`certificate ${editing.value.name}`))) return
+  deleting.value = true
   try {
-    await deleteCertificate(row.id)
+    await deleteCertificate(editing.value.id)
+    dialog.value = false
     await load()
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to delete certificate'), color: 'error' })
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -165,29 +178,24 @@ onMounted(load)
         @click="openCreate"
       />
     </div>
-    <UTable :data="items" :columns="columns">
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
+    <UTable
+      :data="filtered"
+      :columns="columns"
+      :empty="search && items.length ? 'Nothing matches the search.' : 'No certificates found.'"
+    >
       <template #domains-cell="{ row }">
         {{ (row.original.domains || []).join(', ') }}
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2 justify-end">
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-pencil"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-trash"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          v-if="authStore.canWrite"
+          size="sm"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-pencil"
+          @click="openEdit(row.original)"
+        />
       </template>
     </UTable>
   </div>
@@ -256,11 +264,23 @@ onMounted(load)
         </UFormField>
       </form>
     </template>
-    <template #footer>
-      <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-        >Cancel</UButton
-      >
-      <UButton type="submit" form="cert-form" :loading="saving">Save</UButton>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editing && authStore.canWrite"
+          color="error"
+          variant="ghost"
+          icon="i-lucide-trash"
+          label="Delete"
+          type="button"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="cert-form" :loading="saving">Save</UButton>
+      </div>
     </template>
   </FormModal>
 </template>

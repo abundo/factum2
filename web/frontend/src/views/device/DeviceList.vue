@@ -42,20 +42,44 @@ import ServiceEditDialog from '@/components/ServiceEditDialog.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import VlanEditDialog from '@/components/VlanEditDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
 import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 import { expandInterfaceNames } from '@/utils/interfaceNames'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
 const route = useRoute()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const { load: loadInterfaceTypes, typeLabel } = useInterfaceTypes()
 
 const devices = ref([])
 const loading = ref(true)
 const error = ref(null)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const {
+  search: deviceSearch,
+  words: deviceWords,
+  filtered: filteredDevices,
+} = useSearch(devices, (d) =>
+  valuesText(
+    d.name,
+    d.site,
+    d.role,
+    d.status,
+    d.manufacturer,
+    d.model_name,
+    d.primary_ipv4,
+    d.impact?.service_count,
+    d.impact?.customer_count,
+  ),
+)
+const deviceEmpty = computed(() => {
+  if (error.value) return error.value
+  if (deviceWords.value.length && devices.value.length) return 'Nothing matches the search.'
+  return 'No devices found.'
+})
 
 const columns = [
   { id: 'actions', header: '' },
@@ -355,8 +379,10 @@ function saveLocalDevice() {
     })
 }
 
-function removeLocalDevice() {
+async function removeLocalDevice() {
   if (!device.value) return
+  const name = device.value.name || createForm.value.name
+  if (!(await confirmDelete(`device ${name}`))) return
   deletingDevice.value = true
   deleteDevice(device.value.id)
     .then(() => {
@@ -616,6 +642,12 @@ function loadXConnects(id) {
   listXConnects(id).then((data) => {
     xconnects.value = data ?? []
   })
+}
+
+async function removeXConnect(x) {
+  const label = `${xcKindLabels[x.kind] || x.kind} · ${interfaceNameById(x.interface_a_id)} ↔ ${interfaceNameById(x.interface_b_id)}`
+  if (!(await confirmDelete(`cross-connect ${label}`))) return
+  deleteXConnect(x.id).then(() => loadXConnects(device.value?.id))
 }
 
 function loadDevice(row) {
@@ -893,6 +925,7 @@ function removeAddr(addr) {
   addrDeleting.value = true
   deleteAddress(addr.id)
     .then(() => {
+      if (addrEditingId.value === addr.id) addrFormOpen.value = false
       reloadDeviceInterfaces()
       loadDevices()
     })
@@ -908,10 +941,16 @@ function removeAddr(addr) {
     })
 }
 
-function removeIface(row) {
+async function removeIface() {
+  if (!ifaceEditingId.value) return
+  if (!(await confirmDelete(`interface ${ifaceForm.value.name}`))) return
+  const id = ifaceEditingId.value
   ifaceDeleting.value = true
-  deleteInterface(row.id)
-    .then(() => reloadDeviceInterfaces())
+  deleteInterface(id)
+    .then(() => {
+      ifaceFormOpen.value = false
+      reloadDeviceInterfaces()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -943,6 +982,36 @@ const interfaceColumns = computed(() => {
   )
   return cols
 })
+
+const {
+  search: ifaceSearch,
+  words: ifaceWords,
+  filtered: filteredIfaces,
+} = useSearch(
+  () => device.value?.interfaces ?? [],
+  (row) =>
+    valuesText(
+      row.name,
+      typeLabel(row.type),
+      row.description,
+      row.vrf,
+      vlanSummary(row).text,
+      (row.services ?? []).map((s) => s.service_id),
+      (row.addresses ?? []).map((a) => a.address),
+      row.optical?.role,
+    ),
+)
+const ifaceEmpty = computed(() => {
+  const n = device.value?.interfaces?.length ?? 0
+  if (ifaceWords.value.length && n) return 'Nothing matches the search.'
+  return 'No interfaces stored for this device.'
+})
+
+async function removeEditingAddr() {
+  if (!addrEditingId.value) return
+  if (!(await confirmDelete(`address ${addrForm.value.address}`))) return
+  removeAddr({ id: addrEditingId.value })
+}
 
 const serviceDialogOpen = ref(false)
 const editingServiceId = ref(null)
@@ -1093,16 +1162,15 @@ onMounted(() => {
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="deviceSearch" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="devices"
+      :data="filteredDevices"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No devices found.'"
+      :empty="deviceEmpty"
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -1432,6 +1500,7 @@ onMounted(() => {
             :disabled="!canUseDriver"
             @click="updateInterfaces"
           />
+          <SearchInput v-model="ifaceSearch" size="sm" class="w-56" />
           <span v-if="!isSupportedDriverPlatform" class="text-sm text-muted-color"
             >Refresh/Update require an EOS, SROS-MD, IOS-XR, VRP or CISCOSMB device (this device is
             "{{ device?.platform || 'unknown' }}").</span
@@ -1440,9 +1509,9 @@ onMounted(() => {
 
         <UTable
           v-model:sorting="interfaceSorting"
-          :data="device?.interfaces ?? []"
+          :data="filteredIfaces"
           :columns="interfaceColumns"
-          :empty="'No interfaces stored for this device.'"
+          :empty="ifaceEmpty"
           sticky
           class="flex-1 min-h-0 overflow-y-auto"
         >
@@ -1460,25 +1529,14 @@ onMounted(() => {
           </template>
 
           <template #actions-cell="{ row }">
-            <div class="flex gap-1">
-              <UButton
-                icon="i-lucide-pencil"
-                variant="ghost"
-                color="neutral"
-                size="sm"
-                title="Edit interface"
-                @click="openEditIface(row.original)"
-              />
-              <UButton
-                v-if="authStore.canWrite && isLocalDevice && !row.original.netbox_id"
-                icon="i-lucide-trash"
-                variant="ghost"
-                color="error"
-                size="sm"
-                :loading="ifaceDeleting"
-                @click="removeIface(row.original)"
-              />
-            </div>
+            <UButton
+              icon="i-lucide-pencil"
+              variant="ghost"
+              color="neutral"
+              size="sm"
+              title="Edit interface"
+              @click="openEditIface(row.original)"
+            />
           </template>
           <template #name-cell="{ row }">
             <span class="whitespace-nowrap">{{ row.original.name }}</span>
@@ -1574,30 +1632,18 @@ onMounted(() => {
                 :key="addr.id"
                 class="inline-flex items-center gap-0.5 whitespace-nowrap text-sm"
               >
-                <button
-                  type="button"
-                  class="hover:underline"
-                  :title="authStore.canWrite && !addr.netbox_id ? 'Edit address' : ''"
-                  @click="
-                    authStore.canWrite && !addr.netbox_id
-                      ? openEditAddr(row.original, addr)
-                      : undefined
-                  "
-                >
-                  {{ addr.address }}
-                </button>
+                <span>{{ addr.address }}</span>
                 <UBadge v-if="isManagementAddr(addr)" color="info" variant="subtle" size="xs">
                   mgmt
                 </UBadge>
                 <UButton
                   v-if="authStore.canWrite && !addr.netbox_id"
-                  icon="i-lucide-x"
+                  icon="i-lucide-pencil"
                   size="xs"
                   variant="ghost"
-                  color="error"
-                  :loading="addrDeleting"
-                  title="Remove address"
-                  @click="removeAddr(addr)"
+                  color="neutral"
+                  title="Edit address"
+                  @click="openEditAddr(row.original, addr)"
                 />
               </span>
               <UButton
@@ -1626,7 +1672,7 @@ onMounted(() => {
                 size="xs"
                 variant="ghost"
                 color="error"
-                @click="deleteXConnect(x.id).then(() => loadXConnects(device.id))"
+                @click="removeXConnect(x)"
               />
             </li>
           </ul>
@@ -1686,24 +1732,26 @@ onMounted(() => {
       </div>
     </template>
 
-    <template #footer>
-      <UButton
-        v-if="isLocalDevice && authStore.canWrite"
-        label="Delete"
-        icon="i-lucide-trash"
-        color="error"
-        variant="ghost"
-        :loading="deletingDevice"
-        @click="removeLocalDevice"
-      />
-      <UButton
-        v-if="isLocalDevice && authStore.canWrite"
-        label="Save"
-        icon="i-lucide-check"
-        :loading="createSaving"
-        @click="saveLocalDevice"
-      />
-      <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="isLocalDevice && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deletingDevice"
+          @click="removeLocalDevice"
+        />
+        <UButton label="Close" icon="i-lucide-x" variant="ghost" class="ms-auto" @click="close" />
+        <UButton
+          v-if="isLocalDevice && authStore.canWrite"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="createSaving"
+          @click="saveLocalDevice"
+        />
+      </div>
     </template>
   </DcimDetailDialog>
 
@@ -1711,7 +1759,6 @@ onMounted(() => {
     v-model:open="createDialog"
     :source="createForm"
     title="New device"
-    :ui="{ content: 'sm:max-w-lg' }"
   >
     <template #body>
       <div class="flex flex-col gap-4">
@@ -1764,9 +1811,11 @@ onMounted(() => {
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="createDialog = false" />
-      <UButton label="Create" icon="i-lucide-check" :loading="createSaving" @click="saveNew" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" icon="i-lucide-x" variant="ghost" class="ms-auto" @click="close" />
+        <UButton label="Create" icon="i-lucide-check" :loading="createSaving" @click="saveNew" />
+      </div>
     </template>
   </FormModal>
 
@@ -1779,15 +1828,13 @@ onMounted(() => {
     :saving="ifaceSaving"
     :editing="!!ifaceEditingId"
     :can-write="authStore.canWrite"
+    :can-delete="!!ifaceEditingId && authStore.canWrite && ifaceFormWritable"
+    :deleting="ifaceDeleting"
     @save="saveIface"
+    @delete="removeIface"
   />
 
-  <FormModal
-    v-model:open="addrFormOpen"
-    :source="addrForm"
-    :title="addrDialogTitle"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
+  <FormModal v-model:open="addrFormOpen" :source="addrForm" :title="addrDialogTitle">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Address">
@@ -1820,14 +1867,25 @@ onMounted(() => {
         <UCheckbox v-model="addrForm.management" label="Management IP address" />
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="addrFormOpen = false" />
-      <UButton
-        :label="addrEditingId ? 'Save' : 'Add'"
-        icon="i-lucide-check"
-        :loading="addrSaving"
-        @click="saveNewAddr"
-      />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="addrEditingId && authStore.canWrite"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="addrDeleting"
+          @click="removeEditingAddr"
+        />
+        <UButton label="Cancel" icon="i-lucide-x" variant="ghost" class="ms-auto" @click="close" />
+        <UButton
+          :label="addrEditingId ? 'Save' : 'Add'"
+          icon="i-lucide-check"
+          :loading="addrSaving"
+          @click="saveNewAddr"
+        />
+      </div>
     </template>
   </FormModal>
 

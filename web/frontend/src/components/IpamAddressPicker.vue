@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { getForest, getPrefixHosts, listVrfs } from '@/api/ipam'
 import IpamPickerTree from '@/components/IpamPickerTree.vue'
 import SearchInput from '@/components/SearchInput.vue'
+import { matchesWords, searchWords, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'IpamAddressPicker' })
 
@@ -44,20 +45,19 @@ function vrfMatchesInterface(v) {
 
 const constrainedVrfs = computed(() => vrfs.value.filter(vrfMatchesInterface))
 
+const vrfWords = computed(() => searchWords(vrfQuery.value))
+
 const filteredVrfs = computed(() => {
-  const q = vrfQuery.value.trim().toLowerCase()
-  if (!q) return constrainedVrfs.value
-  return constrainedVrfs.value.filter((v) => {
-    const name = (v.name || '').toLowerCase()
-    const ns = (v.namespace_name || '').toLowerCase()
-    const desc = (v.description || '').toLowerCase()
-    return name.includes(q) || ns.includes(q) || desc.includes(q)
-  })
+  if (!vrfWords.value.length) return constrainedVrfs.value
+  return constrainedVrfs.value.filter((v) =>
+    matchesWords(valuesText(v.name, v.namespace_name, v.description), vrfWords.value),
+  )
 })
 
-const vrfEmptyLabel = computed(() =>
-  vrfConstraintActive() ? 'No VRFs match this interface.' : 'No VRFs.',
-)
+const vrfEmptyLabel = computed(() => {
+  if (vrfWords.value.length && constrainedVrfs.value.length) return 'Nothing matches the search.'
+  return vrfConstraintActive() ? 'No VRFs match this interface.' : 'No VRFs.'
+})
 
 function vrfLabel(v) {
   if (!v) return ''
@@ -210,6 +210,7 @@ watch(open, (isOpen) => {
 <template>
   <UModal
     v-model:open="open"
+    :dismissible="false"
     title="Pick IP address"
     :ui="{ content: 'sm:max-w-6xl w-[95vw]' }"
   >
@@ -228,9 +229,7 @@ watch(open, (isOpen) => {
               :key="v.id"
               type="button"
               class="block w-full text-left rounded px-2 py-1.5 text-sm"
-              :class="
-                selectedVrfId === v.id ? 'bg-primary/20 font-medium' : 'hover:bg-elevated'
-              "
+              :class="selectedVrfId === v.id ? 'bg-primary/20 font-medium' : 'hover:bg-elevated'"
               @click="selectVrf(v)"
             >
               <div>{{ vrfLabel(v) }}</div>

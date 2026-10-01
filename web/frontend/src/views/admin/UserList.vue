@@ -6,8 +6,11 @@ import { getRoles } from '@/api/roles'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 
 const users = ref([])
 const roles = ref([])
@@ -20,11 +23,8 @@ const user = ref({})
 const submitted = ref(false)
 const saving = ref(false)
 
-const deleteDialog = ref(false)
-const userToDelete = ref(null)
 const deleting = ref(false)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'username', desc: false }])
 
 const columns = [
@@ -78,14 +78,15 @@ function isAdmin(row) {
   return roleNames(row).includes('admin')
 }
 
-function confirmDelete(row) {
-  userToDelete.value = row
-  deleteDialog.value = true
-}
+const { search, filtered } = useSearch(users, (row) =>
+  valuesText(row.name, row.username, row.email, row.mobile, roleNames(row)),
+)
 
-function performDelete() {
+async function performDelete() {
+  if (!user.value?.id || isAdmin(user.value)) return
+  if (!(await confirmDelete(`user ${user.value.username}`))) return
   deleting.value = true
-  deleteUser(userToDelete.value.id)
+  deleteUser(user.value.id)
     .then(() => {
       toast.add({
         color: 'success',
@@ -93,6 +94,7 @@ function performDelete() {
         description: 'User deleted',
         duration: 3000,
       })
+      userDialog.value = false
       loadUsers()
     })
     .catch((err) => {
@@ -105,14 +107,7 @@ function performDelete() {
     })
     .finally(() => {
       deleting.value = false
-      deleteDialog.value = false
-      userToDelete.value = null
     })
-}
-
-function hideDialog() {
-  userDialog.value = false
-  submitted.value = false
 }
 
 function saveUser() {
@@ -175,25 +170,31 @@ onMounted(() => {
         <h4 class="m-0">Users</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
-    <UTable v-model:sorting="sorting" v-model:global-filter="globalFilter" :data="users" :columns="columns"
-      :loading="loading" :empty="error ?? 'No users found.'" :virtualize="{ estimateSize: 46 }"
-      class="max-h-[calc(100vh-380px)]">
+    <UTable
+      v-model:sorting="sorting"
+      :data="filtered"
+      :columns="columns"
+      :loading="loading"
+      :empty="error || (search && users.length ? 'Nothing matches the search.' : 'No users found.')"
+      :virtualize="{ estimateSize: 46 }"
+      class="max-h-[calc(100vh-380px)]"
+    >
       <template v-for="col in columns.filter((c) => c.accessorKey)" :key="col.accessorKey"
         #[`${col.accessorKey}-header`]="{ column }">
         <SortableColumnHeader :column="column" :label="col.header" />
       </template>
 
       <template #actions-cell="{ row }">
-        <div class="flex gap-2">
-          <UButton icon="i-lucide-pencil" variant="outline" color="neutral" size="sm"
-            @click="editUser(row.original)" />
-          <UButton icon="i-lucide-trash-2" variant="outline" color="error" size="sm"
-            :disabled="isAdmin(row.original)" :title="isAdmin(row.original) ? 'The admin user cannot be deleted' : undefined"
-            @click="confirmDelete(row.original)" />
-        </div>
+        <UButton
+          icon="i-lucide-pencil"
+          variant="outline"
+          color="neutral"
+          size="sm"
+          @click="editUser(row.original)"
+        />
       </template>
       <template #roles-cell="{ row }">
         <div class="flex flex-wrap gap-1">
@@ -203,57 +204,65 @@ onMounted(() => {
     </UTable>
   </div>
 
-  <FormModal v-model:open="userDialog" :source="user" title="User Details" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="userDialog" :source="user" title="User Details">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="username" class="block font-bold mb-3">Username</label>
-          <UInput id="username" v-model.trim="user.username"
+      <div class="flex flex-col gap-4">
+        <UFormField label="Username">
+          <UInput
+            v-model.trim="user.username"
             :color="submitted && !user.username?.trim() ? 'error' : undefined"
-            :highlight="submitted && !user.username?.trim()" autofocus class="w-full" />
+            :highlight="submitted && !user.username?.trim()"
+            autofocus
+            class="w-full"
+          />
           <small v-if="submitted && !user.username?.trim()" class="text-red-500">Username is required.</small>
-        </div>
-        <div>
-          <label for="name" class="block font-bold mb-3">Name</label>
-          <UInput id="name" v-model="user.name" class="w-full" />
-        </div>
-        <div>
-          <label for="email" class="block font-bold mb-3">Email</label>
-          <UInput id="email" v-model="user.email" class="w-full" />
-        </div>
-        <div>
-          <label for="mobile" class="block font-bold mb-3">Mobile</label>
-          <UInput id="mobile" v-model="user.mobile" class="w-full" />
-        </div>
-        <div>
-          <label for="roles" class="block font-bold mb-3">Roles</label>
-          <USelectMenu id="roles" v-model="user.role_ids" :items="roles" value-key="id" label-key="name"
-            placeholder="Select Roles" multiple class="w-full" />
-        </div>
-        <div>
-          <label for="password" class="block font-bold mb-3">Password</label>
-          <PasswordInput id="password" v-model="user.password"
+        </UFormField>
+        <UFormField label="Name">
+          <UInput v-model="user.name" class="w-full" />
+        </UFormField>
+        <UFormField label="Email">
+          <UInput v-model="user.email" class="w-full" />
+        </UFormField>
+        <UFormField label="Mobile">
+          <UInput v-model="user.mobile" class="w-full" />
+        </UFormField>
+        <UFormField label="Roles">
+          <USelectMenu
+            v-model="user.role_ids"
+            :items="roles"
+            value-key="id"
+            label-key="name"
+            placeholder="Select Roles"
+            multiple
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Password">
+          <PasswordInput
+            v-model="user.password"
             :color="submitted && !user.id && !user.password ? 'error' : undefined"
-            :highlight="submitted && !user.id && !user.password" />
+            :highlight="submitted && !user.id && !user.password"
+          />
           <small v-if="submitted && !user.id && !user.password" class="text-red-500">Password is required.</small>
           <small v-else-if="user.id" class="text-muted-color">Leave blank to keep the current password.</small>
-        </div>
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveUser" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="user.id && !isAdmin(user)"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveUser" />
+      </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Confirm" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <span v-if="userToDelete">Delete user <b>{{ userToDelete.username }}</b>?</span>
-    </template>
-    <template #footer>
-      <UButton label="No" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton label="Yes" icon="i-lucide-check" color="error" :loading="deleting" @click="performDelete" />
-    </template>
-  </UModal>
 </template>

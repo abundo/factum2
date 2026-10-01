@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { getFloorPlan, saveFloorPlanLayout } from '@/api/floorPlans'
 import FloorPlanCanvas from '@/components/dcim/FloorPlanCanvas.vue'
 import RackFootprint from '@/components/dcim/RackFootprint.vue'
 import { useFloorPlanEditor } from '@/composables/useFloorPlanEditor'
+import { useUnsaved } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 
 defineOptions({ name: 'FloorPlanPage' })
@@ -26,6 +27,7 @@ const drawer = ref(false)
 
 const editor = useFloorPlanEditor()
 const plan = computed(() => editor.draft.value)
+useUnsaved(() => editor.dirty.value)
 
 function errMsg(err, fallback) {
   return err.response?.data?.error ?? fallback
@@ -116,13 +118,6 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
-
-onBeforeRouteLeave(() => {
-  if (editor.dirty.value) {
-    return window.confirm('Discard unsaved floor-plan changes?')
-  }
-  return true
-})
 </script>
 
 <template>

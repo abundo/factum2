@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
+import { useFormGuard } from '@/composables/useFormGuard'
+import SearchInput from '@/components/SearchInput.vue'
+import { useSearch, valuesText } from '@/utils/search'
 import {
   createFeature,
   deleteFeature,
@@ -37,7 +40,7 @@ const props = defineProps({
   draftEndpoint: { type: Object, default: null },
 })
 
-const emit = defineEmits(['assign', 'delete-assignment', 'saved', 'delete-service'])
+const emit = defineEmits(['assign', 'saved', 'delete-service'])
 
 const toast = useToast()
 const saving = ref(false)
@@ -154,6 +157,34 @@ function errMsg(err, fallback) {
 function assignmentName(id) {
   return props.variables.find((v) => v.id === id)?.name ?? `#${id}`
 }
+
+const {
+  search: assignmentSearch,
+  words: assignmentWords,
+  filtered: filteredAssignments,
+} = useSearch(
+  () => props.assignments,
+  (row) => valuesText(assignmentName(row.variable_def_id), row.value),
+)
+const assignmentEmpty = computed(() =>
+  assignmentWords.value.length && props.assignments.length
+    ? 'Nothing matches the search.'
+    : 'No assignments on this node.',
+)
+const {
+  search: resolvedSearch,
+  words: resolvedWords,
+  filtered: filteredResolved,
+} = useSearch(
+  () => props.resolved,
+  (row) =>
+    valuesText(row.name, row.error, row.value, row.from_default ? 'default' : row.source_name),
+)
+const resolvedEmpty = computed(() =>
+  resolvedWords.value.length && props.resolved.length
+    ? 'Nothing matches the search.'
+    : 'No variables defined.',
+)
 
 function resetCLIForm(node) {
   const ctx = node?.payload?.context ?? {}
@@ -361,6 +392,15 @@ function doUnrealize() {
 function confirmUnrealize() {
   doUnrealize()
 }
+
+const unrealizeSource = computed(() => ({
+  netbox: unrealizeRemoveNetbox.value,
+  device: unrealizeRemoveDevice.value,
+}))
+const { close: closeUnrealize, onUpdateOpen: onUnrealizeOpen } = useFormGuard(
+  unrealizeSource,
+  unrealizeOpen,
+)
 
 function requestDeleteService() {
   if (!serviceRow.value?.id) return
@@ -854,14 +894,15 @@ function toggleFeature(id) {
             @click="emit('assign')"
           />
         </div>
+        <SearchInput v-model="assignmentSearch" size="sm" class="w-56" />
         <UTable
-          :data="assignments"
+          :data="filteredAssignments"
           :columns="[
+            { id: 'actions', header: '' },
             { accessorKey: 'variable_def_id', header: 'Variable' },
             { accessorKey: 'value', header: 'Value' },
-            { id: 'actions', header: '' },
           ]"
-          empty="No assignments on this node."
+          :empty="assignmentEmpty"
         >
           <template #variable_def_id-cell="{ row }">
             {{ assignmentName(row.original.variable_def_id) }}
@@ -870,35 +911,26 @@ function toggleFeature(id) {
             {{ JSON.stringify(row.original.value) }}
           </template>
           <template #actions-cell="{ row }">
-            <div class="flex gap-1">
-              <UButton
-                icon="i-lucide-pencil"
-                variant="outline"
-                color="neutral"
-                size="sm"
-                @click="emit('assign', row.original)"
-              />
-              <UButton
-                v-if="canWrite"
-                icon="i-lucide-trash-2"
-                variant="outline"
-                color="error"
-                size="sm"
-                @click="emit('delete-assignment', row.original)"
-              />
-            </div>
+            <UButton
+              icon="i-lucide-pencil"
+              variant="outline"
+              color="neutral"
+              size="sm"
+              @click="emit('assign', row.original)"
+            />
           </template>
         </UTable>
         <template v-if="selected.kind === 'interface'">
           <h6 class="m-0">Effective values</h6>
+          <SearchInput v-model="resolvedSearch" size="sm" class="w-56" />
           <UTable
-            :data="resolved"
+            :data="filteredResolved"
             :columns="[
               { accessorKey: 'name', header: 'Variable' },
               { accessorKey: 'value', header: 'Value' },
               { accessorKey: 'source_name', header: 'Source' },
             ]"
-            empty="No variables defined."
+            :empty="resolvedEmpty"
           >
             <template #value-cell="{ row }">
               {{ row.original.error || JSON.stringify(row.original.value) }}
@@ -912,7 +944,12 @@ function toggleFeature(id) {
     </template>
   </div>
 
-  <UModal v-model:open="unrealizeOpen" title="Unrealize service" :ui="{ content: 'sm:max-w-md' }">
+  <UModal
+    :open="unrealizeOpen"
+    :dismissible="false"
+    title="Unrealize service"
+    @update:open="onUnrealizeOpen"
+  >
     <template #body>
       <p class="text-sm m-0">
         Drops the technical realization (type, endpoints, tree node) and keeps the commercial row.
@@ -927,8 +964,10 @@ function toggleFeature(id) {
       </label>
     </template>
     <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
-      <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="closeUnrealize" />
+        <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
+      </div>
     </template>
   </UModal>
 </template>

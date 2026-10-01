@@ -10,18 +10,20 @@ import {
 } from '@/api/dcim'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'PlatformList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 
 const items = ref([])
 const manufacturers = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
 
 const columns = [
@@ -45,10 +47,6 @@ const editingLocal = computed(() => {
   return items.value.find((i) => i.id === editingId.value)?.source !== 'netbox'
 })
 
-function isLocal(row) {
-  return row.source !== 'netbox'
-}
-
 function sourceBadgeColor(source) {
   if (source === 'factum') return 'success'
   return 'neutral'
@@ -62,6 +60,9 @@ const manufacturerById = computed(() => {
   for (const m of manufacturers.value) map.set(m.id, m.name)
   return map
 })
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(row.name, row.slug, row.source, manufacturerById.value.get(row.manufacturer_id)),
+)
 
 function load() {
   loading.value = true
@@ -124,10 +125,16 @@ function save() {
     })
 }
 
-function remove(row) {
+async function remove() {
+  const row = items.value.find((i) => i.id === editingId.value)
+  if (!row) return
+  if (!(await confirmDelete(`platform ${row.name}`))) return
   deleting.value = true
   deletePlatform(row.id)
-    .then(() => load())
+    .then(() => {
+      dialog.value = false
+      load()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -157,16 +164,15 @@ onMounted(load)
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="items"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No platforms found.'"
+      :empty="error || (search && items.length ? 'Nothing matches the search.' : 'No platforms found.')"
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -191,34 +197,18 @@ onMounted(load)
         {{ manufacturerById.get(row.original.manufacturer_id) || '—' }}
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2">
-          <UButton
-            icon="i-lucide-pencil"
-            variant="outline"
-            color="neutral"
-            size="sm"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            v-if="canWrite && isLocal(row.original)"
-            icon="i-lucide-trash"
-            variant="ghost"
-            color="error"
-            size="sm"
-            :loading="deleting"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          icon="i-lucide-pencil"
+          variant="outline"
+          color="neutral"
+          size="sm"
+          @click="openEdit(row.original)"
+        />
       </template>
     </UTable>
   </div>
 
-  <FormModal
-    v-model:open="dialog"
-    :source="form"
-    :title="dialogTitle"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
+  <FormModal v-model:open="dialog" :source="form" :title="dialogTitle">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name">
@@ -235,15 +225,26 @@ onMounted(load)
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="dialog = false" />
-      <UButton
-        v-if="canWrite && editingLocal"
-        label="Save"
-        icon="i-lucide-check"
-        :loading="saving"
-        @click="save"
-      />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editingId && canWrite && editingLocal"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canWrite && editingLocal"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="save"
+        />
+      </div>
     </template>
   </FormModal>
 </template>

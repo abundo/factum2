@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 import { createRole, getRoles, updateRole } from '@/api/roles'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
 
@@ -17,8 +18,8 @@ const role = ref({})
 const submitted = ref(false)
 const saving = ref(false)
 
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(roles, (row) => valuesText(row.name, row.description))
 
 const columns = [
   { id: 'actions', header: '' },
@@ -56,11 +57,6 @@ function editRole(row) {
   role.value = { ...row }
   submitted.value = false
   roleDialog.value = true
-}
-
-function hideDialog() {
-  roleDialog.value = false
-  submitted.value = false
 }
 
 function saveRole() {
@@ -111,16 +107,15 @@ onMounted(loadRoles)
         <h4 class="m-0">Roles</h4>
         <UButton label="New" icon="i-lucide-plus" color="neutral" size="sm" @click="openNew" />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="roles"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No roles found.'"
+      :empty="error || (search && roles.length ? 'Nothing matches the search.' : 'No roles found.')"
       :virtualize="{ estimateSize: 46 }"
       class="max-h-[calc(100vh-380px)]"
     >
@@ -144,13 +139,11 @@ onMounted(loadRoles)
     </UTable>
   </div>
 
-  <FormModal v-model:open="roleDialog" :source="role" title="Role Details" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="roleDialog" :source="role" title="Role Details">
     <template #body>
-      <div class="flex flex-col gap-6">
-        <div>
-          <label for="name" class="block font-bold mb-3">Name</label>
+      <div class="flex flex-col gap-4">
+        <UFormField label="Name">
           <UInput
-            id="name"
             v-model.trim="role.name"
             :color="submitted && !role.name?.trim() ? 'error' : undefined"
             :highlight="submitted && !role.name?.trim()"
@@ -158,17 +151,18 @@ onMounted(loadRoles)
             class="w-full"
           />
           <small v-if="submitted && !role.name?.trim()" class="text-red-500">Name is required.</small>
-        </div>
-        <div>
-          <label for="description" class="block font-bold mb-3">Description</label>
-          <UTextarea id="description" v-model="role.description" :rows="3" class="w-full" />
-        </div>
+        </UFormField>
+        <UFormField label="Description">
+          <UTextarea v-model="role.description" :rows="3" class="w-full" />
+        </UFormField>
       </div>
     </template>
 
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-      <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveRole" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveRole" />
+      </div>
     </template>
   </FormModal>
 </template>

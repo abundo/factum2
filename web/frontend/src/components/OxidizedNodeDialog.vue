@@ -12,14 +12,13 @@ const props = defineProps({
 
 const open = defineModel('open', { type: Boolean, default: false })
 
-const title = computed(() =>
-  props.node?.name ? `${props.node.name} — Oxidized` : 'Oxidized',
-)
+const title = computed(() => (props.node?.name ? `${props.node.name} — Oxidized` : 'Oxidized'))
 </script>
 
 <template>
   <UModal
     v-model:open="open"
+    :dismissible="false"
     :title="title"
     :ui="{ content: 'w-[95vw] h-[90vh] sm:max-w-none' }"
   >

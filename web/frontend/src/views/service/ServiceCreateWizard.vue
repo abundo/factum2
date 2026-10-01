@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCustomers } from '@/api/customers'
 import { createService } from '@/api/services'
+import { usePageForm } from '@/composables/useFormGuard'
 
 const router = useRouter()
 const toast = useToast()
@@ -66,7 +67,16 @@ const form = ref({
   comment: '',
 })
 
+const pageForm = computed(() => ({
+  product: product.value,
+  category: category.value,
+  step: activeStep.value,
+  ...form.value,
+}))
+const { mark } = usePageForm(pageForm)
+
 onMounted(() => {
+  mark()
   getCustomers()
     .then((data) => {
       customers.value = data ?? []
@@ -101,6 +111,7 @@ function handleCreate() {
   createService(payload)
     .then((created) => {
       logLines.value.push(`Created service ${created.service_id}`)
+      mark()
       toast.add({
         color: 'success',
         title: 'Successful',
@@ -137,8 +148,7 @@ function cancelWizard() {
     <UStepper v-model="activeStep" :items="stepperItems" linear class="mb-6" />
 
     <div v-if="activeStep === '1'" class="flex flex-col gap-6 py-4">
-      <div>
-        <label class="block font-bold mb-3">Product</label>
+      <UFormField label="Product">
         <URadioGroup
           v-model="product"
           :items="productOptions"
@@ -149,9 +159,8 @@ function cancelWizard() {
         <small v-if="submittedStep1 && !product" class="text-red-500 block mt-2">
           Select a product.
         </small>
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Category</label>
+      </UFormField>
+      <UFormField label="Category">
         <URadioGroup
           v-model="category"
           :items="categoryOptions"
@@ -161,9 +170,8 @@ function cancelWizard() {
         <small v-if="submittedStep1 && !category" class="text-red-500 block mt-2">
           Select a category.
         </small>
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Service ID</label>
+      </UFormField>
+      <UFormField label="Service ID">
         <UInput
           v-model="form.serviceID"
           type="number"
@@ -176,7 +184,7 @@ function cancelWizard() {
             <span class="text-muted text-sm">{{ category }}</span>
           </template>
         </UInput>
-      </div>
+      </UFormField>
       <div class="flex justify-between mt-6">
         <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelWizard" />
         <UButton label="Next" icon="i-lucide-arrow-right" trailing @click="handleProductNext" />
@@ -184,8 +192,7 @@ function cancelWizard() {
     </div>
 
     <div v-else-if="activeStep === '2'" class="flex flex-col gap-6 py-4">
-      <div>
-        <label class="block font-bold mb-3">Company</label>
+      <UFormField label="Company">
         <USelectMenu
           v-model="form.company"
           :items="customerOptions"
@@ -194,27 +201,22 @@ function cancelWizard() {
           placeholder="Select a customer (optional)"
           class="w-full"
         />
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Deliverypoint A</label>
+      </UFormField>
+      <UFormField label="Deliverypoint A">
         <UInput v-model="form.deliverypoint1" class="w-full" />
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Deliverypoint B</label>
+      </UFormField>
+      <UFormField label="Deliverypoint B">
         <UInput v-model="form.deliverypoint2" class="w-full" />
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Product</label>
+      </UFormField>
+      <UFormField label="Product">
         <UInput v-model="form.product" class="w-full" />
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Service</label>
+      </UFormField>
+      <UFormField label="Service">
         <UInput v-model="form.service" class="w-full" />
-      </div>
-      <div>
-        <label class="block font-bold mb-3">Comment</label>
+      </UFormField>
+      <UFormField label="Comment">
         <UTextarea v-model="form.comment" :rows="3" class="w-full" />
-      </div>
+      </UFormField>
       <div class="flex justify-between mt-6">
         <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="cancelWizard" />
         <div class="flex gap-2">

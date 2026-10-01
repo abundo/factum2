@@ -1,7 +1,9 @@
 <script setup>
-import { computed, watch } from 'vue'
-import { useToast } from '@nuxt/ui/composables'
+import { computed, useAttrs } from 'vue'
 import { useFormDirty } from '@/composables/useFormDirty'
+import { useConfirm } from '@/composables/useConfirm'
+import { useUnsaved } from '@/composables/useFormGuard'
+import { wideModal } from '@/utils/form'
 
 defineOptions({ inheritAttrs: false, name: 'FormModal' })
 
@@ -12,7 +14,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const toast = useToast()
+const attrs = useAttrs()
+const { ask } = useConfirm()
 const { dirty: snapshotDirty, markClean } = useFormDirty(() => props.source, {
   open,
   loading: () => props.loading,
@@ -20,34 +23,60 @@ const { dirty: snapshotDirty, markClean } = useFormDirty(() => props.source, {
 
 const isDirty = computed(() => (props.dirty !== undefined ? props.dirty : snapshotDirty.value))
 
-let warned = false
-watch(open, (isOpen) => {
-  if (isOpen) warned = false
+// Save sets `open` false directly. Cancel and the modal X call requestClose,
+// which asks before discarding. The footer slot receives `close`.
+useUnsaved(
+  () => !!open.value && isDirty.value,
+  () => {
+    open.value = false
+  },
+)
+
+const modalUi = computed(() => {
+  const passed = attrs.ui && typeof attrs.ui === 'object' ? attrs.ui : {}
+  const content = [wideModal.content, passed.content].filter(Boolean).join(' ')
+  return { ...passed, content }
 })
 
-function onClosePrevent() {
-  if (!isDirty.value || warned) return
-  warned = true
-  toast.add({
-    color: 'warning',
-    title: 'Unsaved changes',
-    description: 'Click Cancel or Close to discard.',
-    duration: 3000,
-  })
+const restAttrs = computed(() => {
+  const rest = { ...attrs }
+  delete rest.ui
+  return rest
+})
+
+async function requestClose() {
+  if (!open.value) return
+  if (isDirty.value) {
+    const yes = await ask({
+      title: 'Unsaved changes',
+      message: 'You have changes that are not saved. Discard them?',
+    })
+    if (!yes) return
+  }
+  open.value = false
 }
 
-defineExpose({ dirty: isDirty, markClean })
+function onUpdateOpen(next) {
+  if (next) open.value = true
+  else requestClose()
+}
+
+defineExpose({ dirty: isDirty, markClean, requestClose })
 </script>
 
 <template>
   <UModal
-    v-bind="$attrs"
-    v-model:open="open"
-    :dismissible="!isDirty"
-    @close:prevent="onClosePrevent"
+    v-bind="restAttrs"
+    :open="open"
+    :ui="modalUi"
+    :dismissible="false"
+    @update:open="onUpdateOpen"
   >
     <template v-for="(_, name) in $slots" :key="name" #[name]="slotProps">
-      <slot :name="name" v-bind="slotProps ?? {}" />
+      <slot
+        :name="name"
+        v-bind="name === 'footer' ? { ...(slotProps ?? {}), close: requestClose } : (slotProps ?? {})"
+      />
     </template>
   </UModal>
 </template>

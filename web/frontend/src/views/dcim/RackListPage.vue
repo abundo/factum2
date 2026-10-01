@@ -2,12 +2,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
-import { createRack, deleteRack, getRacks } from '@/api/racks'
+import { createRack, getRacks } from '@/api/racks'
 import { getSites } from '@/api/sites'
 import FormModal from '@/components/FormModal.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'RackListPage' })
 
@@ -20,8 +21,17 @@ const items = ref([])
 const sites = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(
+    row.name,
+    row.site_name,
+    row.height_u != null ? `${row.height_u}U` : '',
+    row.occupancy_percent != null ? `${row.occupancy_percent}%` : '',
+    row.unknown_dimensions ? 'unknown height' : '',
+    row.source,
+  ),
+)
 const dialog = ref(false)
 const saving = ref(false)
 const form = ref(emptyForm())
@@ -92,12 +102,6 @@ function save() {
     })
 }
 
-function remove(row) {
-  deleteRack(row.id)
-    .then(load)
-    .catch((err) => toast.add({ color: 'error', title: 'Delete failed', description: errMsg(err) }))
-}
-
 onMounted(load)
 </script>
 
@@ -115,15 +119,14 @@ onMounted(load)
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="items"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No racks found.'"
+      :empty="error || (search && items.length ? 'Nothing matches the search.' : 'No racks found.')"
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -146,28 +149,19 @@ onMounted(load)
         />
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2">
-          <UButton
-            icon="i-lucide-rows-3"
-            variant="outline"
-            color="neutral"
-            size="sm"
-            @click="router.push(`/dcim/racks/${row.original.id}`)"
-          />
-          <UButton
-            v-if="canWrite && !row.original.read_only"
-            icon="i-lucide-trash"
-            variant="ghost"
-            color="error"
-            size="sm"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          icon="i-lucide-rows-3"
+          variant="outline"
+          color="neutral"
+          size="sm"
+          aria-label="Open rack"
+          @click="router.push(`/dcim/racks/${row.original.id}`)"
+        />
       </template>
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form" title="New rack" :ui="{ content: 'sm:max-w-sm' }">
+  <FormModal v-model:open="dialog" :source="form" title="New rack">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField label="Name">
@@ -191,9 +185,11 @@ onMounted(load)
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="dialog = false" />
-      <UButton label="Create" :loading="saving" @click="save" />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton class="ms-auto" label="Cancel" variant="ghost" @click="close" />
+        <UButton label="Create" :loading="saving" @click="save" />
+      </div>
     </template>
   </FormModal>
 </template>

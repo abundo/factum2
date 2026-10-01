@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import SearchInput from '@/components/SearchInput.vue'
+import { matchesWords, searchWords, valuesText } from '@/utils/search'
 
 const props = defineProps({
   devices: { type: Array, default: () => [] },
@@ -59,24 +60,22 @@ function isFactumSite(s) {
   return s?.source !== 'netbox'
 }
 
+const words = computed(() => searchWords(search.value))
+
 const filteredDevices = computed(() => {
-  const q = search.value.trim().toLowerCase()
   return props.devices.filter((d) => {
     if (d.vm) return false
     if (missingSiteOnly.value && hasSite(d)) return false
-    if (!q) return true
-    return [d.name, d.site, d.manufacturer, d.model_name].some((s) =>
-      (s || '').toLowerCase().includes(q),
-    )
+    if (!words.value.length) return true
+    return matchesWords(valuesText(d.name, d.site, d.manufacturer, d.model_name), words.value)
   })
 })
 
 const filteredSites = computed(() => {
-  const q = search.value.trim().toLowerCase()
   return [...props.sites]
     .filter((s) => {
-      if (!q) return true
-      return (s.name || '').toLowerCase().includes(q)
+      if (!words.value.length) return true
+      return matchesWords(valuesText(s.name), words.value)
     })
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
 })
@@ -334,7 +333,11 @@ function submitSite() {
         v-if="!loading && !filteredDevices.length && !filteredSites.length"
         class="px-3 py-6 text-sm text-muted-color text-center"
       >
-        No matching devices or sites.
+        {{
+          words.length && (devices.length || sites.length)
+            ? 'Nothing matches the search.'
+            : 'No matching devices or sites.'
+        }}
       </div>
     </div>
 

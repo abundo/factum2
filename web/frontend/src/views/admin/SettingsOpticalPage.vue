@@ -2,12 +2,21 @@
 import { useToast } from '@nuxt/ui/composables'
 import { onMounted, ref } from 'vue'
 import { createKindMap, deleteKindMap, listKindMaps, updateKindMap } from '@/api/optical'
+import SearchInput from '@/components/SearchInput.vue'
+import { useConfirm } from '@/composables/useConfirm'
+import { useSearch, valuesText } from '@/utils/search'
 
 const toast = useToast()
+const { confirmDelete } = useConfirm()
 const rows = ref([])
 const loading = ref(true)
 const roleName = ref('')
 const kind = ref('wdm_shelf')
+const dialog = ref(false)
+const editing = ref(null)
+const formKind = ref('wdm_shelf')
+const saving = ref(false)
+const deleting = ref(false)
 
 const kindOptions = [
   { label: 'WDM shelf (TXP/MXP chassis)', value: 'wdm_shelf' },
@@ -15,6 +24,14 @@ const kindOptions = [
   { label: 'ILA / amplifier', value: 'ila' },
   { label: 'Passive / ODF', value: 'passive' },
 ]
+
+function kindLabel(value) {
+  return kindOptions.find((option) => option.value === value)?.label ?? value
+}
+
+const { search, filtered } = useSearch(rows, (row) =>
+  valuesText(row.netbox_role_name, kindLabel(row.optical_kind), row.optical_kind),
+)
 
 function load() {
   loading.value = true
@@ -45,12 +62,44 @@ function add() {
     })
 }
 
-function changeKind(row, optical_kind) {
-  updateKindMap(row.id, { optical_kind }).then(load)
+function openEdit(row) {
+  editing.value = row
+  formKind.value = row.optical_kind
+  dialog.value = true
 }
 
-function remove(row) {
-  deleteKindMap(row.id).then(load)
+function saveEdit() {
+  if (!editing.value) return
+  saving.value = true
+  updateKindMap(editing.value.id, { optical_kind: formKind.value })
+    .then(() => {
+      dialog.value = false
+      load()
+    })
+    .catch((err) => {
+      toast.add({ color: 'error', title: 'Save failed', description: err?.response?.data?.error })
+    })
+    .finally(() => {
+      saving.value = false
+    })
+}
+
+async function remove() {
+  if (!editing.value) return
+  const name = editing.value.netbox_role_name || 'map'
+  if (!(await confirmDelete(`optical kind map ${name}`))) return
+  deleting.value = true
+  deleteKindMap(editing.value.id)
+    .then(() => {
+      dialog.value = false
+      load()
+    })
+    .catch((err) => {
+      toast.add({ color: 'error', title: 'Delete failed', description: err?.response?.data?.error })
+    })
+    .finally(() => {
+      deleting.value = false
+    })
 }
 
 onMounted(load)
@@ -75,33 +124,63 @@ onMounted(load)
       />
       <UButton label="Add" :disabled="!roleName" @click="add" />
     </div>
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
     <UTable
-      :data="rows"
+      :data="filtered"
       :loading="loading"
+      :empty="search && rows.length ? 'Nothing matches the search.' : 'No kind maps yet.'"
       :columns="[
+        { id: 'actions', header: '' },
         { accessorKey: 'netbox_role_name', header: 'NetBox role' },
         { accessorKey: 'optical_kind', header: 'Kind' },
-        { id: 'actions', header: '' },
       ]"
     >
       <template #optical_kind-cell="{ row }">
-        <USelect
-          :model-value="row.original.optical_kind"
-          :items="kindOptions"
-          value-key="value"
-          label-key="label"
-          @update:model-value="changeKind(row.original, $event)"
-        />
+        {{ kindLabel(row.original.optical_kind) }}
       </template>
       <template #actions-cell="{ row }">
         <UButton
-          icon="i-lucide-trash"
-          color="error"
-          variant="ghost"
+          icon="i-lucide-pencil"
+          color="neutral"
+          variant="outline"
           size="sm"
-          @click="remove(row.original)"
+          @click="openEdit(row.original)"
         />
       </template>
     </UTable>
   </div>
+
+  <FormModal v-model:open="dialog" :source="formKind" title="Optical kind map">
+    <template #body>
+      <div class="flex flex-col gap-4">
+        <UFormField label="NetBox role">
+          <UInput :model-value="editing?.netbox_role_name" disabled class="w-full" />
+        </UFormField>
+        <UFormField label="Kind">
+          <USelect
+            v-model="formKind"
+            :items="kindOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </UFormField>
+      </div>
+    </template>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editing"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="saveEdit" />
+      </div>
+    </template>
+  </FormModal>
 </template>

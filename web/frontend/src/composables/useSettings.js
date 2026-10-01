@@ -2,6 +2,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { onMounted, reactive, ref } from 'vue'
 import { getSettings, updateSettings } from '@/api/settings'
 import { loadBranding } from '@/composables/useBranding'
+import { usePageForm } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 
 // Shared load/save logic for the admin settings pages (Sources, Destinations,
@@ -11,6 +12,7 @@ export function useSettings() {
   const toast = useToast()
 
   const settings = reactive({})
+  const pageForm = usePageForm(settings)
   const loading = ref(true)
   const saving = ref(false)
   const forbidden = ref(false)
@@ -23,6 +25,7 @@ export function useSettings() {
     getSettings()
       .then((data) => {
         Object.assign(settings, data)
+        pageForm.mark()
       })
       .catch((err) => {
         if (err.response?.status === 403 || err.response?.status === 401) {
@@ -41,6 +44,7 @@ export function useSettings() {
     updateSettings(settings)
       .then((data) => {
         Object.assign(settings, data)
+        pageForm.mark()
         toast.add({
           color: 'success',
           title: 'Successful',

@@ -283,12 +283,16 @@ function load() {
 
 function filter(q) {
   if (!tree) return
-  const s = (q ?? '').trim()
-  if (!s) {
+  const words = (q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) {
     tree.clearFilter()
     return
   }
-  tree.filterNodes(s, { mode: 'hide' })
+  // Keep the folders above a match, and unfold them.
+  tree.filterNodes(
+    (node) => words.every((w) => (node.title ?? '').toLowerCase().includes(w)),
+    { mode: 'hide', autoExpand: true },
+  )
 }
 
 function expandAll() {

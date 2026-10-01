@@ -8,6 +8,7 @@ import {
   getOxidizedVersion,
   getOxidizedVersions,
 } from '@/api/oxidized'
+import SearchInput from '@/components/SearchInput.vue'
 import {
   apiError,
   formatOxidizedAge,
@@ -16,6 +17,7 @@ import {
   nodeMatches,
   statusColor,
 } from '@/utils/oxidized'
+import { useSearch, valuesText } from '@/utils/search'
 
 const props = defineProps({
   // Already-resolved Oxidized node (Oxidized browser).
@@ -68,6 +70,16 @@ const versionColumns = [
   { accessorKey: 'oid', header: 'Commit' },
 ]
 
+const { search: versionSearch, filtered: filteredVersions } = useSearch(versions, (row) =>
+  valuesText(
+    formatOxidizedTime(row.date || row.time),
+    formatOxidizedAge(row.date || row.time),
+    row.author?.name,
+    row.message,
+    row.oid,
+  ),
+)
+
 function versionOptionLabel(version) {
   const when = version.date || version.time
   const oid = (version.oid || '').slice(0, 8)
@@ -76,6 +88,7 @@ function versionOptionLabel(version) {
 
 function resetContent() {
   tab.value = 'config'
+  versionSearch.value = ''
   oidNew.value = ''
   oidOld.value = PARENT_OID
   configText.value = ''
@@ -356,7 +369,13 @@ const diffLines = computed(() => {
               />
             </div>
 
-            <UTable :data="versions" :columns="versionColumns" :empty="'No versions.'" class="max-h-48">
+            <SearchInput v-model="versionSearch" size="sm" class="w-56" />
+            <UTable
+              :data="filteredVersions"
+              :columns="versionColumns"
+              :empty="versionSearch && versions.length ? 'Nothing matches the search.' : 'No versions.'"
+              class="max-h-48"
+            >
               <template #pick-cell="{ row }">
                 <UButton
                   label="New"

@@ -23,8 +23,11 @@ import {
   swallowAttachConflict,
 } from '@/utils/serviceEndpoints'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import { useFormGuard } from '@/composables/useFormGuard'
 
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 
 const props = defineProps({
   serviceId: { type: Number, default: null },
@@ -234,6 +237,7 @@ function loadServiceById(id) {
 
 watch(open, (isOpen) => {
   if (!isOpen) {
+    submitted.value = false
     showConfigPreview.value = false
     configPreview.value = []
     configPreviewError.value = ''
@@ -270,11 +274,6 @@ watch(
     })
   },
 )
-
-function hideDialog() {
-  open.value = false
-  submitted.value = false
-}
 
 function loadConfigPreview() {
   if (!service.value?.id || !selectedServiceType.value) {
@@ -502,7 +501,7 @@ function saveService() {
     })
 }
 
-function confirmDelete(row) {
+async function requestDelete(row) {
   deleteTarget.value = row
   // Default to a full teardown when applicable - deleting a service is
   // assumed to mean it should stop existing everywhere, not just in
@@ -510,6 +509,12 @@ function confirmDelete(row) {
   // loadServiceById), which includes l2vpn_netbox_id/applied_to_device.
   deleteRemoveNetbox.value = Boolean(row?.l2vpn_netbox_id)
   deleteRemoveDevice.value = Boolean(row?.applied_to_device)
+  if (!row?.l2vpn_netbox_id && !row?.applied_to_device) {
+    const ok = await confirmDelete(`service ${row?.service_id || ''}`)
+    if (!ok) return
+    doDeleteService()
+    return
+  }
   deleteDialog.value = true
 }
 
@@ -585,9 +590,7 @@ function realizeCommercial() {
         parent_id: parentId,
         kind: 'service',
         service_id: service.value.id,
-      }).catch((err) =>
-        swallowAttachConflict(err, findServiceScope(listScopes, service.value.id)),
-      ),
+      }).catch((err) => swallowAttachConflict(err, findServiceScope(listScopes, service.value.id))),
     )
     .then(() => putServiceEndpoints(service.value.id, genericEndpointsPayload()))
     .then(() => getService(service.value.id))
@@ -631,7 +634,11 @@ function doUnrealize() {
         schemaValues.value = { ...data.service.fields }
         genericEndpoints.value = []
       }
-      toast.add({ color: 'success', title: 'Unrealized', description: 'Technical realization removed.' })
+      toast.add({
+        color: 'success',
+        title: 'Unrealized',
+        description: 'Technical realization removed.',
+      })
       emit('saved')
     })
     .catch((err) => {
@@ -649,6 +656,24 @@ function doUnrealize() {
 function confirmUnrealize() {
   doUnrealize()
 }
+
+const deleteSource = computed(() => ({
+  netbox: deleteRemoveNetbox.value,
+  device: deleteRemoveDevice.value,
+}))
+const unrealizeSource = computed(() => ({
+  netbox: unrealizeRemoveNetbox.value,
+  device: unrealizeRemoveDevice.value,
+}))
+const { close: closeDelete, onUpdateOpen: onDeleteOpen } = useFormGuard(
+  deleteSource,
+  deleteDialog,
+  hideDeleteDialog,
+)
+const { close: closeUnrealize, onUpdateOpen: onUnrealizeOpen } = useFormGuard(
+  unrealizeSource,
+  unrealizeOpen,
+)
 </script>
 
 <template>
@@ -927,34 +952,32 @@ function confirmUnrealize() {
       </template>
     </template>
 
-    <template #footer>
-      <div class="flex w-full justify-between">
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
         <UButton
           v-if="service.source === 'factum' && canWrite"
           label="Delete"
-          icon="i-lucide-trash-2"
-          variant="outline"
+          icon="i-lucide-trash"
           color="error"
-          @click="confirmDelete(service)"
+          variant="ghost"
+          @click="requestDelete(service)"
         />
         <UButton
           v-else-if="isRealized && canWrite"
           label="Unrealize"
-          variant="outline"
           color="error"
+          variant="ghost"
           @click="openUnrealize"
         />
-        <div class="flex gap-2 ms-auto">
-          <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDialog" />
-          <UButton
-            v-if="canWrite"
-            label="Save"
-            icon="i-lucide-check"
-            :loading="saving"
-            :disabled="loading"
-            @click="saveService"
-          />
-        </div>
+        <UButton label="Cancel" icon="i-lucide-x" variant="ghost" class="ms-auto" @click="close" />
+        <UButton
+          v-if="canWrite"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="saving"
+          :disabled="loading"
+          @click="saveService"
+        />
       </div>
     </template>
   </FormModal>
@@ -970,11 +993,14 @@ function confirmUnrealize() {
     @select="onPathPick"
   />
 
-  <UModal v-model:open="unrealizeOpen" title="Unrealize service" :ui="{ content: 'sm:max-w-md' }">
+  <UModal
+    :open="unrealizeOpen"
+    :dismissible="false"
+    title="Unrealize service"
+    @update:open="onUnrealizeOpen"
+  >
     <template #body>
-      <p class="text-sm m-0">
-        Drops the technical realization and keeps this commercial row.
-      </p>
+      <p class="text-sm m-0">Drops the technical realization and keeps this commercial row.</p>
       <label class="flex items-center gap-2 mt-3">
         <UCheckbox v-model="unrealizeRemoveNetbox" />
         Remove from NetBox
@@ -985,12 +1011,19 @@ function confirmUnrealize() {
       </label>
     </template>
     <template #footer>
-      <UButton label="Cancel" variant="ghost" @click="unrealizeOpen = false" />
-      <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
+      <div class="flex w-full gap-2">
+        <UButton label="Cancel" variant="ghost" class="ms-auto" @click="closeUnrealize" />
+        <UButton label="Unrealize" color="error" :loading="unrealizing" @click="confirmUnrealize" />
+      </div>
     </template>
   </UModal>
 
-  <UModal v-model:open="deleteDialog" title="Delete service" :ui="{ content: 'sm:max-w-md' }">
+  <UModal
+    :open="deleteDialog"
+    :dismissible="false"
+    title="Delete service"
+    @update:open="onDeleteOpen"
+  >
     <template #body>
       <p>
         Are you sure you want to delete service
@@ -1016,14 +1049,23 @@ function confirmUnrealize() {
     </template>
 
     <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="hideDeleteDialog" />
-      <UButton
-        label="Delete"
-        icon="i-lucide-trash-2"
-        color="error"
-        :loading="deleting"
-        @click="deleteServiceConfirmed"
-      />
+      <div class="flex w-full gap-2">
+        <UButton
+          label="Cancel"
+          icon="i-lucide-x"
+          variant="ghost"
+          class="ms-auto"
+          @click="closeDelete"
+        />
+        <UButton
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="deleteServiceConfirmed"
+        />
+      </div>
     </template>
   </UModal>
 </template>

@@ -12,6 +12,7 @@ import {
   nodeMatches,
   statusColor,
 } from '@/utils/oxidized'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'OxidizedBrowserPage' })
 
@@ -21,8 +22,18 @@ const router = useRouter()
 const nodes = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(nodes, (row) =>
+  valuesText(
+    row.name,
+    row.ip,
+    row.model,
+    row.group,
+    row.status,
+    formatOxidizedTime(row.time),
+    formatOxidizedTime(row.mtime),
+  ),
+)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -103,7 +114,7 @@ watch(
           :loading="loading"
           @click="load"
         />
-        <SearchInput v-model="globalFilter" />
+        <SearchInput v-model="search" />
       </div>
     </div>
 
@@ -119,11 +130,12 @@ watch(
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="nodes"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No devices in Oxidized.'"
+      :empty="
+        error || (search && nodes.length ? 'Nothing matches the search.' : 'No devices in Oxidized.')
+      "
       :virtualize="{ estimateSize: 46 }"
       class="max-h-[calc(100vh-320px)]"
     >

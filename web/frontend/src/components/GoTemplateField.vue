@@ -78,9 +78,11 @@ function apply() {
           @apply="apply"
         />
       </template>
-      <template #footer>
-        <UButton label="Cancel" variant="ghost" @click="open = false" />
-        <UButton label="Apply" icon="i-lucide-check" @click="apply" />
+      <template #footer="{ close }">
+        <div class="flex w-full gap-2">
+          <UButton label="Cancel" variant="ghost" class="ms-auto" @click="close" />
+          <UButton label="Apply" icon="i-lucide-check" @click="apply" />
+        </div>
       </template>
     </FormModal>
   </div>

@@ -12,19 +12,31 @@ import {
 } from '@/api/customers'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'CustomerList' })
 
 const router = useRouter()
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 
 const customers = ref([])
 const loading = ref(true)
 const error = ref(null)
-const globalFilter = ref('')
 const sorting = ref([{ id: 'name', desc: false }])
+const { search, filtered } = useSearch(customers, (row) =>
+  valuesText(
+    row.name,
+    row.postalcity,
+    row.organization_number,
+    row.country,
+    row.source,
+    row.service_count > 0 ? 'Services' : '',
+  ),
+)
 
 const columns = [
   { id: 'actions', header: '' },
@@ -53,7 +65,6 @@ const customerLoading = ref(false)
 const customerError = ref(null)
 const relatedContacts = ref([])
 const saving = ref(false)
-const deleteDialog = ref(false)
 const deleting = ref(false)
 
 const isCreate = computed(() => editingId.value === null)
@@ -160,21 +171,20 @@ function showServices(customerRow) {
   router.push({ path: '/service', query: { customer_id: customerRow.id } })
 }
 
-function confirmDelete() {
-  deleteDialog.value = true
-}
-
-function performDelete() {
+async function performDelete() {
   if (!editingId.value) return
+  const ok = await confirmDelete(
+    `customer ${form.value.name || 'this customer'}`,
+    'This cannot be undone. Customers that still have services cannot be deleted.',
+  )
+  if (!ok) return
   deleting.value = true
   deleteCustomer(editingId.value)
     .then(() => {
-      deleteDialog.value = false
       detailDialog.value = false
       loadCustomers()
     })
     .catch((err) => {
-      deleteDialog.value = false
       toast.add({
         color: 'error',
         title: 'Delete failed',
@@ -213,16 +223,17 @@ onMounted(loadCustomers)
           @click="openNew"
         />
       </div>
-      <SearchInput v-model="globalFilter" />
+      <SearchInput v-model="search" />
     </div>
 
     <UTable
       v-model:sorting="sorting"
-      v-model:global-filter="globalFilter"
-      :data="customers"
+      :data="filtered"
       :columns="columns"
       :loading="loading"
-      :empty="error ?? 'No customers found.'"
+      :empty="
+        error || (search && customers.length ? 'Nothing matches the search.' : 'No customers found.')
+      "
       :virtualize="{ estimateSize: 46 }"
       sticky
       class="min-h-0 flex-1"
@@ -277,7 +288,6 @@ onMounted(loadCustomers)
     :source="form"
     :loading="customerLoading"
     :title="dialogTitle"
-    :ui="{ content: 'sm:max-w-lg' }"
   >
     <template #body>
       <div v-if="customerLoading" class="flex justify-center p-4">
@@ -287,52 +297,31 @@ onMounted(loadCustomers)
       <UAlert v-else-if="customerError" color="error" variant="subtle" :title="customerError" />
 
       <div v-else>
-        <div class="grid grid-cols-[9rem_1fr] items-center gap-y-4 gap-x-3">
-          <label for="name" class="font-bold">Name</label>
-          <UInput id="name" v-model="form.name" :disabled="readOnly" class="w-full" />
-
-          <label for="postal_address1" class="font-bold">Postal address 1</label>
-          <UInput
-            id="postal_address1"
-            v-model="form.postal_address1"
-            :disabled="readOnly"
-            class="w-full"
-          />
-
-          <label for="postal_address2" class="font-bold">Postal address 2</label>
-          <UInput
-            id="postal_address2"
-            v-model="form.postal_address2"
-            :disabled="readOnly"
-            class="w-full"
-          />
-
-          <label for="postalzipcode" class="font-bold">Zip code</label>
-          <UInput
-            id="postalzipcode"
-            v-model="form.postalzipcode"
-            :disabled="readOnly"
-            class="w-full"
-          />
-
-          <label for="postalcity" class="font-bold">City</label>
-          <UInput id="postalcity" v-model="form.postalcity" :disabled="readOnly" class="w-full" />
-
-          <label for="country" class="font-bold">Country</label>
-          <UInput id="country" v-model="form.country" :disabled="readOnly" class="w-full" />
-
-          <label for="organization_number" class="font-bold">Org.no</label>
-          <UInput
-            id="organization_number"
-            v-model="form.organization_number"
-            :disabled="readOnly"
-            class="w-full"
-          />
-
-          <template v-if="!isCreate">
-            <label for="source" class="font-bold">Source</label>
-            <UInput id="source" :model-value="customerSource" disabled class="w-full" />
-          </template>
+        <div class="flex flex-col gap-4">
+          <UFormField label="Name">
+            <UInput v-model="form.name" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="Postal address 1">
+            <UInput v-model="form.postal_address1" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="Postal address 2">
+            <UInput v-model="form.postal_address2" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="Zip code">
+            <UInput v-model="form.postalzipcode" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="City">
+            <UInput v-model="form.postalcity" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="Country">
+            <UInput v-model="form.country" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField label="Org.no">
+            <UInput v-model="form.organization_number" :disabled="readOnly" class="w-full" />
+          </UFormField>
+          <UFormField v-if="!isCreate" label="Source">
+            <UInput :model-value="customerSource" disabled class="w-full" />
+          </UFormField>
         </div>
 
         <div v-if="!isCreate" class="mt-6 border-t border-default pt-4">
@@ -364,46 +353,26 @@ onMounted(loadCustomers)
       </div>
     </template>
 
-    <template #footer>
-      <div class="flex w-full justify-between">
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
         <UButton
           v-if="!isCreate && isLocal && canWrite"
           label="Delete"
-          icon="i-lucide-trash-2"
-          variant="outline"
+          icon="i-lucide-trash"
           color="error"
-          @click="confirmDelete"
+          variant="ghost"
+          :loading="deleting"
+          @click="performDelete"
         />
-        <div class="flex gap-2 ms-auto">
-          <UButton
-            v-if="!readOnly"
-            :label="isCreate ? 'Create' : 'Save'"
-            :loading="saving"
-            :disabled="!form.name.trim() || saving"
-            @click="save"
-          />
-          <UButton label="Close" icon="i-lucide-x" variant="ghost" @click="detailDialog = false" />
-        </div>
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="!readOnly"
+          :label="isCreate ? 'Create' : 'Save'"
+          :loading="saving"
+          :disabled="!form.name.trim() || saving"
+          @click="save"
+        />
       </div>
     </template>
   </FormModal>
-
-  <UModal v-model:open="deleteDialog" title="Delete customer" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <p>
-        Delete customer <strong>{{ form.name || 'this customer' }}</strong
-        >? This cannot be undone. Customers that still have services cannot be deleted.
-      </p>
-    </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="deleteDialog = false" />
-      <UButton
-        label="Delete"
-        icon="i-lucide-trash-2"
-        color="error"
-        :loading="deleting"
-        @click="performDelete"
-      />
-    </template>
-  </UModal>
 </template>

@@ -5,6 +5,7 @@ import { getDevices } from '@/api/devices'
 import { createInterface, deleteInterface, getInterfaces, updateInterface } from '@/api/dcim'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { useInterfaceTypes } from '@/composables/useInterfaceTypes'
 
@@ -12,6 +13,7 @@ defineOptions({ name: 'InterfaceList' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const { defaultType, load: loadTypes, typeItems } = useInterfaceTypes()
 
 const items = ref([])
@@ -61,10 +63,6 @@ const editingLocal = computed(() => {
   if (!editingId.value) return true
   return items.value.find((i) => i.id === editingId.value)?.source !== 'netbox'
 })
-
-function isLocal(row) {
-  return row.source !== 'netbox'
-}
 
 function sourceBadgeColor(source) {
   if (source === 'factum') return 'success'
@@ -171,10 +169,16 @@ function save() {
     })
 }
 
-function remove(row) {
+async function remove() {
+  const row = items.value.find((i) => i.id === editingId.value)
+  if (!row) return
+  if (!(await confirmDelete(`interface ${row.name}`))) return
   deleting.value = true
   deleteInterface(row.id)
-    .then(() => load())
+    .then(() => {
+      dialog.value = false
+      load()
+    })
     .catch((err) => {
       toast.add({
         color: 'error',
@@ -261,24 +265,13 @@ onMounted(() => {
         />
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2">
-          <UButton
-            icon="i-lucide-pencil"
-            variant="outline"
-            color="neutral"
-            size="sm"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            v-if="canWrite && isLocal(row.original)"
-            icon="i-lucide-trash"
-            variant="ghost"
-            color="error"
-            size="sm"
-            :loading="deleting"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          icon="i-lucide-pencil"
+          variant="outline"
+          color="neutral"
+          size="sm"
+          @click="openEdit(row.original)"
+        />
       </template>
     </UTable>
 
@@ -301,12 +294,7 @@ onMounted(() => {
     </div>
   </div>
 
-  <FormModal
-    v-model:open="dialog"
-    :source="form"
-    :title="dialogTitle"
-    :ui="{ content: 'sm:max-w-sm' }"
-  >
+  <FormModal v-model:open="dialog" :source="form" :title="dialogTitle">
     <template #body>
       <div class="flex flex-col gap-4">
         <UFormField v-if="!editingId" label="Device">
@@ -345,15 +333,26 @@ onMounted(() => {
         </UFormField>
       </div>
     </template>
-    <template #footer>
-      <UButton label="Cancel" icon="i-lucide-x" variant="ghost" @click="dialog = false" />
-      <UButton
-        v-if="canWrite && editingLocal"
-        label="Save"
-        icon="i-lucide-check"
-        :loading="saving"
-        @click="save"
-      />
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editingId && canWrite && editingLocal"
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="ghost"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" label="Cancel" icon="i-lucide-x" variant="ghost" @click="close" />
+        <UButton
+          v-if="canWrite && editingLocal"
+          label="Save"
+          icon="i-lucide-check"
+          :loading="saving"
+          @click="save"
+        />
+      </div>
     </template>
   </FormModal>
 </template>

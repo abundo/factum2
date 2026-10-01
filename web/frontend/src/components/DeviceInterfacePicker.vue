@@ -4,6 +4,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { getDevice, getDevices } from '@/api/devices'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { useSearch, valuesText } from '@/utils/search'
 
 const props = defineProps({
   mode: { type: String, default: 'service' }, // service | wavelength | fiber
@@ -26,8 +27,6 @@ const device = ref(null)
 const loadingInterfaces = ref(false)
 const selectedInterfaceId = ref(null)
 
-const deviceFilter = ref('')
-const interfaceFilter = ref('')
 const deviceSorting = ref([{ id: 'name', desc: false }])
 const interfaceSorting = ref([{ id: 'name', desc: false }])
 const deviceTable = ref(null)
@@ -63,6 +62,16 @@ const pickerTableUi = {
 // CLISessionApplier fails at preview, not in this picker. Unique is
 // device+iface only (enforced by the parent form when interfaces.unique).
 const listedDevices = computed(() => devices.value)
+const {
+  search: deviceFilter,
+  words: deviceWords,
+  filtered: filteredDevices,
+} = useSearch(listedDevices, (row) => valuesText(row.name, row.site, row.platform))
+const deviceEmpty = computed(() =>
+  deviceWords.value.length && listedDevices.value.length
+    ? 'Nothing matches the search.'
+    : 'No devices found.',
+)
 
 const deviceRowSelection = computed(() =>
   selectedDeviceId.value ? { [String(selectedDeviceId.value)]: true } : {},
@@ -79,6 +88,18 @@ const listedInterfaces = computed(() => {
     (i) =>
       (i.type && i.type !== 'virtual' && i.type !== 'lag') || i.id === selectedInterfaceId.value,
   )
+})
+const {
+  search: interfaceFilter,
+  words: interfaceWords,
+  filtered: filteredInterfaces,
+} = useSearch(listedInterfaces, (row) => valuesText(row.name, row.description))
+const interfaceEmpty = computed(() => {
+  if (interfaceWords.value.length && listedInterfaces.value.length)
+    return 'Nothing matches the search.'
+  if (loadingInterfaces.value) return 'Loading...'
+  if (selectedDeviceId.value) return 'No interfaces found on this device.'
+  return 'Select a device.'
 })
 
 function rowId(row) {
@@ -199,7 +220,12 @@ function confirmSelection() {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Select device / interface" :ui="{ content: 'sm:max-w-5xl' }">
+  <UModal
+    v-model:open="open"
+    :dismissible="false"
+    title="Select device / interface"
+    :ui="{ content: 'sm:max-w-5xl' }"
+  >
     <template #body>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="flex flex-col gap-2 min-w-0">
@@ -210,13 +236,12 @@ function confirmSelection() {
           <UTable
             ref="deviceTable"
             v-model:sorting="deviceSorting"
-            v-model:global-filter="deviceFilter"
-            :data="listedDevices"
+            :data="filteredDevices"
             :columns="deviceColumns"
             :loading="loadingDevices"
             :row-selection="deviceRowSelection"
             :get-row-id="rowId"
-            empty="No devices found."
+            :empty="deviceEmpty"
             sticky
             class="max-h-[50vh]"
             :ui="pickerTableUi"
@@ -256,19 +281,12 @@ function confirmSelection() {
           <UTable
             ref="interfaceTable"
             v-model:sorting="interfaceSorting"
-            v-model:global-filter="interfaceFilter"
-            :data="listedInterfaces"
+            :data="filteredInterfaces"
             :columns="interfaceColumns"
             :loading="loadingInterfaces"
             :row-selection="interfaceRowSelection"
             :get-row-id="rowId"
-            :empty="
-              loadingInterfaces
-                ? 'Loading...'
-                : selectedDeviceId
-                  ? 'No interfaces found on this device.'
-                  : 'Select a device.'
-            "
+            :empty="interfaceEmpty"
             sticky
             class="max-h-[50vh]"
             :ui="pickerTableUi"

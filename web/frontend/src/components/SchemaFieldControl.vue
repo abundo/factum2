@@ -31,10 +31,7 @@ const allocRows = ref([])
 const type = computed(() => props.field?.type || 'string')
 const isNumeric = computed(() => type.value === 'int' || type.value === 'vlan')
 const isPrefix = computed(
-  () =>
-    type.value === 'prefix' ||
-    type.value === 'ipv4_prefix' ||
-    type.value === 'ipv6_prefix',
+  () => type.value === 'prefix' || type.value === 'ipv4_prefix' || type.value === 'ipv6_prefix',
 )
 
 function labelOf(field) {
@@ -406,7 +403,12 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
     <small v-if="showRequired" class="text-red-500"> {{ labelOf(field) }} is required. </small>
   </div>
 
-  <UModal v-model:open="pickerOpen" title="Select commercial service" :ui="{ content: 'sm:max-w-lg' }">
+  <UModal
+    v-model:open="pickerOpen"
+    :dismissible="false"
+    title="Select commercial service"
+    :ui="{ content: 'sm:max-w-lg' }"
+  >
     <template #body>
       <div class="flex flex-col gap-3">
         <SearchInput v-model="pickerQ" placeholder="Search CN/CI…" />
@@ -425,7 +427,7 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
           }}</span>
         </button>
         <p v-if="!pickerLoading && !pickerRows.length" class="text-muted-color text-sm m-0">
-          No matching services.
+          {{ pickerQ.trim() ? 'Nothing matches the search.' : 'No matching services.' }}
         </p>
       </div>
     </template>
@@ -434,7 +436,7 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
     </template>
   </UModal>
 
-  <UModal v-model:open="allocOpen" title="Allocate prefix" :ui="{ content: 'sm:max-w-md' }">
+  <UModal v-model:open="allocOpen" :dismissible="false" title="Allocate prefix">
     <template #body>
       <p v-if="allocLoading" class="text-muted-color text-sm">Loading free prefixes…</p>
       <p v-else-if="allocError" class="text-red-500 text-sm m-0">{{ allocError }}</p>
@@ -451,7 +453,9 @@ const showAlloc = computed(() => isPrefix.value && !!props.field.resource)
           <span>{{ row.prefix }}</span>
           <UBadge :label="row.free ? 'free' : 'in use'" :color="row.free ? 'success' : 'neutral'" />
         </button>
-        <p v-if="!allocRows.length" class="text-muted-color text-sm m-0">No prefixes on this resource.</p>
+        <p v-if="!allocRows.length" class="text-muted-color text-sm m-0">
+          No prefixes on this resource.
+        </p>
       </div>
     </template>
     <template #footer>

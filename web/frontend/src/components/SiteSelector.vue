@@ -82,13 +82,15 @@ function destroyTree() {
 
 function applyFilter(q) {
   if (!tree) return
-  const s = (q ?? '').trim()
-  if (!s) {
+  const words = (q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) {
     tree.clearFilter()
     return
   }
-  tree.filterNodes(s, { mode: 'hide' })
-  tree.expandAll(true)
+  tree.filterNodes(
+    (node) => words.every((w) => (node.title ?? '').toLowerCase().includes(w)),
+    { mode: 'hide', autoExpand: true },
+  )
 }
 
 function findByName(name) {
@@ -285,6 +287,7 @@ onBeforeUnmount(destroyTree)
 <template>
   <UModal
     :open="visible"
+    :dismissible="false"
     title="Select site"
     :ui="{
       overlay: 'site-selector-layer',

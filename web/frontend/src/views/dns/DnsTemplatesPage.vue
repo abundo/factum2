@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
+import SearchInput from '@/components/SearchInput.vue'
 import {
   createDnsTemplate,
   deleteDnsTemplate,
@@ -10,26 +12,29 @@ import {
   listSOATemplates,
   updateDnsTemplate,
 } from '@/api/dns'
+import { useSearch, valuesText } from '@/utils/search'
 
 defineOptions({ name: 'DnsTemplatesPage' })
 
 const toast = useToast()
 const authStore = useAuthStore()
+const { confirmDelete } = useConfirm()
 const items = ref([])
 const soas = ref([])
 const policies = ref([])
 const dialog = ref(false)
 const saving = ref(false)
+const deleting = ref(false)
 const editing = ref(null)
 const form = reactive(emptyForm())
 
 const columns = [
+  { id: 'actions', header: '' },
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'soa_template', header: 'SOA' },
   { accessorKey: 'default_ttl', header: 'TTL' },
   { id: 'dnssec', accessorKey: 'dnssec_policy', header: 'DNSSEC' },
   { id: 'nameservers', header: 'NS' },
-  { id: 'actions', header: '' },
 ]
 
 const soaItems = computed(() => soas.value.map((s) => ({ label: s.name, value: s.id })))
@@ -51,6 +56,16 @@ function emptyForm() {
     nameservers: [emptyNameserver(), emptyNameserver()],
   }
 }
+
+const { search, filtered } = useSearch(items, (row) =>
+  valuesText(
+    row.name,
+    row.soa_template,
+    row.default_ttl,
+    row.dnssec_policy,
+    nameserverSummary(row.nameservers),
+  ),
+)
 
 function nameserverSummary(list) {
   return (list || [])
@@ -134,13 +149,18 @@ async function save() {
   }
 }
 
-async function remove(row) {
-  if (!confirm(`Delete DNS template ${row.name}?`)) return
+async function remove() {
+  if (!editing.value) return
+  if (!(await confirmDelete(`DNS template ${editing.value.name}`))) return
+  deleting.value = true
   try {
-    await deleteDnsTemplate(row.id)
+    await deleteDnsTemplate(editing.value.id)
+    dialog.value = false
     await load()
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to delete DNS template'), color: 'error' })
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -163,7 +183,12 @@ onMounted(load)
         @click="openCreate"
       />
     </div>
-    <UTable :data="items" :columns="columns">
+    <SearchInput v-model="search" class="mb-3 max-w-xs" />
+    <UTable
+      :data="filtered"
+      :columns="columns"
+      :empty="search && items.length ? 'Nothing matches the search.' : 'No DNS templates found.'"
+    >
       <template #dnssec-cell="{ row }">
         {{ row.original.dnssec_policy || '—' }}
       </template>
@@ -171,33 +196,25 @@ onMounted(load)
         {{ nameserverSummary(row.original.nameservers) }}
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex gap-2 justify-end">
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-pencil"
-            @click="openEdit(row.original)"
-          />
-          <UButton
-            v-if="authStore.canWrite"
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-trash"
-            @click="remove(row.original)"
-          />
-        </div>
+        <UButton
+          v-if="authStore.canWrite"
+          size="sm"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-pencil"
+          @click="openEdit(row.original)"
+        />
       </template>
     </UTable>
   </div>
 
-  <FormModal v-model:open="dialog" :source="form">
-    <template #content>
-      <UCard>
-        <template #header>{{ editing ? 'Edit DNS template' : 'New DNS template' }}</template>
-        <form class="space-y-3" @submit.prevent="save">
+  <FormModal
+    v-model:open="dialog"
+    :source="form"
+    :title="editing ? 'Edit DNS template' : 'New DNS template'"
+  >
+    <template #body>
+      <form id="dns-template-form" class="space-y-3" @submit.prevent="save">
           <UFormField label="Name">
             <UInput v-model="form.name" class="w-full" required />
           </UFormField>
@@ -261,14 +278,25 @@ onMounted(load)
               </UButton>
             </div>
           </UFormField>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton color="neutral" variant="ghost" type="button" @click="dialog = false"
-              >Cancel</UButton
-            >
-            <UButton type="submit" :loading="saving">Save</UButton>
-          </div>
-        </form>
-      </UCard>
+      </form>
+    </template>
+    <template #footer="{ close }">
+      <div class="flex w-full gap-2">
+        <UButton
+          v-if="editing && authStore.canWrite"
+          color="error"
+          variant="ghost"
+          icon="i-lucide-trash"
+          label="Delete"
+          type="button"
+          :loading="deleting"
+          @click="remove"
+        />
+        <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
+          >Cancel</UButton
+        >
+        <UButton type="submit" form="dns-template-form" :loading="saving">Save</UButton>
+      </div>
     </template>
   </FormModal>
 </template>
