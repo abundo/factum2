@@ -57,7 +57,7 @@ function topLevelValues() {
   return values
 }
 
-// Nested accordions (Admin > Settings/Sources/Destinations/AAA) also emit
+// Nested accordions (Admin > Settings/Sources/Destinations/Services/AAA) also emit
 // update:modelValue through UNavigationMenu. Ignore those so they don't
 // collapse every top-level heading.
 function onOpenSectionsUpdate(val) {
@@ -221,6 +221,13 @@ const groups = computed(() => {
           ],
         },
         {
+          label: 'Services',
+          icon: 'i-lucide-radio',
+          children: [
+            { label: 'RADIUS', icon: 'i-lucide-shield-check', to: '/admin/radius' },
+          ],
+        },
+        {
           label: 'AAA',
           icon: 'i-lucide-shield-check',
           children: [
@@ -228,7 +235,6 @@ const groups = computed(() => {
             { label: 'Roles', icon: 'i-lucide-shield', to: '/admin/roles' },
             { label: 'Authentication', icon: 'i-lucide-key', to: '/admin/authentication' },
             { label: 'Authorization', icon: 'i-lucide-lock', to: '/admin/authorization' },
-            { label: 'RADIUS', icon: 'i-lucide-shield-check', to: '/admin/radius' },
           ],
         },
       ]),

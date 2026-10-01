@@ -119,7 +119,7 @@ A worker that should answer switch and router logins needs a `radius`
 entry in `worker.commands`. The command line is not executed. The name
 starts a UDP listener (default `:1812`) that binds to the directory
 configured in the GUI and allows a user only when an LDAP group is mapped
-to that device's NetBox role. Policy is edited under Admin → AAA → RADIUS.
+to that device's NetBox role. Policy is edited under Admin → Services → RADIUS.
 The worker keeps the last copy on disk, so logins continue while the
 primary is down. Open UDP 1812 from the management network to this host.
 The primary still dials out to `/hub`; the switches dial in to 1812.

@@ -433,7 +433,7 @@ policy is the admin group. Unknown, disabled, or unmapped devices are
 rejected. `GET /api/radius-config` (radius role only) is cached at
 `worker.radius_state` (default `/var/lib/factum2/radius/cache.json`);
 accept/reject lines POST to `/api/radius-events` and spool locally if the
-hub is down. GUI: Admin → AAA → RADIUS.
+hub is down. GUI: Admin → Services → RADIUS.
 
 ### Web backend (`web/`)
 

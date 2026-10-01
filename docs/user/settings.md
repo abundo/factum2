@@ -96,6 +96,11 @@ services into NetBox/Factum). GUI device I/O uses the same credentials
 (per-device override, or the `default` row): service push, delete-from-device,
 unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
 
+## Services
+
+- **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
+  device roles. See [RADIUS](radius.md)
+
 ## AAA
 
 - **Users** / **Roles** — local accounts; `admin` cannot be deleted
@@ -103,5 +108,3 @@ unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
   RADIUS network login uses this same directory
 - **Authorization** — map LDAP group DNs to Factum roles, plus a default
   role for users who match no group
-- **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
-  device roles. See [RADIUS](radius.md)

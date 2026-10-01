@@ -5,7 +5,7 @@ order: 57
 
 # RADIUS
 
-**Admin → AAA → RADIUS** lets routers and switches log in with a username
+**Admin → Services → RADIUS** lets routers and switches log in with a username
 and password from Active Directory or OpenLDAP. The password check and the
 group check happen on the RADIUS worker, against the two directory servers
 configured under **Authentication**. factum2 stores the policy and the
