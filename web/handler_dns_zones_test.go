@@ -172,6 +172,12 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	if len(cfg.Zones[0].Nameservers) != 3 || cfg.Zones[0].Nameservers[1].Address != "2001:db8::53" {
 		t.Fatalf("dns-config nameservers = %+v", cfg.Zones[0].Nameservers)
 	}
+	if cfg.Zones[0].DNSSECPolicy != "dnssec-policy" || len(cfg.DNSSECPolicies) != 1 || cfg.DNSSECPolicies[0].Name != "dnssec-policy" {
+		t.Fatalf("dns-config dnssec = zone %q policies %+v", cfg.Zones[0].DNSSECPolicy, cfg.DNSSECPolicies)
+	}
+	if cfg.DNSSECPolicies[0].KSKAlgorithm != "ecdsap256sha256" {
+		t.Fatalf("dns-config policy = %+v", cfg.DNSSECPolicies[0])
+	}
 
 	c, rec = jsonRequest(t, http.MethodDelete, "/api/dns/zones/"+itoa(zone.ID), nil, []string{"id"}, []string{itoa(zone.ID)})
 	if err := ctrl.ApiDnsZoneDelete(c); err != nil {

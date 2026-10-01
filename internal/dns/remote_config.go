@@ -13,15 +13,16 @@ import (
 // remoteConfigResponse mirrors web.DNSConfigResponse.
 type remoteConfigResponse struct {
 	util.CommonConfig
-	DestFile        string          `json:"dest_file"`
-	IgnoreModels    string          `json:"ignore_models"`
-	IgnorePlatforms string          `json:"ignore_platforms"`
-	ZonesEnabled    bool            `json:"zones_enabled"`
-	DhcpEnabled     bool            `json:"dhcp_enabled"`
-	ZonesFile       string          `json:"zones_file"`
-	PrefixesFile    string          `json:"prefixes_file"`
-	Zones           []ConfigDNSZone `json:"zones"`
-	DHCP            ConfigDHCP      `json:"dhcp"`
+	DestFile        string               `json:"dest_file"`
+	IgnoreModels    string               `json:"ignore_models"`
+	IgnorePlatforms string               `json:"ignore_platforms"`
+	ZonesEnabled    bool                 `json:"zones_enabled"`
+	DhcpEnabled     bool                 `json:"dhcp_enabled"`
+	ZonesFile       string               `json:"zones_file"`
+	PrefixesFile    string               `json:"prefixes_file"`
+	Zones           []ConfigDNSZone      `json:"zones"`
+	DNSSECPolicies  []ConfigDNSSECPolicy `json:"dnssec_policies"`
+	DHCP            ConfigDHCP           `json:"dhcp"`
 }
 
 // FetchRemoteConfig pulls the DNS sync settings from the primary,
@@ -39,11 +40,12 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*Config, error) {
 			IgnoreModels:    remote.IgnoreModels,
 			IgnorePlatforms: remote.IgnorePlatforms,
 		},
-		ZonesEnabled: remote.ZonesEnabled,
-		DhcpEnabled:  remote.DhcpEnabled,
-		ZonesFile:    remote.ZonesFile,
-		PrefixesFile: remote.PrefixesFile,
-		Zones:        remote.Zones,
-		DHCP:         remote.DHCP,
+		ZonesEnabled:   remote.ZonesEnabled,
+		DhcpEnabled:    remote.DhcpEnabled,
+		ZonesFile:      remote.ZonesFile,
+		PrefixesFile:   remote.PrefixesFile,
+		Zones:          remote.Zones,
+		DNSSECPolicies: remote.DNSSECPolicies,
+		DHCP:           remote.DHCP,
 	}, nil
 }

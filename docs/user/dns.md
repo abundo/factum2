@@ -19,7 +19,7 @@ for devices, then applying BIND/Kea through the dnsmgr2 library).
 | --- | --- |
 | **SOA templates** | MNAME, RNAME, refresh/retry/expire/minimum. Serial is not stored; dnsmgr2 assigns `YYYYMMDDnn` on sync. |
 | **DNS templates** | Named `dns_template`: which SOA, default TTL, NS hostnames with an optional IPv4 or IPv6 address, optional DNSSEC policy |
-| **DNSSEC policies** | BIND `dnssec-policy` name and key/signature timings. dnsmgr2 writes the **name** into `named.conf` (`dnssec-policy "…"`). |
+| **DNSSEC policies** | BIND `dnssec-policy` name and key/signature timings. On sync, `factum2-dns` writes the policy into the zone include. dnsmgr2 emits the block in `named.conf` and sets `dnssec-policy "…"` plus `inline-signing` on each zone whose DNS template uses it. |
 | **Zones** | Name, type (`forward` / `reverse4` / `reverse6`), DNS template, records |
 
 A zone's SOA and apex NS come from its DNS template. Each nameserver row
@@ -82,8 +82,10 @@ Zone template names in the Factum zone editor must match names in that
 file.
 
 When the zone editor is on and **Destinations → DNS → Include file** is
-set, `factum2-dns` writes that path as a YAML zone list (`zones:`). List
-it from the main config:
+set, `factum2-dns` writes that path as a YAML zone list (`zones:`) plus
+`dnssec_policies:` for every DNSSEC policy. Each zone carries
+`dnssec_policy` when its DNS template has one. List it from the main
+config:
 
     dnsmgr2:
       - host_dns_template: isc_bind
@@ -96,10 +98,14 @@ means "do not write a zone list" (zones stay inline in the main yaml).
 ## Sync
 
 A DNS job writes the JSON records file (devices plus zone-editor
-records), the zone include, and (if DHCP is on) the prefix include, then
-`factum2-dns` applies the administrator-managed `dnsmgr2.yaml` in-process
-(BIND zone files, `rndc`, optional Kea). No separate `dnsmgr2` binary is
-required on the worker. Zone-editor records for a zone named the same as **default
+records), the zone include (zones and DNSSEC policies), and (if DHCP is
+on) the prefix include, then `factum2-dns` applies the
+administrator-managed `dnsmgr2.yaml` in-process (BIND zone files,
+`rndc`, optional Kea). No separate `dnsmgr2` binary is required on the
+worker. dnsmgr2 writes each DNSSEC policy at the top of the BIND include
+(`named.conf.dnsmgr2`) and references it from the zone statement. A
+policy named `default` is BIND's built-in policy and is not written as a
+block. Zone-editor records for a zone named the same as **default
 domain** are merged into that domain's `records` array with the device
 records.
 

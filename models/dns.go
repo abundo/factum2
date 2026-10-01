@@ -36,8 +36,9 @@ type DnsSOATemplateDTO struct {
 }
 
 // DnsDNSSECPolicy is a BIND dnssec-policy (name, KSK/ZSK, signature timings).
-// dnsmgr2 currently consumes only Name (as zone_templates.dnssec_policy);
-// the rest is stored so the GUI can round-trip a full policy.
+// factum2-dns writes every policy into the zone include. dnsmgr2 emits the
+// block in named.conf and points each zone at the policy named by its DNS
+// template. The built-in BIND policy "default" cannot be redefined.
 type DnsDNSSECPolicy struct {
 	FactumModel
 	Name                     string `json:"name" gorm:"uniqueIndex;not null;type:varchar(255)"`

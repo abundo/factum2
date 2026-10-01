@@ -276,8 +276,11 @@ func TestSyncDevicesWritesZoneInclude(t *testing.T) {
 			ZonesEnabled: true,
 			ZonesFile:    inc,
 			Zones: []ConfigDNSZone{
-				{Name: "example.com", Type: "forward", DnsTemplate: "default_dns"},
+				{Name: "example.com", Type: "forward", DnsTemplate: "default_dns", DNSSECPolicy: "lab"},
 			},
+			DNSSECPolicies: []ConfigDNSSECPolicy{{
+				Name: "lab", KSKAlgorithm: "ecdsap256sha256", ZSKAlgorithm: "ecdsap256sha256",
+			}},
 		},
 		update: func() error { return nil },
 	}
@@ -291,6 +294,9 @@ func TestSyncDevicesWritesZoneInclude(t *testing.T) {
 	s := string(got)
 	if !strings.Contains(s, "name: example.com") || !strings.Contains(s, "dns_template: default_dns") {
 		t.Fatalf("include:\n%s", s)
+	}
+	if !strings.Contains(s, "dnssec_policies:") || !strings.Contains(s, "dnssec_policy: lab") {
+		t.Fatalf("include missing DNSSEC policy:\n%s", s)
 	}
 	if strings.Contains(s, "prefixes:") {
 		t.Fatalf("zone include has prefixes:\n%s", s)

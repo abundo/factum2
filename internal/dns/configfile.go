@@ -15,12 +15,13 @@ const zoneIncludeWarning = "# WARNING! do not edit, factum2-dns will overwrite y
 // generate dnsmgr2 zone/prefix include files and extra JSON records-file sections.
 type Config struct {
 	util.ConfigDNS
-	ZonesEnabled bool
-	DhcpEnabled  bool
-	ZonesFile    string
-	PrefixesFile string
-	Zones        []ConfigDNSZone
-	DHCP         ConfigDHCP
+	ZonesEnabled   bool
+	DhcpEnabled    bool
+	ZonesFile      string
+	PrefixesFile   string
+	Zones          []ConfigDNSZone
+	DNSSECPolicies []ConfigDNSSECPolicy
+	DHCP           ConfigDHCP
 }
 
 // ConfigDHCP is the prefix list written into the DHCP include when DhcpEnabled.
@@ -41,12 +42,27 @@ type ConfigDNSNameserver struct {
 	Address  string `json:"address,omitempty"`
 }
 
+// ConfigDNSSECPolicy is one BIND dnssec-policy. Sync writes it into the
+// zone include; dnsmgr2 emits the block at the top of named.conf.
+type ConfigDNSSECPolicy struct {
+	Name                     string `json:"name" yaml:"name"`
+	KSKLifetime              string `json:"ksk_lifetime" yaml:"ksk_lifetime,omitempty"`
+	KSKAlgorithm             string `json:"ksk_algorithm" yaml:"ksk_algorithm,omitempty"`
+	ZSKLifetime              string `json:"zsk_lifetime" yaml:"zsk_lifetime,omitempty"`
+	ZSKAlgorithm             string `json:"zsk_algorithm" yaml:"zsk_algorithm,omitempty"`
+	PurgeKeys                string `json:"purge_keys" yaml:"purge_keys,omitempty"`
+	SignaturesValidity       string `json:"signatures_validity" yaml:"signatures_validity,omitempty"`
+	SignaturesValidityDNSKEY string `json:"signatures_validity_dnskey" yaml:"signatures_validity_dnskey,omitempty"`
+	SignaturesRefresh        string `json:"signatures_refresh" yaml:"signatures_refresh,omitempty"`
+}
+
 type ConfigDNSZone struct {
-	Name        string                `json:"name"`
-	Type        string                `json:"type"`
-	DnsTemplate string                `json:"dns_template"`
-	Nameservers []ConfigDNSNameserver `json:"nameservers,omitempty"`
-	Records     []ConfigDNSRecord     `json:"records"`
+	Name         string                `json:"name"`
+	Type         string                `json:"type"`
+	DnsTemplate  string                `json:"dns_template"`
+	DNSSECPolicy string                `json:"dnssec_policy,omitempty"`
+	Nameservers  []ConfigDNSNameserver `json:"nameservers,omitempty"`
+	Records      []ConfigDNSRecord     `json:"records"`
 }
 
 type ConfigDNSRecord struct {
@@ -59,9 +75,22 @@ type ConfigDNSRecord struct {
 }
 
 type yamlZone struct {
-	Name        string `yaml:"name"`
-	Type        string `yaml:"type"`
-	DnsTemplate string `yaml:"dns_template"`
+	Name         string `yaml:"name"`
+	Type         string `yaml:"type"`
+	DnsTemplate  string `yaml:"dns_template"`
+	DNSSECPolicy string `yaml:"dnssec_policy,omitempty"`
+}
+
+type yamlDNSSECPolicy struct {
+	Name                     string `yaml:"name"`
+	KSKLifetime              string `yaml:"ksk_lifetime,omitempty"`
+	KSKAlgorithm             string `yaml:"ksk_algorithm,omitempty"`
+	ZSKLifetime              string `yaml:"zsk_lifetime,omitempty"`
+	ZSKAlgorithm             string `yaml:"zsk_algorithm,omitempty"`
+	PurgeKeys                string `yaml:"purge_keys,omitempty"`
+	SignaturesValidity       string `yaml:"signatures_validity,omitempty"`
+	SignaturesValidityDNSKEY string `yaml:"signatures_validity_dnskey,omitempty"`
+	SignaturesRefresh        string `yaml:"signatures_refresh,omitempty"`
 }
 
 type yamlPrefix struct {
@@ -72,7 +101,8 @@ type yamlPrefix struct {
 }
 
 type yamlZoneInclude struct {
-	Zones []yamlZone `yaml:"zones"`
+	DNSSECPolicies []yamlDNSSECPolicy `yaml:"dnssec_policies,omitempty"`
+	Zones          []yamlZone         `yaml:"zones"`
 }
 
 type yamlPrefixInclude struct {
@@ -90,9 +120,10 @@ func zoneListYAML(zones []ConfigDNSZone) []yamlZone {
 			typ = "forward"
 		}
 		out = append(out, yamlZone{
-			Name:        z.Name,
-			Type:        typ,
-			DnsTemplate: z.DnsTemplate,
+			Name:         z.Name,
+			Type:         typ,
+			DnsTemplate:  z.DnsTemplate,
+			DNSSECPolicy: strings.TrimSpace(z.DNSSECPolicy),
 		})
 	}
 	return out
@@ -122,7 +153,32 @@ func RenderZoneInclude(cfg *Config) ([]byte, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("dns config is not loaded")
 	}
-	return marshalInclude(yamlZoneInclude{Zones: zoneListYAML(cfg.Zones)})
+	return marshalInclude(yamlZoneInclude{
+		DNSSECPolicies: dnssecPoliciesYAML(cfg.DNSSECPolicies),
+		Zones:          zoneListYAML(cfg.Zones),
+	})
+}
+
+func dnssecPoliciesYAML(policies []ConfigDNSSECPolicy) []yamlDNSSECPolicy {
+	out := make([]yamlDNSSECPolicy, 0, len(policies))
+	for _, p := range policies {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, yamlDNSSECPolicy{
+			Name:                     name,
+			KSKLifetime:              strings.TrimSpace(p.KSKLifetime),
+			KSKAlgorithm:             strings.TrimSpace(p.KSKAlgorithm),
+			ZSKLifetime:              strings.TrimSpace(p.ZSKLifetime),
+			ZSKAlgorithm:             strings.TrimSpace(p.ZSKAlgorithm),
+			PurgeKeys:                strings.TrimSpace(p.PurgeKeys),
+			SignaturesValidity:       strings.TrimSpace(p.SignaturesValidity),
+			SignaturesValidityDNSKEY: strings.TrimSpace(p.SignaturesValidityDNSKEY),
+			SignaturesRefresh:        strings.TrimSpace(p.SignaturesRefresh),
+		})
+	}
+	return out
 }
 
 // RenderPrefixInclude builds a dnsmgr2 prefix-include YAML document. The

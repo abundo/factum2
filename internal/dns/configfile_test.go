@@ -184,6 +184,47 @@ func TestWriteZoneRecordsJSONTXT(t *testing.T) {
 	}
 }
 
+func TestRenderZoneIncludeDNSSEC(t *testing.T) {
+	cfg := &Config{
+		Zones: []ConfigDNSZone{
+			{Name: "example.com", Type: "forward", DnsTemplate: "default_dns", DNSSECPolicy: "lab"},
+			{Name: "192.0.2.0/24", Type: "reverse4", DnsTemplate: "default_dns"},
+		},
+		DNSSECPolicies: []ConfigDNSSECPolicy{
+			{
+				Name: "lab", KSKLifetime: "P1y", KSKAlgorithm: "ecdsap256sha256",
+				ZSKLifetime: "30d", ZSKAlgorithm: "ecdsap256sha256",
+				PurgeKeys: "365d", SignaturesValidity: "14d",
+				SignaturesValidityDNSKEY: "14d", SignaturesRefresh: "5d",
+			},
+		},
+	}
+	out, err := RenderZoneInclude(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"dnssec_policies:",
+		"name: lab",
+		"ksk_lifetime: P1y",
+		"ksk_algorithm: ecdsap256sha256",
+		"zsk_lifetime: 30d",
+		"purge_keys: 365d",
+		"signatures_validity: 14d",
+		"signatures_validity_dnskey: 14d",
+		"signatures_refresh: 5d",
+		"dnssec_policy: lab",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("yaml missing %q\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "dnssec_policy:") != 1 {
+		t.Errorf("unsigned zone should omit dnssec_policy\n%s", s)
+	}
+}
+
 func TestRenderPrefixInclude(t *testing.T) {
 	cfg := &Config{
 		DhcpEnabled: true,

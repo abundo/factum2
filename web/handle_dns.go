@@ -16,15 +16,16 @@ import (
 // parses - keep the JSON tags in sync with that type.
 type DNSConfigResponse struct {
 	util.CommonConfig
-	DestFile        string              `json:"dest_file"`
-	IgnoreModels    string              `json:"ignore_models"`
-	IgnorePlatforms string              `json:"ignore_platforms"`
-	ZonesEnabled    bool                `json:"zones_enabled"`
-	DhcpEnabled     bool                `json:"dhcp_enabled"`
-	ZonesFile       string              `json:"zones_file"`
-	PrefixesFile    string              `json:"prefixes_file"`
-	Zones           []dns.ConfigDNSZone `json:"zones"`
-	DHCP            dns.ConfigDHCP      `json:"dhcp"`
+	DestFile        string                   `json:"dest_file"`
+	IgnoreModels    string                   `json:"ignore_models"`
+	IgnorePlatforms string                   `json:"ignore_platforms"`
+	ZonesEnabled    bool                     `json:"zones_enabled"`
+	DhcpEnabled     bool                     `json:"dhcp_enabled"`
+	ZonesFile       string                   `json:"zones_file"`
+	PrefixesFile    string                   `json:"prefixes_file"`
+	Zones           []dns.ConfigDNSZone      `json:"zones"`
+	DNSSECPolicies  []dns.ConfigDNSSECPolicy `json:"dnssec_policies,omitempty"`
+	DHCP            dns.ConfigDHCP           `json:"dhcp"`
 }
 
 // ApiDNSConfig returns the DNS sync settings from the database-backed
@@ -59,7 +60,12 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
+		policies, err := loadDNSSECPolicies(ctrl.DB)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
 		resp.Zones = zones
+		resp.DNSSECPolicies = policies
 	}
 	return c.JSON(http.StatusOK, resp)
 }
@@ -67,6 +73,7 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSZone, error) {
 	var zoneRows []models.DnsZone
 	if err := db.Preload("DnsTemplate").
+		Preload("DnsTemplate.DNSSECPolicy").
 		Preload("DnsTemplate.Nameservers", func(tx *gorm.DB) *gorm.DB { return tx.Order("rank") }).
 		Preload("Records", func(tx *gorm.DB) *gorm.DB { return tx.Order("rank") }).
 		Order("name").Find(&zoneRows).Error; err != nil {
@@ -89,15 +96,42 @@ func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSZone, error) {
 		for _, n := range z.DnsTemplate.Nameservers {
 			ns = append(ns, dns.ConfigDNSNameserver{Hostname: n.Hostname, Address: n.Address})
 		}
+		policyName := ""
+		if z.DnsTemplate.DNSSECPolicy != nil {
+			policyName = z.DnsTemplate.DNSSECPolicy.Name
+		}
 		zones = append(zones, dns.ConfigDNSZone{
-			Name:        z.Name,
-			Type:        z.Type,
-			DnsTemplate: z.DnsTemplate.Name,
-			Nameservers: ns,
-			Records:     recs,
+			Name:         z.Name,
+			Type:         z.Type,
+			DnsTemplate:  z.DnsTemplate.Name,
+			DNSSECPolicy: policyName,
+			Nameservers:  ns,
+			Records:      recs,
 		})
 	}
 	return zones, nil
+}
+
+func loadDNSSECPolicies(db *gorm.DB) ([]dns.ConfigDNSSECPolicy, error) {
+	var rows []models.DnsDNSSECPolicy
+	if err := db.Order("name").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]dns.ConfigDNSSECPolicy, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, dns.ConfigDNSSECPolicy{
+			Name:                     p.Name,
+			KSKLifetime:              p.KSKLifetime,
+			KSKAlgorithm:             p.KSKAlgorithm,
+			ZSKLifetime:              p.ZSKLifetime,
+			ZSKAlgorithm:             p.ZSKAlgorithm,
+			PurgeKeys:                p.PurgeKeys,
+			SignaturesValidity:       p.SignaturesValidity,
+			SignaturesValidityDNSKEY: p.SignaturesValidityDNSKEY,
+			SignaturesRefresh:        p.SignaturesRefresh,
+		})
+	}
+	return out, nil
 }
 
 func loadDHCPSyncPayload(db *gorm.DB, settings *models.Settings) (dns.ConfigDHCP, error) {

@@ -135,8 +135,8 @@ onMounted(load)
       <div>
         <div class="font-semibold text-lg">DNSSEC policies</div>
         <p class="text-muted-color text-sm">
-          BIND dnssec-policy name attached to a DNS template. dnsmgr2 writes the name into
-          named.conf.
+          BIND dnssec-policy attached to a DNS template. factum2-dns writes the policy
+          into the zone include on sync, and dnsmgr2 emits it in named.conf.
         </p>
       </div>
       <UButton
