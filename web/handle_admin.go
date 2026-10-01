@@ -34,6 +34,7 @@ func (ctrl *Controller) ApiSettingsGet(c *echo.Context) error {
 		text := radius.DefaultReply
 		settings.RadiusReply = &text
 	}
+	settings.DeviceSyncWorkers = models.DeviceSyncWorkerCount(settings.DeviceSyncWorkers)
 	return c.JSON(http.StatusOK, settings)
 }
 
@@ -72,6 +73,7 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	}
 	settings.RadiusMachineAccount = account
 	settings.RadiusMachineDomain = domain
+	settings.DeviceSyncWorkers = models.DeviceSyncWorkerCount(settings.DeviceSyncWorkers)
 
 	if err := ctrl.DB.Save(settings).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})

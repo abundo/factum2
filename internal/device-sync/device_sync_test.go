@@ -2032,6 +2032,21 @@ func TestL2vpnSlug(t *testing.T) {
 	}
 }
 
+func TestWorkerLimit(t *testing.T) {
+	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), nil)
+	if got := ds.workerLimit(); got != models.DefaultDeviceSyncWorkers {
+		t.Fatalf("unset workers = %d, want %d", got, models.DefaultDeviceSyncWorkers)
+	}
+	ds.cfg.Workers = 3
+	if got := ds.workerLimit(); got != 3 {
+		t.Fatalf("workers = %d, want 3", got)
+	}
+	ds.cfg.Workers = -1
+	if got := ds.workerLimit(); got != models.DefaultDeviceSyncWorkers {
+		t.Fatalf("negative workers = %d, want %d", got, models.DefaultDeviceSyncWorkers)
+	}
+}
+
 // ----- forEachPair concurrency -----
 
 // TestForEachPairTemplateCacheIsRaceSafe runs interfacesCreate over many
@@ -2049,7 +2064,7 @@ func TestForEachPairTemplateCacheIsRaceSafe(t *testing.T) {
 	}
 	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
 
-	const n = 3 * syncWorkers
+	const n = 3 * models.DefaultDeviceSyncWorkers
 	for i := 0; i < n; i++ {
 		dc := drivers.NewDeviceConfig()
 		dc.AddInterface(&drivers.Interface{Name: "Ethernet1", Type: "other"})

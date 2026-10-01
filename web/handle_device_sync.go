@@ -29,8 +29,11 @@ type DeviceSyncConfigResponse struct {
 	InventoryMaps map[string]string `json:"inventory_maps"`
 	// ServiceSources is nil when Settings.DeviceSyncServiceSources is nil
 	// (every implemented source). An empty slice means sync no services.
-	ServiceSources *[]string                      `json:"service_sources"`
-	Auth           map[string]DeviceSyncAuthEntry `json:"auth"`
+	ServiceSources *[]string `json:"service_sources"`
+	// Workers is how many devices one run handles at once. Always at least
+	// 1; an unset Settings.DeviceSyncWorkers is models.DefaultDeviceSyncWorkers.
+	Workers int                            `json:"workers"`
+	Auth    map[string]DeviceSyncAuthEntry `json:"auth"`
 }
 
 // splitLines splits a newline-separated Settings field (see
@@ -97,6 +100,7 @@ func (ctrl *Controller) ApiDeviceSyncConfig(c *echo.Context) error {
 		VlanGroupName:  settings.DeviceSyncVlanGroupName,
 		InventoryMaps:  cfgmgmt.InventoryMaps(types),
 		ServiceSources: serviceSourceList(settings.DeviceSyncServiceSources),
+		Workers:        models.DeviceSyncWorkerCount(settings.DeviceSyncWorkers),
 		Auth:           auth,
 	})
 }

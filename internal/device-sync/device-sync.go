@@ -29,20 +29,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// syncWorkers bounds how many devices are handled at once, both while
-// connecting (SSH/NETCONF to the device itself) and in each forEachPair
-// phase (REST calls to Netbox) - each phase still runs to completion across
-// every pair before the next phase starts (see run()), so this only
-// parallelizes independent, same-phase, per-device work. This is I/O-bound
-// work (waiting on the device or on Netbox, not on CPU), so unlike a
-// CPU-bound worker pool there's no reason to tie this to runtime.NumCPU() -
-// the ceiling is whatever concurrent load the devices/Netbox can take
-// without erroring or rate-limiting, which in practice is comfortably above
-// core count. 8 is an untuned starting point; raise it if a real run shows
-// headroom (no errors/timeouts) and lower it if Netbox starts rejecting
-// requests.
-const syncWorkers = 8
-
 // SyncOptions controls which devices are synced and how destructive
 // changes are confirmed
 type SyncOptions struct {
@@ -228,7 +214,23 @@ func (ds *DeviceSync) devicesToSync() ([]*models.Device, error) {
 	return []*models.Device{device}, nil
 }
 
-// forEachPair runs fn over every pair, up to syncWorkers at a time, and
+// workerLimit is how many devices this run handles at once, both while
+// connecting (SSH/NETCONF to the device itself) and in each forEachPair
+// phase (REST calls to Netbox). Each phase still runs to completion across
+// every pair before the next phase starts (see run()), so this only
+// parallelizes independent, same-phase, per-device work. The count is
+// Settings.DeviceSyncWorkers; a missing config or a value below 1 keeps
+// models.DefaultDeviceSyncWorkers. errgroup treats a limit below 1 as
+// unlimited, so this never returns that.
+func (ds *DeviceSync) workerLimit() int {
+	n := 0
+	if ds.cfg != nil {
+		n = ds.cfg.Workers
+	}
+	return models.DeviceSyncWorkerCount(n)
+}
+
+// forEachPair runs fn over every pair, up to workerLimit at a time, and
 // waits for all of them to finish before returning - callers rely on that to
 // sequence phases (run()'s delete-before-create-before-update comments).
 // Pairs are independent devices, so this is safe in general; the exceptions
@@ -236,7 +238,7 @@ func (ds *DeviceSync) devicesToSync() ([]*models.Device, error) {
 // cross-pair cable) are locked internally rather than handled here.
 func (ds *DeviceSync) forEachPair(fn func(*devicePair)) {
 	var g errgroup.Group
-	g.SetLimit(syncWorkers)
+	g.SetLimit(ds.workerLimit())
 	for i := range ds.pairs {
 		pair := &ds.pairs[i]
 		g.Go(func() error {
@@ -273,9 +275,9 @@ func (ds *DeviceSync) deviceSelected(d *models.Device) bool {
 }
 
 // connectDevices connects to every device in devices concurrently, up to
-// syncWorkers at a time, and sets ds.pairs to the ones that succeeded. Each
+// workerLimit at a time, and sets ds.pairs to the ones that succeeded. Each
 // device's own SSH/NETCONF round trip dominates connectDevice's cost, so
-// this is the same I/O-bound fan-out as forEachPair - see syncWorkers.
+// this is the same I/O-bound fan-out as forEachPair - see workerLimit.
 // Results are collected into a devices-length slice indexed by position
 // rather than appended by whichever goroutine finishes first, so ds.pairs
 // ends up in devices' order regardless of which connection was slowest;
@@ -284,7 +286,7 @@ func (ds *DeviceSync) deviceSelected(d *models.Device) bool {
 func (ds *DeviceSync) connectDevices(devices []*models.Device) {
 	results := make([]*devicePair, len(devices))
 	var g errgroup.Group
-	g.SetLimit(syncWorkers)
+	g.SetLimit(ds.workerLimit())
 	for i, d := range devices {
 		g.Go(func() error {
 			results[i] = ds.connectDevice(d)

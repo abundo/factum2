@@ -626,6 +626,12 @@ type Settings struct {
 	// line. Nil means every implemented source. An empty string means none.
 	// The NetBox object kind still comes from the cfgmgmt service type.
 	DeviceSyncServiceSources *string `gorm:"column:device_sync_service_sources;type:text" form:"device_sync_service_sources" json:"device_sync_service_sources"`
+	// DeviceSyncWorkers is how many devices factum2-device-sync handles at
+	// once: the SSH/NETCONF connect fan-out and each later NetBox phase.
+	// Phases still run one after another. Values below 1 are treated as
+	// DefaultDeviceSyncWorkers. The work is I/O-bound, so the useful ceiling
+	// is whatever the devices and NetBox accept, not the CPU count.
+	DeviceSyncWorkers int `gorm:"column:device_sync_workers" form:"device_sync_workers" json:"device_sync_workers"`
 
 	// LDAP / Active Directory authentication + authorization. Connection
 	// fields are edited from the admin "Authentication" page,
@@ -701,6 +707,20 @@ type Settings struct {
 	RadiusMachineAccount  string `gorm:"column:radius_machine_account;type:varchar(64)" form:"radius_machine_account" json:"radius_machine_account"`
 	RadiusMachinePassword string `gorm:"column:radius_machine_password;type:text" form:"radius_machine_password" json:"radius_machine_password"`
 	RadiusMachineDomain   string `gorm:"column:radius_machine_domain;type:varchar(64)" form:"radius_machine_domain" json:"radius_machine_domain"`
+}
+
+// DefaultDeviceSyncWorkers is the parallel-device limit used when
+// Settings.DeviceSyncWorkers is unset. It matches the limit device-sync
+// used before the setting existed.
+const DefaultDeviceSyncWorkers = 8
+
+// DeviceSyncWorkerCount returns n when it is at least 1, otherwise
+// DefaultDeviceSyncWorkers.
+func DeviceSyncWorkerCount(n int) int {
+	if n < 1 {
+		return DefaultDeviceSyncWorkers
+	}
+	return n
 }
 
 // LibrenmsPendingDelete is one LibreNMS device that sync has quarantined

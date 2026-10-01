@@ -60,6 +60,12 @@ const serviceSources = [
   },
 ]
 
+function saveDeviceSyncSettings() {
+  const n = Number(settings.device_sync_workers)
+  settings.device_sync_workers = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 8
+  saveSettings()
+}
+
 function enabledSourceSet() {
   const raw = settings.device_sync_service_sources
   if (raw == null) {
@@ -228,7 +234,7 @@ onMounted(loadDeviceSyncAuths)
           icon="i-lucide-check"
           :loading="settingsSaving"
           :disabled="settingsLoading"
-          @click="saveSettings"
+          @click="saveDeviceSyncSettings"
         />
       </div>
 
@@ -242,6 +248,18 @@ onMounted(loadDeviceSyncAuths)
           help="Syncs device interfaces/addresses/connections into Netbox. Netbox connection settings are shared with the Netbox tab under Sources settings; per-device login credentials are managed below."
         >
           <USwitch v-model="settings.device_sync_enabled" />
+        </UFormField>
+        <UFormField
+          label="Parallel workers"
+          help="How many devices are handled at once while connecting and during each NetBox phase. A phase still finishes for every device before the next phase starts. A blank or invalid value is saved as 8."
+        >
+          <UInputNumber
+            v-model="settings.device_sync_workers"
+            :min="1"
+            :step="1"
+            :format-options="{ useGrouping: false }"
+            class="w-32"
+          />
         </UFormField>
         <UFormField
           v-for="svc in serviceSources"

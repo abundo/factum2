@@ -91,6 +91,43 @@ func TestApiDeviceSyncConfigServiceSources(t *testing.T) {
 	}
 }
 
+func TestApiDeviceSyncConfigWorkers(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/device-sync-config", nil, nil, nil)
+	if err := ctrl.ApiDeviceSyncConfig(c); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	var body DeviceSyncConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Workers != models.DefaultDeviceSyncWorkers {
+		t.Fatalf("workers = %d, want %d", body.Workers, models.DefaultDeviceSyncWorkers)
+	}
+
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.DeviceSyncWorkers = 3
+	if err := db.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = jsonRequest(t, http.MethodGet, "/api/device-sync-config", nil, nil, nil)
+	if err := ctrl.ApiDeviceSyncConfig(c); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	body = DeviceSyncConfigResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Workers != 3 {
+		t.Fatalf("workers = %d, want 3", body.Workers)
+	}
+}
+
 func TestServiceSourceListEmptyMeansNone(t *testing.T) {
 	empty := ""
 	got := serviceSourceList(&empty)

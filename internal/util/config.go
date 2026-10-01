@@ -188,7 +188,11 @@ type ConfigDeviceSync struct {
 	// (eline, elan, l3vpn). Nil means every implemented source. An empty
 	// slice means write no services, including the ELINE fallback.
 	ServiceSources *[]string
-	Auth           map[string]ConfigDeviceSyncAuth
+	// Workers is how many devices one run handles at once
+	// (Settings.DeviceSyncWorkers). Values below 1 mean
+	// models.DefaultDeviceSyncWorkers.
+	Workers int
+	Auth    map[string]ConfigDeviceSyncAuth
 }
 
 // ConfigLibrenms is a runtime-only DTO, not part of ConfigRoot - same
