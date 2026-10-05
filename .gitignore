@@ -33,9 +33,13 @@ pkg/
 # vendor/
 
 
-# Go workspace file (local library development; see DEV.md)
+# Go workspace file (local library development; see DEV.md).
+# A dnsmgr2 checkout used by that workspace belongs beside this repo
+# (../dnsmgr2). Ignore one placed inside the tree so it is not added
+# as a gitlink.
 go.work
 go.work.sum
+/dnsmgr2/
 
 # Skill runtime state (skills themselves under .grok/skills are committed)
 .grok/skills/**/.state/
