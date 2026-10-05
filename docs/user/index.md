@@ -22,7 +22,8 @@ currently on GitHub.
 | Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |
 | Racks / Floor plans / Connections | Infrastructure | Room drawings, rack elevations, direct cables |
-| Network map / Configuration / Devices / Interfaces / Interface types / Oxidized / Software | DCIM | Inventory, topology, live configuration, config backups, NOS images |
+| Network map / Configuration / Devices / Interfaces / Interface types / Oxidized | DCIM | Inventory, topology, live configuration, config backups |
+| Packet capture / Software | Tools | Port mirror and NOS images |
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | Zones / DNS templates | Services → DNS | Only if **DNS zone editor** is enabled |
 | Certificates / Accounts / Challenges | Services → Certificates | Only if **Certificates** is enabled (Destinations) |

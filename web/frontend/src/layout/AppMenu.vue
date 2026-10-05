@@ -154,9 +154,6 @@ const groups = computed(() => {
         ...(authStore.oxidizedEnabled
           ? [{ label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' }]
           : []),
-        ...(authStore.storageEnabled
-          ? [{ label: 'Software', icon: 'i-lucide-package', to: '/software' }]
-          : []),
       ]),
       ...(authStore.ipamEnabled
         ? [
@@ -186,6 +183,9 @@ const groups = computed(() => {
           // Sit the new-window control next to the label, not at the row edge.
           ui: { linkTrailing: '!ms-0' },
         },
+        ...(authStore.storageEnabled
+          ? [{ label: 'Software', icon: 'i-lucide-package', to: '/software' }]
+          : []),
       ]),
     )
   }

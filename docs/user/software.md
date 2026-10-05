@@ -5,7 +5,7 @@ order: 55
 
 # Software
 
-The **Software** page (DCIM menu) is a repository of router and switch
+The **Software** page (Tools menu) is a repository of router and switch
 images. Upload, rename, move, and delete files and folders, then copy an
 image onto a device.
 
