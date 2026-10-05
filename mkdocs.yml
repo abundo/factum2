@@ -53,6 +53,7 @@ nav:
       - DNS: user/dns.md
       - Certificates: user/certs.md
       - Software: user/software.md
+      - RADIUS: user/radius.md
       - Admin settings: user/settings.md
       - Software bill of materials: user/sbom.md
   - Install:

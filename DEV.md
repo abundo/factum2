@@ -116,7 +116,7 @@ not from factum config.
 `factum.token` is a shared secret (matched against the primary's
 `Settings.FactumApiToken`, set from the admin UI's Factum tab) used on the
 HTTPS fallback — `internal/factum`'s HTTP client, used by `factum2-dns` and
-`factum2-librenms-cli`. Unix-socket calls send no bearer (the socket ACL is
+`factum2-librenms`. Unix-socket calls send no bearer (the socket ACL is
 the auth). Set the token in both places (admin UI and the remote host's
 `factum.token` config key) if anything on that host still uses HTTPS, or
 those commands get 401s.
@@ -146,6 +146,7 @@ account, which any admin can already see via `GET /api/admin/settings`.
 | `factum2-driver`               | `cmd/driver`               | Run device-driver commands over the Factum API (`exec`, `version`, ...)                                      |
 | `factum2-certs`                | `cmd/certs`                | Write lego `.lego.yaml` / `.env` and run lego (`sync`)                                                       |
 | `factum2-dns`                  | `cmd/dns`                  | Push device data into DNS (`update`)                                                                         |
+| `factum2-device-sync`          | `cmd/device-sync`          | Read on-device interfaces, addresses, and services into NetBox (`sync`)                                      |
 | `factum2-icinga`               | `cmd/icinga`               | Sync Icinga with factum (`get-hosts-down`, `get-services-down`, `show-events`, `sync`)                       |
 | `factum2-icinga-notifications` | `cmd/icinga-notifications` | Icinga2 `NotificationCommand` - builds and sends the HTML alert email for a host/service notification        |
 | `factum2-lime`                 | `cmd/lime`                 | Sync customers from Lime CRM (`sync`)                                                                        |
@@ -396,7 +397,7 @@ GUI against real apps, not a substitute for these tiers):
 - **Opt-in real-container tier**: official images
   (`netboxcommunity/netbox`, `librenms/librenms`) are each a multi-container
   app in their own right (NetBox: Postgres+Redis; LibreNMS: MySQL+Redis, and
-  `factum2-librenms-cli` also reads LibreNMS's own MySQL directly for
+  `factum2-librenms` also reads LibreNMS's own MySQL directly for
   `PortsGet`/`PortsUpdateIgnore` - see AGENTS.md's sync section) - too heavy
   to fold into `testdata/itest` above without slowing down every LDAP/mail
   test run. For interactive use, `make dev-up` (`dev/`) is the shared lab

@@ -3,6 +3,83 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
+## v1.2.0
+
+### New
+
+- **RADIUS:** switches and routers log in through a worker. PAP checks the
+  directory bind. MikroTik MS-CHAPv2 checks Active Directory with the
+  computer account on the Service tab. A login also needs an LDAP group
+  mapped to the device's NetBox role. Accept attributes are edited under
+  Admin → Services → RADIUS.
+- **Packet capture:** Tools → Packet capture mirrors an Arista Ethernet,
+  Port-Channel, or Recirc-Channel and shows the packets in the browser.
+- **Running configuration:** DCIM → Configuration edits Arista EOS and
+  Cisco IOS-XR from CLI text, and Nokia SR OS MD from the device's
+  configuration JSON. A click selects a context. A double click opens or
+  closes that context's children.
+- **NetBox delta sync:** `factum2-netbox sync-delta` (job `netbox-delta`)
+  refetches what changed since the last full sync. Webhook bursts wait one
+  quiet period, then run that delta. Device, VM, cable, site, region, and
+  location deletes apply immediately.
+- **Config bundles:** Config → Export / Import moves a service definition
+  with its translation CLI, macros, variables, and parameter objects.
+- **DNS:** a template nameserver can carry an address, written as in-zone
+  A/AAAA glue. Zone sync writes DNSSEC policies for dnsmgr2 v1.2.2.
+- **Devices:** a VM flag on device types and devices. The customer dialog
+  lists linked contacts.
+- A schedule can name several jobs. Device sync can run several workers at
+  once, and ELINE, ELAN, and L3VPN sync can each be turned off.
+- A security policy for vulnerability reports (`SECURITY.md`).
+
+### Changed
+
+- NetBox origin is one `source` custom field (`factum:42`). Downstream ids
+  are one `destination` field (`librenms:42 zabbix:7`). Each integration
+  updates only its own id. `librenms_id` is no longer created.
+- Remote worker upgrades SSH as `factum` and use passwordless sudo. Root
+  SSH is refused when a remote worker is in the run.
+- The network map uses OpenFreeMap Liberty. Lines are colored by fiber,
+  wavelength, and capacity.
+- The cable editor spans the device columns you pick, and each device
+  appears in one column.
+- Provisioning follows Organization. DNS and Certificates sit under
+  Services. Software sits under Tools, next to Packet capture. RADIUS sits
+  under Admin → Services.
+- Tables search as you type. Delete lives in the detail view and asks
+  before it removes the named row. Forms stay wide, and leaving a page
+  with unsaved edits asks first.
+- Oxidized versions show age in days, or years and days.
+- Icinga alert mail names the Factum customers and services on the host.
+- Reset links, worker command arguments, and hub config fetches stay
+  inside their trust boundary.
+
+### Fixed
+
+- The installer extracts a release archive on Python 3.14 when
+  `tarfile.data_filter` is missing.
+- A NetBox cable stays when its webhook races the save.
+- Changing an address VRF updates that row, so the device's primary IP
+  stays.
+- The log panel no longer jumps when its backlog arrives.
+
+### Upgrading
+
+- Install applies goose migrations `00023` through `00031`. Stop
+  `factum2-web` before migrating by hand.
+- A worker upgrade needs a `factum` user, the primary's deploy key in that
+  user's `authorized_keys`, and `examples/factum2-install.sudoers`.
+- Copy old NetBox origin fields with `examples/netbox_migrate_source_field.py`
+  and old LibreNMS ids with `examples/netbox_migrate_destination_field.py`
+  before the next sync. `factum2-netbox check --update` creates `source`
+  and `destination`.
+- Add `netbox-delta` next to `netbox` in `worker.commands`
+  (`sync-delta --job`) to schedule the shorter sync. A full `sync` records
+  the cursor. With no cursor, delta runs a full sync.
+- DNSSEC policy lines need dnsmgr2 v1.2.2 on the DNS host.
+- The primary and its workers must be this same build. The hub handshake
+  rejects a mismatch.
+
 ## v1.1.2
 
 ### Changed

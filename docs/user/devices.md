@@ -94,8 +94,11 @@ and assigns the device to it.
 ## Configuration
 
 **DCIM → Configuration** opens the running configuration of one device.
-The device list shows only platforms the page can edit. Arista EOS is
-the first. Pick a device and refresh to read `show running-config`.
+The device list shows only platforms the page can edit: Arista EOS,
+Cisco IOS-XR, and Nokia SR OS MD (classic SR OS is not edited here).
+Pick a device and refresh. EOS and IOS-XR are read with
+`show running-config`. SR OS MD is read as configuration JSON and shown
+as MD-CLI.
 
 The tree on the left is every context in the running configuration.
 **root** is the commands that do not open a block, such as a one-line

@@ -47,6 +47,9 @@ section before adding tests there.
   drives `playwright-core` against Chromium inside `factum-dev-browser`.
   `run-factum2-web` drives host `/usr/bin/google-chrome-stable` with
   `--no-sandbox`.
+- **GoReleaser** is `~/go/bin/goreleaser` (v2). It is not on the default
+  `PATH`. `goreleaser check` and `make snapshot` need that directory on
+  `PATH`. See DEV.md's Release section.
 - **Device SSH:** reuse one SSH connection per device for the process
   lifetime via `internal/drivers` `memoryPool` (`InitSSHPool`; default-on
   for `vrp`/`ciscosmb`). Do not reconnect per command. Kill switch:
@@ -85,7 +88,7 @@ are upstream sources synced _into_ factum's Postgres DB (`factum2-netbox
 sync`, `factum2-lime sync` — see `internal/netbox`, `internal/lime`), while
 DNS, Icinga, LibreNMS, Oxidized and Prometheus are downstream targets
 synced _from_ factum (`factum2-dns sync`, `factum2-certs sync`, `factum2-icinga sync`,
-`factum2-librenms-cli sync`, `factum2-oxidized sync`, `factum2-prometheus
+`factum2-librenms sync`, `factum2-oxidized sync`, `factum2-prometheus
 sync`) — same shape as Icinga: `internal/oxidized`'s
 `FactumOxidizedClient.Sync` filters devices (enabled, `CfBackupOxidized`,
 not on any `Settings.OxidizedIgnore*` list, has a primary IPv4), writes
@@ -160,7 +163,7 @@ services whose `ServiceType` is already set to something other than the
 mapped type or empty.
 
 DNS, Icinga, LibreNMS, Oxidized and Prometheus are different: their CLI tools
-(`factum2-dns`, `factum2-icinga`, `factum2-librenms-cli`, `factum2-oxidized`,
+(`factum2-dns`, `factum2-icinga`, `factum2-librenms`, `factum2-oxidized`,
 `factum2-prometheus`) are meant to run on a _different host_ than the primary
 (the DNS/Icinga/LibreNMS/Oxidized/Prometheus server itself), so they can't just
 open a direct Postgres
@@ -246,7 +249,7 @@ firewall step, not something the process unbinds.
   `internal/dns.Sync` doesn't actually filter on the ignore fields, never
   did even back when they were a YAML map.
 - LibreNMS's own MySQL credentials are _not_ part of any of this - they're
-  not in `Settings` or fetched over REST at all. `factum2-librenms-cli`
+  not in `Settings` or fetched over REST at all. `factum2-librenms`
   assumes it runs co-located with the LibreNMS server, and reads them
   directly from LibreNMS's own `.env` file on disk
   (`NewFactumLibrenmsClient` in `internal/librenms/factum2-librenms.go`,
@@ -254,7 +257,7 @@ firewall step, not something the process unbinds.
   result into `LibrenmsClient.DBConfig` for `PortsGet`/`PortsUpdateIgnore`.
 - **Triggering a sync**: in production the trigger is always a cron job on
   the primary itself, not a human or a scheduler on the worker/target host -
-  `factum2-dns`/`factum2-icinga`/`factum2-librenms-cli`/`factum2-oxidized`/
+  `factum2-dns`/`factum2-icinga`/`factum2-librenms`/`factum2-oxidized`/
   `factum2-prometheus` are never invoked by their own local cron, only ever
   dispatched by the primary
   over the hub. The Job overview page
@@ -282,7 +285,7 @@ firewall step, not something the process unbinds.
   existing predefined-command mechanism rather than each service CLI
   having its own bespoke listener: an agent activates a command by name
   via `worker.commands` (e.g. a `worker.commands.librenms` entry running
-  `factum2-librenms-cli sync`), and `StartJob` dispatches a `command`
+  `factum2-librenms sync`), and `StartJob` dispatches a `command`
   envelope per task to exactly one connected node whose hello-reported
   roles include the target name (deliberately _not_ a fan-out to every
   matching node the way `factum2-worker run`'s `SendCommand`/`RunAndWait`
@@ -374,7 +377,7 @@ firewall step, not something the process unbinds.
   `FetchRemoteConfig`/`RemoteClient` fetch `Settings.NetboxApiURL/
 NetboxApiToken` from the primary (`GET /api/netbox-config`,
   `web.ApiNetboxConfig`, `util.ConfigNetbox`) via `util.FactumHTTP` rather
-  than opening a direct Postgres connection — `factum2-librenms-cli` runs on
+  than opening a direct Postgres connection — `factum2-librenms` runs on
   the LibreNMS host, not the primary, and has no access to its Postgres DB.
   LibreNMS's own REST/MySQL and the NetBox API after those credentials are
   fetched stay local / on NetBox's URL; they are not tunneled.
@@ -423,14 +426,17 @@ is a separate systemd unit (`examples/factum2-storage.service`), not a
 `worker.commands` entry. Feature flag `Settings.StorageEnabled`.
 
 **RADIUS (`internal/radius`):** a worker with `worker.commands` key
-`radius` listens for Access-Request (PAP + Message-Authenticator) and
-binds to LDAP itself, using the Authentication settings and the second
-directory host for dial failover. It does not proxy the login through
-factum2. A user is accepted only when `memberOf` matches a
+`radius` listens for Access-Request and binds to LDAP itself, using the
+Authentication settings and the second directory host for dial failover.
+It does not proxy the login through factum2. PAP checks the password with
+a directory bind. MikroTik sends MS-CHAPv2; that check needs Active
+Directory and the computer account on the Service tab, and OpenLDAP
+rejects it. A user is accepted only when `memberOf` matches a
 `RadiusPolicy` for the NetBox role of the device identified by NAS-IP /
 source address (`RadiusClient` holds the shared secret). An all-devices
 policy is the admin group. Unknown, disabled, or unmapped devices are
-rejected. `GET /api/radius-config` (radius role only) is cached at
+rejected. An accept also returns the Service tab's accept attributes.
+`GET /api/radius-config` (radius role only) is cached at
 `worker.radius_state` (default `/var/lib/factum2/radius/cache.json`);
 accept/reject lines POST to `/api/radius-events` and spool locally if the
 hub is down. GUI: Admin → Services → RADIUS.

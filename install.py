@@ -1874,9 +1874,13 @@ def extract_archive(archive: Path, dest: Path) -> Path:
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar.getmembers():
             _assert_tar_member_safe(member, dest_abs)
-        # filter="data" is Python 3.12+; members were already checked above.
+        # filter="data" is Python 3.12+. Members were already checked above.
+        # Python 3.14's extractall looks up tarfile.data_filter when filter
+        # is omitted, so a missing data_filter still needs an explicit filter.
         if getattr(tarfile, "data_filter", None) is not None:
             tar.extractall(dest, filter="data")
+        elif sys.version_info >= (3, 12):
+            tar.extractall(dest, filter="fully_trusted")
         else:
             tar.extractall(dest)
     if _looks_like_release_root(dest):
