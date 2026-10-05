@@ -410,6 +410,10 @@ builds (`go run`, `make factum2-web`) serve the placeholder in
 `docs/generated/sbom.md` first still compiles, but keeps that
 placeholder.
 
+Write the release's section in `CHANGELOG.md` before tagging (`## vX.Y.Z`:
+New, Changed, Fixed, Upgrading). The notes on GitHub are that section
+(`dev/release-notes.sh`), and the release workflow fails without one.
+
     git tag -a v0.1.0 -m "v0.1.0"
     git push origin v0.1.0
 
