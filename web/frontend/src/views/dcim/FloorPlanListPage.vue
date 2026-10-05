@@ -145,7 +145,6 @@ onMounted(load)
           v-if="canWrite"
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           class="shrink-0 self-center"
           aria-label="Rename floor plan"

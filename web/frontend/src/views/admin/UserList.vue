@@ -191,7 +191,6 @@ onMounted(() => {
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="editUser(row.original)"
         />

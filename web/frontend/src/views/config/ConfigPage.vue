@@ -1979,7 +1979,6 @@ onBeforeUnmount(() => {
                 <UButton
                   icon="i-lucide-pencil"
                   variant="outline"
-                  color="neutral"
                   size="sm"
                   @click="openVar(row.original)"
                 />
@@ -2018,7 +2017,6 @@ onBeforeUnmount(() => {
                 <UButton
                   icon="i-lucide-pencil"
                   variant="outline"
-                  color="neutral"
                   size="sm"
                   @click="openType(row.original)"
                 />
@@ -2054,7 +2052,6 @@ onBeforeUnmount(() => {
                 <UButton
                   icon="i-lucide-pencil"
                   variant="outline"
-                  color="neutral"
                   size="sm"
                   @click="openMacro(row.original)"
                 />

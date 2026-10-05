@@ -130,7 +130,6 @@ onMounted(load)
       <template #actions-cell="{ row }">
         <UButton
           size="sm"
-          color="neutral"
           variant="outline"
           icon="i-lucide-pencil"
           aria-label="Edit zone"

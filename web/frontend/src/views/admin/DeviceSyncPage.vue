@@ -348,7 +348,6 @@ onMounted(loadDeviceSyncAuths)
           <UButton
             icon="i-lucide-pencil"
             variant="outline"
-            color="neutral"
             size="sm"
             @click="editDeviceSyncAuth(row.original)"
           />

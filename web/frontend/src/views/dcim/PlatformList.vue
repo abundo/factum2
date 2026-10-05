@@ -200,7 +200,6 @@ onMounted(load)
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="openEdit(row.original)"
         />

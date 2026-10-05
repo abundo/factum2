@@ -471,7 +471,6 @@ onMounted(() => {
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="openDetail(row.original)"
         />
@@ -640,8 +639,7 @@ onMounted(() => {
           <template #actions-cell="{ row }">
             <UButton
               icon="i-lucide-pencil"
-              variant="ghost"
-              color="neutral"
+              variant="outline"
               size="sm"
               title="Edit interface"
               @click="openEditTemplate(row.original)"

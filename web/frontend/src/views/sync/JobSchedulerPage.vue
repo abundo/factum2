@@ -370,7 +370,6 @@ onUnmounted(() => {
           v-if="canWrite"
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="editSchedule(row.original)"
         />

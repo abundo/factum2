@@ -804,7 +804,6 @@ onBeforeUnmount(() => {
               <UButton
                 icon="i-lucide-pencil"
                 variant="outline"
-                color="neutral"
                 size="sm"
                 @click="editClient(row.original)"
               />
@@ -853,7 +852,6 @@ onBeforeUnmount(() => {
               <UButton
                 icon="i-lucide-pencil"
                 variant="outline"
-                color="neutral"
                 size="sm"
                 @click="editPolicy(row.original)"
               />

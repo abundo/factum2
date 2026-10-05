@@ -251,7 +251,6 @@ onMounted(() => {
           <UButton
             icon="i-lucide-pencil"
             variant="outline"
-            color="neutral"
             size="sm"
             @click="editMapping(row.original)"
           />

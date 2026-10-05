@@ -242,7 +242,6 @@ onMounted(load)
           icon="i-lucide-pencil"
           size="sm"
           variant="outline"
-          color="neutral"
           aria-label="Open"
           @click="open(row.original)"
         />

@@ -141,7 +141,6 @@ onMounted(load)
       <template #actions-cell="{ row }">
         <UButton
           icon="i-lucide-pencil"
-          color="neutral"
           variant="outline"
           size="sm"
           @click="openEdit(row.original)"

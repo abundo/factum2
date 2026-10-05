@@ -1187,7 +1187,6 @@ onMounted(() => {
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="showDetail(row.original)"
         />
@@ -1531,8 +1530,7 @@ onMounted(() => {
           <template #actions-cell="{ row }">
             <UButton
               icon="i-lucide-pencil"
-              variant="ghost"
-              color="neutral"
+              variant="outline"
               size="sm"
               title="Edit interface"
               @click="openEditIface(row.original)"
@@ -1640,8 +1638,7 @@ onMounted(() => {
                   v-if="authStore.canWrite && !addr.netbox_id"
                   icon="i-lucide-pencil"
                   size="xs"
-                  variant="ghost"
-                  color="neutral"
+                  variant="outline"
                   title="Edit address"
                   @click="openEditAddr(row.original, addr)"
                 />

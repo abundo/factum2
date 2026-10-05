@@ -268,7 +268,6 @@ onMounted(loadContacts)
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="showDetail(row.original)"
         />

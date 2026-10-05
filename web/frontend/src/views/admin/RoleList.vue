@@ -131,7 +131,6 @@ onMounted(loadRoles)
         <UButton
           icon="i-lucide-pencil"
           variant="outline"
-          color="neutral"
           size="sm"
           @click="editRole(row.original)"
         />

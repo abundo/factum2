@@ -147,7 +147,6 @@ onMounted(load)
         <UButton
           v-if="authStore.canWrite"
           size="sm"
-          color="neutral"
           variant="outline"
           icon="i-lucide-pencil"
           @click="openEdit(row.original)"

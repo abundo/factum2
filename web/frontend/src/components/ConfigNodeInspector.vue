@@ -914,7 +914,6 @@ function toggleFeature(id) {
             <UButton
               icon="i-lucide-pencil"
               variant="outline"
-              color="neutral"
               size="sm"
               @click="emit('assign', row.original)"
             />
