@@ -124,8 +124,41 @@ func TestApiCapturePlatforms(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"eos"`)) {
-		t.Fatalf("body = %s", rec.Body.String())
+	body := rec.Body.String()
+	for _, want := range []string{`"platform":"eos"`, `"Ethernet"`, `"Port-Channel"`, `"Recirc-Channel"`} {
+		if !bytes.Contains(rec.Body.Bytes(), []byte(want)) {
+			t.Fatalf("body = %s, missing %s", body, want)
+		}
+	}
+}
+
+func TestApiCaptureRejectsUnsupportedInterface(t *testing.T) {
+	db := newTestDB(t)
+	dev := models.Device{Name: "lab-eos.example", Platform: "EOS"}
+	if err := db.Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	iface := models.Interface{DeviceID: dev.ID, Name: "Vlan100"}
+	if err := db.Create(&iface).Error; err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	ctrl := &Controller{DB: db}
+	ctrl.driverFn = func(*models.Device, deviceCredentialsRequest, *models.Settings) (drivers.DriverClient, error) {
+		called = true
+		return nil, nil
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/capture", captureStartRequest{
+		DeviceID: dev.ID, InterfaceID: iface.ID,
+	}, nil, nil)
+	if err := ctrl.ApiCapture(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("driver was built for an interface EOS cannot mirror")
 	}
 }
 

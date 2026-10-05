@@ -13,6 +13,7 @@ import { useCaptureWorker } from '@/composables/useCaptureWorker'
 import { useUnsaved } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 import { bytes } from '@/utils/bytes'
+import { captureSourceAllowed, platformPrefixes } from '@/utils/captureSource'
 
 // Packet capture: the Arista driver mirrors the chosen interface to the
 // switch CPU over eAPI, then factum streams tcpdump's pcap over SSH into
@@ -63,23 +64,33 @@ function onPick(row) {
   selected.interfaceName = row.interfaceName
 }
 
+const queryDevice = ref(null)
+
 async function loadQueryTarget() {
   const deviceId = Number(route.query.device) || null
   const interfaceId = Number(route.query.interface) || null
   if (!deviceId || !interfaceId) return
   try {
-    const data = await getDevice(deviceId)
-    const iface = (data.interfaces ?? []).find((i) => i.id === interfaceId)
-    // EOS cannot mirror a subinterface. Leave the picker empty instead of
-    // starting from a name the list will not show.
-    if (!iface || /\.\d+$/.test(iface.name ?? '') || Number(iface.parent_id) > 0) return
-    selected.deviceId = deviceId
-    selected.deviceName = data.name ?? ''
-    selected.interfaceId = interfaceId
-    selected.interfaceName = iface.name ?? ''
+    queryDevice.value = await getDevice(deviceId)
   } catch {
     // The picker still opens; the names stay blank until a device is chosen.
   }
+}
+
+// Apply ?device=&interface= once the driver has said which names it can
+// source. A Vlan or a subinterface stays unselected.
+function applyQueryTarget() {
+  const data = queryDevice.value
+  const deviceId = Number(route.query.device) || null
+  const interfaceId = Number(route.query.interface) || null
+  if (!platformsReady.value || !data || !deviceId || !interfaceId) return
+  const iface = (data.interfaces ?? []).find((i) => i.id === interfaceId)
+  const prefixes = platformPrefixes(platforms.value, data.platform)
+  if (!iface || !captureSourceAllowed(iface.name, prefixes, { parentId: iface.parent_id })) return
+  selected.deviceId = deviceId
+  selected.deviceName = data.name ?? ''
+  selected.interfaceId = interfaceId
+  selected.interfaceName = iface.name ?? ''
 }
 
 onMounted(() => {
@@ -97,8 +108,9 @@ onMounted(() => {
     })
     .finally(() => {
       platformsReady.value = true
+      applyQueryTarget()
     })
-  loadQueryTarget()
+  loadQueryTarget().then(() => applyQueryTarget())
 })
 
 function start() {

@@ -16,12 +16,35 @@ func TestCapturePlatformsIncludeEOS(t *testing.T) {
 	}
 	found := false
 	for _, p := range CapturePlatforms() {
-		if p == "eos" {
-			found = true
+		if p.Platform != "eos" {
+			continue
+		}
+		found = true
+		got := strings.Join(p.Interfaces, ",")
+		if got != "Ethernet,Port-Channel,Recirc-Channel" {
+			t.Fatalf("eos interfaces = %q", got)
 		}
 	}
 	if !found {
-		t.Fatalf("CapturePlatforms() = %v, want eos", CapturePlatforms())
+		t.Fatalf("CapturePlatforms() = %+v, want eos", CapturePlatforms())
+	}
+}
+
+func TestEOSCaptureSourceNames(t *testing.T) {
+	allowed := []string{"Ethernet1", "Ethernet1/1", "Ethernet48/1", "Port-Channel1", "Port-Channel10", "Recirc-Channel1"}
+	for _, name := range allowed {
+		if err := CaptureSourceAllowed("EOS", name); err != nil {
+			t.Errorf("CaptureSourceAllowed(%s) = %v", name, err)
+		}
+	}
+	rejected := []string{"Ethernet2.210", "Port-Channel10.20", "Management1", "Vlan100", "Loopback0", "Vxlan1", "Ethernet", "Port-Channel", "Et1"}
+	for _, name := range rejected {
+		if err := CaptureSourceAllowed("eos", name); err == nil {
+			t.Errorf("CaptureSourceAllowed(%s) accepted a name EOS cannot source", name)
+		}
+	}
+	if err := CaptureSourceAllowed("sros", "1/1/1"); err == nil {
+		t.Fatal("sros has no capture interface list")
 	}
 }
 
@@ -68,10 +91,9 @@ func TestEOSCaptureRejectsSubinterface(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "subinterface") {
 		t.Fatalf("SetupPortMirror(Ethernet2.210) = %v", err)
 	}
-	for _, name := range []string{"Ethernet1", "Ethernet1/1", "Management1", "Port-Channel5", "Vlan100"} {
-		if _, _, ok := splitSubinterface(name); ok {
-			t.Fatalf("%s should be offered for capture", name)
-		}
+	_, err = d.SetupPortMirror(context.Background(), PortMirrorRequest{Interface: "Vlan100"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be mirrored") {
+		t.Fatalf("SetupPortMirror(Vlan100) = %v", err)
 	}
 }
 

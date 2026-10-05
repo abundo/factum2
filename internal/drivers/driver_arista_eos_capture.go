@@ -140,10 +140,11 @@ func (driver *AristaDriver) SetupPortMirror(ctx context.Context, req PortMirrorR
 	if err != nil {
 		return nil, err
 	}
-	// EOS monitor sessions take a parent interface. Ethernet2.210 is not
-	// a legal source; the GUI hides those rows, and this rejects a direct call.
-	if _, _, ok := splitSubinterface(req.Interface); ok {
-		return nil, fmt.Errorf("%s is a subinterface; EOS can only mirror the parent interface", req.Interface)
+	// EOS "monitor session … source ?" accepts Ethernet, Port-Channel,
+	// and Recirc-Channel only, and not a subinterface. The GUI hides
+	// the other rows; this rejects a direct call.
+	if err := CaptureSourceAllowed("eos", req.Interface); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

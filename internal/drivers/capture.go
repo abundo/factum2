@@ -70,37 +70,107 @@ type PortMirror interface {
 	TeardownPortMirror(ctx context.Context, session *PortMirrorSession) error
 }
 
-// portMirrorPlatforms is filled by registerPortMirror from each driver
-// that implements PortMirror. The GUI lists only these platforms.
-var portMirrorPlatforms []string
+// capturePlatform is one NOS that can mirror a port. Interfaces are the
+// CLI words "monitor session … source ?" accepts (Ethernet, Port-Channel).
+// A capturable name starts with one of those words and then a digit
+// (Ethernet1, Port-Channel10, Ethernet1/1).
+type capturePlatform struct {
+	name       string
+	interfaces []string
+}
 
-func registerPortMirror(platform string) {
-	platform = strings.ToLower(platform)
+// portMirrorPlatforms is filled by registerPortMirror from each driver
+// that implements PortMirror. The GUI lists only these platforms, and
+// only interfaces whose names start with that platform's words.
+var portMirrorPlatforms []capturePlatform
+
+// CapturePlatformInfo is one capture-capable platform and the interface
+// name prefixes its monitor session can source.
+type CapturePlatformInfo struct {
+	Platform   string   `json:"platform"`
+	Interfaces []string `json:"interfaces"`
+}
+
+func registerPortMirror(platform string, interfaces ...string) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		panic("drivers: empty port-mirror platform")
+	}
+	if len(interfaces) == 0 {
+		panic("drivers: port-mirror platform " + platform + " lists no interface names")
+	}
+	clean := make([]string, 0, len(interfaces))
+	seen := map[string]struct{}{}
+	for _, name := range interfaces {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.ContainsAny(name, " \t./") {
+			panic("drivers: bad capture interface name " + name)
+		}
+		if _, ok := seen[name]; ok {
+			panic("drivers: duplicate capture interface name " + name + " for " + platform)
+		}
+		seen[name] = struct{}{}
+		clean = append(clean, name)
+	}
 	for _, have := range portMirrorPlatforms {
-		if have == platform {
+		if have.name == platform {
 			panic("drivers: duplicate port-mirror registration for " + platform)
 		}
 	}
-	portMirrorPlatforms = append(portMirrorPlatforms, platform)
+	portMirrorPlatforms = append(portMirrorPlatforms, capturePlatform{name: platform, interfaces: clean})
 }
 
 // CapturePlatforms returns the platforms that implement PortMirror, in
-// registration order.
-func CapturePlatforms() []string {
-	out := make([]string, len(portMirrorPlatforms))
-	copy(out, portMirrorPlatforms)
+// registration order. Each Interfaces list is the CLI words that platform
+// accepts as a monitor-session source.
+func CapturePlatforms() []CapturePlatformInfo {
+	out := make([]CapturePlatformInfo, len(portMirrorPlatforms))
+	for i, p := range portMirrorPlatforms {
+		ifaces := append([]string(nil), p.interfaces...)
+		out[i] = CapturePlatformInfo{Platform: p.name, Interfaces: ifaces}
+	}
 	return out
 }
 
 // CaptureSupported reports whether platform (any case) implements PortMirror.
 func CaptureSupported(platform string) bool {
+	_, ok := capturePlatformByName(platform)
+	return ok
+}
+
+func capturePlatformByName(platform string) (capturePlatform, bool) {
 	platform = strings.ToLower(strings.TrimSpace(platform))
 	for _, have := range portMirrorPlatforms {
-		if have == platform {
-			return true
+		if have.name == platform {
+			return have, true
 		}
 	}
-	return false
+	return capturePlatform{}, false
+}
+
+// CaptureSourceAllowed reports whether name can be a monitor-session
+// source on platform. The name must start with a registered interface
+// word and a digit. Subinterfaces (Ethernet2.210) are rejected: the
+// session takes the parent.
+func CaptureSourceAllowed(platform, name string) error {
+	p, ok := capturePlatformByName(platform)
+	if !ok {
+		return fmt.Errorf("packet capture is not supported for platform %s", strings.TrimSpace(platform))
+	}
+	name = strings.TrimSpace(name)
+	if _, _, sub := splitSubinterface(name); sub {
+		return fmt.Errorf("%s is a subinterface; %s can only mirror the parent interface", name, p.name)
+	}
+	for _, prefix := range p.interfaces {
+		if len(name) <= len(prefix) || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		c := name[len(prefix)]
+		if c >= '0' && c <= '9' {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s cannot be mirrored; %s accepts %s", name, p.name, strings.Join(p.interfaces, ", "))
 }
 
 // ValidateCaptureInterface rejects names that must not be interpolated

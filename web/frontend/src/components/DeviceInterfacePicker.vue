@@ -4,6 +4,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { getDevice, getDevices } from '@/api/devices'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
+import { captureSourceAllowed, platformKey, platformPrefixes } from '@/utils/captureSource'
 import { useSearch, valuesText } from '@/utils/search'
 
 const props = defineProps({
@@ -12,11 +13,13 @@ const props = defineProps({
   deviceId: { type: Number, default: null },
   interfaceId: { type: Number, default: null },
   // When set, only devices whose platform is in this list are shown
-  // (case-insensitive). Null lists every device. Packet capture passes the
-  // platforms that can set up a port mirror.
+  // (case-insensitive). Null lists every device. Packet capture passes
+  // { platform, interfaces } from the driver: interfaces are the CLI words
+  // a monitor session can source, and only names that start with one of
+  // them are listed. A plain string still filters devices only.
   platforms: { type: Array, default: null },
-  // EOS monitor sessions cannot source a subinterface (Ethernet2.210).
-  // Packet capture sets this so those rows are not offered.
+  // Hide subinterfaces (Ethernet2.210) when platforms does not already
+  // say which names can be sourced.
   hideSubinterfaces: { type: Boolean, default: false },
 })
 
@@ -70,9 +73,9 @@ const pickerTableUi = {
 // picker. Unique is device+iface only (enforced by the parent form when
 // interfaces.unique).
 const listedDevices = computed(() => {
-  const allow = (props.platforms ?? []).map((p) => String(p).toLowerCase()).filter(Boolean)
+  const allow = (props.platforms ?? []).map(platformKey).filter(Boolean)
   if (!props.platforms) return devices.value
-  return devices.value.filter((d) => allow.includes(String(d.platform ?? '').toLowerCase()))
+  return devices.value.filter((d) => allow.includes(platformKey(d.platform)))
 })
 const {
   search: deviceFilter,
@@ -101,16 +104,23 @@ function isSubinterface(iface) {
   return /\.\d+$/.test(String(iface?.name ?? ''))
 }
 
-const listedInterfaces = computed(() => {
-  if (!device.value) return []
-  let ifaces = device.value.interfaces ?? []
-  if (props.hideSubinterfaces) ifaces = ifaces.filter((i) => !isSubinterface(i))
+function visibleInterfaces(dev) {
+  let ifaces = dev?.interfaces ?? []
+  const prefixes = platformPrefixes(props.platforms, dev?.platform)
+  if (prefixes) {
+    ifaces = ifaces.filter((i) =>
+      captureSourceAllowed(i.name, prefixes, { parentId: i.parent_id }),
+    )
+  } else if (props.hideSubinterfaces) {
+    ifaces = ifaces.filter((i) => !isSubinterface(i))
+  }
   if (props.mode === 'service') return ifaces
   return ifaces.filter(
-    (i) =>
-      (i.type && i.type !== 'virtual' && i.type !== 'lag') || i.id === selectedInterfaceId.value,
+    (i) => (i.type && i.type !== 'virtual' && i.type !== 'lag') || i.id === selectedInterfaceId.value,
   )
-})
+}
+
+const listedInterfaces = computed(() => visibleInterfaces(device.value))
 const {
   search: interfaceFilter,
   words: interfaceWords,
@@ -120,6 +130,11 @@ const interfaceEmpty = computed(() => {
   if (interfaceWords.value.length && listedInterfaces.value.length)
     return 'Nothing matches the search.'
   if (loadingInterfaces.value) return 'Loading...'
+  const captureFilter =
+    platformPrefixes(props.platforms, device.value?.platform) != null || props.hideSubinterfaces
+  if (captureFilter && selectedDeviceId.value && (device.value?.interfaces?.length ?? 0) > 0) {
+    return 'No interface on this device can be mirrored.'
+  }
   if (selectedDeviceId.value) return 'No interfaces found on this device.'
   return 'Select a device.'
 })
@@ -161,7 +176,7 @@ function loadInterfaces(id) {
       device.value = data
       if (
         selectedInterfaceId.value &&
-        !(data.interfaces ?? []).some((i) => i.id === selectedInterfaceId.value)
+        !visibleInterfaces(data).some((i) => i.id === selectedInterfaceId.value)
       ) {
         selectedInterfaceId.value = null
       }
@@ -231,6 +246,7 @@ function confirmSelection() {
   if (!selectedDeviceId.value || !selectedInterfaceId.value) return
   const selectedDevice = devices.value.find((d) => d.id === selectedDeviceId.value)
   const selectedInterface = listedInterfaces.value.find((i) => i.id === selectedInterfaceId.value)
+  if (!selectedInterface) return
   emit('select', {
     deviceId: selectedDeviceId.value,
     deviceName: selectedDevice?.name ?? '',

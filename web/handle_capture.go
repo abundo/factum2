@@ -66,7 +66,8 @@ func (s *captureSlots) acquire(id uint) (func(), error) {
 }
 
 // ApiCapturePlatforms lists the platforms whose driver implements port
-// mirroring. The packet-capture page filters the device picker with this.
+// mirroring, and the interface name prefixes each one can source. The
+// packet-capture page filters the device picker with this.
 func (ctrl *Controller) ApiCapturePlatforms(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"platforms": drivers.CapturePlatforms()})
 }
@@ -105,6 +106,9 @@ func (ctrl *Controller) ApiCapture(c *echo.Context) error {
 	}
 	if ifaceName == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "interface not found on this device"})
+	}
+	if err := drivers.CaptureSourceAllowed(device.Platform, ifaceName); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	req, err := drivers.NormalizeCaptureRequest(drivers.PortMirrorRequest{
 		Interface:  ifaceName,
