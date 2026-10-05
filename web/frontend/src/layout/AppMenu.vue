@@ -21,6 +21,38 @@ function section(label, children) {
   ]
 }
 
+// DNS and Certificates are submenus. The heading is omitted when both features are off.
+function servicesSection(authStore) {
+  const children = []
+  if (authStore.dnsZonesEnabled) {
+    children.push({
+      label: 'DNS',
+      icon: 'i-lucide-globe-2',
+      children: [
+        { label: 'Zones', icon: 'i-lucide-globe-2', to: '/dns/zones' },
+        { label: 'DNS templates', icon: 'i-lucide-layers', to: '/dns/templates' },
+        { label: 'SOA templates', icon: 'i-lucide-file-text', to: '/dns/soa-templates' },
+        { label: 'DNSSEC policies', icon: 'i-lucide-shield', to: '/dns/dnssec-policies' },
+      ],
+    })
+  }
+  if (authStore.certsEnabled) {
+    children.push({
+      label: 'Certificates',
+      icon: 'i-lucide-file-key',
+      children: [
+        { label: 'Certificates', icon: 'i-lucide-file-key', to: '/certs' },
+        { label: 'Accounts', icon: 'i-lucide-user-cog', to: '/certs/accounts' },
+        { label: 'Challenges', icon: 'i-lucide-shield', to: '/certs/challenges' },
+      ],
+    })
+  }
+  if (!children.length) return []
+  // section() is already one menu group. Wrap it so the spread in groups
+  // pushes that group, matching the other optional headings.
+  return [section('Services', children)]
+}
+
 function pathMatches(to, exact, path) {
   if (!to) return false
   if (exact) return path === to
@@ -98,6 +130,13 @@ const groups = computed(() => {
             ]),
           ]
         : []),
+      section('Provisioning', [
+        { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
+        { label: 'Config', icon: 'i-lucide-settings-2', to: '/config' },
+        ...(authStore.opticalEnabled
+          ? [{ label: 'Maintenance', icon: 'i-lucide-wrench', to: '/maintenance' }]
+          : []),
+      ]),
       section('Infrastructure', [
         { label: 'Racks', icon: 'i-lucide-rows-3', to: '/dcim/racks' },
         { label: 'Floor plans', icon: 'i-lucide-layout-panel-left', to: '/dcim/floor-plans' },
@@ -126,32 +165,7 @@ const groups = computed(() => {
             ]),
           ]
         : []),
-      ...(authStore.dnsZonesEnabled
-        ? [
-            section('DNS', [
-              { label: 'Zones', icon: 'i-lucide-globe-2', to: '/dns/zones' },
-              { label: 'DNS templates', icon: 'i-lucide-layers', to: '/dns/templates' },
-              { label: 'SOA templates', icon: 'i-lucide-file-text', to: '/dns/soa-templates' },
-              { label: 'DNSSEC policies', icon: 'i-lucide-shield', to: '/dns/dnssec-policies' },
-            ]),
-          ]
-        : []),
-      ...(authStore.certsEnabled
-        ? [
-            section('Certificates', [
-              { label: 'Certificates', icon: 'i-lucide-file-key', to: '/certs' },
-              { label: 'Accounts', icon: 'i-lucide-user-cog', to: '/certs/accounts' },
-              { label: 'Challenges', icon: 'i-lucide-shield', to: '/certs/challenges' },
-            ]),
-          ]
-        : []),
-      section('Provisioning', [
-        { label: 'Services', icon: 'i-lucide-zap', to: '/service' },
-        { label: 'Config', icon: 'i-lucide-settings-2', to: '/config' },
-        ...(authStore.opticalEnabled
-          ? [{ label: 'Maintenance', icon: 'i-lucide-wrench', to: '/maintenance' }]
-          : []),
-      ]),
+      ...servicesSection(authStore),
       section('Jobs', [
         { label: 'Job overview', icon: 'i-lucide-refresh-cw', to: '/sync/overview' },
         { label: 'Job status', icon: 'i-lucide-list-checks', to: '/sync/status' },

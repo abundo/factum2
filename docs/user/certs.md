@@ -8,8 +8,8 @@ order: 45
 Factum can request TLS certificates with [lego](https://github.com/go-acme/lego)
 using the **DNS-01** challenge and **RFC2136** dynamic updates.
 
-Enable **Certificates** under Admin → Destinations. That shows the
-Certificates menu and includes **certs** in [jobs](jobs.md).
+Enable **Certificates** under Admin → Destinations. That shows
+**Services → Certificates** and includes **certs** in [jobs](jobs.md).
 
 ## What is stored
 
