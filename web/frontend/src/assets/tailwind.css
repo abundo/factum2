@@ -5,11 +5,13 @@
 
 /*
   Small compatibility utilities so existing view markup (`class="card"`,
-  `class="text-muted-color"`) doesn't need to be touched across every file -
-  these map onto Nuxt UI's own design tokens so they stay light/dark aware.
+  `class="text-muted-color"`) doesn't need to be touched across every file.
+  `card` is a page section with no frame. The main area already pads the
+  viewport, so a rounded border and inner padding would only shrink the
+  content. Form-label layout below still keys off this class.
 */
 @utility card {
-  @apply bg-default rounded-lg border border-default p-6;
+  @apply bg-default;
 }
 
 @utility text-muted-color {
