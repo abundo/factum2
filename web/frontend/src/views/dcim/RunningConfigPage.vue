@@ -126,17 +126,24 @@ function toggle(id) {
   expanded.value = next
 }
 
-function expandSubtree(node, set) {
-  if (!node?.children?.length) return
-  set.add(node.id)
-  for (const child of node.children) expandSubtree(child, set)
+function clearExpanded(node, set) {
+  if (!node) return
+  set.delete(node.id)
+  for (const child of node.children || []) clearExpanded(child, set)
 }
 
 function onRow(node) {
+  const wasSelected = node.editable && selectedId.value === node.id
   if (node.editable) selectedId.value = node.id
   if (!node.children?.length) return
   const next = new Set(expanded.value)
-  expandSubtree(node, next)
+  const open = next.has(node.id)
+  // Drop every open descendant so a selection shows only the next level.
+  clearExpanded(node, next)
+  // A second click on the open selection closes that context and everything under it.
+  // A folder has no selection, so a click on an open folder does the same.
+  const compact = open && (wasSelected || !node.editable)
+  if (!compact) next.add(node.id)
   expanded.value = next
 }
 
