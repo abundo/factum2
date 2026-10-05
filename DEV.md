@@ -266,7 +266,16 @@ matches those binaries. A standalone copy also checks the latest GitHub
 
 ```sh
 make test            # go test ./... - no device, no database, no network
+make test-all        # every suite, in order, stop at the first failure
 ```
+
+`make test-all` runs `make test`, `install_test.py`, `dev/netbox_seed_test.py`,
+`go test -tags release ./docs/` (that tag is the only way
+`docs/sbom_release_test.go` is compiled), then `make test-integration` and
+`make test-integration-web`. It does not start the labs. Bring those up
+first, or the EOS driver tests fail to connect and the LDAP/mail tests
+skip. Nokia SR OS and Open ROADM integration tests still skip unless
+`FACTUM_TEST_SROS_*` / `FACTUM_TEST_OPENROADM_*` point at a device.
 
 GitHub Actions runs `go vet`, `make test`, `make`, and a GoReleaser snapshot
 on every push to `main` and on pull requests
@@ -400,7 +409,9 @@ GUI against real apps, not a substitute for these tiers):
 Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
 `CGO_ENABLED=0`; `factum2-web` with `-tags release` so the Vue SPA is
 embedded) and published to GitHub when a `v*` tag is pushed
-(`.github/workflows/release.yml`). Tests must pass first. The same
+(`.github/workflows/release.yml`). That workflow runs `go vet` and
+`make test` before publishing. `make test-all` is the local pass over
+every suite. The same
 release compile stamps a software bill of materials into the GUI
 Documentation page (`/doc/sbom`): `go list -m all` plus npm packages
 from `web/frontend/package-lock.json` (`make sbom` /

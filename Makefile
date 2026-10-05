@@ -9,7 +9,7 @@ COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
-.PHONY: build test test-install frontend wiregasm release install snapshot dev-up dev-down dev-reset docs sbom
+.PHONY: build test test-all test-install frontend wiregasm release install snapshot dev-up dev-down dev-reset docs sbom
 
 build: factum2 factum2-becs factum2-certs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-storage factum2-web factum2-worker
 
@@ -21,6 +21,19 @@ test:
 
 test-install:
 	python3 -m unittest install_test.py
+
+# Every suite in the tree, in order, stopping at the first failure.
+# Integration tiers are unchanged: bring labs up first (lab-up, itest-up).
+# SR OS and Open ROADM still skip unless FACTUM_TEST_SROS_* /
+# FACTUM_TEST_OPENROADM_* point at a device. docs/sbom_release_test.go
+# is behind the release build tag, so plain `make test` never runs it.
+test-all:
+	$(MAKE) test
+	$(MAKE) test-install
+	cd $(DEV_DIR) && python3 -m unittest netbox_seed_test.py
+	go test -tags release -count=1 ./docs/
+	$(MAKE) test-integration
+	$(MAKE) test-integration-web
 
 # Operator docs (docs/user + docs/install) → site/. Needs mkdocs-material
 # (pip install -r requirements-docs.txt). Same files the GUI embeds.
