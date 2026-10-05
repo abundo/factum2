@@ -11,6 +11,13 @@ const props = defineProps({
   // Currently assigned pair, used to preselect rows when the modal opens.
   deviceId: { type: Number, default: null },
   interfaceId: { type: Number, default: null },
+  // When set, only devices whose platform is in this list are shown
+  // (case-insensitive). Null lists every device. Packet capture passes the
+  // platforms that can set up a port mirror.
+  platforms: { type: Array, default: null },
+  // EOS monitor sessions cannot source a subinterface (Ethernet2.210).
+  // Packet capture sets this so those rows are not offered.
+  hideSubinterfaces: { type: Boolean, default: false },
 })
 
 const open = defineModel('open', { type: Boolean, default: false })
@@ -58,20 +65,27 @@ const pickerTableUi = {
   ].join(' '),
 }
 
-// Service mode lists every device and interface. Missing CLI / missing
-// CLISessionApplier fails at preview, not in this picker. Unique is
-// device+iface only (enforced by the parent form when interfaces.unique).
-const listedDevices = computed(() => devices.value)
+// Service mode lists every device and interface, unless platforms is set.
+// Missing CLI / missing CLISessionApplier fails at preview, not in this
+// picker. Unique is device+iface only (enforced by the parent form when
+// interfaces.unique).
+const listedDevices = computed(() => {
+  const allow = (props.platforms ?? []).map((p) => String(p).toLowerCase()).filter(Boolean)
+  if (!props.platforms) return devices.value
+  return devices.value.filter((d) => allow.includes(String(d.platform ?? '').toLowerCase()))
+})
 const {
   search: deviceFilter,
   words: deviceWords,
   filtered: filteredDevices,
 } = useSearch(listedDevices, (row) => valuesText(row.name, row.site, row.platform))
-const deviceEmpty = computed(() =>
-  deviceWords.value.length && listedDevices.value.length
-    ? 'Nothing matches the search.'
-    : 'No devices found.',
-)
+const deviceEmpty = computed(() => {
+  if (deviceWords.value.length && listedDevices.value.length) return 'Nothing matches the search.'
+  if (props.platforms && devices.value.length && !listedDevices.value.length) {
+    return 'No supported devices.'
+  }
+  return 'No devices found.'
+})
 
 const deviceRowSelection = computed(() =>
   selectedDeviceId.value ? { [String(selectedDeviceId.value)]: true } : {},
@@ -80,9 +94,17 @@ const interfaceRowSelection = computed(() =>
   selectedInterfaceId.value ? { [String(selectedInterfaceId.value)]: true } : {},
 )
 
+// A subinterface is a parent plus a numeric suffix (Ethernet2.210), or a
+// row whose NetBox parent is set. "Ethernet1/1" is a physical port.
+function isSubinterface(iface) {
+  if (Number(iface?.parent_id) > 0) return true
+  return /\.\d+$/.test(String(iface?.name ?? ''))
+}
+
 const listedInterfaces = computed(() => {
   if (!device.value) return []
-  const ifaces = device.value.interfaces ?? []
+  let ifaces = device.value.interfaces ?? []
+  if (props.hideSubinterfaces) ifaces = ifaces.filter((i) => !isSubinterface(i))
   if (props.mode === 'service') return ifaces
   return ifaces.filter(
     (i) =>

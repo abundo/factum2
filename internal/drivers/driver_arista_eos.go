@@ -27,6 +27,9 @@ type AristaDriver struct {
 
 func init() {
 	registerDriver("eos", func(p DriverParam) (DriverClient, error) { return NewAristaDriver(p) })
+	// Packet capture mirrors a port to the CPU over SSH. Nokia adds its
+	// own PortMirror later; this registration is what the GUI filters on.
+	registerPortMirror("eos")
 }
 
 func NewAristaDriver(p DriverParam) (*AristaDriver, error) {

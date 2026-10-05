@@ -321,6 +321,10 @@ type ConfigWorker struct {
 type ConfigWeb struct {
 	Bind      string
 	JWTSecret string
+	// WiregasmDir is where wiregasm.js, wiregasm.wasm.gz and
+	// wiregasm.data.gz live (make wiregasm). Empty searches
+	// /usr/share/factum2/wiregasm and web/static/wiregasm.
+	WiregasmDir string `yaml:"wiregasm_dir" boa:"configonly" optional:"true"`
 }
 
 // ConfigLdapWriteback is the elevated LDAP/AD identity permitted to change

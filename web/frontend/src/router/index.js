@@ -12,6 +12,12 @@ const router = createRouter({
       component: () => import('@/views/auth/LoginPage.vue'),
     },
     {
+      path: '/capture/window',
+      name: 'capture-window',
+      meta: { title: 'Packet capture', requiresRead: true },
+      component: () => import('@/views/capture/CaptureWindowPage.vue'),
+    },
+    {
       path: '/forgot-password',
       name: 'forgot-password',
       component: () => import('@/views/auth/ForgotPasswordPage.vue'),
@@ -249,6 +255,12 @@ const router = createRouter({
           name: 'sync-librenms-deletions',
           meta: { title: 'Device deletions', requiresRead: true },
           component: () => import('@/views/sync/LibrenmsPendingDeletesPage.vue'),
+        },
+        {
+          path: '/capture',
+          name: 'capture',
+          meta: { title: 'Packet capture', requiresRead: true },
+          component: () => import('@/views/capture/CapturePage.vue'),
         },
         {
           path: '/report',

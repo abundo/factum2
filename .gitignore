@@ -7,6 +7,8 @@ build/
 bin/
 dist/
 web/static/vue/
+# Wiregasm (make wiregasm). Served from disk; not part of the Vue bundle.
+web/static/wiregasm/
 
 # javascript, css
 node_modules/

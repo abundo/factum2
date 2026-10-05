@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { openCaptureWindow } from '@/composables/useCaptureWindow'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -161,6 +162,16 @@ const groups = computed(() => {
           to: '/sync/librenms-deletions',
         },
       ]),
+      section('Tools', [
+        {
+          label: 'Packet capture',
+          icon: 'i-lucide-radar',
+          to: '/capture',
+          slot: 'capture',
+          // Sit the new-window control next to the label, not at the row edge.
+          ui: { linkTrailing: '!ms-0' },
+        },
+      ]),
     )
   }
 
@@ -223,9 +234,7 @@ const groups = computed(() => {
         {
           label: 'Services',
           icon: 'i-lucide-radio',
-          children: [
-            { label: 'RADIUS', icon: 'i-lucide-shield-check', to: '/admin/radius' },
-          ],
+          children: [{ label: 'RADIUS', icon: 'i-lucide-shield-check', to: '/admin/radius' }],
         },
         {
           label: 'AAA',
@@ -262,5 +271,20 @@ watch(
     :items="items"
     class="w-full"
     @update:model-value="onOpenSectionsUpdate"
-  />
+  >
+    <template #capture-trailing>
+      <span
+        role="button"
+        tabindex="0"
+        class="inline-flex items-center justify-center rounded-md p-0.5 text-muted hover:bg-elevated hover:text-highlighted"
+        aria-label="Open packet capture in a new window"
+        title="Open in a new window"
+        @click.stop.prevent="openCaptureWindow()"
+        @keydown.enter.stop.prevent="openCaptureWindow()"
+        @keydown.space.stop.prevent="openCaptureWindow()"
+      >
+        <UIcon name="i-lucide-plus" class="size-4" />
+      </span>
+    </template>
+  </UNavigationMenu>
 </template>

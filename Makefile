@@ -9,7 +9,7 @@ COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE := $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 GO_BUILD_FLAGS := -ldflags="-s -w -X github.com/abundo/factum2/internal/buildinfo.Version=$(VERSION) -X github.com/abundo/factum2/internal/buildinfo.Commit=$(COMMIT) -X github.com/abundo/factum2/internal/buildinfo.Date=$(DATE)"
 
-.PHONY: build test test-install frontend release install snapshot dev-up dev-down dev-reset docs sbom
+.PHONY: build test test-install frontend wiregasm release install snapshot dev-up dev-down dev-reset docs sbom
 
 build: factum2 factum2-becs factum2-certs factum2-device-sync factum2-dns factum2-driver factum2-icinga factum2-icinga-notifications factum2-lime factum2-librenms factum2-netbox factum2-oxidized factum2-prometheus factum2-storage factum2-web factum2-worker
 
@@ -161,6 +161,18 @@ factum2-worker:
 # from disk. `make build` is Go-only; compose install / `make dev-up` run this.
 frontend:
 	cd web/frontend && npm ci && npm run build
+
+# Wiregasm (Wireshark in WebAssembly, GPL-2.0) for Tools → Packet capture.
+# A separate program, checked against the same integrity hash Portitor pins.
+# factum2-web serves web/static/wiregasm (or /usr/share/factum2/wiregasm,
+# or web.wiregasm_dir).
+WIREGASM_VERSION := 1.9.1
+WIREGASM_URL := https://registry.npmjs.org/@goodtools/wiregasm/-/wiregasm-$(WIREGASM_VERSION).tgz
+WIREGASM_SHA512 := kV/mDapHD//S0QVqyPwVnOdm3NLSSwHYT6u/b+nenUxofWauZ2Y6LvgCxMMk5Jvw3+++EKIDpRRx9jfnt7lshw==
+WIREGASM_DIR := web/static/wiregasm
+
+wiregasm:
+	@python3 scripts/install_wiregasm.py "$(WIREGASM_VERSION)" "$(WIREGASM_URL)" "$(WIREGASM_SHA512)" "$(WIREGASM_DIR)"
 
 # Operator-facing SBOM markdown, overlaid onto docs/user/sbom.md in a
 # -tags release factum2-web binary. The placeholder at

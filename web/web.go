@@ -53,6 +53,9 @@ type Controller struct {
 	// dhcpLeasesFn, if set, replaces the Kea/hub lease fetch used by
 	// GET /api/dns/leases (tests).
 	dhcpLeasesFn func(ctx context.Context) ([]dns.DHCPLease, error)
+	// WiregasmDir is the directory handleWiregasm serves. GUI sets it;
+	// tests set it to a temp dir.
+	WiregasmDir string
 	// netboxDeviceSyncDebounce coalesces NetBox device/interface/IP webhooks
 	// into one shared quiet period, then syncs the queued devices one at
 	// a time. Zero value uses the default 3s delay.
@@ -138,7 +141,16 @@ func GUI(p *GuiParams) error {
 	})
 	go scheduler.Run(context.Background())
 
-	ctrl := Controller{DB: DB, LogHub: logHub, RemoteManager: remoteManager}
+	ctrl := Controller{
+		DB:            DB,
+		LogHub:        logHub,
+		RemoteManager: remoteManager,
+		WiregasmDir:   resolveWiregasmDir(util.Config.Web.WiregasmDir),
+	}
+
+	// Wiregasm (the packet-capture viewer) is installed on disk, not in the
+	// Vue bundle. Its own path so the SPA fallback does not answer it.
+	e.GET("/wiregasm/:name", ctrl.handleWiregasm)
 
 	// -----------------------------------------------------------------
 	// Web pages
@@ -298,6 +310,11 @@ func GUI(p *GuiParams) error {
 	api.GET("/device/name/:name/impact", ctrl.ApiDeviceImpactByName, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device/name/:name", ctrl.ApiGetDeviceByName, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.GET("/device", ctrl.ApiGetDevices, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	// Packet capture mirrors a port over SSH (Arista EOS today) and streams
+	// pcap to the browser. Starting one changes the device, so it takes
+	// write. The platform list is what the device picker filters on.
+	api.GET("/capture/platforms", ctrl.ApiCapturePlatforms, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/capture", ctrl.ApiCapture, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/device", ctrl.ApiDeviceCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/device/:id", ctrl.ApiDeviceUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/device/:id", ctrl.ApiDeviceDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
