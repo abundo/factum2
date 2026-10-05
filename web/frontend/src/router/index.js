@@ -233,6 +233,12 @@ const router = createRouter({
           component: () => import('@/views/topology/NetworkMap.vue'),
         },
         {
+          path: '/dcim/configuration',
+          name: 'dcim-configuration',
+          meta: { title: 'Configuration', requiresRead: true },
+          component: () => import('@/views/dcim/RunningConfigPage.vue'),
+        },
+        {
           path: '/sync/overview',
           name: 'sync-overview',
           meta: { title: 'Job overview', requiresRead: true },

@@ -144,6 +144,7 @@ const groups = computed(() => {
       ]),
       section('DCIM', [
         { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
+        { label: 'Configuration', icon: 'i-lucide-square-terminal', to: '/dcim/configuration' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
         { label: 'Interfaces', icon: 'i-lucide-cable', to: '/dcim/interfaces' },
         { label: 'Interface types', icon: 'i-lucide-tag', to: '/dcim/interface-types' },

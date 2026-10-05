@@ -16,6 +16,7 @@ declare module 'vue' {
     ConfigBundleDialog: typeof import('./src/components/ConfigBundleDialog.vue')['default']
     ConfigNodeInspector: typeof import('./src/components/ConfigNodeInspector.vue')['default']
     ConfigScopeTree: typeof import('./src/components/ConfigScopeTree.vue')['default']
+    ConfigTextEditor: typeof import('./src/components/ConfigTextEditor.vue')['default']
     ConfirmDialog: typeof import('./src/components/ConfirmDialog.vue')['default']
     ConnectionDeviceNode: typeof import('./src/components/dcim/ConnectionDeviceNode.vue')['default']
     CustomBranding: typeof import('./src/components/CustomBranding.vue')['default']

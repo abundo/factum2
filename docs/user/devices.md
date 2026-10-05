@@ -91,6 +91,32 @@ device only (typical for a lone chassis). Fill in a site when several
 devices share the same place — Factum creates or updates the NetBox site
 and assigns the device to it.
 
+## Configuration
+
+**DCIM → Configuration** opens the running configuration of one device.
+The device list shows only platforms the page can edit. Arista EOS is
+the first. Pick a device and refresh to read `show running-config`.
+
+The tree on the left is every context in the running configuration.
+**root** is the commands that do not open a block, such as a one-line
+aaa statement or the hostname. **interfaces** lists each interface.
+Every other indented block is its own node: radius-server, management
+api, router bgp, router isis, and the same again inside them
+(address-family, vrf, and whatever else is indented). A banner is its
+own node as well. Selecting a context shows that context and every
+context under it, indented as on the device. Selecting a nested
+context shows that smaller piece. Committing a banner rewrites the
+whole banner.
+
+Changed lines are marked. **Commit** enters the context for you
+(`router bgp 6782`, then `address-family ipv4`) and applies the edit in
+a configure session. A command the device rejects aborts the session and
+is shown on the page. After a successful commit the configuration is
+read again and the difference in that context is shown.
+
+Device login uses the same **Admin → Device sync** credentials as
+interface refresh. Commit needs write permission.
+
 ## Oxidized
 
 When Oxidized is enabled under Admin → Destinations → Oxidized, an

@@ -315,6 +315,11 @@ func GUI(p *GuiParams) error {
 	// write. The platform list is what the device picker filters on.
 	api.GET("/capture/platforms", ctrl.ApiCapturePlatforms, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/capture", ctrl.ApiCapture, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	// Running-config editor. The platform list is what the device picker
+	// filters on. Commit writes one context inside a transaction.
+	api.GET("/dcim/running-config/platforms", ctrl.ApiRunningConfigPlatforms, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.GET("/dcim/running-config/:id", ctrl.ApiRunningConfigGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
+	api.POST("/dcim/running-config/:id", ctrl.ApiRunningConfigCommit, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/device", ctrl.ApiDeviceCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/device/:id", ctrl.ApiDeviceUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/device/:id", ctrl.ApiDeviceDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)

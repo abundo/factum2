@@ -83,6 +83,22 @@ for an undeclared VID).
 (`eapiConfigLines`/`eapiDescend` walk it the way a hierarchical parser
 would walk indented CLI text) into interfaces/VLANs/ELINE/ELAN/VRF/L3VPN.
 
+DCIM → Configuration reads the same config as CLI text
+(`RunningConfigGet`) and parses every indented block into a context
+(`running_config.go`). root is the top-level commands that do not open
+a block. interfaces groups each interface. radius-server, management
+api, router bgp, router isis, and every nested block (address-family,
+vrf, and the rest) are their own nodes. A node's editor text is that
+context plus the contexts under it, indented three spaces per level.
+A `banner` block, which EOS
+prints up to a line `EOF` rather than by indent, is a node too, and a
+commit of it rewrites the banner.
+`CommitRunningContext` applies one context's line diff inside a
+configure session (`configure session`, the enter path, the commands,
+`commit`). A rejected command aborts the session. The session
+description carries the operator comment; EOS configure sessions have
+no `commit comment`. Nokia is not in this page yet.
+
 ### EOS ELINE
 
 `ApplyELINE`/`RemoveELINE` provision an `mpls-ldp` pseudowire (for a

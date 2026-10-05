@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/factum"
-	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/internal/util"
 )
 
 // validateDriverParam checks the credentials every driver constructor
@@ -72,6 +72,15 @@ type DriverClient interface {
 	GetDeviceConfig() (*DeviceConfig, error)
 	// GetNeighbors returns the device's LLDP-discovered neighbors.
 	GetNeighbors() ([]*Neighbor, error)
+}
+
+// RunningConfigCommitter writes commands inside a configuration
+// transaction. enter is the mode path from configure root, for example
+// "router bgp 6782" then "address-family ipv4". commands are the changes
+// for that context and do not repeat enter. EOS implements this with a
+// configure session. Platforms without a transaction return an error.
+type RunningConfigCommitter interface {
+	CommitRunningContext(enter []string, commands []string, comment string) error
 }
 
 // DriverFactory builds a DriverClient for one platform.
