@@ -83,21 +83,23 @@ for an undeclared VID).
 (`eapiConfigLines`/`eapiDescend` walk it the way a hierarchical parser
 would walk indented CLI text) into interfaces/VLANs/ELINE/ELAN/VRF/L3VPN.
 
-DCIM → Configuration reads the same config as CLI text
-(`RunningConfigGet`) and parses every indented block into a context
-(`running_config.go`). root is the top-level commands that do not open
-a block. interfaces groups each interface. radius-server, management
-api, router bgp, router isis, and every nested block (address-family,
-vrf, and the rest) are their own nodes. A node's editor text is that
-context plus the contexts under it, indented three spaces per level.
-A `banner` block, which EOS
-prints up to a line `EOF` rather than by indent, is a node too, and a
-commit of it rewrites the banner.
-`CommitRunningContext` applies one context's line diff inside a
+DCIM → Configuration reads EOS as CLI text (`RunningConfigGet(false)`)
+and parses every indented block into a context (`running_config.go`).
+eAPI can also return that tree as JSON — each command line is a key
+whose `cmds` object is the context under it — but the page keeps the
+CLI text, because that is what the editor commits and because a banner
+is not an indented `cmds` block. root is the top-level commands that do
+not open a block. interfaces groups each interface. radius-server,
+management api, router bgp, router isis, and every nested block
+(address-family, vrf, and the rest) are their own nodes. A node's
+editor text is that context plus the contexts under it, indented three
+spaces per level. A `banner` block, which EOS prints up to a line `EOF`
+rather than by indent, is a node too, and a commit of it rewrites the
+banner. `CommitRunningContext` applies one context's line diff inside a
 configure session (`configure session`, the enter path, the commands,
 `commit`). A rejected command aborts the session. The session
 description carries the operator comment; EOS configure sessions have
-no `commit comment`. Nokia is not in this page yet.
+no `commit comment`.
 
 ### EOS ELINE
 
@@ -150,6 +152,13 @@ doc comment in `models.go`).
 CLI parser (`config_context.go`) and `tagparse.go`'s declarative
 `cfg:"..."`-tagged-struct engine, rather than a hand-written regexp+switch
 walk.
+
+DCIM → Configuration uses that same CLI text. IOS-XR has no JSON
+running-config. The tree is the indented blocks (one space per level),
+with each interface under an `interfaces` folder. `CommitRunningContext`
+enters the context in a `configure` candidate, sends the line diff
+(`no` for a removed line), `commit comment` (unquoted), and always
+`abort` afterwards so a rejected command is not left uncommitted.
 
 ### IOS-XR ELINE
 
@@ -224,6 +233,15 @@ datastore, with persistence across reboot a distinct, unrelated MD-CLI step
 unsupported: SR OS has no per-interface global-VLAN concept at all - every
 VLAN-tagged construct is a SAP scoped inside a service (epipe/vpls/vprn),
 not a standalone interface property.
+
+DCIM → Configuration for SROS-MD reads `admin show configuration json`
+(`RunningConfigGet(true)`). The configure object is the context tree:
+a JSON object is a context, a list is a folder of contexts (one per
+element, labeled by its key), and scalar leaves stay in the parent
+body. The editor shows that context as MD-CLI. `CommitRunningContext`
+applies the MD-CLI diff (`delete` for a removed leaf or block) inside
+`edit-config exclusive`, then `commit comment`, `discard`, `exit all`,
+and `quit-config`. Classic `sros` is not on this page.
 
 `GetDeviceConfig` fetches `show configuration json` over SSH and walks the
 resulting `map[string]any` tree with best-effort accessors

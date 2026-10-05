@@ -2,18 +2,27 @@ package drivers
 
 // Running-config contexts for the DCIM Configuration page.
 //
-// Every indented block is a context, at every depth. root holds the
-// top-level commands that do not open a block (hostname, a one-line aaa
-// statement, and the rest). interfaces groups each interface. Anything
-// else with indented commands — radius-server, management api, router
-// bgp, router isis, a vrf, an address-family — is its own node, and the
-// same split applies inside it. A banner is a context too: EOS prints
-// it as lines up to EOF, not as an indented block. A node's body is
-// that context plus every context under it, indented the way EOS
-// prints it (three spaces per level). Selecting a nested context shows
-// that smaller piece.
+// EOS and IOS-XR running-config are indented CLI. Every indented block
+// is a context, at every depth. root holds the top-level commands that
+// do not open a block (hostname, a one-line aaa statement, and the
+// rest). interfaces groups each interface. Anything else with indented
+// commands — radius-server, management api, router bgp, a vrf, an
+// address-family — is its own node, and the same split applies inside
+// it. A banner is a context too: EOS prints it as lines up to EOF, not
+// as an indented block. A node's body is that context plus every
+// context under it, indented the way that platform prints it (three
+// spaces per level on EOS, one space on IOS-XR). Selecting a nested
+// context shows that smaller piece.
 //
-// EOS is the first platform. Nokia SR OS will add its own builder later.
+// EOS can also return this tree as eAPI JSON (each command line is a
+// key whose "cmds" object is the context under it). The page still
+// reads EOS as CLI text, because that is the text the editor commits
+// and because a banner is not an indented "cmds" block.
+//
+// Nokia SROS-MD has the same kind of JSON tree (admin show
+// configuration json). The page builds contexts from that JSON and
+// shows each one as MD-CLI, which is what edit-config accepts back.
+// IOS-XR has no JSON running-config, so it is parsed from CLI text.
 
 import (
 	"fmt"
@@ -28,32 +37,53 @@ type ConfigContext struct {
 	Enter    []string        `json:"enter"`
 	Body     string          `json:"body"`
 	Editable bool            `json:"editable"`
+	Syntax   string          `json:"syntax,omitempty"`
 	Children []ConfigContext `json:"children,omitempty"`
 }
 
 // RunningConfigPlatforms are the platform slugs the Configuration page
 // can load. The device picker hides every other platform.
 func RunningConfigPlatforms() []string {
-	return []string{"eos"}
+	return []string{"eos", "ios-xr", "sros-md"}
+}
+
+// normalizeRunningPlatform folds case and the IOS-XR alias. SROS-MD
+// stays sros-md; classic "sros" is a different CLI and is not edited here.
+func normalizeRunningPlatform(platform string) string {
+	p := strings.ToLower(strings.TrimSpace(platform))
+	if p == "iosxr" {
+		return "ios-xr"
+	}
+	return p
 }
 
 // RunningConfigSupported reports whether platform has a context builder
 // and a commit transaction. Comparison is case-insensitive.
 func RunningConfigSupported(platform string) bool {
-	p := strings.ToLower(strings.TrimSpace(platform))
-	return slices.Contains(RunningConfigPlatforms(), p)
+	return slices.Contains(RunningConfigPlatforms(), normalizeRunningPlatform(platform))
+}
+
+// RunningConfigAsJSON reports whether the page should ask the driver for
+// structured JSON instead of CLI text. Nokia's context tree is the JSON
+// configuration. EOS and IOS-XR are read as CLI text.
+func RunningConfigAsJSON(platform string) bool {
+	return normalizeRunningPlatform(platform) == "sros-md"
 }
 
 // BuildRunningConfigTree parses a running-config into the context tree
-// for platform. The text is the CLI rendering (EOS "show running-config"
-// text), not the platform's JSON form.
+// for platform. EOS and IOS-XR text is CLI ("show running-config").
+// SROS-MD text is the JSON document from "admin show configuration json".
 func BuildRunningConfigTree(platform, text string) ([]ConfigContext, error) {
 	if !RunningConfigSupported(platform) {
 		return nil, fmt.Errorf("running configuration is not supported for platform %s", platform)
 	}
-	switch strings.ToLower(strings.TrimSpace(platform)) {
+	switch normalizeRunningPlatform(platform) {
 	case "eos":
 		return buildEOSConfigTree(text), nil
+	case "ios-xr":
+		return buildIOSXRConfigTree(text), nil
+	case "sros-md":
+		return buildSROSConfigTree(text)
 	default:
 		return nil, fmt.Errorf("running configuration is not supported for platform %s", platform)
 	}
@@ -96,6 +126,9 @@ func NormalizeConfigText(s string) string {
 // context uses a line diff inside the node's enter path. An empty
 // command list means there is nothing to send.
 func ContextCommit(node *ConfigContext, after string) (enter []string, commands []string) {
+	if node != nil && node.Syntax == "md-cli" {
+		return node.Enter, diffMDCLI(node.Body, after)
+	}
 	if node != nil && len(node.Enter) == 1 && strings.HasPrefix(node.Enter[0], "banner ") {
 		body := NormalizeConfigText(after)
 		if body == NormalizeConfigText(node.Body) {
@@ -227,9 +260,45 @@ func diffLines(s string) []string {
 }
 
 func buildEOSConfigTree(text string) []ConfigContext {
+	return buildIndentedConfigTree(text, "!", "   ", liftEOSBanners)
+}
+
+func buildIOSXRConfigTree(text string) []ConfigContext {
+	return buildIndentedConfigTree(trimIOSXRConfig(text), "!", " ", nil)
+}
+
+// trimIOSXRConfig drops the SSH echo around "show running-config". The
+// captured buffer starts with the command itself and, after the column-0
+// end line, the prompt. The config between those is what the tree parses.
+func trimIOSXRConfig(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	start := 0
+	for start < len(lines) {
+		switch strings.TrimSpace(lines[start]) {
+		case "", "show running-config", "Building configuration...", "Building configuration ...":
+			start++
+			continue
+		}
+		break
+	}
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "end" && len(lines[i]) == len(strings.TrimLeft(lines[i], " ")) {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+func buildIndentedConfigTree(text, comment, pad string, lift func([]string) ([]string, map[string]*ConfigContext)) []ConfigContext {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	lines, banners := liftEOSBanners(lines)
-	nodes := ParseConfigContext(lines, "!")
+	banners := map[string]*ConfigContext{}
+	if lift != nil {
+		lines, banners = lift(lines)
+	}
+	nodes := ParseConfigContext(lines, comment)
 	var rootLines, ifaces, contexts []*ConfigNode
 	for _, n := range nodes {
 		switch {
@@ -249,12 +318,12 @@ func buildEOSConfigTree(text string) []ConfigContext {
 	for _, n := range ifaces {
 		name := strings.TrimSpace(strings.TrimPrefix(n.Line, "interface "))
 		id := uniqueContextID("if/"+name, ifaceIDs)
-		ifaceNodes = append(ifaceNodes, contextNode(n, id, name, nil))
+		ifaceNodes = append(ifaceNodes, contextNode(n, id, name, nil, pad))
 	}
 	out := []ConfigContext{
 		{
 			ID: "root", Label: "root", Enter: []string{},
-			Body: renderNodeBody(rootLines), Editable: true,
+			Body: renderNodeBody(rootLines, pad), Editable: true,
 		},
 		{
 			ID: "interfaces", Label: "interfaces", Enter: []string{},
@@ -270,7 +339,7 @@ func buildEOSConfigTree(text string) []ConfigContext {
 			continue
 		}
 		id := uniqueContextID(eosContextPiece("", n.Line), topIDs)
-		out = append(out, contextNode(n, id, n.Line, nil))
+		out = append(out, contextNode(n, id, n.Line, nil, pad))
 	}
 	return out
 }
@@ -321,18 +390,18 @@ func readEOSBanner(lines []string, at int) (body []string, end int, ok bool) {
 // contextNode is one indented block. Nested blocks become children, with
 // the enter path extended by this line. The body is the whole block
 // under this line, including those children, in file order.
-func contextNode(n *ConfigNode, id, label string, enter []string) ConfigContext {
+func contextNode(n *ConfigNode, id, label string, enter []string, pad string) ConfigContext {
 	path := append(append([]string{}, enter...), n.Line)
-	_, children := splitChildContexts(n.Children, id, path)
+	_, children := splitChildContexts(n.Children, id, path, pad)
 	return ConfigContext{
 		ID: id, Label: label, Enter: path,
-		Body:     renderNodeBody(n.Children),
+		Body:     renderNodeBody(n.Children, pad),
 		Editable: true,
 		Children: children,
 	}
 }
 
-func splitChildContexts(nodes []*ConfigNode, parentID string, enter []string) (direct []*ConfigNode, children []ConfigContext) {
+func splitChildContexts(nodes []*ConfigNode, parentID string, enter []string, pad string) (direct []*ConfigNode, children []ConfigContext) {
 	used := map[string]int{}
 	for _, n := range nodes {
 		if n == nil || n.Line == "" {
@@ -343,7 +412,7 @@ func splitChildContexts(nodes []*ConfigNode, parentID string, enter []string) (d
 			continue
 		}
 		id := uniqueContextID(eosContextPiece(parentID, n.Line), used)
-		children = append(children, contextNode(n, id, n.Line, enter))
+		children = append(children, contextNode(n, id, n.Line, enter, pad))
 	}
 	return direct, children
 }
@@ -383,15 +452,15 @@ func uniqueContextID(id string, used map[string]int) string {
 }
 
 // renderNodeBody prints nodes and their children. Each nested level is
-// indented three spaces, which is the EOS running-config indent.
-func renderNodeBody(nodes []*ConfigNode) string {
+// indented by pad (three spaces on EOS, one space on IOS-XR).
+func renderNodeBody(nodes []*ConfigNode, padUnit string) string {
 	var b strings.Builder
-	writeConfigNodes(&b, nodes, 0)
+	writeConfigNodes(&b, nodes, 0, padUnit)
 	return NormalizeConfigText(b.String())
 }
 
-func writeConfigNodes(b *strings.Builder, nodes []*ConfigNode, depth int) {
-	pad := strings.Repeat("   ", depth)
+func writeConfigNodes(b *strings.Builder, nodes []*ConfigNode, depth int, padUnit string) {
+	pad := strings.Repeat(padUnit, depth)
 	for _, n := range nodes {
 		if n == nil || n.Line == "" {
 			continue
@@ -399,7 +468,7 @@ func writeConfigNodes(b *strings.Builder, nodes []*ConfigNode, depth int) {
 		b.WriteString(pad)
 		b.WriteString(n.Line)
 		b.WriteByte('\n')
-		writeConfigNodes(b, n.Children, depth+1)
+		writeConfigNodes(b, n.Children, depth+1, padUnit)
 	}
 }
 

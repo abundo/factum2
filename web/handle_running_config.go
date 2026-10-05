@@ -12,8 +12,11 @@ import (
 )
 
 // DCIM → Configuration loads a device's running config as a context tree
-// and commits one context at a time. EOS uses a configure session. The
-// device login is the device-sync credential, same as interface refresh.
+// and commits one context at a time. EOS uses a configure session.
+// IOS-XR uses a candidate configure (commit, then abort). SROS-MD uses
+// an MD-CLI exclusive candidate. Nokia's tree is read from configuration
+// JSON; EOS and IOS-XR are read from CLI text. The device login is the
+// device-sync credential, same as interface refresh.
 
 type runningConfigCommitRequest struct {
 	ContextID string `json:"context_id"`
@@ -118,7 +121,7 @@ func (ctrl *Controller) ApiRunningConfigCommit(c *echo.Context) error {
 }
 
 func loadRunningConfigTree(device *models.Device, drv drivers.DriverClient) ([]drivers.ConfigContext, error) {
-	cfg, err := drv.RunningConfigGet(false)
+	cfg, err := drv.RunningConfigGet(drivers.RunningConfigAsJSON(device.Platform))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read running configuration: %w", err)
 	}

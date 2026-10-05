@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -104,6 +105,23 @@ func (driver *NokiaDriver) Version() (*VersionModel, error) {
 }
 
 func (driver *NokiaDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel, error) {
+	if jsonformat {
+		// MD-CLI JSON. The context tree is this document: objects are
+		// contexts, lists are folders of contexts. Classic "admin
+		// display-config" is not that tree.
+		output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{
+			{Cmd: "//environment no more"},
+			{Cmd: "/admin show configuration json | no-more", EndMarker: srosConfigEndMarker},
+		})
+		if err != nil {
+			return nil, err
+		}
+		raw, err := extractJSONObject(output)
+		if err != nil {
+			return nil, fmt.Errorf("sros running-config: %w", err)
+		}
+		return &RunningConfigModel{ConfigStr: raw}, nil
+	}
 	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "//environment no more"}, {Cmd: "//admin display-config", EndMarker: srosConfigEndMarker}})
 	if err != nil {
 		return nil, err
@@ -236,13 +254,12 @@ func (driver *NokiaDriver) srosConfig() (map[string]any, error) {
 	// with the device's echo of the command itself and suffixed with the
 	// prompt reappearing after the final "}" line, so the actual JSON
 	// object has to be sliced out before unmarshaling.
-	start := strings.Index(output, "{")
-	end := strings.LastIndex(output, "}")
-	if start < 0 || end < start {
-		return nil, errors.New("srosConfig: no JSON object found in output")
+	raw, err := extractJSONObject(output)
+	if err != nil {
+		return nil, fmt.Errorf("srosConfig: %w", err)
 	}
 	var root map[string]any
-	if err := json.Unmarshal([]byte(output[start:end+1]), &root); err != nil {
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
 		return nil, err
 	}
 	return srosMap(root, "nokia-conf:configure"), nil
