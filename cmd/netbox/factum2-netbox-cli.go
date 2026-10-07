@@ -46,8 +46,9 @@ type DeviceInterfaceParams struct {
 
 type ParamsSync struct {
 	Params
-	Name string `required:"false"`
-	Job  bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+	Name  string `required:"false"`
+	Job   bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+	Delta bool   `descr:"Apply NetBox changes since the last sync instead of a full inventory" optional:"true"`
 }
 
 type ParamsDelta struct {
@@ -76,6 +77,21 @@ func newNetbox(c *util.ConfigDB) (*netboxtool.NetboxClient, error) {
 		URL:   settings.NetboxApiURL,
 		Token: settings.NetboxApiToken,
 	})
+}
+
+func runNetboxSync(p *Params, name string, job, delta bool) error {
+	cmdbase.SetupLog(p.CommonParams)
+	var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
+	if job {
+		reporter = jobevent.NewStdoutReporter(os.Stdout)
+	}
+	if delta {
+		if name != "" {
+			return fmt.Errorf("--delta does not take a device name")
+		}
+		return netbox.SyncDelta(&p.Config, reporter)
+	}
+	return netbox.Sync(&p.Config, name, reporter)
 }
 
 func main() {
@@ -144,27 +160,17 @@ func main() {
 			},
 			boa.CmdT[ParamsSync]{
 				Use:   "sync",
-				Short: "Sync Netbox with factum (full inventory)",
+				Short: "Sync Netbox with factum (full inventory, or --delta for changes since the last sync)",
 				RunFuncE: func(p *ParamsSync, cmd *cobra.Command, args []string) error {
-					cmdbase.SetupLog(p.CommonParams)
-					var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
-					if p.Job {
-						reporter = jobevent.NewStdoutReporter(os.Stdout)
-					}
-					return netbox.Sync(&p.Config, p.Name, reporter)
+					return runNetboxSync(&p.Params, p.Name, p.Job, p.Delta)
 				},
 			},
 
 			boa.CmdT[ParamsDelta]{
 				Use:   "sync-delta",
-				Short: "Apply NetBox changes since the last sync",
+				Short: "Apply NetBox changes since the last sync (same as sync --delta)",
 				RunFuncE: func(p *ParamsDelta, cmd *cobra.Command, args []string) error {
-					cmdbase.SetupLog(p.CommonParams)
-					var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
-					if p.Job {
-						reporter = jobevent.NewStdoutReporter(os.Stdout)
-					}
-					return netbox.SyncDelta(&p.Config, reporter)
+					return runNetboxSync(&p.Params, "", p.Job, true)
 				},
 			},
 

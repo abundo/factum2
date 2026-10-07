@@ -70,6 +70,31 @@ func TestIsValidJobTarget(t *testing.T) {
 	}
 }
 
+func TestCommandForJobTarget(t *testing.T) {
+	t.Parallel()
+	cmd, args, ok := commandForJobTarget("dns", []string{"dns", "netbox"})
+	if !ok || cmd != "dns" || args != nil {
+		t.Fatalf("dns: cmd=%q args=%v ok=%v", cmd, args, ok)
+	}
+	cmd, args, ok = commandForJobTarget(NetboxDeltaTarget, []string{"netbox"})
+	if !ok || cmd != "netbox" || len(args) != 1 || args[0] != "--delta" {
+		t.Fatalf("delta on netbox: cmd=%q args=%v ok=%v", cmd, args, ok)
+	}
+	cmd, args, ok = commandForJobTarget(NetboxDeltaTarget, []string{"netbox", NetboxDeltaTarget})
+	if !ok || cmd != NetboxDeltaTarget || args != nil {
+		t.Fatalf("legacy netbox-delta command: cmd=%q args=%v ok=%v", cmd, args, ok)
+	}
+	if _, _, ok = commandForJobTarget(NetboxDeltaTarget, []string{"dns"}); ok {
+		t.Fatal("delta must not match a worker with no netbox command")
+	}
+	if reportedCommand(CommandMsg{Command: "netbox"}) != "netbox" {
+		t.Fatal("empty report should echo the command name")
+	}
+	if reportedCommand(CommandMsg{Command: "netbox", Report: NetboxDeltaTarget}) != NetboxDeltaTarget {
+		t.Fatal("report should be the log name when set")
+	}
+}
+
 func TestStartJobHousekeepingRunsLocally(t *testing.T) {
 	db := newHousekeepingTestDB(t)
 	now := time.Now()

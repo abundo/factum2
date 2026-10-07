@@ -7,8 +7,11 @@ order: 50
 
 Syncs and maintenance tasks run as **jobs**. A job is one trigger (a
 single target, or **Sync all**) made of one **task** per target. The
-primary dispatches each task to a connected worker whose roles include
-that target — except housekeeping, which runs in-process on the primary.
+primary dispatches each task to a connected worker that handles that
+target. Housekeeping runs in-process on the primary. NetBox changes
+(`netbox-delta`) reuse the `netbox` command and append `--delta` (list it
+in that command's `allow_args`). A worker that still defines a
+`netbox-delta` command keeps using it.
 
 ## Job overview
 

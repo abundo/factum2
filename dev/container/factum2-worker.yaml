@@ -18,9 +18,7 @@ worker:
         netbox:
             cmd: /opt/factum2/factum2-netbox
             args: ["sync", "--job"]
-        netbox-delta:
-            cmd: /opt/factum2/factum2-netbox
-            args: ["sync-delta", "--job"]
+            allow_args: ["--delta"]
         device-sync:
             cmd: /opt/factum2/factum2-device-sync
             args: ["sync", "--job"]

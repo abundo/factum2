@@ -323,15 +323,17 @@ sites, racks, VRFs, interface types, and, when enabled, customer and
 contact push plus L2VPN import). Run it a few times a day. A successful
 full sync records a changelog cursor.
 
-`factum2-netbox sync-delta` (job target `netbox-delta`) reads NetBox
-`/api/core/object-changes/` since that cursor and refetches only what
-changed. Schedule it more often than the full sync. It is not part of
-"Sync all". With no cursor, or when the change set is at least 10 devices
-and at least 20% of the stored NetBox inventory, it runs a full sync
-instead. The changelog does not keep deletes forever
-(`CHANGELOG_RETENTION`, 90 days by default); the periodic full sync is
-what picks up anything the cursor missed. Add a `netbox-delta` entry next
-to `netbox` in `worker.commands` (`sync-delta --job`).
+`factum2-netbox sync --delta` (job target `netbox-delta`; `sync-delta` is
+the same command) reads NetBox `/api/core/object-changes/` since that
+cursor and refetches only what changed. Schedule it more often than the
+full sync. It is not part of "Sync all". With no cursor, or when the
+change set is at least 10 devices and at least 20% of the stored NetBox
+inventory, it runs a full sync instead. The changelog does not keep
+deletes forever (`CHANGELOG_RETENTION`, 90 days by default); the periodic
+full sync is what picks up anything the cursor missed. The job runs the
+`netbox` worker command with `--delta` appended. List that flag in
+`allow_args` on the `netbox` entry. A worker that still defines a
+`netbox-delta` command keeps using that command.
 
 `POST /api/netbox-webhook` queues create/update events for one quiet
 period (3 seconds with no further event), then runs that same delta sync.

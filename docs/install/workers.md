@@ -69,7 +69,10 @@ Start from `examples/factum2-worker.yaml` on the worker host:
 - `worker.tls_cert` / `worker.tls_key` — required. SAN must match the
   hostname or IP in Address (Go ignores CN)
 - `worker.commands` — only the tools this host should run. Add `--job` to
-  a command's `args` for structured job events
+  a command's `args` for structured job events. NetBox changes (job
+  `netbox-delta`) reuse the `netbox` command: set
+  `allow_args: ["--delta"]`. A second `netbox-delta` command is not
+  required; one that is already there keeps running `sync-delta`
 - `factum.url` / `factum.token` — HTTPS fallback if the unix socket is
   missing; omit on start-only hosts
 

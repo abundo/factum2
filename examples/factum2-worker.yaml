@@ -57,9 +57,10 @@ worker:
     netbox:
       cmd: /opt/factum2/factum2-netbox
       args: ["sync", "--job"]
-    netbox-delta:
-      cmd: /opt/factum2/factum2-netbox
-      args: ["sync-delta", "--job"]
+      # Job netbox-delta appends this flag (factum2-netbox sync --job --delta).
+      # A separate netbox-delta command is not required. One that is still
+      # defined keeps running sync-delta instead.
+      allow_args: ["--delta"]
     # RADIUS for switch and router login. The name starts an in-process UDP
     # listener; cmd is not executed. Policy is Admin → Services → RADIUS.
     # radius:

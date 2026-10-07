@@ -3,6 +3,15 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
+## Unreleased
+
+### Changed
+
+- NetBox delta sync runs as `factum2-netbox sync --delta` on the existing
+  `netbox` worker command. Add `allow_args: ["--delta"]` to that entry.
+  A separate `netbox-delta` command is no longer required. A worker that
+  still advertises one keeps using `sync-delta`.
+
 ## v1.2.0
 
 ### New

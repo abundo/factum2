@@ -78,10 +78,23 @@ type HelloMsg struct {
 
 // CommandMsg is sent by the primary (RemoteManager) to run a predefined
 // command, routed by the agent's activated role name (CommandMsg.Command).
+// Args are extra tokens the command's allow_args must list. Report, when
+// set, is the job target echoed in logs and events. The agent never uses
+// it to choose which command to run.
 type CommandMsg struct {
 	ID      string   `json:"id"`
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
+	Report  string   `json:"report,omitempty"`
+}
+
+// reportedCommand is the name logs, events, and the running-target map use.
+// An empty Report means the command name itself.
+func reportedCommand(msg CommandMsg) string {
+	if msg.Report != "" {
+		return msg.Report
+	}
+	return msg.Command
 }
 
 // LogMsg is sent by the agent while (and after) it runs a command.
@@ -496,34 +509,42 @@ func (m *RemoteManager) SendCommand(role string, args []string) (matched int, id
 	return matched, id, err
 }
 
-// dispatchSingle sends to at most one connected node activated for role,
-// unlike sendCommandWithID's full fan-out - used by createAndDispatchTask
-// so a task maps to exactly one execution and one completion signal.
-// Fanning a task-tracked dispatch out to every redundant node sharing a
-// role would let two independent runs race to update the same JobTask row.
-// Returns the dispatched-to node's name (empty if matched is 0) so the
-// caller can track which node is running the task.
-func (m *RemoteManager) dispatchSingle(id, role string, args []string) (node string, matched int, err error) {
-	payload, err := json.Marshal(CommandMsg{ID: id, Command: role, Args: args})
-	if err != nil {
-		return "", 0, err
-	}
-	env := Envelope{Type: EnvelopeCommand, Payload: payload}
-
+// dispatchSingle sends to at most one connected node that can run jobTarget
+// (see commandForJobTarget), unlike sendCommandWithID's full fan-out. Used
+// by createAndDispatchTask so a task maps to exactly one execution and one
+// completion signal. Fanning a task-tracked dispatch out to every redundant
+// node sharing a role would let two independent runs race to update the
+// same JobTask row. Returns the dispatched-to node's name (empty if matched
+// is 0) so the caller can track which node is running the task.
+func (m *RemoteManager) dispatchSingle(id, jobTarget string) (node string, matched int, err error) {
 	m.mu.Lock()
 	var targetName string
 	var target *nodeConn
+	var command string
+	var args []string
 	for name, nc := range m.conns {
-		if slices.Contains(nc.roles, role) {
-			targetName, target = name, nc
-			break
+		cmd, extra, ok := commandForJobTarget(jobTarget, nc.roles)
+		if !ok {
+			continue
 		}
+		targetName, target, command, args = name, nc, cmd, extra
+		break
 	}
 	m.mu.Unlock()
 
 	if target == nil {
 		return "", 0, nil
 	}
+
+	msg := CommandMsg{ID: id, Command: command, Args: args}
+	if command != jobTarget {
+		msg.Report = jobTarget
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return "", 0, err
+	}
+	env := Envelope{Type: EnvelopeCommand, Payload: payload}
 	if !trySend(target.outbox, env) {
 		return "", 0, nil
 	}
@@ -597,7 +618,7 @@ func (m *RemoteManager) createAndDispatchTask(jobPK uint, taskID, target string)
 		return 1, nil
 	}
 
-	node, matched, err := m.dispatchSingle(taskID, target, nil)
+	node, matched, err := m.dispatchSingle(taskID, target)
 	if err != nil {
 		m.clearRunning(target, taskID)
 		return 0, err

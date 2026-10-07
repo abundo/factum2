@@ -165,7 +165,7 @@ func (w *Worker) handleHubConn(rw http.ResponseWriter, r *http.Request) {
 				slog.Error("worker hub: invalid command envelope, discarding", "err", err)
 				continue
 			}
-			slog.Debug("received command", "id", cmdMsg.ID, "command", cmdMsg.Command, "args", cmdMsg.Args)
+			slog.Debug("received command", "id", cmdMsg.ID, "command", cmdMsg.Command, "args", cmdMsg.Args, "report", cmdMsg.Report)
 			go w.runCommand(w.runCtx, cmdMsg, outbox)
 		case EnvelopeResponse:
 			var resp ResponseMsg
@@ -215,25 +215,28 @@ func commandNames(commands map[string]util.ConfigWorkerCommand) []string {
 // handleHubConn), not a per-connection context, so the command keeps
 // running to completion even if the hub connection drops mid-run.
 func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<- Envelope) {
-	logger := slog.With("id", cmdMsg.ID, "command", cmdMsg.Command)
+	// Report names the job in logs. Lookup stays on Command, so a forged
+	// report cannot select a different binary.
+	name := reportedCommand(cmdMsg)
+	logger := slog.With("id", cmdMsg.ID, "command", cmdMsg.Command, "report", name)
 
 	predefined, ok := w.cfg.Commands[cmdMsg.Command]
 	if !ok {
 		logger.Error("rejected unknown command")
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: "unknown command"})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: -1, Err: "unknown command"})
 		return
 	}
 
 	if cmdMsg.Command == radius.Role {
 		logger.Info("radius listens in-process")
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: 0})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: 0})
 		return
 	}
 
 	extra, err := filterWireArgs(predefined.AllowArgs, cmdMsg.Args)
 	if err != nil {
 		logger.Error("rejected wire arguments", "err", err)
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
 		return
 	}
 
@@ -244,19 +247,19 @@ func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		logger.Error("stdout pipe", "err", err)
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
 		return
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		logger.Error("stderr pipe", "err", err)
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
 		logger.Error("start command", "err", err)
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: -1, Err: err.Error()})
 		return
 	}
 
@@ -276,7 +279,7 @@ func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<
 			exitCode = -1
 		}
 	}
-	sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: StreamExit, ExitCode: exitCode, Err: errMsg})
+	sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: exitCode, Err: errMsg})
 	logger.Info("command finished", "exit_code", exitCode)
 }
 
@@ -300,14 +303,14 @@ func streamOutput(wg *sync.WaitGroup, cmdMsg CommandMsg, r io.Reader, stream str
 		line := scanner.Text()
 		if stream == StreamStdout {
 			if level, message, ok := decodeEventLine(line); ok {
-				sendEvent(outbox, EventMsg{ID: cmdMsg.ID, Target: cmdMsg.Command, Level: level, Message: message})
+				sendEvent(outbox, EventMsg{ID: cmdMsg.ID, Target: reportedCommand(cmdMsg), Level: level, Message: message})
 				continue
 			}
 		}
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: stream, Data: line})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: reportedCommand(cmdMsg), Stream: stream, Data: line})
 	}
 	if err := scanner.Err(); err != nil {
-		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: cmdMsg.Command, Stream: stream, Data: fmt.Sprintf("[stream read error: %v]", err)})
+		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: reportedCommand(cmdMsg), Stream: stream, Data: fmt.Sprintf("[stream read error: %v]", err)})
 	}
 }
 

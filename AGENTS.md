@@ -267,8 +267,13 @@ firewall step, not something the process unbinds.
   (`web.ApiSyncTrigger`, `web/handle_sync.go`), which calls
   `ctrl.RemoteManager.StartJob("sync", requestedBy, []string{target})`
   (`internal/worker/hub.go`) - this side needed no changes to add a new
-  target's button, it already handles all of `SyncTargets` generically. The
-  "Sync all" button instead calls `POST /api/sync/all`
+  target's button, it already handles all of `SyncTargets` generically.
+  `netbox-delta` is a job target but not a `worker.commands` key: dispatch
+  (`commandForJobTarget`) sends the `netbox` command with `--delta`, which
+  that entry must list in `allow_args`. `CommandMsg.Report` keeps the log
+  source and the running-target lock on `netbox-delta`. A node that still
+  advertises a `netbox-delta` command is sent that command with no args.
+  The "Sync all" button instead calls `POST /api/sync/all`
   (`web.ApiSyncTriggerAll`), which orders every enabled target sources-
   first via `worker.SequencedSyncAllTargets` and calls the same `StartJob`
   with all of them - one `Job` row dispatching a `JobTask` per target, one
@@ -286,8 +291,8 @@ firewall step, not something the process unbinds.
   having its own bespoke listener: an agent activates a command by name
   via `worker.commands` (e.g. a `worker.commands.librenms` entry running
   `factum2-librenms sync`), and `StartJob` dispatches a `command`
-  envelope per task to exactly one connected node whose hello-reported
-  roles include the target name (deliberately _not_ a fan-out to every
+  envelope per task to exactly one connected node that can run that
+  target (deliberately _not_ a fan-out to every
   matching node the way `factum2-worker run`'s `SendCommand`/`RunAndWait`
   still is - see "Jobs and job tasks" below for why). A sync trigger still
   can't run anything outside the agent's own `worker.commands` allowlist,

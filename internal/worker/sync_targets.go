@@ -14,10 +14,33 @@ import (
 const HousekeepingTarget = "housekeeping"
 
 // NetboxDeltaTarget applies NetBox object-changes since the last cursor
-// (factum2-netbox sync-delta). It is a job target when NetBox is enabled,
+// (factum2-netbox sync --delta). It is a job target when NetBox is enabled,
 // scheduled and triggered on its own. It is not a SyncTargets entry, so
 // "Sync all" keeps running the full netbox inventory sync only.
+//
+// The worker command is still "netbox". Dispatch appends "--delta" when
+// the node does not advertise a separate netbox-delta command. That older
+// command (factum2-netbox sync-delta) keeps working when it is present.
 const NetboxDeltaTarget = "netbox-delta"
+
+// commandForJobTarget maps a job target onto one worker command and the
+// extra argv the hub may append. roles are the names from the node's hello.
+// A normal target matches a command of the same name and sends no args.
+func commandForJobTarget(target string, roles []string) (command string, args []string, ok bool) {
+	if target == NetboxDeltaTarget {
+		if slices.Contains(roles, NetboxDeltaTarget) {
+			return NetboxDeltaTarget, nil, true
+		}
+		if slices.Contains(roles, "netbox") {
+			return "netbox", []string{"--delta"}, true
+		}
+		return "", nil, false
+	}
+	if slices.Contains(roles, target) {
+		return target, nil, true
+	}
+	return "", nil, false
+}
 
 // SyncTargets lists the systems that can be synced from the web UI. Each
 // name doubles as the role/command name a factum2-worker instance activates
