@@ -118,6 +118,20 @@ func TestEOSMirrorCommands(t *testing.T) {
 	if strings.Join(down, "\n") != "configure\nno monitor session Ethernet3\nend" {
 		t.Fatalf("teardown = %v", down)
 	}
+	slash := eosMirrorApplyCommands("Ethernet49/1")
+	wantSlash := []string{
+		"configure",
+		"monitor session Ethernet49_1 source Ethernet49/1",
+		"monitor session Ethernet49_1 destination cpu",
+		"monitor session Ethernet49_1 rate-limit per-ingress-chip 1 mbps",
+		"end",
+	}
+	if strings.Join(slash, "\n") != strings.Join(wantSlash, "\n") {
+		t.Fatalf("slash setup = %v", slash)
+	}
+	if strings.Join(eosMirrorDeleteCommands(eosMirrorSessionName("Ethernet49/1")), "\n") != "configure\nno monitor session Ethernet49_1\nend" {
+		t.Fatal("slash teardown kept the slash in the session name")
+	}
 }
 
 func TestEOSParseMirrorJSON(t *testing.T) {

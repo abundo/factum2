@@ -23,22 +23,31 @@ var eosMirrorLinux = regexp.MustCompile(`(?i)\(\s*(mirror[0-9]+)\s*\)`)
 
 var eosMirrorIfaceExact = regexp.MustCompile(`^mirror[0-9]+$`)
 
+// eosMirrorSessionName is the monitor-session name for iface. EOS rejects
+// "/" in that name, so Ethernet49/1 is session Ethernet49_1. The source
+// interface in the same command keeps the slash.
+func eosMirrorSessionName(iface string) string {
+	return strings.ReplaceAll(iface, "/", "_")
+}
+
 // eosMirrorApplyCommands creates one monitor session over eAPI. The
-// session name is the interface, so a capture of Ethernet1 is
-// "monitor session Ethernet1 source Ethernet1",
+// session name is the interface, with "/" replaced by "_", so a capture
+// of Ethernet1 is "monitor session Ethernet1 source Ethernet1",
 // "monitor session Ethernet1 destination cpu", and
 // "monitor session Ethernet1 rate-limit per-ingress-chip 1 mbps".
+// Ethernet49/1 is "monitor session Ethernet49_1 source Ethernet49/1".
 // The Linux mirror name is read by a later show: in the same runCmds
 // batch the CPU destination is still "unknown" and has no mirror
 // interface. A leftover session of the same name is deleted first, in
 // its own request. "no monitor session" on a missing session fails the
 // whole batch and would roll the new session back with it.
 func eosMirrorApplyCommands(iface string) []string {
+	session := eosMirrorSessionName(iface)
 	return []string{
 		"configure",
-		"monitor session " + iface + " source " + iface,
-		"monitor session " + iface + " destination cpu",
-		"monitor session " + iface + " rate-limit per-ingress-chip 1 mbps",
+		"monitor session " + session + " source " + iface,
+		"monitor session " + session + " destination cpu",
+		"monitor session " + session + " rate-limit per-ingress-chip 1 mbps",
 		"end",
 	}
 }
@@ -150,45 +159,47 @@ func (driver *AristaDriver) SetupPortMirror(ctx context.Context, req PortMirrorR
 		return nil, err
 	}
 	// Drop a leftover of this same name so sources do not accumulate.
-	// A session that is already gone is not a failure.
-	if err := driver.removeMirror(ctx, req.Interface); err != nil {
+	// A session that is already gone is not a failure. The session name
+	// replaces "/" with "_"; the source interface keeps its slash.
+	session := eosMirrorSessionName(req.Interface)
+	if err := driver.removeMirror(ctx, session); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if _, err := eapiRunCmds(driver.p.Username, driver.p.Password, driver.p.Name, eosMirrorApplyCommands(req.Interface), eapiFormatText); err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	// The CPU destination stays "unknown", with no Linux mirror name,
 	// until EOS programs the session. On the lab switch that is about
 	// two seconds after the configuration request returns.
-	linuxIface, err := driver.eosMirrorLinuxIface(ctx, req.Interface)
+	linuxIface, err := driver.eosMirrorLinuxIface(ctx, session)
 	if err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	cmd, err := eosTCPDumpCommand(linuxIface, req)
 	if err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	stream, err := startSSHCommand(ctx, driver.p, cmd)
 	if err != nil {
-		_ = driver.removeMirror(context.Background(), req.Interface)
+		_ = driver.removeMirror(context.Background(), session)
 		return nil, err
 	}
 	return &PortMirrorSession{
-		Name:      req.Interface,
+		Name:      session,
 		Interface: linuxIface,
 		Packets:   stream,
 		diag:      stream.stderrText,
