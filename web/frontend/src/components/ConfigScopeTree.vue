@@ -9,7 +9,7 @@ const props = defineProps({
   reloadKey: { type: Number, default: 0 },
   canWrite: { type: Boolean, default: false },
 })
-const emit = defineEmits(['contextmenu', 'select', 'move', 'rebind'])
+const emit = defineEmits(['contextmenu', 'select', 'move', 'rebind', 'dblclick'])
 
 const el = ref(null)
 let tree
@@ -197,6 +197,16 @@ function buildTree(source) {
         return
       }
       emit('select', selectedPayload(e.node))
+    },
+    dblclick: (e) => {
+      if (e.info?.region === 'expander') return
+      const node = e.node
+      if (!node) return
+      const data = node.data ?? {}
+      const kind = data.kind || node.type
+      if (kind !== 'device' || !data.device_id) return
+      emit('dblclick', selectedPayload(node))
+      return false
     },
     dnd: {
       dragStart: (e) => {

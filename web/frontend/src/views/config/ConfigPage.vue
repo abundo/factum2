@@ -38,6 +38,7 @@ import {
   updateServiceType as updateServiceRowType,
 } from '@/api/services'
 import ConfigBundleDialog from '@/components/ConfigBundleDialog.vue'
+import DeviceDetailDialog from '@/components/DeviceDetailDialog.vue'
 import ConfigNodeInspector from '@/components/ConfigNodeInspector.vue'
 import ConfigScopeTree from '@/components/ConfigScopeTree.vue'
 import GoTemplateEditor from '@/components/GoTemplateEditor.vue'
@@ -62,6 +63,8 @@ const toast = useToast()
 const authStore = useAuthStore()
 const { confirmDelete, ask } = useConfirm()
 const treeRef = ref(null)
+const deviceDetailOpen = ref(false)
+const deviceDetailId = ref(0)
 const filter = ref('')
 const saving = ref(false)
 const tab = ref('tree')
@@ -542,6 +545,16 @@ function nearestMatrixNode(node) {
     cur = map[cur.parent_id]
   }
   return null
+}
+
+function onTreeDblClick(node) {
+  if (node?.kind !== 'device' || !node.device_id) return
+  deviceDetailId.value = node.device_id
+  deviceDetailOpen.value = true
+}
+
+function onDeviceDetailChanged() {
+  reloadKey.value += 1
 }
 
 function onSelect(node) {
@@ -1835,6 +1848,7 @@ onBeforeUnmount(() => {
               @select="onSelect"
               @move="onMove"
               @rebind="onRebind"
+              @dblclick="onTreeDblClick"
             />
           </div>
           <div
@@ -2683,4 +2697,10 @@ onBeforeUnmount(() => {
       </div>
     </template>
   </FormModal>
+
+  <DeviceDetailDialog
+    v-model:open="deviceDetailOpen"
+    :device-id="deviceDetailId"
+    @changed="onDeviceDetailChanged"
+  />
 </template>

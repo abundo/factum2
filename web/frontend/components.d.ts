@@ -21,6 +21,7 @@ declare module 'vue' {
     ConnectionDeviceNode: typeof import('./src/components/dcim/ConnectionDeviceNode.vue')['default']
     CustomBranding: typeof import('./src/components/CustomBranding.vue')['default']
     DcimDetailDialog: typeof import('./src/components/DcimDetailDialog.vue')['default']
+    DeviceDetailDialog: typeof import('./src/components/DeviceDetailDialog.vue')['default']
     DeviceInterfacePicker: typeof import('./src/components/DeviceInterfacePicker.vue')['default']
     DevicePairCables: typeof import('./src/components/dcim/DevicePairCables.vue')['default']
     DhcpLeasePicker: typeof import('./src/components/DhcpLeasePicker.vue')['default']
