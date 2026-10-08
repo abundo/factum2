@@ -32,7 +32,7 @@ const maxTypeDepth = 8
 
 func ValidScopeKind(k string) bool {
 	switch k {
-	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 		models.ConfigScopeKindDevice, models.ConfigScopeKindInterface,
 		models.ConfigScopeKindParameter, models.ConfigScopeKindCLI,
 		models.ConfigScopeKindService, models.ConfigScopeKindServiceEndpoint,

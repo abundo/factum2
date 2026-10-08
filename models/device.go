@@ -257,6 +257,7 @@ const (
 // and locations all map onto this table (parented the same way they nest
 // in NetBox); operators can also create sites here (source=factum). GPS
 // is optional — the network map only plots rows that have coordinates.
+// The same hierarchy is mirrored into the config tree for Provisioning.
 type Site struct {
 	FactumModel
 	ParentID   *uint   `json:"parent_id" gorm:"index"`

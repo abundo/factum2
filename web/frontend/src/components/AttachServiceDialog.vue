@@ -210,7 +210,7 @@ async function treeParentId() {
   const deviceNode = (rows ?? []).find((s) => s.kind === 'device' && s.device_id === props.deviceId)
   if (deviceNode?.parent_id) {
     const p = (rows ?? []).find((s) => s.id === deviceNode.parent_id)
-    if (p && (p.kind === 'folder' || p.kind === 'site' || p.kind === 'location')) return p.id
+    if (p && (p.kind === 'folder' || p.kind === 'region' || p.kind === 'site' || p.kind === 'location')) return p.id
   }
   return findServicesFolderId(async () => rows)
 }

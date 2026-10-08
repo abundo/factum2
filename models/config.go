@@ -6,6 +6,7 @@ import (
 
 const (
 	ConfigScopeKindFolder          = "folder"
+	ConfigScopeKindRegion          = "region"
 	ConfigScopeKindSite            = "site"
 	ConfigScopeKindLocation        = "location"
 	ConfigScopeKindDevice          = "device"
@@ -74,6 +75,10 @@ type ConfigScope struct {
 	SortOrder     int                `json:"sort_order"`
 	Payload       ConfigScopePayload `json:"payload" gorm:"serializer:json"`
 	SeedChecksum  string             `json:"-" gorm:"type:varchar(64)"`
+	// NetboxKind and NetboxID identify a region, site, or location mirrored
+	// from NetBox. NetboxID 0 is a node created in Factum.
+	NetboxKind string `json:"netbox_kind,omitempty" gorm:"type:varchar(32)"`
+	NetboxID   uint   `json:"netbox_id"`
 }
 
 func (ConfigScope) TableName() string { return "config_scopes" }

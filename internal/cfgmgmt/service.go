@@ -253,7 +253,7 @@ func CanonicalServiceParentID(db *gorm.DB, from *models.ConfigScope) (uint, erro
 		return sf.ID, nil
 	}
 	switch from.Kind {
-	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
 		return from.ID, nil
 	case models.ConfigScopeKindDevice:
 		if from.ParentID != nil {

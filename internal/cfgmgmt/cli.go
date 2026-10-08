@@ -577,7 +577,7 @@ func nearestMatrixScope(db *gorm.DB, start *models.ConfigScope) (*models.ConfigS
 	}
 	for i := range chain {
 		switch chain[i].Kind {
-		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite,
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite,
 			models.ConfigScopeKindLocation, models.ConfigScopeKindDevice:
 			cp := chain[i]
 			return &cp, nil

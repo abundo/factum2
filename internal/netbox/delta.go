@@ -1,6 +1,7 @@
 package netbox
 
 import (
+	"errors"
 	"time"
 
 	"github.com/abundo/factum2/internal/jobevent"
@@ -361,13 +362,10 @@ func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter job
 	if err := p.applyCables(db, nb, reporter); err != nil {
 		return err
 	}
-	if err := p.applyTree(db, p.sites, models.SiteNetboxKindSite, reporter); err != nil {
+	if err := p.applyTrees(db, reporter); err != nil {
 		return err
 	}
-	if err := p.applyTree(db, p.regions, models.SiteNetboxKindRegion, reporter); err != nil {
-		return err
-	}
-	if err := p.applyTree(db, p.locations, models.SiteNetboxKindLocation, reporter); err != nil {
+	if err := p.placeChangedDevices(db, devices, reporter); err != nil {
 		return err
 	}
 	if p.racks || p.devTypes || len(p.devices) > 0 {
@@ -446,17 +444,65 @@ func (p *deltaPlan) applyCables(db *gorm.DB, nb *netboxtool.NetboxClient, report
 	return nil
 }
 
-func (p *deltaPlan) applyTree(db *gorm.DB, actions map[uint]string, kind string, reporter jobevent.Reporter) error {
-	for id, action := range actions {
-		if action == "delete" {
-			if _, err := DeleteSyncedSiteNode(db, kind, id); err != nil {
+// applyTrees mirrors changed regions, then sites, then locations. A second
+// pass fixes parents that were created later in the same window. Deletes
+// run only on the first pass.
+func (p *deltaPlan) applyTrees(db *gorm.DB, reporter jobevent.Reporter) error {
+	steps := []struct {
+		kind    string
+		actions map[uint]string
+	}{
+		{models.SiteNetboxKindRegion, p.regions},
+		{models.SiteNetboxKindSite, p.sites},
+		{models.SiteNetboxKindLocation, p.locations},
+	}
+	for _, step := range steps {
+		for id, action := range step.actions {
+			if action != "delete" {
+				continue
+			}
+			if _, err := DeleteSyncedSiteNode(db, step.kind, id); err != nil {
 				return err
 			}
-			continue
 		}
-		if err := SyncDCIMTreeItem(db, kind, id, reporter); err != nil {
-			return err
+	}
+	// Twice: the first pass inserts nodes, the second parents a node whose
+	// parent was created later in the same pass (two locations, or a region
+	// whose parent region shares the window).
+	for pass := 0; pass < 2; pass++ {
+		for _, step := range steps {
+			for id, action := range step.actions {
+				if action == "delete" {
+					continue
+				}
+				if err := SyncDCIMTreeItem(db, step.kind, id, reporter); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
+}
+
+func (p *deltaPlan) placeChangedDevices(db *gorm.DB, devices []*netboxtool.NBDevice, reporter jobevent.Reporter) error {
+	ids := map[uint]struct{}{}
+	for _, dev := range devices {
+		if dev == nil {
+			continue
+		}
+		var row models.Device
+		err := db.Select("id").Where("netbox_id = ? AND vm = ?", dev.NetboxID, dev.VM).Take(&row).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		ids[row.ID] = struct{}{}
+	}
+	sites := map[uint]struct{}{}
+	for id := range p.sites {
+		sites[id] = struct{}{}
+	}
+	return placeSyncedDevices(db, devicePlaceFilter{factumIDs: ids, netboxSiteIDs: sites}, reporter)
 }

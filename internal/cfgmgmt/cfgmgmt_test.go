@@ -229,6 +229,7 @@ func TestSeedReservedFolders(t *testing.T) {
 func TestValidScopeKind(t *testing.T) {
 	for _, k := range []string{
 		models.ConfigScopeKindFolder,
+		models.ConfigScopeKindRegion,
 		models.ConfigScopeKindSite,
 		models.ConfigScopeKindLocation,
 		models.ConfigScopeKindDevice,

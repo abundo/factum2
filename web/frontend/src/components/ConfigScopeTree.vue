@@ -91,6 +91,8 @@ function kindLabel(kind, name) {
       if (name === '_catalog') return 'Catalog'
       if (name === '_services') return 'Services'
       return 'Folder'
+    case 'region':
+      return 'Region'
     case 'site':
       return 'Site'
     case 'location':
@@ -163,6 +165,7 @@ function buildTree(source) {
     ],
     types: {
       folder: { icon: false },
+      region: { icon: false },
       site: { icon: false },
       location: { icon: false },
       device: { icon: false },

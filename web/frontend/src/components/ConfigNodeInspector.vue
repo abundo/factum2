@@ -81,6 +81,7 @@ const showAssignments = computed(() => {
   return (
     kind === 'parameter' ||
     kind === 'folder' ||
+    kind === 'region' ||
     kind === 'site' ||
     kind === 'location' ||
     kind === 'device' ||

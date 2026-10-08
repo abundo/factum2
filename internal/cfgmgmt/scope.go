@@ -445,7 +445,7 @@ func assertCurrentParentKind(db *gorm.DB, child *models.ConfigScope) error {
 
 func organizationalParentKind(k string) bool {
 	switch k {
-	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
 		return true
 	}
 	return false
@@ -456,7 +456,7 @@ func assertParentKind(child, parent *models.ConfigScope) error {
 		return statusErr(400, "parent scope not found")
 	}
 	switch child.Kind {
-	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation:
 		if organizationalParentKind(parent.Kind) {
 			return nil
 		}
@@ -476,28 +476,28 @@ func assertParentKind(child, parent *models.ConfigScope) error {
 		return nil
 	case models.ConfigScopeKindParameter:
 		switch parent.Kind {
-		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface, models.ConfigScopeKindService:
 			return nil
 		}
 		return statusErr(400, "parameter cannot be under "+parent.Kind)
 	case models.ConfigScopeKindCLI:
 		switch parent.Kind {
-		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
 			return nil
 		}
 		return statusErr(400, "cli cannot be under "+parent.Kind)
 	case models.ConfigScopeKindResource:
 		switch parent.Kind {
-		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 			models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
 			return nil
 		}
 		return statusErr(400, "resource cannot be under "+parent.Kind)
 	case models.ConfigScopeKindService:
 		switch parent.Kind {
-		case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+		case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 			models.ConfigScopeKindDevice:
 			return nil
 		}
@@ -783,7 +783,7 @@ func isOrganizationalScope(s *models.ConfigScope) bool {
 		return false
 	}
 	switch s.Kind {
-	case models.ConfigScopeKindFolder, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
+	case models.ConfigScopeKindFolder, models.ConfigScopeKindRegion, models.ConfigScopeKindSite, models.ConfigScopeKindLocation,
 		models.ConfigScopeKindDevice, models.ConfigScopeKindInterface:
 		return true
 	}

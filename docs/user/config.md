@@ -19,8 +19,8 @@ CLI objects, and services, or to attach a device. Drag to move a node
 
 | Kind | What it is |
 | --- | --- |
-| Folder / site / location | Organizational. Site and location are folder variants. |
-| Device | An existing DCIM device **attached** here. Detach does not delete inventory. Interfaces are managed children. |
+| Folder / region / site / location | Organizational. Region, site, and location are folder variants. NetBox sync creates these under `global`. |
+| Device | A DCIM device. NetBox sync places each device under its site (or under `global` when it has none). Detach does not delete inventory. Interfaces are managed children. |
 | Parameter object | Named assignments (MTU, AS number, …). They apply to the parent and its descendants. |
 | Resource | Named CIDR list used by prefix fields on a service definition. Place on a site, device, or interface — not under a service node. |
 | CLI object | Per-NOS command templates (features with add/remove). Baseline objects sit on the ancestor chain; service translation lives under `_catalog/cli`. |
@@ -57,8 +57,10 @@ the other CLI platforms (`system-view` session).
 ## Devices and services
 
 **Attach** an existing DCIM device; Factum does not create routers from
-this tree. **Detach** removes the device from the tree and its config
-children (parameters, CLI, interfaces). The inventory row stays.
+this tree. NetBox sync does that attach for every device and keeps the
+device under its site. **Detach** removes the device from the tree and
+its config children (parameters, CLI, interfaces). The inventory row stays.
+The next sync places a NetBox device back under its site.
 
 A **service** node is the same CN/CI row as on the Services page. Create
 from the tree: pick a **definition** (Config → **Catalog** → Service definitions — Factum
@@ -131,8 +133,8 @@ is preview-only.
 
 A parameter object applies to its parent and that parent's descendants: a
 variable set on a site-level object applies to devices under that site
-unless a closer object overrides it. Attach a device under the site so it
-picks up those values.
+unless a closer object overrides it. Synced devices sit under their site,
+so they pick up those values.
 
 A **resource** is a named CIDR list. Prefix fields on a definition that
 set `resource` pick a free prefix from the closest matching resource on

@@ -225,7 +225,7 @@ const categoryOptions = [
   { label: 'CN', value: 'CN' },
   { label: 'CI', value: 'CI' },
 ]
-const orgKindTitles = { folder: 'Folder', site: 'Site', location: 'Location' }
+const orgKindTitles = { folder: 'Folder', region: 'Region', site: 'Site', location: 'Location' }
 
 const macroSchema = computed(() =>
   withCfgmgmtContext(cfgmgmtMacroSchema, {
@@ -283,7 +283,7 @@ function applyFilter(q) {
 }
 
 function isOrgKind(kind) {
-  return kind === 'folder' || kind === 'site' || kind === 'location'
+  return kind === 'folder' || kind === 'region' || kind === 'site' || kind === 'location'
 }
 
 function isReservedFolder(node) {
@@ -306,6 +306,7 @@ function canRename(node) {
 
 const renameKindLabels = {
   folder: 'folder',
+  region: 'region',
   site: 'site',
   location: 'location',
   parameter: 'parameter object',
@@ -530,6 +531,7 @@ function nearestMatrixNode(node) {
   while (cur) {
     if (
       cur.kind === 'folder' ||
+      cur.kind === 'region' ||
       cur.kind === 'site' ||
       cur.kind === 'location' ||
       cur.kind === 'device'

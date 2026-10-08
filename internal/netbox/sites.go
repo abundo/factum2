@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -288,19 +289,38 @@ func deleteNetboxNode(db *gorm.DB, kind string, netboxID uint) (int, error) {
 	return 1, nil
 }
 
-// DeleteSiteByNetboxID removes the synced dcim.site row for netboxID.
+// DeleteSiteByNetboxID removes the synced dcim.site row for netboxID and
+// the matching config-tree node. Devices that were under that site move
+// to global on the next placement.
 func DeleteSiteByNetboxID(db *gorm.DB, netboxID uint) (int, error) {
-	return deleteNetboxNode(db, models.SiteNetboxKindSite, netboxID)
+	return DeleteSyncedSiteNode(db, models.SiteNetboxKindSite, netboxID)
 }
 
-// DeleteSyncedSiteNode removes the synced row for a region, site, or location.
+// DeleteSyncedSiteNode removes the synced Organization row and config-tree
+// node for a region, site, or location. The returned count is the
+// Organization row (0 or 1).
 func DeleteSyncedSiteNode(db *gorm.DB, kind string, netboxID uint) (int, error) {
-	return deleteNetboxNode(db, kind, netboxID)
+	n, err := deleteNetboxNode(db, kind, netboxID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := deleteConfigNode(db, kind, netboxID); err != nil {
+		return 0, err
+	}
+	if kind == models.SiteNetboxKindSite {
+		if err := placeSyncedDevices(db, devicePlaceFilter{
+			netboxSiteIDs: map[uint]struct{}{netboxID: {}},
+		}, nil); err != nil {
+			return 0, err
+		}
+	}
+	return n, nil
 }
 
-// syncSites mirrors NetBox regions, sites and locations into models.Site as
-// one parented tree. Factum-created rows (source=factum) are never deleted.
-// An empty combined fetch does not wipe local synced rows.
+// syncSites mirrors NetBox regions, sites and locations into models.Site
+// and into the config tree under global. Devices are then placed under
+// their site in that tree. Factum-created site rows (source=factum) are
+// never deleted. An empty combined fetch does not wipe local synced rows.
 func syncSites(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Reporter) error {
 	items, err := listDCIMTree(nb)
 	if err != nil {
@@ -348,7 +368,10 @@ func syncSites(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repor
 
 	reporter.Emit(jobevent.Info, "Netbox site sync: %d new, %d updated, %d deleted",
 		countNew, countUpdated, countDeleted)
-	return nil
+	if err := syncConfigTree(db, items, reporter); err != nil {
+		return err
+	}
+	return placeSyncedDevices(db, devicePlaceFilter{all: true}, reporter)
 }
 
 // SyncDCIMTreeItem applies one NetBox region/site/location. A missing or
@@ -366,9 +389,32 @@ func SyncDCIMTreeItem(db *gorm.DB, kind string, netboxID uint, reporter jobevent
 	}
 	var created, updated, deleted int
 	if item == nil {
-		deleted, err = deleteNetboxNode(db, kind, netboxID)
+		deleted, err = DeleteSyncedSiteNode(db, kind, netboxID)
 	} else {
 		created, updated, err = upsertNetboxNode(db, *item, true)
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		if err := cfgmgmt.Seed(db); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		root, rootErr := cfgmgmt.RootScope(db)
+		if rootErr != nil {
+			reporter.EmitErr(rootErr)
+			return rootErr
+		}
+		_, _, err = upsertConfigNode(db, root.ID, *item, true)
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		if kind == models.SiteNetboxKindSite {
+			err = placeSyncedDevices(db, devicePlaceFilter{
+				netboxSiteIDs: map[uint]struct{}{netboxID: {}},
+			}, reporter)
+		}
 	}
 	if err != nil {
 		reporter.EmitErr(err)

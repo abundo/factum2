@@ -246,6 +246,23 @@ func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 		}
 	}
 
+	if !fullSync {
+		ids := map[uint]struct{}{}
+		for _, nbDevice := range nb_devices {
+			var row models.Device
+			err := db.Select("id").Where("netbox_id = ? AND vm = ?", nbDevice.NetboxID, nbDevice.VM).Take(&row).Error
+			if err != nil {
+				reporter.EmitErr(err)
+				return err
+			}
+			ids[row.ID] = struct{}{}
+		}
+		if err := placeSyncedDevices(db, devicePlaceFilter{factumIDs: ids}, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1196,6 +1213,9 @@ func deleteInterface(db *gorm.DB, interfaceID uint) error {
 // addresses, tags and connections — see deleteInterface) and device-level
 // tags. Shared by full-sync cleanup and the webhook's single-object delete.
 func deleteDevice(db *gorm.DB, device models.Device) error {
+	if err := detachConfigDevice(db, device.ID); err != nil {
+		return err
+	}
 	var interfaces []models.Interface
 	if err := db.Where("device_id = ?", device.ID).Find(&interfaces).Error; err != nil {
 		return err

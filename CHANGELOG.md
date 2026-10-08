@@ -19,10 +19,18 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- NetBox sync mirrors regions, sites, and locations into Provisioning →
+  Config and places each device under its site. Organization sites still
+  receive the same rows for the network map and racks.
 - NetBox delta sync runs as `factum2-netbox sync --delta` on the existing
   `netbox` worker command. Add `allow_args: ["--delta"]` to that entry.
   A separate `netbox-delta` command is no longer required. A worker that
   still advertises one keeps using `sync-delta`.
+
+### Upgrading
+
+- Install applies goose migration `00032` (`config_scopes.netbox_kind`
+  and `netbox_id`). Stop `factum2-web` before migrating by hand.
 
 ## v1.2.0
 

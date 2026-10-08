@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
@@ -196,5 +197,23 @@ func ApplySite(db *gorm.DB, netboxID uint, site *netboxtool.NetboxSite) (created
 		item.Longitude = float64(*site.Longitude)
 	}
 	created, updated, err = upsertNetboxNode(db, item, false)
-	return created, updated, 0, err
+	if err != nil {
+		return created, updated, 0, err
+	}
+	if err := cfgmgmt.Seed(db); err != nil {
+		return created, updated, 0, err
+	}
+	root, err := cfgmgmt.RootScope(db)
+	if err != nil {
+		return created, updated, 0, err
+	}
+	if _, _, err := upsertConfigNode(db, root.ID, item, false); err != nil {
+		return created, updated, 0, err
+	}
+	if err := placeSyncedDevices(db, devicePlaceFilter{
+		netboxSiteIDs: map[uint]struct{}{netboxID: {}},
+	}, nil); err != nil {
+		return created, updated, 0, err
+	}
+	return created, updated, 0, nil
 }
