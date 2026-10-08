@@ -814,13 +814,13 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 	case localIf.CableID != 0:
 		cable, err = ds.nb.api.GetCable(localIf.CableID)
 		if err != nil {
-			ds.reporter.EmitErr(err)
+			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d to %s %s: %v", device.Name, localIf.Name, localIf.CableID, remoteDevice.Name, remoteIf.Name, err)
 			return
 		}
 	case remoteIf.CableID != 0:
 		cable, err = ds.nb.api.GetCable(remoteIf.CableID)
 		if err != nil {
-			ds.reporter.EmitErr(err)
+			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d on %s %s: %v", device.Name, localIf.Name, remoteIf.CableID, remoteDevice.Name, remoteIf.Name, err)
 			return
 		}
 	}
@@ -835,10 +835,11 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 	}
 
 	if cable != nil && remoteIf.CableID != 0 && remoteIf.CableID != localIf.CableID {
-		if remoteCable, err := ds.nb.api.GetCable(remoteIf.CableID); err == nil && remoteCable != nil {
-			if netbox.IsLLDPCable(remoteCable) {
-				ds.nb.DeleteCable(remoteCable)
-			}
+		remoteCable, err := ds.nb.api.GetCable(remoteIf.CableID)
+		if err != nil {
+			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d on %s %s: %v", device.Name, localIf.Name, remoteIf.CableID, remoteDevice.Name, remoteIf.Name, err)
+		} else if remoteCable != nil && netbox.IsLLDPCable(remoteCable) {
+			ds.nb.DeleteCable(device, remoteDevice, localIf, remoteIf, remoteCable)
 		}
 	}
 

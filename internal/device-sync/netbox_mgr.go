@@ -9,8 +9,8 @@ import (
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 // NetboxAPI narrows *netboxtool.NetboxClient to what NetboxMgr needs, so
@@ -240,12 +240,12 @@ func (m *NetboxMgr) CreateCable(device, remoteDevice *models.Device, localIface,
 	return nil
 }
 
-func (m *NetboxMgr) DeleteCable(cable *netboxtool.NBCable) error {
+func (m *NetboxMgr) DeleteCable(device, remoteDevice *models.Device, localIface, remoteIface *models.Interface, cable *netboxtool.NBCable) error {
 	if err := m.api.DeleteCable(cable.NetboxID); err != nil {
-		m.reporter.Emit(jobevent.Error, "delete connection %d: %v", cable.NetboxID, err)
+		m.reporter.Emit(jobevent.Error, "%s: interface %s: delete connection %d to %s %s: %v", device.Name, localIface.Name, cable.NetboxID, remoteDevice.Name, remoteIface.Name, err)
 		return err
 	}
-	m.reporter.Emit(jobevent.Info, "deleted connection %d", cable.NetboxID)
+	m.reporter.Emit(jobevent.Info, "%s: interface %s: deleted connection %d to %s %s", device.Name, localIface.Name, cable.NetboxID, remoteDevice.Name, remoteIface.Name)
 	return nil
 }
 

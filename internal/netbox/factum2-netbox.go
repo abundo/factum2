@@ -711,6 +711,20 @@ func findOrCreateTenant(nb tenantAPI, customer models.Customer) (*netboxtool.NBT
 // interfaces, addresses and tags against Netbox. Returns true if the
 // device was newly created.
 func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]string) (bool, error) {
+	// wrap attaches the device a database or catalog error belongs to.
+	// Callers that already name the device (syncInterfaces, syncTags)
+	// return their error as-is.
+	wrap := func(err error) (bool, error) {
+		if err == nil {
+			return false, nil
+		}
+		name := nb_device.Name
+		if name == "" {
+			name = fmt.Sprintf("netbox id %d", nb_device.NetboxID)
+		}
+		return false, fmt.Errorf("device %s: %w", name, err)
+	}
+
 	// Scoped by vm as well as netbox_id: Netbox's dcim.Device and
 	// virtualization.VirtualMachine tables have independent ID sequences, so
 	// a physical device and a VM can share the same NetboxID.
@@ -730,7 +744,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	var existing models.Device
 	lookupErr := db.Select("id", "optical_kind").Where("netbox_id = ? AND vm = ?", nb_device.NetboxID, nb_device.VM).Take(&existing).Error
 	if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		return false, lookupErr
+		return wrap(lookupErr)
 	}
 	isNew := errors.Is(lookupErr, gorm.ErrRecordNotFound)
 
@@ -747,16 +761,16 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	device.Platform = nb_device.Platform
 	device.PlatformID = nb_device.PlatformID
 	if mfr, err := upsertManufacturer(db, nb_device.Manufacturer, nb_device.ManufacturerID); err != nil {
-		return false, err
+		return wrap(err)
 	} else if mfr.ID != 0 {
 		dt, err := upsertDeviceType(db, mfr.ID, nb_device.ModelName, nb_device.ModelID, nb_device.VM)
 		if err != nil {
-			return false, err
+			return wrap(err)
 		}
 		device.DeviceTypeID = dt.ID
 	}
 	if _, err := upsertPlatform(db, nb_device.Platform, nb_device.PlatformID); err != nil {
-		return false, err
+		return wrap(err)
 	}
 	device.PrimaryIPv4 = nb_device.PrimaryIPv4
 	device.PrimaryIPv4ID = nb_device.PrimaryIPv4ID
@@ -784,7 +798,7 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 
 	kindMaps, mapErr := optical.LoadKindMaps(db)
 	if mapErr != nil {
-		return false, mapErr
+		return wrap(mapErr)
 	}
 	device.OpticalKindCF = optical.NormalizeOpticalKindCF(optical.CustomFieldValue(nb_device.CustomFields, "optical_role", "optical_kind"))
 	kind := optical.ResolveOpticalKind(device.OpticalKindCF, device.Role, kindMaps)
@@ -815,10 +829,22 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 		UpdateAll: true,
 	}).Create(&device).Error
 	if err != nil {
-		return false, err
+		return wrap(err)
+	}
+	// ON CONFLICT DO UPDATE does not always fill the primary key. Interfaces
+	// and tags must hang off the row that already exists.
+	if device.ID == 0 {
+		device.ID = existing.ID
+	}
+	if device.ID == 0 {
+		var row models.Device
+		if err := db.Select("id").Where("netbox_id = ? AND vm = ?", nb_device.NetboxID, nb_device.VM).Take(&row).Error; err != nil {
+			return wrap(err)
+		}
+		device.ID = row.ID
 	}
 
-	if err := syncTags(db, device.ID, 0, nb_device.Tags); err != nil {
+	if err := syncTags(db, device.ID, 0, nb_device.Tags, "device "+nb_device.Name); err != nil {
 		return false, err
 	}
 	if err := syncInterfaces(db, device.ID, nb_device.Interfaces, dnsNames); err != nil {
@@ -828,78 +854,196 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	return isNew, nil
 }
 
-// syncInterfaces creates/updates the interfaces of a device, matched by
-// netbox_id, and removes any factum interface no longer present in
-// nb_interfaces (along with its addresses and tags).
+// syncInterfaces creates/updates the interfaces of a device and removes any
+// factum interface no longer present in nb_interfaces (along with its
+// addresses and tags).
+//
+// Rows are matched by netbox_id first. A same-name row whose netbox id is
+// not in this payload (the interface was recreated in Netbox, or Factum
+// only had a local netbox_id=0 copy) is reused, because
+// idx_interfaces_device_id_name forbids a second row with that name.
+// Inserting on (device_id, netbox_id) alone used to fail that constraint
+// with no device or interface in the error.
 func syncInterfaces(db *gorm.DB, deviceID uint, nb_interfaces []netboxtool.NBInterface, dnsNames map[uint]string) error {
+	deviceName := interfaceDeviceName(db, deviceID)
+	return db.Transaction(func(tx *gorm.DB) error {
+		return reconcileInterfaces(tx, deviceID, deviceName, nb_interfaces, dnsNames)
+	})
+}
+
+func interfaceDeviceName(db *gorm.DB, deviceID uint) string {
+	var name string
+	if err := db.Model(&models.Device{}).Where("id = ?", deviceID).Limit(1).Pluck("name", &name).Error; err != nil || strings.TrimSpace(name) == "" {
+		return fmt.Sprintf("id %d", deviceID)
+	}
+	return name
+}
+
+// ifaceAssign is one Netbox interface and the factum row it will update.
+// existing is nil when the interface is new.
+type ifaceAssign struct {
+	nb       netboxtool.NBInterface
+	existing *models.Interface
+}
+
+func (a ifaceAssign) identity() string {
+	if a.existing == nil {
+		return fmt.Sprintf("%q (netbox id %d, not in factum yet)", a.nb.Name, a.nb.NetboxID)
+	}
+	return fmt.Sprintf("%q (factum id %d, netbox id %d, current name %q)", a.nb.Name, a.existing.ID, a.existing.NetboxID, a.existing.Name)
+}
+
+func reconcileInterfaces(db *gorm.DB, deviceID uint, deviceName string, nb_interfaces []netboxtool.NBInterface, dnsNames map[uint]string) error {
 	var existing []models.Interface
 	if err := db.Where("device_id = ?", deviceID).Find(&existing).Error; err != nil {
-		return err
+		return fmt.Errorf("device %s: list interfaces: %w", deviceName, err)
 	}
-	seen := make(map[uint]bool, len(nb_interfaces))
-	for _, nb_intf := range nb_interfaces {
-		seen[nb_intf.NetboxID] = true
+	byNetbox := make(map[uint]*models.Interface, len(existing))
+	byName := make(map[string]*models.Interface, len(existing))
+	for i := range existing {
+		row := &existing[i]
+		if row.NetboxID != 0 {
+			byNetbox[row.NetboxID] = row
+		}
+		byName[row.Name] = row
+	}
 
-		// Built fresh (no factum ID) and upserted on (device_id, netbox_id)
-		// rather than read-then-Save, same reasoning and pattern as
-		// syncDevice above. The unique index on (device_id, netbox_id)
-		// makes a duplicate insert fail instead of leaving a stale twin.
-		var iface models.Interface
-		iface.DeviceID = deviceID
-		iface.NetboxID = nb_intf.NetboxID
-		iface.Name = nb_intf.Name
-		iface.Description = nb_intf.Description
-		iface.Enabled = nb_intf.Enabled
-		iface.CfRole = nb_intf.CfRole
-		iface.VRF = nb_intf.VRF
-		iface.Type = nb_intf.Type
-		iface.UntaggedVLAN = nb_intf.UntaggedVLAN
-		iface.TaggedVLANs = nb_intf.TaggedVLANs
-		iface.VLANNames = nb_intf.VLANNames
-		iface.SwitchportMode = models.NetboxModeToSwitchportMode(nb_intf.Mode)
-		iface.CableID = nb_intf.CableID
-		iface.Label = nb_intf.Label
-		iface.ParentID = nb_intf.ParentID
-		if err := db.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "device_id"}, {Name: "netbox_id"}},
-			TargetWhere: clause.Where{Exprs: []clause.Expression{
-				clause.Expr{SQL: "netbox_id != 0"},
-			}},
-			UpdateAll: true,
-		}).Create(&iface).Error; err != nil {
-			return err
+	inPayload := make(map[uint]string, len(nb_interfaces))
+	for _, nb := range nb_interfaces {
+		if nb.NetboxID == 0 {
+			continue
 		}
+		if prev, ok := inPayload[nb.NetboxID]; ok {
+			return fmt.Errorf("device %s: netbox id %d is used by both interface %q and %q", deviceName, nb.NetboxID, prev, nb.Name)
+		}
+		inPayload[nb.NetboxID] = nb.Name
+	}
 
-		if err := syncAddresses(db, iface.ID, nb_intf.Addresses, dnsNames); err != nil {
-			return err
+	assigned := make([]ifaceAssign, len(nb_interfaces))
+	claimed := make(map[uint]bool, len(nb_interfaces))
+	for i, nb := range nb_interfaces {
+		assigned[i].nb = nb
+		if nb.NetboxID == 0 {
+			continue
 		}
-		if err := syncTags(db, 0, iface.ID, nb_intf.Tags); err != nil {
-			return err
+		row := byNetbox[nb.NetboxID]
+		if row == nil || claimed[row.ID] {
+			continue
 		}
-		if role := optical.NormalizeOpticalPortRole(optical.CustomFieldValue(nb_intf.CustomFields, "optical_role")); role != "" {
-			if err := upsertOpticalPortRole(db, iface.ID, role); err != nil {
-				return err
+		assigned[i].existing = row
+		claimed[row.ID] = true
+	}
+	for i, nb := range nb_interfaces {
+		if assigned[i].existing != nil {
+			continue
+		}
+		row := byName[nb.Name]
+		if row == nil || claimed[row.ID] {
+			continue
+		}
+		if row.NetboxID != 0 {
+			if otherName, ok := inPayload[row.NetboxID]; ok && row.NetboxID != nb.NetboxID {
+				return fmt.Errorf("device %s: interface %q (netbox id %d) collides with interface %q (factum id %d, netbox id %d, name %q), which is also in this sync",
+					deviceName, nb.Name, nb.NetboxID, otherName, row.ID, row.NetboxID, row.Name)
 			}
 		}
+		assigned[i].existing = row
+		claimed[row.ID] = true
 	}
 
+	byFinalName := make(map[string]int, len(assigned))
+	for i, a := range assigned {
+		if prev, ok := byFinalName[a.nb.Name]; ok {
+			return fmt.Errorf("device %s: interface name %q is claimed by %s and by %s",
+				deviceName, a.nb.Name, assigned[prev].identity(), a.identity())
+		}
+		byFinalName[a.nb.Name] = i
+	}
+
+	// Drop rows this payload does not keep before renaming, so a stale
+	// name is free for the interface that now owns it.
 	for _, intf := range existing {
-		if !seen[intf.NetboxID] {
-			if err := deleteInterface(db, intf.ID); err != nil {
-				return err
+		if claimed[intf.ID] {
+			continue
+		}
+		if err := deleteInterface(db, intf.ID); err != nil {
+			return fmt.Errorf("device %s: delete interface %q (factum id %d, netbox id %d): %w", deviceName, intf.Name, intf.ID, intf.NetboxID, err)
+		}
+	}
+	// Move renamed rows off their old names first so two interfaces can
+	// swap names without tripping idx_interfaces_device_id_name.
+	for _, a := range assigned {
+		if a.existing == nil || a.existing.Name == a.nb.Name {
+			continue
+		}
+		tmp := interfaceSyncTempName(a.existing.ID)
+		if err := db.Model(&models.Interface{}).Where("id = ?", a.existing.ID).Update("name", tmp).Error; err != nil {
+			return fmt.Errorf("device %s: rename interface %q (factum id %d, netbox id %d) out of the way of %q: %w",
+				deviceName, a.existing.Name, a.existing.ID, a.existing.NetboxID, a.nb.Name, err)
+		}
+	}
+
+	for _, a := range assigned {
+		iface := interfaceFromNetbox(deviceID, a.nb, a.existing)
+		var err error
+		if iface.ID == 0 {
+			err = db.Create(&iface).Error
+		} else {
+			err = db.Save(&iface).Error
+		}
+		if err != nil {
+			return fmt.Errorf("device %s: save interface %q (factum id %d, netbox id %d): %w", deviceName, a.nb.Name, iface.ID, a.nb.NetboxID, err)
+		}
+		where := fmt.Sprintf("device %s: interface %q", deviceName, iface.Name)
+		if err := syncAddresses(db, where, iface.ID, a.nb.Addresses, dnsNames); err != nil {
+			return err
+		}
+		if err := syncTags(db, 0, iface.ID, a.nb.Tags, where); err != nil {
+			return err
+		}
+		if role := optical.NormalizeOpticalPortRole(optical.CustomFieldValue(a.nb.CustomFields, "optical_role")); role != "" {
+			if err := upsertOpticalPortRole(db, iface.ID, role); err != nil {
+				return fmt.Errorf("%s: optical role %s: %w", where, role, err)
 			}
 		}
 	}
 	return nil
 }
 
+func interfaceSyncTempName(id uint) string {
+	return "\x00factum-sync-" + strconv.FormatUint(uint64(id), 10)
+}
+
+func interfaceFromNetbox(deviceID uint, nb netboxtool.NBInterface, existing *models.Interface) models.Interface {
+	var iface models.Interface
+	if existing != nil {
+		iface = *existing
+	}
+	iface.DeviceID = deviceID
+	iface.NetboxID = nb.NetboxID
+	iface.Name = nb.Name
+	iface.Description = nb.Description
+	iface.Enabled = nb.Enabled
+	iface.CfRole = nb.CfRole
+	iface.VRF = nb.VRF
+	iface.Type = nb.Type
+	iface.UntaggedVLAN = nb.UntaggedVLAN
+	iface.TaggedVLANs = nb.TaggedVLANs
+	iface.VLANNames = nb.VLANNames
+	iface.SwitchportMode = models.NetboxModeToSwitchportMode(nb.Mode)
+	iface.CableID = nb.CableID
+	iface.Label = nb.Label
+	iface.ParentID = nb.ParentID
+	return iface
+}
+
 // syncAddresses creates/updates the addresses of an interface, matched
 // by netbox_id, and removes NetBox-synced rows no longer present in
 // nb_addresses. Factum-created addresses (NetboxID=0) are left alone.
-func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAddress, dnsNames map[uint]string) error {
+func syncAddresses(db *gorm.DB, where string, interfaceID uint, nb_addresses []netboxtool.NBAddress, dnsNames map[uint]string) error {
 	var existing []models.Address
 	if err := db.Where("interface_id = ?", interfaceID).Find(&existing).Error; err != nil {
-		return err
+		return fmt.Errorf("%s: list addresses: %w", where, err)
 	}
 	byNetboxID := make(map[uint]models.Address, len(existing))
 	for _, addr := range existing {
@@ -924,7 +1068,7 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 			_ = ipam.ResolveAddressPrefix(db, &addr, p, addr.VRF, nil)
 		}
 		if err := db.Save(&addr).Error; err != nil {
-			return err
+			return fmt.Errorf("%s: save address %s (vrf %s, netbox id %d): %w", where, addr.Address, vrfLabel(addr.VRF), addr.NetboxID, err)
 		}
 	}
 
@@ -934,11 +1078,18 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 		}
 		if !seen[addr.NetboxID] {
 			if err := db.Delete(&models.Address{}, addr.ID).Error; err != nil {
-				return err
+				return fmt.Errorf("%s: delete address %s (vrf %s, factum id %d, netbox id %d): %w", where, addr.Address, vrfLabel(addr.VRF), addr.ID, addr.NetboxID, err)
 			}
 		}
 	}
 	return nil
+}
+
+func vrfLabel(vrf string) string {
+	if vrf == "" {
+		return "global"
+	}
+	return vrf
 }
 
 // syncTags creates/updates tags for a device (interfaceID == 0) or an
@@ -946,7 +1097,7 @@ func syncAddresses(db *gorm.DB, interfaceID uint, nb_addresses []netboxtool.NBAd
 // factum tag no longer present in nb_tags. Exactly one of
 // deviceID/interfaceID is non-zero; the unused side is stored as SQL
 // NULL (see models.Tag), so it must be queried/set as NULL, not 0.
-func syncTags(db *gorm.DB, deviceID, interfaceID uint, nb_tags []netboxtool.NBTag) error {
+func syncTags(db *gorm.DB, deviceID, interfaceID uint, nb_tags []netboxtool.NBTag, where string) error {
 	var existing []models.Tag
 	q := db
 	if deviceID != 0 {
@@ -955,7 +1106,7 @@ func syncTags(db *gorm.DB, deviceID, interfaceID uint, nb_tags []netboxtool.NBTa
 		q = q.Where("interface_id = ? AND device_id IS NULL", interfaceID)
 	}
 	if err := q.Find(&existing).Error; err != nil {
-		return err
+		return fmt.Errorf("%s: list tags: %w", where, err)
 	}
 	byNetboxID := make(map[uint]models.Tag, len(existing))
 	for _, tag := range existing {
@@ -977,14 +1128,14 @@ func syncTags(db *gorm.DB, deviceID, interfaceID uint, nb_tags []netboxtool.NBTa
 		tag.NetboxID = nb_tag.NetboxID
 		tag.Name = nb_tag.Name
 		if err := db.Save(&tag).Error; err != nil {
-			return err
+			return fmt.Errorf("%s: save tag %q (netbox id %d): %w", where, tag.Name, tag.NetboxID, err)
 		}
 	}
 
 	for _, tag := range existing {
 		if !seen[tag.NetboxID] {
 			if err := db.Delete(&models.Tag{}, tag.ID).Error; err != nil {
-				return err
+				return fmt.Errorf("%s: delete tag %q (factum id %d, netbox id %d): %w", where, tag.Name, tag.ID, tag.NetboxID, err)
 			}
 		}
 	}

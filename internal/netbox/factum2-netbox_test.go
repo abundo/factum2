@@ -294,7 +294,7 @@ func TestSyncAddressesStoresValidatedDNSName(t *testing.T) {
 		{NetboxID: 10, Name: "eth0"},
 	})
 	id := ifaceIDs["eth0"]
-	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+	if err := syncAddresses(db, `device r1: interface "eth0"`, id, []netboxtool.NBAddress{
 		{NetboxID: 200, Address: "10.0.0.1/24"},
 	}, map[uint]string{200: "lo0.r1.example.com"}); err != nil {
 		t.Fatal(err)
@@ -307,7 +307,7 @@ func TestSyncAddressesStoresValidatedDNSName(t *testing.T) {
 		t.Errorf("dns_name = %q", addr.DNSName)
 	}
 
-	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+	if err := syncAddresses(db, `device r1: interface "eth0"`, id, []netboxtool.NBAddress{
 		{NetboxID: 200, Address: "10.0.0.1/24"},
 	}, nil); err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestSyncAddressesKeepsFactumRows(t *testing.T) {
 	if err := db.Create(&local).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := syncAddresses(db, id, []netboxtool.NBAddress{
+	if err := syncAddresses(db, `device r1: interface "eth0"`, id, []netboxtool.NBAddress{
 		{NetboxID: 200, Address: "10.0.0.1/24"},
 	}, nil); err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestSyncAddressesKeepsFactumRows(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 
-	if err := syncAddresses(db, id, nil, nil); err != nil {
+	if err := syncAddresses(db, `device r1: interface "eth0"`, id, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Where("interface_id = ?", id).Find(&rows).Error; err != nil {
@@ -750,6 +750,118 @@ func TestSyncInterfaces_CopiesVLANNames(t *testing.T) {
 	}
 	if got := iface.VLANNames[200]; got != "servers" {
 		t.Errorf("VLANNames[200] = %q, want servers", got)
+	}
+}
+
+func TestSyncInterfaces_ReusesSameNameWhenNetboxIDChanges(t *testing.T) {
+	db := newImportTestDB(t)
+	deviceID, ids := seedDeviceWithIfaces(t, db, "sw1", 7, []models.Interface{{
+		NetboxID: 10, Name: "Ethernet1", Type: "1000base-t", LibrenmsID: 42,
+	}})
+	if err := db.Create(&models.Address{InterfaceID: ids["Ethernet1"], NetboxID: 100, Address: "10.0.0.1/24", VRF: "mgmt"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := syncInterfaces(db, deviceID, []netboxtool.NBInterface{{
+		NetboxID: 99, Name: "Ethernet1", Type: "1000base-t", Description: "uplink",
+		Addresses: []netboxtool.NBAddress{{NetboxID: 100, Address: "10.0.0.1/24", VRF: "mgmt"}},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ifaces []models.Interface
+	if err := db.Where("device_id = ?", deviceID).Find(&ifaces).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ifaces) != 1 {
+		t.Fatalf("interfaces = %d, want 1", len(ifaces))
+	}
+	got := ifaces[0]
+	if got.ID != ids["Ethernet1"] || got.NetboxID != 99 || got.LibrenmsID != 42 || got.Description != "uplink" {
+		t.Fatalf("iface = %+v, want same factum id, netbox id 99, librenms 42, description uplink", got)
+	}
+	var addr models.Address
+	if err := db.Where("interface_id = ?", got.ID).First(&addr).Error; err != nil {
+		t.Fatal(err)
+	}
+	if addr.Address != "10.0.0.1/24" || addr.VRF != "mgmt" || addr.NetboxID != 100 {
+		t.Fatalf("address = %+v", addr)
+	}
+}
+
+func TestSyncInterfaces_AdoptsLocalInterfaceByName(t *testing.T) {
+	db := newImportTestDB(t)
+	deviceID, ids := seedDeviceWithIfaces(t, db, "sw1", 7, []models.Interface{{
+		Name: "Ethernet1", Type: "1000base-t",
+	}})
+	if err := syncInterfaces(db, deviceID, []netboxtool.NBInterface{{
+		NetboxID: 50, Name: "Ethernet1", Type: "1000base-t",
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got models.Interface
+	if err := db.First(&got, ids["Ethernet1"]).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.NetboxID != 50 || got.Name != "Ethernet1" {
+		t.Fatalf("iface = %+v, want netbox id 50 kept on the local row", got)
+	}
+}
+
+func TestSyncInterfaces_SwapsNames(t *testing.T) {
+	db := newImportTestDB(t)
+	deviceID, ids := seedDeviceWithIfaces(t, db, "sw1", 7, []models.Interface{
+		{NetboxID: 10, Name: "Ethernet1"},
+		{NetboxID: 11, Name: "Ethernet2"},
+	})
+	if err := syncInterfaces(db, deviceID, []netboxtool.NBInterface{
+		{NetboxID: 10, Name: "Ethernet2"},
+		{NetboxID: 11, Name: "Ethernet1"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var a, b models.Interface
+	if err := db.First(&a, ids["Ethernet1"]).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&b, ids["Ethernet2"]).Error; err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "Ethernet2" || a.NetboxID != 10 || b.Name != "Ethernet1" || b.NetboxID != 11 {
+		t.Fatalf("a=%+v b=%+v", a, b)
+	}
+}
+
+func TestSyncInterfaces_DuplicateNameReportsDeviceAndInterfaces(t *testing.T) {
+	db := newImportTestDB(t)
+	deviceID, ids := seedDeviceWithIfaces(t, db, "sw1", 7, []models.Interface{
+		{NetboxID: 10, Name: "Ethernet1"},
+		{NetboxID: 11, Name: "Ethernet2"},
+	})
+	err := syncInterfaces(db, deviceID, []netboxtool.NBInterface{
+		{NetboxID: 10, Name: "Ethernet1"},
+		{NetboxID: 99, Name: "Ethernet1"},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected duplicate name error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"device sw1",
+		"Ethernet1",
+		"netbox id 10",
+		"netbox id 99",
+		fmt.Sprintf("factum id %d", ids["Ethernet1"]),
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+	var n int64
+	if err := db.Model(&models.Interface{}).Where("device_id = ?", deviceID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("interfaces = %d, want 2 after rolled-back conflict", n)
 	}
 }
 
