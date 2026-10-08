@@ -3,12 +3,16 @@ version: 2
 
 project_name: factum2
 
-# factum2-web's //go:embed of web/static (including the Vue SPA) requires the
-# frontend to be built first. Other binaries ignore that directory.
+# factum2-web's //go:embed of web/static (the Vue SPA and Wiregasm) requires
+# both trees to exist first. Other binaries ignore that directory.
 before:
     hooks:
         - npm --prefix web/frontend ci
         - npm --prefix web/frontend run build
+        # Wiregasm (GPL-2.0) is not an npm dependency of the GUI. This
+        # downloads the pinned build into web/static/wiregasm so the
+        # release factum2-web embeds it.
+        - make wiregasm
         # Inventory is //go:embed'd into factum2-web (`docs/sbom_release.go`).
         - go run ./internal/sbom/gensbom -o docs/generated/sbom.md
 

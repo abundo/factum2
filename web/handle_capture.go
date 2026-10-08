@@ -1,10 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -214,8 +216,17 @@ func pcapMagic(b []byte) bool {
 	return false
 }
 
+// openBundledWiregasm opens one Wiregasm file from the static tree.
+// Release builds embed that tree when `make wiregasm` ran before compile.
+// Dev builds read web/static from disk. Tests replace this.
+var openBundledWiregasm = func(name string) (fs.File, error) {
+	return staticFS().Open("wiregasm/" + name)
+}
+
 // handleWiregasm serves the Wiregasm build (Wireshark in WebAssembly).
-// It is installed beside factum (make wiregasm), not embedded.
+// A directory on disk wins (web.wiregasm_dir, /usr/share/factum2/wiregasm,
+// or web/static/wiregasm). Otherwise the copy embedded in a release binary
+// is served.
 func (ctrl *Controller) handleWiregasm(c *echo.Context) error {
 	name := c.Param("name")
 	if !slices.Contains(wiregasmFiles, name) {
@@ -226,14 +237,40 @@ func (ctrl *Controller) handleWiregasm(c *echo.Context) error {
 		dir = resolveWiregasmDir("")
 	}
 	path := filepath.Join(dir, name)
-	if _, err := os.Stat(path); err != nil {
+	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		if name != "wiregasm.js" {
+			c.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
+		}
+		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFile(c.Response(), c.Request(), path)
+		return nil
+	}
+	f, err := openBundledWiregasm(name)
+	if err != nil {
 		return c.String(http.StatusNotFound, "Wiregasm is not installed in "+dir+" (run make wiregasm)")
+	}
+	return serveBundledWiregasm(c, name, f)
+}
+
+func serveBundledWiregasm(c *echo.Context, name string, f fs.File) error {
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		return c.String(http.StatusNotFound, "not found")
+	}
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		body, err := io.ReadAll(f)
+		if err != nil {
+			return err
+		}
+		rs = bytes.NewReader(body)
 	}
 	if name != "wiregasm.js" {
 		c.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
 	}
 	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
-	http.ServeFile(c.Response(), c.Request(), path)
+	http.ServeContent(c.Response(), c.Request(), name, st.ModTime(), rs)
 	return nil
 }
 

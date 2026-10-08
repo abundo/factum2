@@ -62,6 +62,15 @@ sudo /etc/factum2/install.py
 On a TTY the installer lists GitHub releases. Non-interactive:
 `sudo /etc/factum2/install.py --install latest --yes`.
 
+A `.tar.gz` already on the host (a GoReleaser archive, including an interim
+stamp such as `0.6.1-rc1`) installs the same way. No git checkout and no
+compiler. The file is one architecture; this host and every enabled worker
+must match it.
+
+```sh
+sudo /etc/factum2/install.py --archive /tmp/factum2_0.6.1-rc1_linux_amd64.tar.gz
+```
+
 That copies binaries to `/opt/factum2`, stops `factum2-web` if it is
 running, applies schema migrations, then installs systemd units:
 

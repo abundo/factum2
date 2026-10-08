@@ -76,6 +76,10 @@ func Markdown(meta Meta, modules []GoModule, npm []NPMPackage) string {
 	b.WriteString("The npm *Tree* column is `direct` (a `package.json` dependency),\n")
 	b.WriteString("`development` (a `package.json` devDependency), or `transitive` /\n")
 	b.WriteString("`development (transitive)` for the rest of the lockfile.\n\n")
+	b.WriteString("Packet capture also embeds [Wiregasm](https://www.npmjs.com/package/@goodtools/wiregasm)\n")
+	b.WriteString("(`@goodtools/wiregasm`, GPL-2.0), Wireshark compiled to WebAssembly.\n")
+	b.WriteString("`make wiregasm` downloads the pinned build into `web/static/wiregasm`\n")
+	b.WriteString("before the release compile. It is not a dependency in `web/frontend/package.json`.\n\n")
 
 	b.WriteString("## Go modules\n\n")
 	fmt.Fprintf(&b, "%d modules.\n\n", len(modules))

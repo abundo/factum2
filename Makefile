@@ -195,10 +195,12 @@ wiregasm:
 sbom:
 	go run ./internal/sbom/gensbom -o docs/generated/sbom.md -version "$(VERSION)" -commit "$(COMMIT)" -date "$(DATE)"
 
-# Self-contained release binary: static/, templates/ and the built frontend
-# (web/static/vue, are embedded into the binary via go:embed , so it needs no web/ directory
-# alongside it at runtime. Also stamps the SBOM into the embedded docs.
-factum2-web-release: frontend
+# Self-contained release binary. static/ (the built frontend in
+# web/static/vue, and Wiregasm in web/static/wiregasm) is embedded via
+# go:embed, so the binary needs no web/ directory alongside it. `wiregasm`
+# downloads the pinned GPL build first; the release compile fails without
+# web/static/wiregasm/VERSION. Also stamps the SBOM into the embedded docs.
+factum2-web-release: frontend wiregasm
 	@mkdir -p $(BUILD_DIR)
 	@go run ./internal/sbom/gensbom -o docs/generated/sbom.md -version "$(VERSION)" -commit "$(COMMIT)" -date "$(DATE)"
 	@go build $(GO_BUILD_FLAGS) -tags release -o $(BUILD_DIR)/factum2-web cmd/web/factum2-web-cli.go; \

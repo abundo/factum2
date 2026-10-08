@@ -17,4 +17,6 @@ On an installed release, this same nav entry lists every Go module in
 the module graph and every npm package locked for the GUI.
 
 The same inputs live in the source tree: `go.mod` / `go.sum` and
-`web/frontend/package-lock.json`.
+`web/frontend/package-lock.json`. A release binary also embeds Wiregasm
+(`@goodtools/wiregasm`, GPL-2.0), downloaded by `make wiregasm` into
+`web/static/wiregasm`.

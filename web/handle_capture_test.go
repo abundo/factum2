@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/abundo/factum2/internal/drivers"
 	"github.com/abundo/factum2/models"
@@ -181,5 +183,65 @@ func TestHandleWiregasm(t *testing.T) {
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleWiregasmUsesBundleWhenDiskMisses(t *testing.T) {
+	orig := openBundledWiregasm
+	t.Cleanup(func() { openBundledWiregasm = orig })
+	openBundledWiregasm = func(name string) (fs.File, error) {
+		return fstest.MapFS{
+			"wiregasm.js": &fstest.MapFile{Data: []byte("/* bundled */")},
+		}.Open(name)
+	}
+	ctrl := &Controller{WiregasmDir: t.TempDir()}
+	c, rec := jsonRequest(t, http.MethodGet, "/wiregasm/wiregasm.js", nil, []string{"name"}, []string{"wiregasm.js"})
+	if err := ctrl.handleWiregasm(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("bundled")) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleWiregasmDiskWinsOverBundle(t *testing.T) {
+	orig := openBundledWiregasm
+	t.Cleanup(func() { openBundledWiregasm = orig })
+	openBundledWiregasm = func(name string) (fs.File, error) {
+		return fstest.MapFS{
+			"wiregasm.js": &fstest.MapFile{Data: []byte("/* bundled */")},
+		}.Open(name)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "wiregasm.js"), []byte("/* disk */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := &Controller{WiregasmDir: dir}
+	c, rec := jsonRequest(t, http.MethodGet, "/wiregasm/wiregasm.js", nil, []string{"name"}, []string{"wiregasm.js"})
+	if err := ctrl.handleWiregasm(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("disk")) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("bundled")) {
+		t.Fatalf("served the bundle: %s", rec.Body.String())
+	}
+}
+
+func TestHandleWiregasmMissing(t *testing.T) {
+	orig := openBundledWiregasm
+	t.Cleanup(func() { openBundledWiregasm = orig })
+	openBundledWiregasm = func(string) (fs.File, error) {
+		return nil, fs.ErrNotExist
+	}
+	dir := t.TempDir()
+	ctrl := &Controller{WiregasmDir: dir}
+	c, rec := jsonRequest(t, http.MethodGet, "/wiregasm/wiregasm.js", nil, []string{"name"}, []string{"wiregasm.js"})
+	if err := ctrl.handleWiregasm(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNotFound || !bytes.Contains(rec.Body.Bytes(), []byte("make wiregasm")) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }

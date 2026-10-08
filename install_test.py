@@ -236,6 +236,18 @@ class ExtractStampedVersionTests(unittest.TestCase):
     def test_dev_token(self) -> None:
         self.assertEqual(install.extract_stamped_version("dev\n"), "dev")
 
+    def test_prerelease_suffix_kept(self) -> None:
+        self.assertEqual(
+            install.extract_stamped_version("factum2-worker version 0.6.1-rc1"),
+            "0.6.1-rc1",
+        )
+        self.assertEqual(
+            install.extract_stamped_version("factum2-worker version v0.6.1-next\n"),
+            "v0.6.1-next",
+        )
+        self.assertEqual(install.extract_stamped_version("0.6.1-rc1\n"), "0.6.1-rc1")
+        self.assertTrue(install.same_stamp("v0.6.1-rc1", "0.6.1-rc1"))
+
     def test_empty(self) -> None:
         self.assertIsNone(install.extract_stamped_version(""))
         self.assertIsNone(install.extract_stamped_version("   "))
@@ -953,6 +965,124 @@ class FetchVerifiedInstallerTests(unittest.TestCase):
         with self.assertRaises(install.InstallError) as ctx:
             install.fetch_verified_installer(client, rel, "amd64")
         self.assertIn("has no install.py", str(ctx.exception))
+
+
+def _elf_header(machine: int, *, endian: str = "little") -> bytes:
+    data = bytearray(64)
+    data[0:4] = b"\x7fELF"
+    data[4] = 2
+    data[5] = 1 if endian == "little" else 2
+    data[18:20] = machine.to_bytes(2, endian)
+    return bytes(data)
+
+
+class ElfGoarchTests(unittest.TestCase):
+    def test_amd64_and_arm64(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            amd = base / "amd"
+            arm = base / "arm"
+            other = base / "other"
+            amd.write_bytes(_elf_header(62))
+            arm.write_bytes(_elf_header(183))
+            other.write_bytes(_elf_header(3))
+            self.assertEqual(install.elf_goarch(amd), "amd64")
+            self.assertEqual(install.elf_goarch(arm), "arm64")
+            self.assertIsNone(install.elf_goarch(other))
+            self.assertIsNone(install.elf_goarch(base / "missing"))
+
+
+def _exec_tgz(path: Path, files: dict[str, bytes]) -> None:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            info.mode = 0o755 if Path(name).suffix == "" else 0o644
+            tar.addfile(info, io.BytesIO(data))
+    path.write_bytes(buf.getvalue())
+
+
+def _archive_files(prefix: str, worker: bytes, installer: bytes | None = None) -> dict[str, bytes]:
+    files = {f"{prefix}/{name}": worker for name in install.KNOWN_BINARIES}
+    for unit in (
+        *install.PRIMARY_UNITS,
+        install.DRIVER_UNIT,
+        install.STORAGE_UNIT,
+    ):
+        files[f"{prefix}/examples/{unit}"] = b"[Unit]\nDescription=test\n"
+    if installer is not None:
+        files[f"{prefix}/install.py"] = installer
+    return files
+
+
+class ArchiveInstallTests(unittest.TestCase):
+    def test_rejects_missing_file(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--archive", "/tmp/factum2-no-such-archive.tar.gz", "--yes"])
+        self.assertIn("Archive not found", str(ctx.exception))
+
+    def test_rejects_combined_with_install(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--archive", "rel.tar.gz", "--install", "v1.0.0"])
+        self.assertIn("cannot be combined", str(ctx.exception))
+
+    def test_old_installer_in_archive_is_not_used(self) -> None:
+        payload = _installer_script(install.ARCHIVE_INSTALLER_VERSION - 1)
+        self.assertFalse(install.should_run_archive_installer(payload))
+
+    def test_newer_archive_installer_is_used(self) -> None:
+        payload = _installer_script(install.ARCHIVE_INSTALLER_VERSION + 1)
+        self.assertTrue(install.should_run_archive_installer(payload))
+
+    def test_dry_run_reads_prerelease_stamp(self) -> None:
+        script = b"#!/bin/sh\nprintf '%s\n' 'factum2-worker version 0.6.1-rc1'\n"
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            archive = base / "factum2_0.6.1-rc1_linux_amd64.tar.gz"
+            _exec_tgz(
+                archive,
+                _archive_files("factum2_0.6.1-rc1_linux_amd64", script),
+            )
+            with patch.object(install, "elf_goarch", return_value=install.local_arch()):
+                with patch.object(install, "log") as log:
+                    rc = install.main(
+                        [
+                            "--archive",
+                            str(archive),
+                            "--primary-only",
+                            "--dry-run",
+                        ]
+                    )
+            self.assertEqual(rc, 0)
+            text = "\n".join(str(c.args[0]) for c in log.call_args_list)
+            self.assertIn("0.6.1-rc1", text)
+            self.assertIn("Would install 0.6.1-rc1", text)
+
+    def test_reexecs_archive_installer(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            marker = base / "ran"
+            archive = base / "factum2_0.6.1-rc1_linux_amd64.tar.gz"
+            payload = (
+                "#!/usr/bin/env python3\n"
+                f"INSTALLER_VERSION = {install.ARCHIVE_INSTALLER_VERSION}\n"
+                "def main():\n"
+                "    return 'factum2'\n"
+                f"open({str(marker)!r}, 'w').write('ran')\n"
+            ).encode()
+            script = b"#!/bin/sh\nprintf '%s\n' 'factum2-worker version 0.6.1-rc1'\n"
+            _exec_tgz(
+                archive,
+                _archive_files(
+                    "factum2_0.6.1-rc1_linux_amd64", script, installer=payload
+                ),
+            )
+            rc = install.main(
+                ["--archive", str(archive), "--primary-only", "--dry-run"]
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(marker.read_text(), "ran")
 
 
 class ComposeLabTests(unittest.TestCase):

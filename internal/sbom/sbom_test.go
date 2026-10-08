@@ -139,6 +139,7 @@ func TestMarkdownContainsMarkerAndEscapesPipes(t *testing.T) {
 		"| vue | 3.5.38 | MIT | direct |",
 		"2 modules.",
 		"2 packages from",
+		"@goodtools/wiregasm",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown missing %q\n%s", want, md)

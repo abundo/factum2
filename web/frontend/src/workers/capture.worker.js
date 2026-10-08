@@ -35,8 +35,9 @@ let running = false
 
 const toArray = (vec) => Array.from({ length: vec.size() }, (_, i) => vec.get(i))
 
-// fetchOk fetches a Wiregasm file; factum answers 404 with why (Wiregasm
-// is installed separately, by `make wiregasm`).
+// fetchOk fetches a Wiregasm file. A release binary embeds the pinned
+// build. A dev binary serves web/static/wiregasm (`make wiregasm`) and
+// answers 404 with why when those files are absent.
 async function fetchOk(url) {
   const res = await fetch(url)
   if (!res.ok) throw new Error((await res.text()).trim() || `${url}: ${res.status}`)

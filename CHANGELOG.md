@@ -5,6 +5,18 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ## Unreleased
 
+### New
+
+- `install.py --archive FILE.tar.gz` installs a local release archive.
+  The host does not need a git checkout or a compiler. An interim stamp
+  such as `0.6.1-rc1` is kept.
+
+### Fixed
+
+- **Packet capture:** a release build of `factum2-web` includes Wiregasm.
+  Packet capture works from the installed binary. Development builds still
+  use `make wiregasm`.
+
 ### Changed
 
 - NetBox delta sync runs as `factum2-netbox sync --delta` on the existing

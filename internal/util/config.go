@@ -323,7 +323,8 @@ type ConfigWeb struct {
 	JWTSecret string
 	// WiregasmDir is where wiregasm.js, wiregasm.wasm.gz and
 	// wiregasm.data.gz live (make wiregasm). Empty searches
-	// /usr/share/factum2/wiregasm and web/static/wiregasm.
+	// /usr/share/factum2/wiregasm and web/static/wiregasm, then the
+	// copy embedded in a release binary.
 	WiregasmDir string `yaml:"wiregasm_dir" boa:"configonly" optional:"true"`
 }
 

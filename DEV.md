@@ -188,6 +188,8 @@ make frontend   # npm ci && npm run build in web/frontend -> web/static/vue
 make sbom       # write docs/generated/sbom.md (Go modules + GUI npm); used by release
 make release    # all binaries + factum2-web-release (frontend + SBOM embedded)
 make snapshot   # GoReleaser snapshot into dist/ (does not publish)
+                # install that tarball on a host with no checkout:
+                #   ./install.py --archive dist/factum2_*_linux_amd64.tar.gz
 make install    # release build + install to /opt/factum2 (no restart)
 ```
 
@@ -408,8 +410,8 @@ GUI against real apps, not a substitute for these tiers):
 ## Release
 
 Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
-`CGO_ENABLED=0`; `factum2-web` with `-tags release` so the Vue SPA is
-embedded) and published to GitHub when a `v*` tag is pushed
+`CGO_ENABLED=0`; `factum2-web` with `-tags release` so the Vue SPA and
+Wiregasm are embedded) and published to GitHub when a `v*` tag is pushed
 (`.github/workflows/release.yml`). That workflow runs `go vet` and
 `make test` before publishing. `make test-all` is the local pass over
 every suite. The same
@@ -420,7 +422,8 @@ from `web/frontend/package-lock.json` (`make sbom` /
 builds (`go run`, `make factum2-web`) serve the placeholder in
 `docs/user/sbom.md`. A raw `go build -tags release` without generating
 `docs/generated/sbom.md` first still compiles, but keeps that
-placeholder.
+placeholder. The same command fails until `make wiregasm` has written
+`web/static/wiregasm/VERSION`.
 
 Write the release's section in `CHANGELOG.md` before tagging (`## vX.Y.Z`:
 New, Changed, Fixed, Upgrading). The notes on GitHub are that section
@@ -431,7 +434,9 @@ New, Changed, Fixed, Upgrading). The notes on GitHub are that section
 
 Each release is one `tar.gz` (and a `.deb`) per linux/amd64 and
 linux/arm64, containing every `cmd/*` binary plus `LICENSE`, `README.md`,
-`examples/`, and `install.py`. The `.deb` installs binaries to `/opt/factum2`,
+`examples/`, and `install.py`. GoReleaser runs `make wiregasm` before
+compiling `factum2-web`, so the pinned Wiregasm files are inside that
+binary and packet capture works after install. The `.deb` installs binaries to `/opt/factum2`,
 systemd units to `/lib/systemd/system`, and the installer to
 `/etc/factum2/install.py`.
 

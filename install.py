@@ -23,6 +23,12 @@ from this release, the installer shows a diff and asks before overwriting
                                copy is offered a self-update from the
                                latest GitHub *release* tarball after
                                SHA-256 verification, not from main or git.
+  ./install.py --archive FILE  Local release .tar.gz (no git checkout, no
+                               compiler). Same install as a GitHub release:
+                               binaries, units, migrate, workers. The file
+                               is one linux/arch archive; every host must
+                               match that arch. The version is the stamp
+                               inside the binaries (0.6.1-rc1 is kept).
   ./install.py --source [host] This source tree (development). Runs
                                `make release` and installs build/ onto host
                                (default localhost). Replaces install_prod.sh.
@@ -93,7 +99,10 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 19
+INSTALLER_VERSION = 20
+# First installer that accepts --archive. Older copies inside a tarball
+# are not re-executed: they would ignore the local file and use GitHub.
+ARCHIVE_INSTALLER_VERSION = 20
 INSTALLER_FILENAME = "install.py"
 SELF_UPDATED_ENV = "FACTUM2_INSTALL_SELF_UPDATED"
 # Set when this process is already the selected tag's installer (parent
@@ -153,13 +162,25 @@ def log(msg: str) -> None:
 
 
 def local_arch() -> str:
-    machine = os.uname().machine
-    return {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }.get(machine, machine)
+    return uname_to_goarch(os.uname().machine)
+
+
+def elf_goarch(path: Path) -> str | None:
+    """linux/amd64 or linux/arm64 from an ELF header. None if not one of those."""
+    try:
+        data = path.read_bytes()[:20]
+    except OSError:
+        return None
+    if len(data) < 20 or data[:4] != b"\x7fELF":
+        return None
+    # EI_DATA: 1 little-endian, 2 big-endian. e_machine is a uint16 at offset 18.
+    if data[5] == 1:
+        machine = int.from_bytes(data[18:20], "little")
+    elif data[5] == 2:
+        machine = int.from_bytes(data[18:20], "big")
+    else:
+        return None
+    return {62: "amd64", 183: "arm64"}.get(machine)
 
 
 def uname_to_goarch(machine: str) -> str:
@@ -190,9 +211,10 @@ def same_stamp(a: str, b: str) -> bool:
     return bool(left) and left == right
 
 
-# git describe --tags --always --dirty, as stamped by the Makefile ldflags.
+# X.Y.Z plus prerelease ids (0.6.1-rc1, 1.2.3-next) and git-describe
+# (v1.2.3-4-gabcdef[-dirty]). Ids are dot-separated alphanumerics.
 _STAMPED_VERSION_RE = re.compile(
-    r"v?\d+\.\d+\.\d+(?:-\d+-g[0-9a-f]+)?(?:-dirty)?"
+    r"v?\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)*"
 )
 
 
@@ -205,16 +227,20 @@ def parse_version(tag: str) -> tuple[int, int, int] | None:
 
 
 def extract_stamped_version(text: str) -> str | None:
-    """Parse buildinfo.Version from cobra --version output or a VERSION file."""
+    """Parse buildinfo.Version from cobra --version output or a VERSION file.
+
+    The cobra line wins, so a prerelease token (0.6.1-rc1) is kept whole.
+    """
     if not text or not text.strip():
         return None
-    m = _STAMPED_VERSION_RE.search(text)
-    if m:
-        return m.group(0)
     m = re.search(r"(?i)\bversion\s+(\S+)", text)
     if m:
         token = m.group(1).strip()
-        return token or None
+        if token:
+            return token
+    m = _STAMPED_VERSION_RE.search(text)
+    if m:
+        return m.group(0)
     line = text.strip().splitlines()[0].strip()
     if line and " " not in line:
         return line
@@ -2883,6 +2909,29 @@ def confirm_text(
     return ans in {"y", "yes"}
 
 
+def confirm_archive(
+    version: str,
+    archive_name: str,
+    installed: str,
+    workers: list[str],
+    assume_yes: bool,
+) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        raise InstallError("Refusing to install without a TTY; pass --yes")
+    log("")
+    log(f"Install {version} from {archive_name}")
+    log(f"  currently : {installed}")
+    log(f"  primary   : this host ({', '.join(PRIMARY_UNITS)})")
+    log(f"  workers   : {', '.join(workers) if workers else '(none)'}")
+    try:
+        ans = input("Proceed? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return ans in {"y", "yes"}
+
+
 # ---------------------------------------------------------------------------
 # self-update (install.py from GitHub)
 # ---------------------------------------------------------------------------
@@ -3224,6 +3273,141 @@ def run_pinned_installer_if_needed(
             pass
 
 
+def release_version_from_root(root: Path) -> str:
+    """Version stamped into the archive's binaries (cobra --version)."""
+    for name in ("factum2-worker", "factum2-web", "factum2"):
+        binary = root / name
+        if not binary.is_file():
+            continue
+        ver = _version_from_binary(binary)
+        if ver:
+            return ver
+    raise InstallError(f"Could not read a version from binaries in {root}")
+
+
+def require_archive_layout(root: Path, archive_name: str) -> None:
+    missing_bins = [name for name in KNOWN_BINARIES if not (root / name).is_file()]
+    if missing_bins:
+        raise InstallError(f"{archive_name} is missing {', '.join(missing_bins)}")
+    units = (*PRIMARY_UNITS, DRIVER_UNIT, STORAGE_UNIT)
+    missing_units = [
+        unit for unit in units if not (root / "examples" / unit).is_file()
+    ]
+    if missing_units:
+        raise InstallError(
+            f"{archive_name} is missing "
+            + ", ".join(f"examples/{unit}" for unit in missing_units)
+        )
+
+
+def resolve_archive_path(path: Path) -> Path:
+    archive = path.expanduser()
+    if not archive.is_absolute():
+        archive = Path.cwd() / archive
+    archive = archive.resolve()
+    if not archive.is_file():
+        raise InstallError(f"Archive not found: {archive}")
+    if not (archive.name.endswith(".tar.gz") or archive.name.endswith(".tgz")):
+        raise InstallError(f"{archive.name} is not a .tar.gz")
+    return archive
+
+
+def extract_local_archive(archive: Path) -> tuple[Path, Path]:
+    """Extract a release tarball. Caller deletes the work dir."""
+    work = Path(tempfile.mkdtemp(prefix="factum2-arc-"))
+    try:
+        log(f"==> Extracting {archive.name}")
+        root = extract_archive(archive, work / "root")
+    except InstallError:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        shutil.rmtree(work, ignore_errors=True)
+        raise InstallError(f"{archive.name}: {exc}") from exc
+    return work, root
+
+
+def should_run_archive_installer(payload: bytes) -> bool:
+    """True when the tarball's install.py understands --archive and should run.
+
+    Copies from before ARCHIVE_INSTALLER_VERSION would ignore the local
+    file and download a GitHub release instead.
+    """
+    text = payload.decode("utf-8", errors="replace")
+    if installer_version_of(text) < ARCHIVE_INSTALLER_VERSION:
+        return False
+    current = Path(__file__).resolve().read_bytes()
+    return should_run_pinned_installer(current, payload)
+
+
+def run_archive_installer_if_needed(root: Path, archive: Path) -> int | None:
+    """Re-exec install.py from the tarball when it is newer. None to stay."""
+    if os.environ.get(PINNED_ENV):
+        return None
+    bundled = root / INSTALLER_FILENAME
+    if not bundled.is_file():
+        log(
+            f"!!  {archive.name} has no {INSTALLER_FILENAME}; "
+            "installing with this copy"
+        )
+        return None
+    try:
+        data = bundled.read_bytes()
+    except OSError as exc:
+        raise InstallError(f"Could not read {bundled}: {exc}") from exc
+    payload = installer_bytes_from_text(data)
+    if payload is None:
+        log(
+            f"!!  {archive.name} {INSTALLER_FILENAME} does not look like "
+            "this installer; installing with this copy"
+        )
+        return None
+    if not should_run_archive_installer(payload):
+        payload_ver = installer_version_of(payload.decode("utf-8", errors="replace"))
+        if payload_ver < ARCHIVE_INSTALLER_VERSION:
+            log(
+                f"==> {archive.name} {INSTALLER_FILENAME} "
+                f"(version {payload_ver}) has no --archive; "
+                "installing with this copy"
+            )
+        else:
+            current_ver = installer_version_of(
+                Path(__file__).resolve().read_text(encoding="utf-8", errors="replace")
+            )
+            if current_ver > payload_ver:
+                log(
+                    f"==> This {INSTALLER_FILENAME} (version {current_ver}) is newer "
+                    f"than the archive's (version {payload_ver}); "
+                    "installing with this copy"
+                )
+        return None
+    log(
+        f"==> Running {INSTALLER_FILENAME} from {archive.name} "
+        "(install steps must match that archive's binaries)"
+    )
+    fd, tmp_name = tempfile.mkstemp(prefix="factum2-arc-install-", suffix=".py")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_name, 0o755)
+        env = os.environ.copy()
+        env[PINNED_ENV] = "1"
+        env[SELF_UPDATED_ENV] = "1"
+        proc = subprocess.run(
+            [sys.executable, tmp_name, *sys.argv[1:]],
+            env=env,
+            check=False,
+        )
+        return proc.returncode
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -3250,6 +3434,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         epilog="""
 Modes:
   (default)   GitHub release — production. TUI, --list, or --install TAG.
+  --archive   Local release .tar.gz. No checkout and no compiler.
   --source    This source tree — development. make release, then install
               build/ (replaces install_prod.sh).
   --compose   Local compose lab. make build + make frontend, then restart
@@ -3267,6 +3452,7 @@ Examples:
   /etc/factum2/install.py --list
   /etc/factum2/install.py --install latest --yes
   ./install.py --install v1.0.0 --dry-run
+  ./install.py --archive factum2_0.6.1-rc1_linux_amd64.tar.gz --yes
   ./install.py --self-update          # from latest GitHub release, not main
   ./install.py --source
   ./install.py --source lab-primary --dry-run
@@ -3300,6 +3486,15 @@ Examples:
     p.add_argument("--list", action="store_true", help="print GitHub releases and exit")
     p.add_argument(
         "--install", metavar="TAG", help="GitHub tag to install, or 'latest'"
+    )
+    p.add_argument(
+        "--archive",
+        metavar="FILE",
+        type=Path,
+        help=(
+            "install from a local release .tar.gz (GoReleaser layout) "
+            "instead of GitHub. One linux/arch archive; workers must match."
+        ),
     )
     p.add_argument(
         "--pre", action="store_true", help="include prereleases when resolving 'latest'"
@@ -3749,12 +3944,31 @@ def main_source(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
-    if args.compose is not None and args.source is None:
+    if args.compose is not None and args.source is None and args.archive is None:
         args.source = "localhost"
     if args.worker and args.compose is None:
         raise InstallError("--worker requires --compose")
     if args.worker and args.primary_only:
         raise InstallError("--worker cannot be combined with --primary-only")
+    if args.archive is not None:
+        conflicts = []
+        if args.source is not None:
+            conflicts.append("--source")
+        if args.compose is not None:
+            conflicts.append("--compose")
+        if args.list:
+            conflicts.append("--list")
+        if args.install:
+            conflicts.append("--install")
+        if args.self_update:
+            conflicts.append("--self-update")
+        if args.skip_build:
+            conflicts.append("--skip-build")
+        if conflicts:
+            raise InstallError(
+                "--archive cannot be combined with " + ", ".join(conflicts)
+            )
+        return main_archive(args)
     if args.skip_build and args.source is None:
         raise InstallError("--skip-build requires --source")
     if args.self_update and args.skip_self_update:
@@ -3769,6 +3983,150 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_update and not args.list and args.install is None:
         return 0
     return main_release(args)
+
+
+def main_archive(args: argparse.Namespace) -> int:
+    """Install binaries from a local release tarball. No GitHub and no build."""
+    archive = resolve_archive_path(args.archive)
+    install_dir: Path = args.install_dir
+    goarch = local_arch()
+    installed = read_installed_version(install_dir)
+    log(f"==> factum2  archive={archive}  installed={installed}  arch={ARCHIVE_OS}/{goarch}")
+
+    work: Path | None = None
+    try:
+        work, root = extract_local_archive(archive)
+        pinned_rc = run_archive_installer_if_needed(root, archive)
+        if pinned_rc is not None:
+            return pinned_rc
+        require_archive_layout(root, archive.name)
+        binary = root / "factum2-worker"
+        arch = elf_goarch(binary)
+        if arch is None:
+            raise InstallError(
+                f"{archive.name}: factum2-worker is not a linux/amd64 or linux/arm64 ELF"
+            )
+        if arch != goarch:
+            raise InstallError(
+                f"{archive.name} is {ARCHIVE_OS}/{arch}; this host is {ARCHIVE_OS}/{goarch}"
+            )
+        version = release_version_from_root(root)
+        log(f"==> Archive version {version} ({ARCHIVE_OS}/{arch})")
+
+        workers: list[str] = []
+        addresses: list[str] = []
+        worker_err: str | None = None
+        if not args.primary_only:
+            try:
+                addresses = query_worker_addresses(args.config)
+                workers = worker_hosts(addresses)
+            except InstallError as exc:
+                worker_err = str(exc)
+                log(f"!!  Could not list worker nodes: {exc}")
+        if workers:
+            log("==> Enabled remote workers: " + ", ".join(workers))
+            require_unprivileged_ssh(args.ssh_user)
+            for host in workers:
+                remote = remote_arch(host, args.ssh_user)
+                if remote != arch:
+                    raise InstallError(
+                        f"{host} is {ARCHIVE_OS}/{remote}; {archive.name} is "
+                        f"{ARCHIVE_OS}/{arch}. Upload an archive for that arch, "
+                        "or pass --primary-only to install only this host."
+                    )
+        elif args.primary_only:
+            log("==> Skipping remote workers (--primary-only)")
+            log("    warning: hub handshake requires matching versions on remotes")
+        elif worker_err:
+            refuse_install_without_workers(worker_err, primary_only=args.primary_only)
+        else:
+            log("==> Enabled remote workers: (none)")
+
+        if args.dry_run:
+            prepare_hub_tls(
+                primary_host="localhost",
+                workers=workers,
+                addresses=addresses,
+                ssh_user=args.ssh_user,
+                dry_run=True,
+            )
+            if should_store_hub_ca(
+                primary_only=args.primary_only, worker_err=worker_err
+            ):
+                log("==> Would store hub CA in worker_nodes.tls_ca")
+            log(
+                f"==> Would install {version} from {archive.name} on this host, "
+                f"migrate the database, and restart {', '.join(PRIMARY_UNITS)}"
+            )
+            for host in workers:
+                log(f"==> Would update {host} ({arch}) and restart {WORKER_UNIT}")
+            return 0
+
+        if not confirm_archive(
+            version,
+            archive.name,
+            installed,
+            workers,
+            assume_yes=args.yes,
+        ):
+            log("Aborted.")
+            return 1
+
+        ensure_sudo(False)
+        hub_tls = prepare_hub_tls(
+            primary_host="localhost",
+            workers=workers,
+            addresses=addresses,
+            ssh_user=args.ssh_user,
+            dry_run=False,
+        )
+        install_primary(
+            root,
+            root / "examples",
+            install_dir,
+            version,
+            dry_run=False,
+            assume_yes=args.yes,
+            config_path=args.config,
+            hub_tls=hub_tls,
+        )
+        if (
+            should_store_hub_ca(primary_only=args.primary_only, worker_err=worker_err)
+            and hub_tls.ca_pem
+        ):
+            update_worker_tls_ca(
+                args.config,
+                hub_tls.ca_pem,
+                target_host="localhost",
+                ssh_user=args.ssh_user,
+                dry_run=False,
+            )
+        failures: list[str] = []
+        for host in workers:
+            try:
+                install_worker(
+                    host,
+                    args.ssh_user,
+                    root,
+                    root / "examples",
+                    install_dir,
+                    dry_run=False,
+                    tag=version,
+                    assume_yes=args.yes,
+                    hub_tls=hub_tls,
+                )
+            except InstallError as exc:
+                log(f"!!  {host}: {exc}")
+                failures.append(host)
+        new_ver = read_installed_version(install_dir)
+        log("==> Done")
+        log(f"    primary now at {new_ver}")
+        if failures:
+            raise InstallError("Failed updating workers: " + ", ".join(failures))
+        return 0
+    finally:
+        if work is not None:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def main_release(args: argparse.Namespace) -> int:

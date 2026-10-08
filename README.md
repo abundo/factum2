@@ -92,6 +92,8 @@ sudo /etc/factum2/install.py
 
 On a TTY the installer lists GitHub releases; highlight one and press Enter.
 Non-interactive: `sudo /etc/factum2/install.py --install latest --yes`.
+A tarball already on the host (no checkout, no compiler):
+`sudo /etc/factum2/install.py --archive /tmp/factum2_0.6.1-rc1_linux_amd64.tar.gz`.
 A standalone copy offers to replace itself from the latest GitHub
 **release** (`--self-update`), never from `main` — an unreleased installer
 must not drive binaries that lack its commands (for example `factum2-web

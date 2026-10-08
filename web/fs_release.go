@@ -9,12 +9,26 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"strings"
 )
 
 //go:embed all:static
 var rawStaticFS embed.FS
 
+// wiregasmVersion forces a release compile to fail unless `make wiregasm`
+// has installed the pinned build. all:static embeds those files with the
+// Vue app; this file is the small piece the compiler requires by name.
+//
+//go:embed static/wiregasm/VERSION
+var wiregasmVersion string
+
 func staticFS() fs.FS { return mustSubFS(rawStaticFS, "static") }
+
+func init() {
+	if strings.TrimSpace(wiregasmVersion) == "" {
+		panic("web/static/wiregasm/VERSION is empty; run make wiregasm before a release build")
+	}
+}
 
 // mustSubFS re-roots an embed.FS at dir, since //go:embed all:static keeps
 // "static/" as a path prefix but callers want the contents directly at root

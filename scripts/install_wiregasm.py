@@ -2,8 +2,9 @@
 """Install the pinned Wiregasm build into web/static/wiregasm.
 
 Wiregasm is Wireshark compiled to WebAssembly (GPL-2.0), published as the
-@goodtools/wiregasm npm package. factum2 serves the three dist files; it
-does not vendor them. `make wiregasm` calls this script.
+@goodtools/wiregasm npm package. factum2 does not vendor the dist files.
+`make wiregasm` calls this script. A release compile embeds whatever this
+script wrote into web/static/wiregasm.
 """
 
 import base64
