@@ -256,6 +256,16 @@ def content_type_resolver(nb):
     return resolve
 
 
+def field_type(field):
+    """Custom-field type slug. NetBox may return "text" or {"value": "text", "label": "Text"}."""
+    raw = field.get("type") if isinstance(field, dict) else None
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if raw is None:
+        return ""
+    return str(raw).strip().lower()
+
+
 def find_field(nb, name):
     page = nb.get("/api/extras/custom-fields/", {"name": name, "limit": 50})
     rows, _next = results(page)

@@ -37,6 +37,7 @@ from netbox_migrate_common import (
     OBJECT_PATHS,
     add_common_args,
     content_type_resolver,
+    field_type,
     find_field,
     iter_filtered,
     object_types,
@@ -203,7 +204,7 @@ def migrate(nb, dry_run):
     if destination is None:
         print("custom field destination is not defined; create it with factum2-netbox check --update, then re-run")
         return 1
-    if destination.get("type") not in (None, "", "text"):
+    if field_type(destination) not in ("", "text"):
         print("custom field destination has type %r, want text" % (destination.get("type"),))
         return 1
     resolve = content_type_resolver(nb)
@@ -298,6 +299,9 @@ def _self_check():
     assert legacy_librenms({"librenms_id": 42, "librenms_device_id": 42}) == ("42", "")
     assert legacy_librenms({"librenms_id": 1, "librenms_device_id": 2}) == ("", "conflict")
     assert legacy_librenms({"librenms_device_id": 7}) == ("7", "")
+    assert field_type({"type": "text"}) == "text"
+    assert field_type({"type": {"value": "text", "label": "Text"}}) == "text"
+    assert field_type({"type": {"value": "integer", "label": "Integer"}}) == "integer"
 
 
 def main(argv):

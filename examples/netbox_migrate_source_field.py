@@ -33,6 +33,7 @@ from netbox_migrate_common import (
     OBJECT_PATHS,
     add_common_args,
     content_type_resolver,
+    field_type,
     find_field,
     iter_filtered,
     object_types,
@@ -209,7 +210,7 @@ def migrate_becs_oid(nb, dry_run):
     if source is None:
         print("custom field source is not defined; create it with factum2-netbox check --update, then re-run")
         return 1
-    if source.get("type") not in (None, "", "text"):
+    if field_type(source) not in ("", "text"):
         print("custom field source has type %r, want text" % (source.get("type"),))
         return 1
     resolve = content_type_resolver(nb)
