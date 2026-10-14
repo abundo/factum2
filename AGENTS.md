@@ -281,7 +281,8 @@ firewall step, not something the process unbinds.
   target at a time, each waited on to finish before the next starts
   (`RemoteManager.dispatchRemainingSequentially`) - a destination sync
   (DNS/Icinga/LibreNMS/Oxidized/Prometheus) must never run while, or before, the
-  source sync (NetBox/Lime/BECS) that's supposed to feed it is still
+  source sync (NetBox/Lime/BECS, and device-sync which writes live devices
+  into NetBox) that's supposed to feed it is still
   updating factum's own data. The parent `Job`'s `ExpectedTasks` (set once
   at creation) is what lets `resolveTask` tell "batch truly finished" apart
   from "only the first target's `JobTask` row exists so far" - see "Jobs

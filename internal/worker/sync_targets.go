@@ -48,17 +48,16 @@ func commandForJobTarget(target string, roles []string) (command string, args []
 // command.
 var SyncTargets = []string{"becs", "netbox", "lime", "librenms", "icinga", "oxidized", "prometheus", "dns", "certs", "device-sync"}
 
-// sourceSyncTargets are the upstream systems synced *into* factum, as
-// opposed to the downstream destinations synced *from* factum - see
-// AGENTS.md's "Sync model" section. Mirrors SyncOverviewPage.vue's
-// targetInfo section:'source' entries; "device-sync" isn't a source or a
-// classic destination (it reconciles factum/netbox against live device
-// state) but the frontend groups it with destinations by default, so
-// SequencedSyncAllTargets does the same.
+// sourceSyncTargets are the systems that feed Factum, as opposed to the
+// downstream destinations synced from Factum. See AGENTS.md's "Sync model"
+// section. Mirrors SyncOverviewPage.vue's targetInfo section:'source'
+// entries. device-sync reads live devices and writes NetBox, which then
+// triggers factum2-netbox; it is a source, not a destination.
 var sourceSyncTargets = map[string]bool{
-	"becs":   true,
-	"netbox": true,
-	"lime":   true,
+	"becs":        true,
+	"netbox":      true,
+	"lime":        true,
+	"device-sync": true,
 }
 
 func IsValidSyncTarget(target string) bool {

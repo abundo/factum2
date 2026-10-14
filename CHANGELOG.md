@@ -19,6 +19,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- Job overview lists Device sync under Sources. Sync all runs it with the
+  other sources, before destinations.
 - LibreNMS sync creates a device with its hostname set to the primary
   IPv4 and its display name set to the Factum name plus
   `Settings.DefaultDomain`. Renames and field updates use the LibreNMS

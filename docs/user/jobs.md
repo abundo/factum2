@@ -17,7 +17,8 @@ in that command's `allow_args`). A worker that still defines a
 
 Tiles are grouped:
 
-- **Sources** — BECS, Lime, NetBox (update Factum)
+- **Sources** — BECS, Lime, NetBox, Device sync (update Factum, or write
+  devices into NetBox so NetBox sync can)
 - **Destinations** — DNS, Certificates, Icinga, LibreNMS, Oxidized, Prometheus
   (generated from Factum)
 - **Maintenance** — housekeeping (trim old job history)
