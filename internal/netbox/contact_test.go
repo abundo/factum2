@@ -421,8 +421,10 @@ func TestCustomFieldSpecs_SourceIncludesContact(t *testing.T) {
 			continue
 		}
 		found = true
-		if !contains(spec.objectTypes, "tenancy.tenant") || !contains(spec.objectTypes, "tenancy.contact") {
-			t.Errorf("%s objectTypes = %v, want tenant and contact", spec.name, spec.objectTypes)
+		for _, want := range []string{"tenancy.tenant", "tenancy.contact", "dcim.device", "dcim.interface", "ipam.ipaddress", "virtualization.virtualmachine"} {
+			if !contains(spec.objectTypes, want) {
+				t.Errorf("%s objectTypes = %v, want %s", spec.name, spec.objectTypes, want)
+			}
 		}
 	}
 	if !found {

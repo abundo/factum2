@@ -19,6 +19,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- BECS stores a device, interface, and IP origin in the NetBox `source`
+  custom field (`becs:3641645`). `source` is also assigned to virtual
+  machines. `becs_oid` is no longer created. Until `becs_oid` is copied,
+  sync still matches a device that only has the old integer.
 - NetBox sync mirrors regions, sites, and locations into Provisioning →
   Config and places each device under its site. Organization sites still
   receive the same rows for the network map and racks.
@@ -29,6 +33,14 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Upgrading
 
+- Run `factum2-netbox check --update` so `source` is assigned to devices,
+  interfaces, IP addresses, and virtual machines. Copy existing `becs_oid`
+  values with `examples/netbox_migrate_source_field.py` (source plus
+  source_id, then becs_oid). Copy old LibreNMS ids with
+  `examples/netbox_migrate_destination_field.py`. Both use the NetBox REST
+  API and read the URL and token from the `settings` row, using `db:` in
+  `/etc/factum2/factum2.yaml`. Then delete the old custom fields in the
+  NetBox UI.
 - Install applies goose migration `00032` (`config_scopes.netbox_kind`
   and `netbox_id`). Stop `factum2-web` before migrating by hand.
 

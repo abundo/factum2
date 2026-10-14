@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copy the legacy NetBox custom fields "librenms_id" and "librenms_device_id"
 # into the "destination" field as a librenms:<id> pair. Other systems already
 # stored there (for example zabbix:7) are kept. The legacy values are left
@@ -12,28 +13,40 @@
 #
 #   factum2-netbox check --update
 #
-# Then pipe this file into NetBox's nbshell. Django executes stdin as code
-# and then exits:
+# NetBox URL and token are read from the factum settings row. The database
+# connection comes from factum2.yaml (default /etc/factum2/factum2.yaml).
+# NETBOX_URL / NETBOX_TOKEN, or --url / --token, override that row.
 #
-#   cd /opt/netbox
-#   ./venv/bin/python netbox/manage.py nbshell < netbox_migrate_destination_field.py
+#   python3 examples/netbox_migrate_destination_field.py
+#   python3 examples/netbox_migrate_destination_field.py --dry-run
 #
-# From a host, with the script on the host and NetBox in a container:
-#
-#   docker compose exec -T netbox \
-#     /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py nbshell \
-#     < netbox_migrate_destination_field.py
-#
-# Safe to run more than once. Rows are updated with a SQL UPDATE, so
-# NetBox webhooks and the changelog do not see each rewrite.
+# Safe to run more than once. Each write is a PATCH of
+# custom_fields.destination only. The value is the full list of system:id
+# pairs, so other systems already stored there are kept. A PATCH does fire
+# the object_updated webhook.
 #
 # The written form matches factum's reader (internal/netboxtool/destination.go):
 # space-separated system:id pairs, or a JSON object when reading.
 
+import argparse
 import json
+import sys
 
-from django.db import transaction
-from django.db.models import Q
+from netbox_migrate_common import (
+    APIError,
+    OBJECT_PATHS,
+    add_common_args,
+    content_type_resolver,
+    find_field,
+    iter_filtered,
+    object_types,
+    open_client,
+    patch_custom_field,
+    row_label,
+)
+
+DEST_FIELD = "destination"
+LEGACY_FIELDS = ("librenms_id", "librenms_device_id")
 
 
 def _cf_text(value):
@@ -126,7 +139,7 @@ def _ids_from_tokens(text):
     return out
 
 
-def _parse_destination(value):
+def parse_destination(value):
     """Return the system->id map, or None when the value is unreadable."""
     if value is None or value == "":
         return {}
@@ -148,13 +161,13 @@ def _parse_destination(value):
     return None
 
 
-def _format_destination(ids):
+def format_destination(ids):
     if not ids:
         return ""
     return " ".join("%s:%s" % (key, ids[key]) for key in sorted(ids))
 
 
-def _legacy_librenms(data):
+def legacy_librenms(data):
     """Return (id, problem). problem is 'conflict' when the two old fields disagree."""
     a = _cf_text(data.get("librenms_id"))
     b = _cf_text(data.get("librenms_device_id"))
@@ -167,13 +180,13 @@ def _legacy_librenms(data):
     return a or b, ""
 
 
-def _merge_librenms(current, librenms_id):
+def merge_librenms(current, librenms_id):
     """Return (new_text_or_None, status).
 
     status is updated, unchanged, kept, or unreadable. kept means destination
     already has a different librenms id and this row was not rewritten.
     """
-    ids = _parse_destination(current)
+    ids = parse_destination(current)
     if ids is None:
         return None, "unreadable"
     existing = ids.get("librenms", "")
@@ -182,101 +195,127 @@ def _merge_librenms(current, librenms_id):
     if existing:
         return None, "kept"
     ids["librenms"] = librenms_id
-    return _format_destination(ids), "updated"
+    return format_destination(ids), "updated"
 
 
-def _assigned_models(custom_field):
-    """Models this custom field is assigned to (NetBox 3 content_types or 4 object_types)."""
-    relation = getattr(custom_field, "object_types", None)
-    if relation is None:
-        relation = custom_field.content_types
-    models = []
-    seen = set()
-    for content_type in relation.all():
-        model = content_type.model_class()
-        if model is None:
-            continue
-        key = (model._meta.app_label, model._meta.model_name)
-        if key in seen:
-            continue
-        seen.add(key)
-        field_names = {field.name for field in model._meta.concrete_fields}
-        if "custom_field_data" not in field_names:
-            print("skip %s.%s: no custom_field_data column" % key)
-            continue
-        models.append(model)
-    return models
-
-
-def migrate_destination_field():
-    from extras.models import CustomField
-
-    fields = {}
-    for name in ("destination", "librenms_id", "librenms_device_id"):
-        try:
-            fields[name] = CustomField.objects.get(name=name)
-        except CustomField.DoesNotExist:
-            fields[name] = None
-    if fields["destination"] is None:
+def migrate(nb, dry_run):
+    destination = find_field(nb, DEST_FIELD)
+    if destination is None:
         print("custom field destination is not defined; create it with factum2-netbox check --update, then re-run")
-        return
-    if fields["librenms_id"] is None and fields["librenms_device_id"] is None:
-        print("neither librenms_id nor librenms_device_id is defined; nothing to copy")
-        return
-
-    models = {}
-    for custom_field in fields.values():
-        if custom_field is None:
+        return 1
+    if destination.get("type") not in (None, "", "text"):
+        print("custom field destination has type %r, want text" % (destination.get("type"),))
+        return 1
+    resolve = content_type_resolver(nb)
+    dest_types = set(object_types(destination, resolve))
+    legacy_fields = []
+    types = []
+    for name in LEGACY_FIELDS:
+        field = find_field(nb, name)
+        if field is None:
             continue
-        for model in _assigned_models(custom_field):
-            models[(model._meta.app_label, model._meta.model_name)] = model
-
-    destination_models = set()
-    if fields["destination"] is not None:
-        for model in _assigned_models(fields["destination"]):
-            destination_models.add((model._meta.app_label, model._meta.model_name))
+        legacy_fields.append(name)
+        for obj_type in object_types(field, resolve):
+            if obj_type not in types:
+                types.append(obj_type)
+    if not legacy_fields:
+        print("neither librenms_id nor librenms_device_id is defined; nothing to copy")
+        return 0
 
     counts = {"updated": 0, "unchanged": 0, "kept": 0, "conflict": 0, "unreadable": 0}
-    with transaction.atomic():
-        for (app_label, model_name), model in sorted(models.items()):
-            label = "%s.%s" % (app_label, model_name)
-            if (app_label, model_name) not in destination_models:
-                print("note: %s is not assigned the destination field; the value is stored anyway" % label)
-            model_counts = {"updated": 0, "unchanged": 0, "kept": 0, "conflict": 0, "unreadable": 0}
-            rows = model.objects.filter(
-                Q(custom_field_data__has_key="librenms_id") | Q(custom_field_data__has_key="librenms_device_id")
-            ).iterator()
-            for obj in rows:
-                data = dict(obj.custom_field_data or {})
-                ident, problem = _legacy_librenms(data)
-                if problem == "conflict":
-                    print("%s pk=%s: librenms_id and librenms_device_id disagree; left unchanged" % (label, obj.pk))
-                    model_counts["conflict"] += 1
+    failed = False
+    for obj_type in types:
+        path = OBJECT_PATHS.get(obj_type)
+        if path is None:
+            print("skip %s: no REST path for this object type" % obj_type)
+            failed = True
+            continue
+        if obj_type not in dest_types:
+            print("%s is not assigned the destination field; run factum2-netbox check --update" % obj_type)
+            failed = True
+            continue
+        model_counts = {key: 0 for key in counts}
+        seen = set()
+        rows = []
+        for name in legacy_fields:
+            for row in iter_filtered(nb, path, name, "gt"):
+                rid = row.get("id")
+                if rid in seen:
                     continue
-                new_value, status = _merge_librenms(data.get("destination"), ident)
-                if status == "updated":
-                    data["destination"] = new_value
-                    model.objects.filter(pk=obj.pk).update(custom_field_data=data)
-                elif status == "kept":
-                    print("%s pk=%s: destination already has librenms id %r, legacy value is %r; left unchanged" % (
-                        label, obj.pk, _parse_destination(data.get("destination")).get("librenms"), ident))
-                elif status == "unreadable":
-                    print("%s pk=%s: destination value is not readable; left unchanged" % (label, obj.pk))
-                model_counts[status] += 1
-            for key, n in model_counts.items():
-                counts[key] += n
-            print("%s: updated %d, left unchanged %d, kept existing librenms %d, conflicts %d, unreadable %d" % (
-                label,
-                model_counts["updated"],
-                model_counts["unchanged"],
-                model_counts["kept"],
-                model_counts["conflict"],
-                model_counts["unreadable"],
-            ))
+                seen.add(rid)
+                rows.append(row)
+        for row in rows:
+            fields = row.get("custom_fields") or {}
+            ident, problem = legacy_librenms(fields)
+            label = row_label(row)
+            if problem == "conflict":
+                print("%s %s: librenms_id and librenms_device_id disagree; left unchanged" % (obj_type, label))
+                model_counts["conflict"] += 1
+                continue
+            if ident == "":
+                model_counts["unchanged"] += 1
+                continue
+            new_value, status = merge_librenms(fields.get(DEST_FIELD), ident)
+            if status == "updated":
+                if dry_run:
+                    print("dry-run: would set %s %s destination=%s" % (obj_type, label, new_value))
+                else:
+                    patch_custom_field(nb, path, row, DEST_FIELD, new_value)
+                    print("updated %s %s destination=%s" % (obj_type, label, new_value))
+            elif status == "kept":
+                current = parse_destination(fields.get(DEST_FIELD)) or {}
+                print("%s %s: destination already has librenms id %r, legacy value is %r; left unchanged" % (
+                    obj_type, label, current.get("librenms"), ident))
+            elif status == "unreadable":
+                print("%s %s: destination value is not readable; left unchanged" % (obj_type, label))
+            model_counts[status] += 1
+        for key, n in model_counts.items():
+            counts[key] += n
+        print("%s: updated %d, left unchanged %d, kept existing librenms %d, conflicts %d, unreadable %d" % (
+            obj_type,
+            model_counts["updated"],
+            model_counts["unchanged"],
+            model_counts["kept"],
+            model_counts["conflict"],
+            model_counts["unreadable"],
+        ))
 
     print("done: updated %d, left unchanged %d, kept existing librenms %d, conflicts %d, unreadable %d" % (
         counts["updated"], counts["unchanged"], counts["kept"], counts["conflict"], counts["unreadable"]))
     print("librenms_id and librenms_device_id were not removed. Delete those custom fields in the NetBox UI when you are satisfied with destination.")
+    if failed or counts["conflict"] or counts["unreadable"]:
+        return 1
+    return 0
 
 
-migrate_destination_field()
+def _self_check():
+    assert merge_librenms("", "42") == ("librenms:42", "updated")
+    assert merge_librenms("zabbix:7", "42") == ("librenms:42 zabbix:7", "updated")
+    assert merge_librenms("librenms:42 zabbix:7", "42") == (None, "unchanged")
+    assert merge_librenms("librenms:9", "42") == (None, "kept")
+    assert merge_librenms("see ticket", "42") == (None, "unreadable")
+    assert merge_librenms('{"zabbix": "7"}', "42") == ("librenms:42 zabbix:7", "updated")
+    assert legacy_librenms({"librenms_id": 42, "librenms_device_id": 42}) == ("42", "")
+    assert legacy_librenms({"librenms_id": 1, "librenms_device_id": 2}) == ("", "conflict")
+    assert legacy_librenms({"librenms_device_id": 7}) == ("7", "")
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description="Copy NetBox librenms_id into destination as librenms:<id>.")
+    add_common_args(parser)
+    parser.add_argument("--self-check", action="store_true", help="check the copy rules and exit")
+    args = parser.parse_args(argv)
+    if args.self_check:
+        _self_check()
+        print("self-check ok")
+        return 0
+    try:
+        nb = open_client(args)
+        return migrate(nb, args.dry_run)
+    except (APIError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1 if isinstance(exc, APIError) else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

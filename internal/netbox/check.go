@@ -482,9 +482,6 @@ type skippedCF struct {
 
 func skippedCustomFields(s *models.Settings) []skippedCF {
 	var out []skippedCF
-	if !settingOn(s.BecsEnabled) {
-		out = append(out, skippedCF{name: "becs_oid", reason: "BECS source is disabled"})
-	}
 	if !settingOn(s.OpticalEnabled) {
 		out = append(out, skippedCF{name: "optical_role", reason: "optical is disabled"})
 	}

@@ -38,6 +38,18 @@ func (s cfSpec) choiceSetName() string {
 	return "factum_" + s.name
 }
 
+// sourceObjectTypes is every NetBox object that records where it came
+// from. BECS writes becs:<oid> on devices, interfaces, and IP addresses.
+// Virtual machines are included so a later source does not need a new field.
+var sourceObjectTypes = []string{
+	"tenancy.tenant",
+	"tenancy.contact",
+	"dcim.device",
+	"dcim.interface",
+	"ipam.ipaddress",
+	"virtualization.virtualmachine",
+}
+
 // customFieldSpecs is the field catalogue factum will create/update.
 // Integration-specific rows are omitted when that Settings flag is off.
 func customFieldSpecs(s *models.Settings) []cfSpec {
@@ -88,18 +100,9 @@ func customFieldSpecs(s *models.Settings) []cfSpec {
 			}},
 		{name: "orgno", objectTypes: []string{"tenancy.tenant"}, typ: cfTypeText,
 			label: "Organisationnr"},
-		{name: "source", objectTypes: []string{"tenancy.tenant", "tenancy.contact"}, typ: cfTypeText,
+		{name: "source", objectTypes: sourceObjectTypes, typ: cfTypeText,
 			label: "Source", group: "sync",
-			description: "Origin of this object as <system>:<id>, for example factum:42 or becs:17"},
-	}
-	if settingOn(s.BecsEnabled) {
-		specs = append(specs, cfSpec{
-			name:        "becs_oid",
-			objectTypes: []string{"dcim.device", "dcim.interface", "ipam.ipaddress"},
-			typ:         cfTypeInteger,
-			group:       "sync",
-			description: "Identifies the element in BECS",
-		})
+			description: "Origin of this object as <system>:<id>, for example factum:42 or becs:3641645. A new source system uses this field instead of its own."},
 	}
 	if settingOn(s.OpticalEnabled) {
 		specs = append(specs, cfSpec{

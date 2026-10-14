@@ -12,57 +12,39 @@ package becs
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netbox"
+	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
-	"github.com/abundo/factum2/internal/netboxtool"
 )
 
-const becsOIDField = "becs_oid"
-
-// customFieldUint reads a Netbox custom field that may be a JSON number
-// or a numeric string. Unknown/empty values are 0.
-func customFieldUint(fields map[string]any, key string) uint {
-	if fields == nil {
-		return 0
-	}
-	switch v := fields[key].(type) {
-	case float64:
-		if v < 0 {
-			return 0
-		}
-		return uint(v)
-	case int:
-		if v < 0 {
-			return 0
-		}
-		return uint(v)
-	case uint:
-		return v
-	case string:
-		if v == "" {
-			return 0
-		}
-		n, err := strconv.ParseUint(v, 10, 64)
-		if err != nil {
-			return 0
-		}
-		return uint(n)
-	default:
-		return 0
-	}
-}
-
 func deviceBecsOID(d *netboxtool.NBDevice) uint {
-	return customFieldUint(d.CustomFields, becsOIDField)
+	if d == nil {
+		return 0
+	}
+	return netboxtool.BecsOID(d.CustomFields)
 }
 
 func interfaceBecsOID(iface *netboxtool.NBInterface) uint {
-	return customFieldUint(iface.CustomFields, becsOIDField)
+	if iface == nil {
+		return 0
+	}
+	return netboxtool.BecsOID(iface.CustomFields)
+}
+
+func becsSourceValue(oid uint) string {
+	return netboxtool.FormatBecsSource(oid)
+}
+
+func rememberBecsSource(fields map[string]any, oid uint) map[string]any {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields[netboxtool.SourceField] = becsSourceValue(oid)
+	return fields
 }
 
 const (
@@ -177,9 +159,9 @@ func ifaceByName(d *netboxtool.NBDevice) map[string]*netboxtool.NBInterface {
 	return out
 }
 
-// Sync fetches ibos elements from BECS, reconciles Netbox devices that
-// have a non-zero becs_oid custom field against them, then runs
-// netbox.Sync so factum sees the result. If name is set, only that
+// Sync fetches ibos elements from BECS, reconciles Netbox devices whose
+// source custom field is becs:<oid> (or the legacy becs_oid field) against
+// them, then runs netbox.Sync so factum sees the result. If name is set, only that
 // device is created/updated/deleted (the full BECS tree is still loaded
 // — parent/opaque lookup walks it). dryRun plans the same Netbox writes
 // and reports the exact payloads, but does not apply them or run the
@@ -348,7 +330,7 @@ func (s *Syncer) run(name string) error {
 		s.nbByOID = nbOID
 	}
 
-	s.reporter.Emit(jobevent.Info, "Got %d BECS elements, %d Netbox devices with becs_oid",
+	s.reporter.Emit(jobevent.Info, "Got %d BECS elements, %d Netbox devices with a BECS source",
 		len(becsByOID), len(s.nbByOID))
 
 	if err := s.ensureRefs(); err != nil {
@@ -408,7 +390,7 @@ func (s *Syncer) run(name string) error {
 }
 
 func (s *Syncer) ensureRefs() error {
-	if err := s.nb.RequireCustomField(becsOIDField, "dcim.device", "dcim.interface", "ipam.ipaddress"); err != nil {
+	if err := s.nb.RequireCustomField(netboxtool.SourceField, "dcim.device", "dcim.interface", "ipam.ipaddress"); err != nil {
 		return err
 	}
 
@@ -535,17 +517,14 @@ func (s *Syncer) syncDevices(becsByOID map[int]*Device, becsByName map[string]*D
 	}
 
 	for _, fix := range toSetOID {
-		payload := map[string]any{"custom_fields": map[string]any{"becs_oid": fix.oid}}
+		payload := map[string]any{"custom_fields": map[string]any{netboxtool.SourceField: becsSourceValue(fix.oid)}}
 		s.emitWrite("update device %s: %s", fix.device.Name, formatPayload(payload))
 		if err := s.nb.UpdateDevice(fix.device.NetboxID, payload); err != nil {
-			s.note(fmt.Errorf("set becs_oid on %s: %w", fix.device.Name, err))
+			s.note(fmt.Errorf("set source on %s: %w", fix.device.Name, err))
 			continue
 		}
 		if d := s.refresh(fix.device.Name, fix.device.NetboxID); d != nil {
-			if d.CustomFields == nil {
-				d.CustomFields = map[string]any{}
-			}
-			d.CustomFields[becsOIDField] = fix.oid
+			d.CustomFields = rememberBecsSource(d.CustomFields, fix.oid)
 			s.remember(d)
 		}
 		s.changed = true
@@ -563,9 +542,9 @@ func (s *Syncer) createDevice(b *Device) error {
 		status = "active"
 	}
 	cf := map[string]any{
-		"becs_oid":          b.OID,
-		"parents":           joinParents(b.Parents),
-		"connection_method": b.ConnectionMethod,
+		netboxtool.SourceField: becsSourceValue(uint(b.OID)),
+		"parents":              joinParents(b.Parents),
+		"connection_method":    b.ConnectionMethod,
 	}
 	if b.AlarmDestination != "" {
 		cf["alarm_destination"] = b.AlarmDestination
@@ -602,10 +581,7 @@ func (s *Syncer) createDevice(b *Device) error {
 	}
 	d := s.refresh(created.Name, created.ID)
 	if d != nil {
-		if d.CustomFields == nil {
-			d.CustomFields = map[string]any{}
-		}
-		d.CustomFields[becsOIDField] = uint(b.OID)
+		d.CustomFields = rememberBecsSource(d.CustomFields, uint(b.OID))
 		if s.dryRun {
 			d.ModelName = b.Model
 		}
@@ -724,10 +700,10 @@ func (s *Syncer) syncInterfaces(d *netboxtool.NBDevice, b *Device) {
 			continue
 		}
 		if iface, ok := byName[bIface.Name]; ok {
-			payload := map[string]any{"custom_fields": map[string]any{"becs_oid": bIface.OID}}
+			payload := map[string]any{"custom_fields": map[string]any{netboxtool.SourceField: becsSourceValue(uint(bIface.OID))}}
 			s.emitWrite("update interface %s/%s: %s", d.Name, bIface.Name, formatPayload(payload))
 			if err := s.nb.InterfaceUpdate(int(iface.NetboxID), payload); err != nil {
-				s.note(fmt.Errorf("set interface becs_oid %s/%s: %w", d.Name, bIface.Name, err))
+				s.note(fmt.Errorf("set interface source %s/%s: %w", d.Name, bIface.Name, err))
 				continue
 			}
 			created = true
@@ -737,7 +713,7 @@ func (s *Syncer) syncInterfaces(d *netboxtool.NBDevice, b *Device) {
 			"type":    ifaceType(dt, bIface.Name),
 			"enabled": bIface.Enabled,
 			"custom_fields": map[string]any{
-				"becs_oid": bIface.OID,
+				netboxtool.SourceField: becsSourceValue(uint(bIface.OID)),
 			},
 		}
 		s.emitWrite("create interface %s/%s: %s", d.Name, bIface.Name, formatPayload(payload))
@@ -880,7 +856,7 @@ func (s *Syncer) syncAddressesCreate(d *netboxtool.NBDevice, b *Device) {
 			continue
 		}
 		if have == nil {
-			payload := map[string]any{"custom_fields": map[string]any{"becs_oid": want.OID}}
+			payload := map[string]any{"custom_fields": map[string]any{netboxtool.SourceField: becsSourceValue(uint(want.OID))}}
 			s.emitWrite("create address %s/%s %s: %s", d.Name, iface.Name, want.Address, formatPayload(payload))
 			created, err := s.nb.CreateInterfaceAddress(iface.NetboxID, want.Address, payload)
 			if err != nil {

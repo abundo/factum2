@@ -206,7 +206,11 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("parents", "text", dev)
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
-	add("source", "text", []string{"tenancy.tenant", "tenancy.contact"})
+	add("source", "text", []string{
+		"tenancy.tenant", "tenancy.contact",
+		"dcim.device", "dcim.interface", "ipam.ipaddress",
+		"virtualization.virtualmachine",
+	})
 	return out
 }
 
@@ -326,7 +330,7 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 	}
 }
 
-func TestCheckDB_BecsOIDOnlyWhenEnabled(t *testing.T) {
+func TestCheckDB_BecsOIDIsNotCreated(t *testing.T) {
 	fields := allDeviceCFs()
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
@@ -334,22 +338,12 @@ func TestCheckDB_BecsOIDOnlyWhenEnabled(t *testing.T) {
 		fields: fields,
 	}
 	s := baseSettings()
-	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
-		t.Fatalf("becs_oid must be skipped when BECS is off: %v", err)
-	}
-
 	s.BecsEnabled = boolPtr(true)
-	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
-		t.Fatal("missing becs_oid must fail without --update")
+	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("source replaces becs_oid: %v", err)
 	}
 	if api.fields["becs_oid"] != nil {
-		t.Fatal("must not create becs_oid without --update")
-	}
-	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
-		t.Fatalf("becs_oid should be created with --update: %v", err)
-	}
-	if api.fields["becs_oid"] == nil {
-		t.Fatal("expected becs_oid to be created")
+		t.Fatal("becs_oid must not be created; source holds becs:<oid>")
 	}
 }
 
@@ -386,30 +380,26 @@ func TestCheckDB_DestinationField(t *testing.T) {
 	}
 }
 
-func TestCheckDB_BecsOIDMissingObjectType(t *testing.T) {
+func TestCheckDB_SourceMissingDeviceObjectTypes(t *testing.T) {
 	fields := allDeviceCFs()
-	fields["becs_oid"] = &netboxtool.NBCustomField{
-		NetboxID:    50,
-		Name:        "becs_oid",
-		Type:        "integer",
-		ObjectTypes: []string{"dcim.device"},
-	}
+	fields["source"].ObjectTypes = []string{"tenancy.tenant", "tenancy.contact"}
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
 		rules:  []*NBEventRule{fullRule()},
 		fields: fields,
 	}
 	s := baseSettings()
-	s.BecsEnabled = boolPtr(true)
 	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
-		t.Fatal("missing object types must fail without --update")
+		t.Fatal("source missing device object types must fail without --update")
 	}
 	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
-		t.Fatalf("should add missing object types with --update: %v", err)
+		t.Fatalf("should add device object types with --update: %v", err)
 	}
-	got := api.fields["becs_oid"].ObjectTypes
-	if !contains(got, "dcim.interface") || !contains(got, "ipam.ipaddress") {
-		t.Fatalf("object_types = %v, want interface and ipaddress added", got)
+	got := api.fields["source"].ObjectTypes
+	for _, want := range []string{"dcim.device", "dcim.interface", "ipam.ipaddress", "virtualization.virtualmachine"} {
+		if !contains(got, want) {
+			t.Fatalf("object_types = %v, want %s", got, want)
+		}
 	}
 }
 
@@ -489,13 +479,13 @@ func TestRequiredCustomFields_Conditionals(t *testing.T) {
 	s.LibrenmsEnabled = boolPtr(true)
 	s.OpticalEnabled = boolPtr(true)
 	got = names(requiredCustomFields(s))
-	for _, want := range []string{"becs_oid", "optical_role", "source", "destination"} {
+	for _, want := range []string{"optical_role", "source", "destination"} {
 		if !contains(got, want) {
 			t.Errorf("missing %s when flags on: %v", want, got)
 		}
 	}
-	if contains(got, "librenms_id") {
-		t.Errorf("librenms_id must not be a required field: %v", got)
+	if contains(got, "librenms_id") || contains(got, "becs_oid") {
+		t.Errorf("legacy id fields must not be required: %v", got)
 	}
 }
 

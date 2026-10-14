@@ -99,7 +99,8 @@ oxidized to reload only if the file's content actually changed. Prometheus
 (`Settings.PrometheusDestFile`) from devices with `CfMonitorGrafana` and
 POSTs `Settings.PrometheusReloadURL` only if the file changed. BECS is an upstream
 source like Netbox: `factum2-becs sync` (`internal/becs`) writes ibos
-elements into Netbox (matched by custom field `becs_oid`) then calls
+elements into Netbox (matched by custom field `source` = `becs:<oid>`,
+falling back to legacy `becs_oid`) then calls
 `netbox.Sync` so factum sees the result. The Netbox write path is its own
 reconciler; `internal/netbox`'s helpers write to factum keyed by
 `netbox_id` and are not reused for the BECS→Netbox half.

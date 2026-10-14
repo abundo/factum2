@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 type testReporter struct {
@@ -322,7 +322,10 @@ func TestSyncDevicesSetOID(t *testing.T) {
 		t.Errorf("should not create, created=%v", nb.createdNames)
 	}
 	if got := deviceBecsOID(existing); got != uint(devs[0].OID) {
-		t.Errorf("becs_oid=%d, want %d", got, devs[0].OID)
+		t.Errorf("source oid=%d, want %d", got, devs[0].OID)
+	}
+	if existing.CustomFields["source"] != "becs:3641645" {
+		t.Errorf("source = %#v, want becs:3641645", existing.CustomFields["source"])
 	}
 }
 
@@ -370,15 +373,15 @@ func TestIfaceTypeFallback(t *testing.T) {
 
 func TestRunRequiresBecsOIDCustomField(t *testing.T) {
 	nb := &fakeNetbox{
-		missingCustomField: "becs_oid",
+		missingCustomField: "source",
 		site:               &netboxtool.NetboxNamedRef{ID: 1},
 		role:               &netboxtool.NetboxNamedRef{ID: 2},
 		platform:           &netboxtool.NetboxNamedRef{ID: 3},
 	}
 	s := newTestSyncer(t, nb)
 	err := s.run("")
-	if err == nil || !strings.Contains(err.Error(), "becs_oid") {
-		t.Fatalf("want missing becs_oid error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source") {
+		t.Fatalf("want missing source error, got %v", err)
 	}
 }
 
@@ -426,22 +429,6 @@ func TestRunCreatesDeviceInterfacesAndAddress(t *testing.T) {
 	}
 	if !s.changed || s.created != 1 {
 		t.Errorf("changed=%v created=%d", s.changed, s.created)
-	}
-}
-
-func TestCustomFieldUint(t *testing.T) {
-	m := map[string]any{"n": float64(12), "s": "34", "bad": "x"}
-	if got := customFieldUint(m, "n"); got != 12 {
-		t.Errorf("number: %d", got)
-	}
-	if got := customFieldUint(m, "s"); got != 34 {
-		t.Errorf("string: %d", got)
-	}
-	if got := customFieldUint(m, "bad"); got != 0 {
-		t.Errorf("bad: %d", got)
-	}
-	if got := customFieldUint(nil, "n"); got != 0 {
-		t.Errorf("nil: %d", got)
 	}
 }
 
@@ -504,11 +491,11 @@ func TestDryRunCreateDoesNotWrite(t *testing.T) {
 
 	out := reporterText(s)
 	assertContains(t, out, "dry-run: would create Netbox device test-lab2:")
-	assertContains(t, out, `"becs_oid":3641645`)
+	assertContains(t, out, `"source":"becs:3641645"`)
 	assertContains(t, out, `"status":"active"`)
 	assertContains(t, out, `"parents":"core1.example.com"`)
 	assertContains(t, out, "dry-run: would create interface test-lab2/loopback0:")
-	assertContains(t, out, `"becs_oid":3641698`)
+	assertContains(t, out, `"source":"becs:3641698"`)
 	assertContains(t, out, "dry-run: would create address test-lab2/loopback0 10.15.15.153/32:")
 	assertContains(t, out, "dry-run: would create address test-lab2/vlan1 10.0.0.9/24:")
 	assertContains(t, out, "dry-run: would set primary_ip4 on test-lab2 to 10.15.15.153/32")
@@ -637,9 +624,9 @@ func TestDryRunAddressReplaceDoesNotWrite(t *testing.T) {
 }
 
 func TestFormatPayload(t *testing.T) {
-	got := formatPayload(map[string]any{"status": "active", "custom_fields": map[string]any{"becs_oid": 12}})
+	got := formatPayload(map[string]any{"status": "active", "custom_fields": map[string]any{"source": "becs:12"}})
 	assertContains(t, got, `"status":"active"`)
-	assertContains(t, got, `"becs_oid":12`)
+	assertContains(t, got, `"source":"becs:12"`)
 }
 
 var _ jobevent.Reporter = (*testReporter)(nil)
