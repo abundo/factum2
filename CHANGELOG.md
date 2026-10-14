@@ -19,6 +19,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- LibreNMS sync creates a device with its hostname set to the primary
+  IPv4 and its display name set to the Factum name plus
+  `Settings.DefaultDomain`. Renames and field updates use the LibreNMS
+  device id stored in the NetBox `destination` custom field.
 - BECS stores a device, interface, and IP origin in the NetBox `source`
   custom field (`becs:3641645`). `source` is also assigned to virtual
   machines. `becs_oid` is no longer created. Until `becs_oid` is copied,

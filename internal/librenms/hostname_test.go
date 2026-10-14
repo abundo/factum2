@@ -61,8 +61,24 @@ func TestCallAPIPostsJSONToAPIv0(t *testing.T) {
 	if err := json.Unmarshal(gotBody, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["hostname"] != "10.1.1.1" || payload["community"] != "public" || payload["force_add"] != "1" {
+	if payload["hostname"] != "10.1.1.1" || payload["display"] != "rtr1" || payload["community"] != "public" || payload["force_add"] != "1" {
 		t.Fatalf("body=%v", payload)
+	}
+}
+
+func TestLibrenmsDisplayName(t *testing.T) {
+	fl := &FactumLibrenmsClient{Librenms: NewLibrenmsClient(&util.ConfigLibrenms{
+		CommonConfig: util.CommonConfig{DefaultDomain: "itn.nu"},
+	})}
+	if got := fl.librenmsDisplayName("pdm1"); got != "pdm1.itn.nu" {
+		t.Fatalf("display = %q", got)
+	}
+	if got := fl.librenmsDisplayName("pdm1.itn.nu"); got != "pdm1.itn.nu" {
+		t.Fatalf("display = %q", got)
+	}
+	fl.Librenms.P.DefaultDomain = ""
+	if got := fl.librenmsDisplayName("pdm1"); got != "pdm1" {
+		t.Fatalf("display = %q", got)
 	}
 }
 

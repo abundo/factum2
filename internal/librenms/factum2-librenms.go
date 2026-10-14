@@ -8,9 +8,14 @@ package librenms
 // run if the pending row has ForceDelete set.
 // All LibreNMS hostnames must already be IPv4 or IPv6 addresses; Sync
 // aborts otherwise (run normalize-hostnames first).
-// For each device, check and adjust librenms
+// A device created here uses the primary IPv4 as its hostname and the
+// Factum name with Settings.DefaultDomain appended as its display name.
+// Renames and field updates address the LibreNMS device id stored in
+// the NetBox destination custom field (librenms:<id>).
+// For each linked device, check and adjust librenms
 // - device
 //     enabled flag
+//     display name
 //     location
 //     parents
 // - device interfaces
@@ -293,6 +298,17 @@ func (fl *FactumLibrenmsClient) getDeviceFromLibrenmsDevice(factumDevices *model
 	return nil, nil
 }
 
+// librenmsDisplayName is the display name written to LibreNMS: the Factum
+// device name, with Settings.DefaultDomain appended when the name has no
+// domain of its own. An address is left unchanged.
+func (fl *FactumLibrenmsClient) librenmsDisplayName(name string) string {
+	domain := ""
+	if fl.Librenms != nil && fl.Librenms.P != nil {
+		domain = fl.Librenms.P.DefaultDomain
+	}
+	return util.FormatName(domain, name)
+}
+
 // getFactumDeviceForLibrenmsDevice correlates a librenms device back to its
 // factum device. The primary match is the LibreNMS id factum copied from
 // the NetBox destination custom field (factumDevice.LibrenmsID), stamped
@@ -308,6 +324,8 @@ func (fl *FactumLibrenmsClient) getDeviceFromLibrenmsDevice(factumDevices *model
 // the device on the next run - Sync would then try to create it a second
 // time. Matching on IP closes that gap, and also catches librenms devices
 // added manually with an IP hostname.
+// Those fallbacks only decide create, delete, and the destination backfill.
+// Renames and field updates run only for the LibreNMS id stored in destination.
 func (fl *FactumLibrenmsClient) getFactumDeviceForLibrenmsDevice(librenmsDevice *LibrenmsDevice) *models.Device {
 	for _, factumDevice := range fl.FactumDevices {
 		if factumDevice.LibrenmsID != 0 && factumDevice.LibrenmsID == uint(librenmsDevice.DeviceID) {
@@ -514,9 +532,10 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 
 	created := 0
 	for _, factumDevice := range librenms_create {
-		reporter.Emit(jobevent.Info, "creating device %s in Librenms", factumDevice.Name)
 		addr := strings.Split(factumDevice.PrimaryIPv4, "/")[0]
-		librenmsDeviceID, err := fl.createDevice(addr, factumDevice.Name, reporter)
+		display := fl.librenmsDisplayName(factumDevice.Name)
+		reporter.Emit(jobevent.Info, "creating device %s in Librenms, hostname %s, display %s", factumDevice.Name, addr, display)
+		librenmsDeviceID, err := fl.createDevice(addr, display, reporter)
 		if err != nil {
 			reporter.Emit(jobevent.Error, "cannot create device %s: %s", factumDevice.Name, err)
 			continue
@@ -550,50 +569,37 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 			continue
 		}
 
-		// factumDevice.LibrenmsID is normally stamped in netbox at
-		// creation time (see the create pass above), but devices matched
-		// here via the hostname/IP fallbacks in
-		// getFactumDeviceForLibrenmsDevice never went through that path,
-		// so backfill the destination field now that the match is known.
-		// SetDestinationID reads the current value and rewrites only the
-		// librenms pair.
+		// Renames and field updates address the LibreNMS device id in
+		// the NetBox destination field. A row that already has a
+		// different id is left alone. A row with no id is stamped
+		// from this match, and that id is then the one updated below.
+		// SetDestinationID reads the current value and rewrites only
+		// the librenms pair.
+		linked := factumDevice.LibrenmsID != 0 && factumDevice.LibrenmsID == uint(librenmsDevice.DeviceID)
 		if factumDevice.LibrenmsID == 0 {
 			reporter.Emit(jobevent.Info, "%s, %s: stamping netbox destination librenms=%d", librenmsDevice.Hostname, librenmsDevice.Display, librenmsDevice.DeviceID)
 			if err := fl.Netbox.SetDestinationID(factumDevice.VM, factumDevice.NetboxID, netboxtool.DestinationLibrenms, strconv.Itoa(librenmsDevice.DeviceID)); err != nil {
 				reporter.Emit(jobevent.Error, "%s: cannot update netbox destination: %s", librenmsDevice.Hostname, err)
 			} else {
 				factumDevice.LibrenmsID = uint(librenmsDevice.DeviceID)
+				linked = true
 			}
 		}
+		if !linked {
+			continue
+		}
 
-		// Hostname is the SNMP polling target, set to the device's
-		// primary IPv4 when it was created above - Librenms renames it
-		// via its own /rename/ endpoint rather than the generic
-		// field-update endpoint used below, so it's handled separately.
-		// If hostname isn't an IP at all (e.g. a legacy/manually-added
-		// device still keyed on its FQDN, the same case
-		// getFactumDeviceForLibrenmsDevice's hostname fallback matches),
-		// the device identity is already confirmed by that name match, so
-		// rename straight to the IP - no need for the display-must-
-		// already-match safeguard below, which exists for the riskier
-		// case of two different IPs.
+		// Hostname is the SNMP polling target. LibreNMS renames it via
+		// its own /rename/ endpoint rather than the field-update
+		// endpoint used below. The destination id is the device identity,
+		// so a changed primary IPv4 is renamed directly.
 		if factumDevice.PrimaryIPv4 != "" {
 			addr := strings.Split(factumDevice.PrimaryIPv4, "/")[0]
-			if librenmsDevice.Hostname != addr {
-				if !hostnameIsIP(librenmsDevice.Hostname) {
-					reporter.Emit(jobevent.Info, "%s: hostname is not an IP, renaming to %s", librenmsDevice.Hostname, addr)
-					if _, err := fl.Librenms.DeviceRename(librenmsDevice.DeviceID, addr); err != nil {
-						reporter.EmitErr(err)
-						return err
-					}
-				} else if librenmsDevice.Display != factumDevice.Name {
-					reporter.Emit(jobevent.Warning, "%s: cannot rename hostname to %s, display name %q does not match factum name %q", librenmsDevice.Hostname, addr, librenmsDevice.Display, factumDevice.Name)
-				} else {
-					reporter.Emit(jobevent.Info, "%s: rename hostname to %s", librenmsDevice.Hostname, addr)
-					if _, err := fl.Librenms.DeviceRename(librenmsDevice.DeviceID, addr); err != nil {
-						reporter.EmitErr(err)
-						return err
-					}
+			if addr != "" && librenmsDevice.Hostname != addr {
+				reporter.Emit(jobevent.Info, "%s: rename hostname to %s", librenmsDevice.Hostname, addr)
+				if _, err := fl.Librenms.DeviceRename(librenmsDevice.DeviceID, addr); err != nil {
+					reporter.EmitErr(err)
+					return err
 				}
 			}
 		}
@@ -610,9 +616,10 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 			reporter.Emit(jobevent.Info, "%s: setting ignore to %s", librenmsDevice.Hostname, updateData["ignore"])
 		}
 
-		if librenmsDevice.Display != factumDevice.Name {
-			reporter.Emit(jobevent.Info, "%s: display %q, set to %q", librenmsDevice.Hostname, librenmsDevice.Display, factumDevice.Name)
-			updateData["display_template"] = factumDevice.Name
+		display := fl.librenmsDisplayName(factumDevice.Name)
+		if librenmsDevice.Display != display {
+			reporter.Emit(jobevent.Info, "%s: display %q, set to %q", librenmsDevice.Hostname, librenmsDevice.Display, display)
+			updateData["display_template"] = display
 		}
 
 		if factumDevice.CfLocation != "" && factumDevice.CfLocation != librenmsDevice.Location {
