@@ -81,6 +81,95 @@ func TestCallAPIHTTPError(t *testing.T) {
 	}
 }
 
+func TestDeviceRename(t *testing.T) {
+	const deviceID = 7
+	const newName = "172.27.246.1"
+
+	t.Run("documented array", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch || r.URL.Path != "/api/v0/devices/7/rename/172.27.246.1" {
+				t.Errorf("request = %s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"status":"ok","message":"Device has been renamed"}]`))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewLibrenmsClient(&util.ConfigLibrenms{URL: srv.URL, Key: "tok"})
+		status, err := client.DeviceRename(deviceID, newName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == nil || *status != "ok" {
+			t.Fatalf("status=%v", status)
+		}
+	})
+
+	t.Run("object body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"ok","message":"Device has been renamed"}`))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewLibrenmsClient(&util.ConfigLibrenms{URL: srv.URL, Key: "tok"})
+		if _, err := client.DeviceRename(deviceID, newName); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("empty 200 is success when hostname changed", func(t *testing.T) {
+		var gets int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPatch {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			gets++
+			_, _ = w.Write([]byte(`{"status":"ok","devices":[{"device_id":7,"hostname":"172.27.246.1"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewLibrenmsClient(&util.ConfigLibrenms{URL: srv.URL, Key: "tok"})
+		status, err := client.DeviceRename(deviceID, newName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == nil || *status != "ok" {
+			t.Fatalf("status=%v", status)
+		}
+		if gets != 1 {
+			t.Fatalf("follow-up GETs = %d, want 1", gets)
+		}
+	})
+
+	t.Run("empty 200 is an error when hostname did not change", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPatch {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok","devices":[{"device_id":7,"hostname":"172.27.246.4"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewLibrenmsClient(&util.ConfigLibrenms{URL: srv.URL, Key: "tok"})
+		_, err := client.DeviceRename(deviceID, newName)
+		if err == nil || !strings.Contains(err.Error(), `hostname is still "172.27.246.4"`) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+
+	t.Run("error status", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"error","message":"Device failed to be renamed"}`))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewLibrenmsClient(&util.ConfigLibrenms{URL: srv.URL, Key: "tok"})
+		_, err := client.DeviceRename(deviceID, newName)
+		if err == nil || !strings.Contains(err.Error(), "Device failed to be renamed") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+}
+
 func TestHostnameIsIP(t *testing.T) {
 	cases := []struct {
 		in   string

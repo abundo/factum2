@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -353,18 +354,37 @@ type deviceUpdateFields struct {
 // without this check callers previously saw a nil error on failure and had
 // no way to know the operation didn't actually happen.
 func parseApiResponse(data []byte, err error) (*string, error) {
-	var status StatusJSON
 	if err != nil {
 		return nil, err
 	}
-	err = json.Unmarshal(data, &status)
-	if err != nil {
+	return statusFromBody(data)
+}
+
+// statusFromBody reads a LibreNMS status document. The live API returns an
+// object. rename_device's documented example is a one-element array of that
+// same object, so both shapes are accepted.
+func statusFromBody(data []byte) (*string, error) {
+	body := bytes.TrimSpace(data)
+	if len(body) == 0 {
+		return nil, errors.New("unexpected end of JSON input")
+	}
+	var status StatusJSON
+	if body[0] == '[' {
+		var arr []StatusJSON
+		if err := json.Unmarshal(body, &arr); err != nil {
+			return nil, err
+		}
+		if len(arr) == 0 {
+			return nil, fmt.Errorf("librenms: empty status array: %s", body)
+		}
+		status = arr[0]
+	} else if err := json.Unmarshal(body, &status); err != nil {
 		return nil, err
 	}
 	if status.Status != "ok" {
 		msg := status.Message
 		if msg == "" {
-			msg = string(data)
+			msg = string(body)
 		}
 		return &status.Status, fmt.Errorf("librenms: %s", msg)
 	}
@@ -474,12 +494,34 @@ func (librenms *LibrenmsClient) DeviceUpdate(deviceID int, updates map[string]st
 	return parseApiResponse(response, err)
 }
 
-// Rename device
+// Rename device.
 // https://docs.librenms.org/API/Devices/#rename_device
-func (librenms *LibrenmsClient) DeviceRename(deviceID int, new_name string) (*string, error) {
-	endpoint := fmt.Sprintf("/devices/%d/rename/%s", deviceID, new_name)
+// PATCH /api/v0/devices/:hostname/rename/:new_hostname
+// (hostname may be the device id). The documented body is
+// [{"status":"ok","message":"Device has been renamed"}]; current
+// api_success returns that object without the array wrapper.
+// LibreNMS 26.8.2's rename_device saves the hostname and then falls off
+// the end of the function, so a successful rename is HTTP 200 with an
+// empty body. That is not a failure: re-read the device and accept the
+// rename when the hostname matches.
+func (librenms *LibrenmsClient) DeviceRename(deviceID int, newName string) (*string, error) {
+	endpoint := fmt.Sprintf("/devices/%d/rename/%s", deviceID, url.PathEscape(newName))
 	response, err := librenms.callAPI("PATCH", endpoint, nil)
-	return parseApiResponse(response, err)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(response)) == 0 {
+		dev, gerr := librenms.DeviceGet(deviceID)
+		if gerr != nil {
+			return nil, fmt.Errorf("librenms: rename device %d to %s returned an empty body, and reading the device failed: %w", deviceID, newName, gerr)
+		}
+		if dev.Hostname != newName {
+			return nil, fmt.Errorf("librenms: rename device %d to %s returned an empty body and hostname is still %q", deviceID, newName, dev.Hostname)
+		}
+		ok := "ok"
+		return &ok, nil
+	}
+	return statusFromBody(response)
 }
 
 // Delete device
