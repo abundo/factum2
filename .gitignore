@@ -26,6 +26,10 @@ pkg/
 # Test binary, built with `go test -c`
 *.test
 
+# Containerlab runtime from make lab-up (inventories, switch flash, lab TLS).
+# Keep eos.clab.yml and eos-startup.cfg.
+internal/drivers/testdata/clab/clab-*/
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
