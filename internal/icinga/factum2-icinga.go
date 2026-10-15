@@ -76,23 +76,16 @@ func NewFactumIcingaClient(root *util.ConfigAgentRoot) (*FactumIcingaClient, err
 
 func pinIcingaPaths(cfg *util.ConfigIcinga, paths util.ConfigWorkerPaths) error {
 	var err error
-	if cfg.HostsFile, err = pinIcingaFile(paths.IcingaHostsFile, cfg.HostsFile, "worker.paths.icinga_hosts_file"); err != nil {
+	if cfg.HostsFile, err = util.ResolvePinnedKey(paths, cfg.HostsFile, util.KeyIcingaHostsFile, true, false); err != nil {
 		return err
 	}
-	if cfg.UsersFile, err = pinIcingaFile(paths.IcingaUsersFile, cfg.UsersFile, "worker.paths.icinga_users_file"); err != nil {
+	if cfg.UsersFile, err = util.ResolvePinnedKey(paths, cfg.UsersFile, util.KeyIcingaUsersFile, true, false); err != nil {
 		return err
 	}
-	if cfg.CertsFile, err = pinIcingaFile(paths.IcingaCertsFile, cfg.CertsFile, "worker.paths.icinga_certs_file"); err != nil {
+	if cfg.CertsFile, err = util.ResolvePinnedKey(paths, cfg.CertsFile, util.KeyIcingaCertsFile, true, false); err != nil {
 		return err
 	}
 	return nil
-}
-
-func pinIcingaFile(local, remote, name string) (string, error) {
-	if strings.TrimSpace(remote) == "" && strings.TrimSpace(local) == "" {
-		return "", nil
-	}
-	return util.PinnedPath(local, remote, name)
 }
 
 // createConfFile creates a new config file, with a warning header saying

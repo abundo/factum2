@@ -8,8 +8,6 @@ package oxidized
 //
 
 import (
-	"strings"
-
 	"github.com/abundo/factum2/internal/util"
 )
 
@@ -63,10 +61,7 @@ func RemoteClient(root *util.ConfigAgentRoot) (*oxidizedClient, error) {
 }
 
 func pinDest(cfg *util.ConfigOxidized, paths util.ConfigWorkerPaths) error {
-	if strings.TrimSpace(cfg.DestFile) == "" && strings.TrimSpace(paths.OxidizedDestFile) == "" {
-		return nil
-	}
-	dest, err := util.PinnedPath(paths.OxidizedDestFile, cfg.DestFile, "worker.paths.oxidized_dest_file")
+	dest, err := util.ResolvePinnedKey(paths, cfg.DestFile, util.KeyOxidizedDestFile, true, false)
 	if err != nil {
 		return err
 	}

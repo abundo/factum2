@@ -63,9 +63,10 @@ administrator-managed `dnsmgr2.yaml`. The Kea subnet JSON
 (`kea-dhcp4.dnsmgr2.json`) is still included from the main Kea config as
 `"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`.
 
-When DHCP is on and **Destinations → DHCP → Include file** is set,
-`factum2-dns` writes enabled prefixes into that YAML. List it from the
-main config after `host_dhcp_template`:
+When DHCP is on and **Destinations → DHCP → Include file** names a
+`worker.paths` key (usually `dns_prefixes_file`), `factum2-dns` writes
+enabled prefixes into the path that key has on the worker. List that path
+from the main config after `host_dhcp_template`:
 
     dnsmgr2:
       - host_dhcp_template: isc_kea
@@ -81,20 +82,22 @@ paths, sqlite serial DB, SOA templates, zone templates, host templates).
 Zone template names in the Factum zone editor must match names in that
 file.
 
-When the zone editor is on and **Destinations → DNS → Include file** is
-set, `factum2-dns` writes that path as a YAML zone list (`zones:`) plus
+When the zone editor is on and **Destinations → DNS → Include file** names
+a `worker.paths` key (usually `dns_zones_file`), `factum2-dns` writes the
+path that key has on the worker as a YAML zone list (`zones:`) plus
 `dnssec_policies:` for every DNSSEC policy. Each zone carries
-`dnssec_policy` when its DNS template has one. List it from the main
-config:
+`dnssec_policy` when its DNS template has one. List that worker path from
+the main config:
 
     dnsmgr2:
       - host_dns_template: isc_bind
       - include: /etc/dnsmgr2/factum2-zones.yaml
 
-The **Destination file** is the JSON records file
-(`sources[].type: json`, `sources[].name`), for example
-`/etc/dnsmgr2/factum2-records.json`. An empty include-file path
-means "do not write a zone list" (zones stay inline in the main yaml).
+The **Destination file** is a `worker.paths` key (usually `dns_dest_file`)
+for the JSON records file (`sources[].type: json`, `sources[].name`). The
+path, for example `/etc/dnsmgr2/factum2-records.json`, is only in the
+worker YAML. An empty include-file field with the zone editor off means
+"do not write a zone list" (zones stay inline in the main yaml).
 
 ## Sync
 

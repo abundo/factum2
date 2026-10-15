@@ -68,6 +68,10 @@ Start from `examples/factum2-worker.yaml` on the worker host:
   in the GUI
 - `worker.tls_cert` / `worker.tls_key` — required. SAN must match the
   hostname or IP in Address (Go ignores CN)
+- `worker.paths` — files and the lego binary this host will write or
+  run. The GUI stores the key (`icinga_hosts_file`), and this block stores
+  the path. A sync that names a missing key fails. Restart
+  `factum2-worker` after editing it
 - `worker.commands` — only the tools this host should run. Add `--job` to
   a command's `args` for structured job events. NetBox changes (job
   `netbox-delta`) reuse the `netbox` command: set

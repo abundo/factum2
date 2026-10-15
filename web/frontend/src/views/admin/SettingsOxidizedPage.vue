@@ -31,20 +31,25 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
     </div>
     <div>
       <label for="oxidized_dest_file" class="block font-bold mb-3">Destination file</label>
-      <UInput id="oxidized_dest_file" v-model="settings.oxidized_dest_file" class="w-full" />
+      <UInput
+        id="oxidized_dest_file"
+        v-model="settings.oxidized_dest_file"
+        placeholder="oxidized_dest_file"
+        class="w-full"
+      />
       <p class="text-muted-color mt-1">
-        Oxidized
+        worker.paths key. The
         <span class="font-mono">router.db</span>
-        written by
+        path is set only in each worker's factum2-worker.yaml.
         <span class="font-mono">factum2-oxidized</span>
-        as
+        writes
         <span class="font-mono">name:ip:model</span>
         per line (FQDN, primary IPv4, platform). Oxidized's CSV source must map
         <span class="font-mono">name: 0</span>, <span class="font-mono">ip: 1</span>,
         <span class="font-mono">model: 2</span>
         — the previous two-column
         <span class="font-mono">name:model</span>
-        map would treat the IP as the model.
+        map would treat the IP as the model. Leave blank to use oxidized_dest_file.
       </p>
     </div>
     <div>

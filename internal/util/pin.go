@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// PinnedPath returns the worker-local path a sync may write or execute.
-// The primary's database value is accepted only when it matches this pin,
-// so an admin session or a database write cannot redirect a worker onto
-// another binary or file.
+// PinnedPath checks a worker-local absolute path. remote, when set, must
+// be that same path. Destination sync does not pass the primary's value
+// here: ResolvePinnedKey treats it as a worker.paths key and then checks
+// only the path from this host.
 func PinnedPath(local, remote, name string) (string, error) {
 	local = strings.TrimSpace(local)
 	remote = strings.TrimSpace(remote)

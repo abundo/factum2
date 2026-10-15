@@ -19,6 +19,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- Admin → Destinations file fields store a `worker.paths` key, such as
+  `icinga_hosts_file`. The filesystem path is only in each worker's
+  `factum2-worker.yaml`. A field may name any pinned key. A blank field
+  uses the key for that field.
 - Job overview lists Device sync under Sources. Sync all runs it with the
   other sources, before destinations.
 - LibreNMS sync creates a device with its hostname set to the primary
@@ -39,6 +43,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Upgrading
 
+- Install applies goose migration `00033`. It rewrites destination file
+  settings from filesystem paths to `worker.paths` keys (`icinga_hosts_file`,
+  `dns_dest_file`, `lego_yaml`, and the rest). The paths stay in each
+  worker's `worker.paths`. Stop `factum2-web` before migrating by hand.
+  After it, a destination sync refuses a settings value that is still a
+  path.
 - Run `factum2-netbox check --update` so `source` is assigned to devices,
   interfaces, IP addresses, and virtual machines. Copy existing `becs_oid`
   values with `examples/netbox_migrate_source_field.py` (source plus

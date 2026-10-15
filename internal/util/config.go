@@ -245,10 +245,10 @@ type ConfigWorkerCommand struct {
 	AllowArgs []string `boa:"configonly" yaml:"allow_args" optional:"true"`
 }
 
-// ConfigWorkerPaths pins binaries and output files this host will run or
-// write. The primary still stores the same paths in Settings; a worker
-// uses a path only when it matches the pin here. Empty means that writer
-// refuses the database value.
+// ConfigWorkerPaths maps a destination key to a file or binary on this
+// host. Admin → Destinations stores the key (for example
+// icinga_hosts_file). The path is only here. ResolvePinnedKey refuses a
+// filesystem path sent by the primary.
 type ConfigWorkerPaths struct {
 	LegoBin            string `boa:"configonly" yaml:"lego_bin" optional:"true"`
 	LegoYaml           string `boa:"configonly" yaml:"lego_yaml" optional:"true"`

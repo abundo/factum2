@@ -9,10 +9,10 @@ const certKeyTypeItems = [
 ]
 
 function fillCertsDefaults(settings) {
-  if (!settings.certs_lego_yaml) settings.certs_lego_yaml = '/var/lib/lego/.lego.yaml'
-  if (!settings.certs_env_file) settings.certs_env_file = '/var/lib/lego/.env'
-  if (!settings.certs_lego_bin) settings.certs_lego_bin = 'lego'
-  if (!settings.certs_lego_storage) settings.certs_lego_storage = '/var/lib/lego/storage'
+  if (!settings.certs_lego_yaml) settings.certs_lego_yaml = 'lego_yaml'
+  if (!settings.certs_env_file) settings.certs_env_file = 'lego_env'
+  if (!settings.certs_lego_bin) settings.certs_lego_bin = 'lego_bin'
+  if (!settings.certs_lego_storage) settings.certs_lego_storage = 'lego_storage'
   if (!settings.certs_default_key_type) settings.certs_default_key_type = 'EC256'
 }
 
@@ -38,40 +38,53 @@ function onCertsToggle(settings, val) {
       lego. Certificate distribution and service restarts are out of scope.</small
     >
     <div>
-      <label for="certs_lego_yaml" class="block font-bold mb-3">lego YAML path</label>
+      <label for="certs_lego_yaml" class="block font-bold mb-3">lego YAML</label>
       <UInput
         id="certs_lego_yaml"
         v-model="settings.certs_lego_yaml"
-        placeholder="/var/lib/lego/.lego.yaml"
+        placeholder="lego_yaml"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The path is set only in each worker's factum2-worker.yaml.</small
+      >
     </div>
     <div>
-      <label for="certs_env_file" class="block font-bold mb-3">.env path</label>
+      <label for="certs_env_file" class="block font-bold mb-3">.env file</label>
       <UInput
         id="certs_env_file"
         v-model="settings.certs_env_file"
-        placeholder="/var/lib/lego/.env"
+        placeholder="lego_env"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The path is set only in each worker's factum2-worker.yaml.</small
+      >
     </div>
     <div>
       <label for="certs_lego_bin" class="block font-bold mb-3">lego binary</label>
       <UInput
         id="certs_lego_bin"
         v-model="settings.certs_lego_bin"
-        placeholder="lego"
+        placeholder="lego_bin"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The binary path or command name is set only in each worker's
+        factum2-worker.yaml.</small
+      >
     </div>
     <div>
       <label for="certs_lego_storage" class="block font-bold mb-3">lego storage dir</label>
       <UInput
         id="certs_lego_storage"
         v-model="settings.certs_lego_storage"
-        placeholder="/var/lib/lego"
+        placeholder="lego_storage"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The directory is set only in each worker's factum2-worker.yaml.</small
+      >
     </div>
     <div>
       <label for="certs_default_key_type" class="block font-bold mb-3"

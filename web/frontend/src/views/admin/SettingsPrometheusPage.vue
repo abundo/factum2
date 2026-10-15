@@ -20,9 +20,13 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
       <UInput
         id="prometheus_dest_file"
         v-model="settings.prometheus_dest_file"
-        placeholder="/etc/prometheus/snmp_targets.json"
+        placeholder="prometheus_dest_file"
         class="w-full"
       />
+      <p class="text-muted-color mt-1">
+        worker.paths key. The file_sd JSON path is set only in each worker's factum2-worker.yaml.
+        Leave blank to use prometheus_dest_file.
+      </p>
     </div>
     <div>
       <label for="prometheus_reload_url" class="block font-bold mb-3">Reload URL</label>

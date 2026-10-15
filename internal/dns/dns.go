@@ -48,20 +48,20 @@ func NewDNSClient(config *util.ConfigAgentRoot) (*DNSClient, error) {
 }
 
 func applyWorkerPaths(cfg *Config, paths util.ConfigWorkerPaths) error {
-	dest, err := util.PinnedPath(paths.DNSDestFile, cfg.DestFile, "worker.paths.dns_dest_file")
+	dest, err := util.ResolvePinnedKey(paths, cfg.DestFile, util.KeyDNSDestFile, false, false)
 	if err != nil {
 		return err
 	}
 	cfg.DestFile = dest
 	if cfg.ZonesEnabled || strings.TrimSpace(cfg.ZonesFile) != "" {
-		zones, err := util.PinnedPath(paths.DNSZonesFile, cfg.ZonesFile, "worker.paths.dns_zones_file")
+		zones, err := util.ResolvePinnedKey(paths, cfg.ZonesFile, util.KeyDNSZonesFile, false, false)
 		if err != nil {
 			return err
 		}
 		cfg.ZonesFile = zones
 	}
 	if cfg.DhcpEnabled || strings.TrimSpace(cfg.PrefixesFile) != "" {
-		prefixes, err := util.PinnedPath(paths.DNSPrefixesFile, cfg.PrefixesFile, "worker.paths.dns_prefixes_file")
+		prefixes, err := util.ResolvePinnedKey(paths, cfg.PrefixesFile, util.KeyDNSPrefixesFile, false, false)
 		if err != nil {
 			return err
 		}

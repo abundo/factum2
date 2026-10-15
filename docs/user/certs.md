@@ -26,14 +26,16 @@ Distribution of issued files and restarting services is **out of scope**.
 
 ## Sync
 
-`factum2-certs sync` (worker role `certs`) fetches config from the primary,
-writes:
+`factum2-certs sync` (worker role `certs`) fetches config from the primary.
+The lego YAML, .env, binary, and storage fields are `worker.paths` keys
+(`lego_yaml`, `lego_env`, `lego_bin`, `lego_storage`). The worker writes:
 
-- `.lego.yaml` at **lego YAML path**
-- `.env` at **.env path** (RFC2136 credentials and extra env)
+- `.lego.yaml` at the path for **lego YAML**
+- `.env` at the path for **.env file** (RFC2136 credentials and extra env)
 
-then runs the **lego binary** in the YAML directory. Install
-[lego](https://go-acme.github.io/lego/) on that host.
+then runs the binary named by **lego binary** in the YAML directory. Install
+[lego](https://go-acme.github.io/lego/) on that host and set the paths in
+`factum2-worker.yaml`.
 
 Worker `commands` example:
 

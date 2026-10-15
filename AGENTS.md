@@ -634,9 +634,10 @@ An agent only ever executes commands from its own `worker.commands` map,
 looked up by name. The command line arriving over the wire is never used
 to build a shell command. Extra argv is appended only when that entry's
 `allow_args` lists the token (`--path=*` allows the flag plus one value).
-An empty `allow_args` rejects every wire argument. `worker.paths` pins
-the lego binary and the DNS/Oxidized/Prometheus/Icinga output files; a
-worker writes or executes a database path only when it matches the pin.
+An empty `allow_args` rejects every wire argument. `worker.paths` maps a
+key to the lego binary and the DNS/Oxidized/Prometheus/Icinga output files
+on that host. Admin → Destinations stores the key. The worker resolves it
+locally and refuses a filesystem path from the primary.
 Hub config routes are also limited to the command names in the worker's
 hello (`AllowHubAPIForRoles`), so a DNS worker cannot fetch device-sync
 or NetBox credentials. Keep this indirection intact when touching

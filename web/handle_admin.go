@@ -55,6 +55,9 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	if settings.StorageEnabled != nil && *settings.StorageEnabled {
 		storage.ApplySettingsDefaults(settings)
 	}
+	if err := validateDestinationKeys(settings); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
 	if err := validateBranding(settings.BrandLogo, settings.BrandText); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
@@ -83,6 +86,36 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 
 const maxBrandLogoBytes = 400 * 1024
 const maxBrandTextLen = 80
+
+// validateDestinationKeys requires each destination file field to be empty
+// or a worker.paths key. The filesystem path is not stored here.
+func validateDestinationKeys(s *models.Settings) error {
+	fields := []struct {
+		name  string
+		value *string
+	}{
+		{"dns_dest_file", &s.DnsDestFile},
+		{"dns_zones_file", &s.DnsZonesFile},
+		{"dhcp_prefixes_file", &s.DhcpPrefixesFile},
+		{"certs_lego_yaml", &s.CertsLegoYaml},
+		{"certs_env_file", &s.CertsEnvFile},
+		{"certs_lego_bin", &s.CertsLegoBin},
+		{"certs_lego_storage", &s.CertsLegoStorage},
+		{"icinga_hosts_file", &s.IcingaHostsFile},
+		{"icinga_users_file", &s.IcingaUsersFile},
+		{"icinga_certs_file", &s.IcingaCertsFile},
+		{"oxidized_dest_file", &s.OxidizedDestFile},
+		{"prometheus_dest_file", &s.PrometheusDestFile},
+	}
+	for _, f := range fields {
+		trimmed := strings.TrimSpace(*f.value)
+		if err := util.ValidateWorkerPathKey(trimmed); err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+		*f.value = trimmed
+	}
+	return nil
+}
 
 func validateBranding(logo, text string) error {
 	if len([]rune(text)) > maxBrandTextLen {

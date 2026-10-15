@@ -72,9 +72,10 @@ worker:
     #   args: []
     #   allow_args: ["copy", "-n=*", "--path=*", "--protocol=*", "--job", "--destination=*"]
 
-  # Output paths and the lego binary are pinned here. The same values in
-  # the primary's Settings are accepted only when they match. A worker
-  # refuses a database path that is not listed.
+  # Output files and the lego binary. Admin → Destinations stores the key
+  # (for example icinga_hosts_file), not the path. Each worker maps that
+  # key to its own file. A blank field uses the key named for that field.
+  # A worker refuses a filesystem path sent by the primary.
   # paths:
   #   lego_bin: /usr/bin/lego
   #   lego_yaml: /var/lib/lego/.lego.yaml

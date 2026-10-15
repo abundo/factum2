@@ -129,8 +129,9 @@ node to view the current config, older versions, and diffs.
 Deleted devices are not in that list: `/oxidized` is the current source
 list. Version and diff lookups require the node to still be present.
 
-The destination file Oxidized reads (`router.db`) is written by the
-Oxidized [job](jobs.md), not by this page. This page talks to oxidized-web
+The destination file Oxidized reads (`router.db`) is the `worker.paths`
+path for the key in **Destinations → Oxidized**, written by the Oxidized
+[job](jobs.md), not by this page. This page talks to oxidized-web
 using **Oxidized API URL** on the Destinations tab — that URL must be
 reachable from the Factum primary.
 

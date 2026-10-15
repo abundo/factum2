@@ -3,6 +3,7 @@ package certs
 import (
 	"strings"
 
+	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
 )
 
@@ -41,17 +42,20 @@ func ApplySettingsDefaults(s *models.Settings) {
 	if s == nil {
 		return
 	}
+	// Settings store worker.paths keys. The paths themselves stay in the
+	// worker YAML. ApplyConfigDefaults still fills filesystem paths for a
+	// config that is written without a worker pin.
 	if strings.TrimSpace(s.CertsLegoYaml) == "" {
-		s.CertsLegoYaml = DefaultLegoYAML
+		s.CertsLegoYaml = util.KeyLegoYaml
 	}
 	if strings.TrimSpace(s.CertsEnvFile) == "" {
-		s.CertsEnvFile = DefaultEnvFile
+		s.CertsEnvFile = util.KeyLegoEnv
 	}
 	if strings.TrimSpace(s.CertsLegoBin) == "" {
-		s.CertsLegoBin = DefaultLegoBin
+		s.CertsLegoBin = util.KeyLegoBin
 	}
 	if strings.TrimSpace(s.CertsLegoStorage) == "" {
-		s.CertsLegoStorage = DefaultLegoStorage
+		s.CertsLegoStorage = util.KeyLegoStorage
 	}
 	if strings.TrimSpace(s.CertsDefaultKeyType) == "" {
 		s.CertsDefaultKeyType = DefaultKeyType

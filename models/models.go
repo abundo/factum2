@@ -394,15 +394,18 @@ type Settings struct {
 	BecsEapiOID  uint   `gorm:"column:becs_eapi_oid" form:"becs_eapi_oid" json:"becs_eapi_oid"`
 
 	// DNS
+	// DnsDestFile is a worker.paths key (dns_dest_file). The JSON records
+	// path is only in the worker YAML.
 	DnsDestFile string `gorm:"column:dns_dest_file" form:"dns_dest_file" json:"dns_dest_file"`
 	// IgnoreModels/IgnorePlatforms are newline-separated lists (one model or
 	// platform name per line), edited as a multiline box in the admin UI -
 	// internal/dns.filterDevices skips a device matching either.
 	DnsIgnoreModels    string `gorm:"column:dns_ignore_models;type:text" form:"dns_ignore_models" json:"dns_ignore_models"`
 	DnsIgnorePlatforms string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
-	// DnsZonesFile is the path factum2-dns writes the dnsmgr2 zone-include
-	// YAML to when DnsZonesEnabled is on. Empty skips writing (the
-	// operator lists zones in the main dnsmgr2.yaml).
+	// DnsZonesFile is a worker.paths key (dns_zones_file) for the dnsmgr2
+	// zone-include YAML written when DnsZonesEnabled is on. Empty skips
+	// writing when the zone editor is off (the operator lists zones in
+	// the main dnsmgr2.yaml). The path is only in the worker YAML.
 	DnsZonesFile string `gorm:"column:dns_zones_file" form:"dns_zones_file" json:"dns_zones_file"`
 	// Unused by current factum2-dns (the administrator-managed
 	// dnsmgr2.yaml holds BIND paths and the sqlite serial DB). Kept so
@@ -423,8 +426,9 @@ type Settings struct {
 	// clients (newline-separated). A prefix may override this. Edited on
 	// the Factum tab next to the DHCP feature switch.
 	DhcpDnsServers string `gorm:"column:dhcp_dns_servers;type:text" form:"dhcp_dns_servers" json:"dhcp_dns_servers"`
-	// DhcpPrefixesFile is the path factum2-dns writes the dnsmgr2
-	// prefix-include YAML to when DhcpEnabled is on. Empty skips writing.
+	// DhcpPrefixesFile is a worker.paths key (dns_prefixes_file) for the
+	// dnsmgr2 prefix-include YAML written when DhcpEnabled is on. Empty
+	// skips writing when DHCP is off. The path is only in the worker YAML.
 	DhcpPrefixesFile string `gorm:"column:dhcp_prefixes_file" form:"dhcp_prefixes_file" json:"dhcp_prefixes_file"`
 	// Kea host-template fields. Paths belong in the administrator-managed
 	// dnsmgr2.yaml; these Settings columns remain for existing rows.
@@ -439,8 +443,9 @@ type Settings struct {
 	DhcpKea6TmpDir      string `gorm:"column:dhcp_kea6_tmp_dir" form:"dhcp_kea6_tmp_dir" json:"dhcp_kea6_tmp_dir"`
 	DhcpKea6CmdRestart  string `gorm:"column:dhcp_kea6_cmd_restart" form:"dhcp_kea6_cmd_restart" json:"dhcp_kea6_cmd_restart"`
 
-	// Certificates / lego (https://github.com/go-acme/lego). Paths are
-	// written by factum2-certs on sync. Empty yaml/env paths skip writing.
+	// Certificates / lego (https://github.com/go-acme/lego). These fields
+	// are worker.paths keys (lego_yaml, lego_env, lego_bin, lego_storage).
+	// factum2-certs resolves them on the worker and writes those files.
 	CertsLegoYaml                string `gorm:"column:certs_lego_yaml" form:"certs_lego_yaml" json:"certs_lego_yaml"`
 	CertsEnvFile                 string `gorm:"column:certs_env_file" form:"certs_env_file" json:"certs_env_file"`
 	CertsLegoBin                 string `gorm:"column:certs_lego_bin" form:"certs_lego_bin" json:"certs_lego_bin"`
@@ -463,13 +468,15 @@ type Settings struct {
 	EmailSender string `gorm:"column:email_sender" form:"email_sender" json:"email_sender"`
 
 	// Icinga
-	IcingaApiURL    string `gorm:"column:icinga_api_url" form:"icinga_api_url" json:"icinga_api_url"`
-	IcingaApiUser   string `gorm:"column:icinga_api_user" form:"icinga_api_user" json:"icinga_api_user"`
-	IcingaApiPass   string `gorm:"column:icinga_api_pass" form:"icinga_api_pass" json:"icinga_api_pass"`
+	IcingaApiURL  string `gorm:"column:icinga_api_url" form:"icinga_api_url" json:"icinga_api_url"`
+	IcingaApiUser string `gorm:"column:icinga_api_user" form:"icinga_api_user" json:"icinga_api_user"`
+	IcingaApiPass string `gorm:"column:icinga_api_pass" form:"icinga_api_pass" json:"icinga_api_pass"`
+	// IcingaHostsFile, IcingaUsersFile, and IcingaCertsFile are
+	// worker.paths keys. The Icinga 2 conf paths are only in the worker
+	// YAML. CertsFile is the conf for HTTPS certificate checks (one
+	// Service per certificate name).
 	IcingaHostsFile string `gorm:"column:icinga_hosts_file" form:"icinga_hosts_file" json:"icinga_hosts_file"`
 	IcingaUsersFile string `gorm:"column:icinga_users_file" form:"icinga_users_file" json:"icinga_users_file"`
-	// IcingaCertsFile is the Icinga 2 conf written by factum2-icinga for
-	// HTTPS certificate checks (one Service per certificate name).
 	IcingaCertsFile string `gorm:"column:icinga_certs_file" form:"icinga_certs_file" json:"icinga_certs_file"`
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
 	// per line) that factum2-icinga's Update() skips entirely.
@@ -561,8 +568,8 @@ type Settings struct {
 	OxidizedApiURL  string `gorm:"column:oxidized_api_url" form:"oxidized_api_url" json:"oxidized_api_url"`
 	OxidizedApiUser string `gorm:"column:oxidized_api_user" form:"oxidized_api_user" json:"oxidized_api_user"`
 	OxidizedApiPass string `gorm:"column:oxidized_api_pass" form:"oxidized_api_pass" json:"oxidized_api_pass"`
-	// OxidizedDestFile is oxidized's own router.db - internal/oxidized
-	// writes the filtered device list here (name:ip:model per line).
+	// OxidizedDestFile is a worker.paths key (oxidized_dest_file). The
+	// worker writes oxidized's router.db there (name:ip:model per line).
 	// Oxidized's CSV source must map name: 0, ip: 1, model: 2.
 	OxidizedDestFile string `gorm:"column:oxidized_dest_file" form:"oxidized_dest_file" json:"oxidized_dest_file"`
 	// OxidizedIgnoreDevices/Manufacturers/Models/Platforms are
@@ -574,8 +581,9 @@ type Settings struct {
 	OxidizedIgnoreModels        string `gorm:"column:oxidized_ignore_models;type:text" form:"oxidized_ignore_models" json:"oxidized_ignore_models"`
 	OxidizedIgnorePlatforms     string `gorm:"column:oxidized_ignore_platforms;type:text" form:"oxidized_ignore_platforms" json:"oxidized_ignore_platforms"`
 
-	// Prometheus + snmp_exporter. factum2-prometheus writes a Prometheus
-	// file_sd JSON of SNMP targets (Settings.PrometheusDestFile) from
+	// Prometheus + snmp_exporter. PrometheusDestFile is a worker.paths key
+	// (prometheus_dest_file). factum2-prometheus writes a Prometheus
+	// file_sd JSON of SNMP targets at the path that key names, from
 	// devices flagged CfMonitorGrafana, then POSTs PrometheusReloadURL
 	// if the file changed and a URL is set. Module/Auth are snmp_exporter
 	// names (snmp.yml), not community strings.

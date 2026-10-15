@@ -31,22 +31,22 @@ func NewClient(config *util.ConfigAgentRoot) (*Client, error) {
 }
 
 func applyWorkerPaths(cfg *Config, paths util.ConfigWorkerPaths) error {
-	bin, err := util.PinnedExecutable(paths.LegoBin, cfg.LegoBin, "worker.paths.lego_bin")
+	bin, err := util.ResolvePinnedKey(paths, cfg.LegoBin, util.KeyLegoBin, false, true)
 	if err != nil {
 		return err
 	}
 	cfg.LegoBin = bin
-	yamlPath, err := util.PinnedPath(paths.LegoYaml, cfg.LegoYaml, "worker.paths.lego_yaml")
+	yamlPath, err := util.ResolvePinnedKey(paths, cfg.LegoYaml, util.KeyLegoYaml, false, false)
 	if err != nil {
 		return err
 	}
 	cfg.LegoYaml = yamlPath
-	envPath, err := util.PinnedPath(paths.LegoEnv, cfg.EnvFile, "worker.paths.lego_env")
+	envPath, err := util.ResolvePinnedKey(paths, cfg.EnvFile, util.KeyLegoEnv, false, false)
 	if err != nil {
 		return err
 	}
 	cfg.EnvFile = envPath
-	storage, err := util.PinnedPath(paths.LegoStorage, cfg.LegoStorage, "worker.paths.lego_storage")
+	storage, err := util.ResolvePinnedKey(paths, cfg.LegoStorage, util.KeyLegoStorage, false, false)
 	if err != nil {
 		return err
 	}

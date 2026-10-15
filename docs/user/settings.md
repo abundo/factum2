@@ -61,21 +61,28 @@ DNS, DHCP, Icinga, LibreNMS, Oxidized, Prometheus, and Certificates each have an
 enabled flag under **Admin → Destinations**. DNS, Icinga, LibreNMS, Oxidized,
 and Prometheus also have a destination file or API URL, and ignore lists
 (newline-separated).
-**Destinations → DNS** also has the path of the **dnsmgr2 zone include**
+A destination **file** field stores a `worker.paths` key, such as
+`icinga_hosts_file` or `dns_zones_file`, not a filesystem path. Each worker
+maps that key to a path in `factum2-worker.yaml`. Workers can use different
+paths for the same key. A blank field uses the key named for that field.
+One field may name another key when two outputs should share a file.
+**Destinations → DNS** also has the key of the **dnsmgr2 zone include**
 written when the [zone editor](dns.md) is on. BIND paths, sqlite serial DB,
 and host templates live in the administrator-managed `dnsmgr2.yaml`.
 **Destinations → DHCP** is [DHCP server management](dns.md#dhcp):
 per-prefix DHCP in IPAM, the MAC column on DNS zone records, default DNS
-servers for DHCP clients, and the path of the **dnsmgr2 prefix include**.
+servers for DHCP clients, and the key of the **dnsmgr2 prefix include**
+(`dns_prefixes_file`).
 Kea paths and host templates live in the administrator-managed
 `dnsmgr2.yaml`.
 LibreNMS delayed delete lives under **Destinations → LibreNMS**. Oxidized
 **API URL** is what the GUI Oxidized browser uses; it must be reachable
 from `factum2-web`.
 
-**Destinations → Certificates** is [ACME / lego](certs.md): YAML and dotenv
-paths, lego binary, default key type and Common Name. Sync writes those
-files and runs lego; it does not install certificates on hosts.
+**Destinations → Certificates** is [ACME / lego](certs.md): `lego_yaml`,
+`lego_env`, `lego_bin`, and `lego_storage` keys, plus default key type and
+Common Name. Sync writes the files those keys name on the worker and runs
+lego; it does not install certificates on hosts.
 
 These tools normally run on the destination host, talking back through a
 [worker](jobs.md) — not by opening Postgres from that host.

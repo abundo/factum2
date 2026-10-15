@@ -13,9 +13,13 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
       <UInput
         id="dns_dest_file"
         v-model="settings.dns_dest_file"
-        placeholder="/etc/dnsmgr2/factum2-records.json"
+        placeholder="dns_dest_file"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The JSON records path is set only in each worker's factum2-worker.yaml.
+        Leave blank to use dns_dest_file.</small
+      >
     </div>
     <div>
       <label for="dns_ignore_models" class="block font-bold mb-3">Ignore models</label>
@@ -42,14 +46,16 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
       <UInput
         id="dns_zones_file"
         v-model="settings.dns_zones_file"
-        placeholder="/etc/dnsmgr2/factum2-zones.yaml"
+        placeholder="dns_zones_file"
         class="w-full"
       />
       <small class="text-muted-color"
-        >YAML zone list written by factum2-dns when the zone editor or DHCP is on. Add it as its own
-        item in the administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
+        >worker.paths key, for example dns_zones_file. factum2-dns writes the YAML zone list at the
+        path that key names on the worker when the zone editor is on. Add that path as its own item
+        in the administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
         <code>- include: /etc/dnsmgr2/factum2-zones.yaml</code>
-        (after the <code>host_dns_template</code> entry). Leave blank to skip writing.</small
+        (after the <code>host_dns_template</code> entry). Leave blank to skip writing when the zone
+        editor is off.</small
       >
     </div>
   </SettingsFormPage>

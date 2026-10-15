@@ -53,9 +53,13 @@ import {
       <UInput
         id="icinga_hosts_file"
         v-model="settings.icinga_hosts_file"
-        placeholder="/etc/icinga2/conf.d/factum2-hosts.conf"
+        placeholder="icinga_hosts_file"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key. The file path is set only in each worker's factum2-worker.yaml. Leave
+        blank to use icinga_hosts_file.</small
+      >
     </div>
     <GoTemplateField
       id="icinga_host_template"
@@ -77,9 +81,13 @@ import {
       <UInput
         id="icinga_users_file"
         v-model="settings.icinga_users_file"
-        placeholder="/etc/icinga2/conf.d/factum2-users.conf"
+        placeholder="icinga_users_file"
         class="w-full"
       />
+      <small class="text-muted-color"
+        >worker.paths key, for example icinga_users_file. The file path is set only in each worker's
+        factum2-worker.yaml. Leave blank to use icinga_users_file.</small
+      >
     </div>
     <GoTemplateField
       id="icinga_user_template"
@@ -94,12 +102,14 @@ import {
       <UInput
         id="icinga_certs_file"
         v-model="settings.icinga_certs_file"
-        placeholder="/etc/icinga2/conf.d/factum2-certificates.conf"
+        placeholder="icinga_certs_file"
         class="w-full"
       />
       <small class="text-muted-color"
-        >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it next to
-        the hosts and users files. Leave blank to skip writing.</small
+        >worker.paths key, for example icinga_certs_file. factum2-icinga writes the Icinga 2 conf
+        for HTTPS certificate checks at the path that key names on the worker. Include that path
+        next to the hosts and users files. Leave blank to skip writing when icinga_certs_file is not
+        set on the worker.</small
       >
     </div>
     <GoTemplateField

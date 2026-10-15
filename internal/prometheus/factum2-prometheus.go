@@ -34,7 +34,7 @@ func NewFactumPrometheusClient(root *util.ConfigAgentRoot) (*FactumPrometheusCli
 	if err != nil {
 		return nil, err
 	}
-	dest, err := util.PinnedPath(root.Worker.Paths.PrometheusDestFile, prometheusConfig.DestFile, "worker.paths.prometheus_dest_file")
+	dest, err := util.ResolvePinnedKey(root.Worker.Paths, prometheusConfig.DestFile, util.KeyPrometheusDestFile, false, false)
 	if err != nil {
 		return nil, err
 	}
