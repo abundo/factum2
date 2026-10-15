@@ -37,13 +37,13 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
       <UInput
         id="dhcp_prefixes_file"
         v-model="settings.dhcp_prefixes_file"
-        placeholder="/etc/dnsmgr2/prefixes.yaml"
+        placeholder="/etc/dnsmgr2/factum2-prefixes.yaml"
         class="w-full"
       />
       <small class="text-muted-color"
         >YAML prefix list written by factum2-dns when DHCP is on. Add it as its own item in the
         administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
-        <code>- include: /etc/dnsmgr2/prefixes.yaml</code>
+        <code>- include: /etc/dnsmgr2/factum2-prefixes.yaml</code>
         (after the <code>host_dhcp_template</code> entry). Leave blank to skip writing.</small
       >
     </div>

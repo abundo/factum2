@@ -69,7 +69,7 @@ main config after `host_dhcp_template`:
 
     dnsmgr2:
       - host_dhcp_template: isc_kea
-      - include: /etc/dnsmgr2/prefixes.yaml
+      - include: /etc/dnsmgr2/factum2-prefixes.yaml
 
 Reverse zones use a prefix as the name (`192.168.0.0/16`,
 `2001:db8::/32`), matching dnsmgr2.
@@ -89,10 +89,11 @@ config:
 
     dnsmgr2:
       - host_dns_template: isc_bind
-      - include: /etc/dnsmgr2/zones.yaml
+      - include: /etc/dnsmgr2/factum2-zones.yaml
 
-The **Destination file** is still the JSON records file
-(`sources[].type: json`, `sources[].name`). An empty include-file path
+The **Destination file** is the JSON records file
+(`sources[].type: json`, `sources[].name`), for example
+`/etc/dnsmgr2/factum2-records.json`. An empty include-file path
 means "do not write a zone list" (zones stay inline in the main yaml).
 
 ## Sync

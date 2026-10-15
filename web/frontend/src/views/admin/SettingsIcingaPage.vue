@@ -50,7 +50,12 @@ import {
     />
     <div>
       <label for="icinga_hosts_file" class="block font-bold mb-3">Hosts file</label>
-      <UInput id="icinga_hosts_file" v-model="settings.icinga_hosts_file" class="w-full" />
+      <UInput
+        id="icinga_hosts_file"
+        v-model="settings.icinga_hosts_file"
+        placeholder="/etc/icinga2/conf.d/factum2-hosts.conf"
+        class="w-full"
+      />
     </div>
     <GoTemplateField
       id="icinga_host_template"
@@ -69,7 +74,12 @@ import {
     />
     <div>
       <label for="icinga_users_file" class="block font-bold mb-3">Users file</label>
-      <UInput id="icinga_users_file" v-model="settings.icinga_users_file" class="w-full" />
+      <UInput
+        id="icinga_users_file"
+        v-model="settings.icinga_users_file"
+        placeholder="/etc/icinga2/conf.d/factum2-users.conf"
+        class="w-full"
+      />
     </div>
     <GoTemplateField
       id="icinga_user_template"
@@ -81,7 +91,12 @@ import {
     />
     <div>
       <label for="icinga_certs_file" class="block font-bold mb-3">Certificates file</label>
-      <UInput id="icinga_certs_file" v-model="settings.icinga_certs_file" class="w-full" />
+      <UInput
+        id="icinga_certs_file"
+        v-model="settings.icinga_certs_file"
+        placeholder="/etc/icinga2/conf.d/factum2-certificates.conf"
+        class="w-full"
+      />
       <small class="text-muted-color"
         >Icinga 2 conf written by factum2-icinga for HTTPS certificate checks. Include it next to
         the hosts and users files. Leave blank to skip writing.</small

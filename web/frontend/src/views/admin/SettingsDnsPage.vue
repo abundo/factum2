@@ -10,7 +10,12 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
     </div>
     <div>
       <label for="dns_dest_file" class="block font-bold mb-3">Destination file</label>
-      <UInput id="dns_dest_file" v-model="settings.dns_dest_file" class="w-full" />
+      <UInput
+        id="dns_dest_file"
+        v-model="settings.dns_dest_file"
+        placeholder="/etc/dnsmgr2/factum2-records.json"
+        class="w-full"
+      />
     </div>
     <div>
       <label for="dns_ignore_models" class="block font-bold mb-3">Ignore models</label>
@@ -37,13 +42,13 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
       <UInput
         id="dns_zones_file"
         v-model="settings.dns_zones_file"
-        placeholder="/etc/dnsmgr2/zones.yaml"
+        placeholder="/etc/dnsmgr2/factum2-zones.yaml"
         class="w-full"
       />
       <small class="text-muted-color"
         >YAML zone list written by factum2-dns when the zone editor or DHCP is on. Add it as its own
         item in the administrator-managed <code>/etc/dnsmgr2/dnsmgr2.yaml</code>:
-        <code>- include: /etc/dnsmgr2/zones.yaml</code>
+        <code>- include: /etc/dnsmgr2/factum2-zones.yaml</code>
         (after the <code>host_dns_template</code> entry). Leave blank to skip writing.</small
       >
     </div>
