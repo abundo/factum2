@@ -34,10 +34,14 @@ const editLabel = ref('')
 const editA = ref(null)
 const editB = ref(null)
 const points = ref({})
-const drag = ref(null)
-const pending = ref(null)
-const hoverKey = ref('')
+const deviceDrag = ref(null)
+const deviceHover = ref(-1)
 const ringTip = ref(null)
+const createOpen = ref(false)
+const createFrom = ref(0)
+const createTo = ref(0)
+const pickA = ref(null)
+const pickB = ref(null)
 let dragCleanup = null
 let scrollRaf = 0
 let lastPointer = { x: 0, y: 0 }
@@ -104,7 +108,18 @@ function deviceAt(index) {
 }
 
 function portsAt(index) {
-  return sortedIfaces(deviceAt(index)?.interfaces).filter(isPhysical)
+  return sortedIfaces(deviceAt(index)?.interfaces).filter(
+    (iface) => isPhysical(iface) && iface.connection,
+  )
+}
+
+function dialogPorts(deviceId) {
+  const dev = byId.value[deviceId]
+  return sortedIfaces(dev?.interfaces).filter(isPhysical)
+}
+
+function deviceName(id) {
+  return byId.value[id]?.name || 'Device'
 }
 
 function tipText(iface) {
@@ -124,70 +139,32 @@ function cableSide(iface, index) {
   return null
 }
 
-function isAdjacentCable(iface, index) {
-  return !!cableSide(iface, index)
-}
-
 function portKey(index, ifaceId, dir) {
   return `${index}:${ifaceId}:${dir}`
 }
 
-function linking() {
-  return drag.value || pending.value
-}
-
-function targetIndex(fromIndex, fromDir) {
-  return fromDir === 'left' ? fromIndex - 1 : fromIndex + 1
-}
-
-function isValidDrop(iface, index) {
-  const from = linking()
-  if (!from) return false
-  if (targetIndex(from.fromIndex, from.fromDir) !== index) return false
-  if (iface.id === from.fromId && index === from.fromIndex) return false
-  if (!iface.connection) return true
-  return !!(from.reconnectId && iface.connection.id === from.reconnectId)
-}
-
-function handleClass(iface, index, dir) {
-  const drop =
-    isValidDrop(iface, index) &&
-    (!iface.connection || dir === cableSide(iface, index) || !iface.connection)
-  const hot = drop && hoverKey.value === portKey(index, iface.id, dir)
-  const mine =
-    pending.value && pending.value.fromIndex === index && pending.value.fromId === iface.id
-  const connectedHere = cableSide(iface, index) === dir
-  const parts = [
-    'relative z-10 size-5 shrink-0 rounded-full border-2 shadow-sm transition-transform touch-none',
-  ]
-  if (iface.connection) {
-    parts.push(
-      iface.connection.source === 'netbox'
-        ? 'cursor-pointer border-warning bg-warning'
-        : 'cursor-pointer border-primary bg-primary',
-    )
-  } else {
-    parts.push(
-      props.canWrite
-        ? 'cursor-grab border-primary bg-default'
-        : 'cursor-default border-primary bg-default',
-    )
-  }
-  if (drop && !iface.connection) parts.push('scale-110 border-success bg-success')
-  if (drop && connectedHere) parts.push('scale-110 border-success bg-success')
-  if (mine && pending.value.fromDir === dir) parts.push('scale-110 ring-2 ring-primary')
-  if (hot) parts.push('scale-125 ring-2 ring-success')
+function handleClass(iface) {
+  const parts = ['relative z-10 size-5 shrink-0 rounded-full border-2 shadow-sm touch-none']
+  parts.push(
+    iface.connection?.source === 'netbox'
+      ? 'cursor-pointer border-warning bg-warning'
+      : 'cursor-pointer border-primary bg-primary',
+  )
   return parts.join(' ')
 }
 
 function showHandle(iface, index, dir) {
   const side = cableSide(iface, index)
-  if (iface.connection && side) return side === dir
-  const hasPrev = index > 0 && !!columns.value[index - 1]
-  const hasNext = !!columns.value[index + 1]
-  if (iface.connection) return dir === 'right'
-  if (dir === 'left') return hasPrev
-  return hasNext || !hasPrev
+  if (side) return side === dir
+  return !!iface.connection && dir === 'right'
+}
+
+function columnClass(index) {
+  const d = deviceDrag.value
+  if (!d?.moved) return ''
+  if (d.fromIndex === index) return 'ring-2 ring-primary'
+  if (deviceHover.value === index && columns.value[index]) return 'ring-2 ring-success'
+  return ''
 }
 
 function load() {
@@ -294,21 +271,20 @@ function cablePath(c) {
   return `M ${p1.x} ${p1.y} C ${p1.x + dx * dir} ${p1.y}, ${p2.x - dx * dir} ${p2.y}, ${p2.x} ${p2.y}`
 }
 
-const dragPath = computed(() => {
-  const d = drag.value
-  if (!d || !stage.value) return ''
+const deviceDragPath = computed(() => {
+  const d = deviceDrag.value
+  if (!d?.moved || !stage.value) return ''
+  const col = stage.value.querySelector(`[data-device-col="${d.fromIndex}"]`)
+  if (!col) return ''
   const box = stage.value.getBoundingClientRect()
-  const from = points.value[portKey(d.fromIndex, d.fromId, d.fromDir)]
-  if (!from) return ''
-  const x = d.x - box.left
-  const y = d.y - box.top
-  const dx = Math.max(40, Math.abs(x - from.x) / 2)
-  return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${x - dx} ${y}, ${x} ${y}`
+  const r = col.getBoundingClientRect()
+  const x1 = r.left + r.width / 2 - box.left
+  const y1 = r.top + 28 - box.top
+  const x2 = d.x - box.left
+  const y2 = d.y - box.top
+  const dx = Math.max(40, Math.abs(x2 - x1) / 2)
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`
 })
-
-function findIface(index, id) {
-  return (deviceAt(index)?.interfaces || []).find((p) => p.id === id) || null
-}
 
 function stopAutoScroll() {
   if (!scrollRaf) return
@@ -335,41 +311,44 @@ function overflowAncestors(el) {
 
 function autoScrollStep() {
   scrollRaf = 0
-  if (!drag.value) return
+  if (!deviceDrag.value) return
+  const x = lastPointer.x
   const y = lastPointer.y
   const edge = 64
   let moved = false
   const nodes = overflowAncestors(scroller.value || stage.value)
+  if (scroller.value && !nodes.includes(scroller.value)) nodes.unshift(scroller.value)
   for (const el of nodes) {
     const box = el.getBoundingClientRect()
+    let dx = 0
     let dy = 0
-    if (y < box.top + edge) {
-      dy = -Math.max(4, Math.min(28, (box.top + edge - y) / 3))
-    } else if (y > box.bottom - edge) {
-      dy = Math.max(4, Math.min(28, (y - (box.bottom - edge)) / 3))
-    }
-    if (!dy) continue
+    if (y < box.top + edge) dy = -Math.max(4, Math.min(28, (box.top + edge - y) / 3))
+    else if (y > box.bottom - edge) dy = Math.max(4, Math.min(28, (y - (box.bottom - edge)) / 3))
+    if (x < box.left + edge) dx = -Math.max(4, Math.min(28, (box.left + edge - x) / 3))
+    else if (x > box.right - edge) dx = Math.max(4, Math.min(28, (x - (box.right - edge)) / 3))
+    if (!dx && !dy) continue
     el.scrollTop += dy
+    el.scrollLeft += dx
     moved = true
   }
   if (!moved) return
   measure()
-  if (drag.value) drag.value = { ...drag.value, x: lastPointer.x, y: lastPointer.y }
+  if (deviceDrag.value) deviceDrag.value = { ...deviceDrag.value, x: lastPointer.x, y: lastPointer.y }
   scrollRaf = requestAnimationFrame(autoScrollStep)
 }
 
-function handleUnderPoint(x, y) {
+function columnUnderPoint(x, y) {
   const stack = document.elementsFromPoint?.(x, y) ?? [document.elementFromPoint(x, y)]
   for (const el of stack) {
-    const handle = el?.closest?.('[data-port-handle]')
-    if (handle) return handle
+    const col = el?.closest?.('[data-device-col]')
+    if (col) return Number(col.getAttribute('data-device-col'))
   }
-  return null
+  return -1
 }
 
 function stopDragListen() {
   stopAutoScroll()
-  hoverKey.value = ''
+  deviceHover.value = -1
   ringTip.value = null
   if (!dragCleanup) return
   dragCleanup()
@@ -378,133 +357,79 @@ function stopDragListen() {
 
 function onStageScroll() {
   measure()
-  if (drag.value) drag.value = { ...drag.value }
+  if (deviceDrag.value) deviceDrag.value = { ...deviceDrag.value }
 }
 
 function onDragWheel(e) {
-  if (!drag.value || !scroller.value) return
+  if (!deviceDrag.value || !scroller.value) return
   scroller.value.scrollTop += e.deltaY
+  scroller.value.scrollLeft += e.deltaX
   measure()
-  drag.value = { ...drag.value }
+  deviceDrag.value = { ...deviceDrag.value }
 }
 
-function onPointerMove(e) {
-  if (!drag.value) return
+function onDeviceMove(e) {
+  const d = deviceDrag.value
+  if (!d) return
   lastPointer = { x: e.clientX, y: e.clientY }
-  const dx = e.clientX - drag.value.originX
-  const dy = e.clientY - drag.value.originY
-  const moved = drag.value.moved || dx * dx + dy * dy > 16
-  if (moved) pending.value = null
-  const handle = handleUnderPoint(e.clientX, e.clientY)
-  hoverKey.value = handle?.getAttribute('data-port-key') || ''
-  if (handle) {
-    showRingTip(
-      e,
-      findIface(
-        Number(handle.getAttribute('data-col')),
-        Number(handle.getAttribute('data-iface-id')),
-      ),
-    )
-  } else {
-    ringTip.value = null
-  }
-  drag.value = { ...drag.value, x: e.clientX, y: e.clientY, moved }
+  const dx = e.clientX - d.originX
+  const dy = e.clientY - d.originY
+  const moved = d.moved || dx * dx + dy * dy > 16
+  deviceHover.value = columnUnderPoint(e.clientX, e.clientY)
+  deviceDrag.value = { ...d, x: e.clientX, y: e.clientY, moved }
   if (!scrollRaf) scrollRaf = requestAnimationFrame(autoScrollStep)
 }
 
-function onPointerUp(e) {
-  const d = drag.value
-  const handle = handleUnderPoint(e.clientX, e.clientY)
-  const toId = handle ? Number(handle.getAttribute('data-iface-id')) : 0
-  const toIndex = handle ? Number(handle.getAttribute('data-col')) : -1
-  const iface = toId ? findIface(toIndex, toId) : null
-  // isValidDrop reads the in-progress drag, so decide before clearing it.
-  const valid = !!(iface && isValidDrop(iface, toIndex))
+function onDeviceUp(e) {
+  const d = deviceDrag.value
+  const to = columnUnderPoint(e.clientX, e.clientY)
+  const moved = !!d?.moved
   stopDragListen()
-  drag.value = null
-  if (!d) return
-  if (!valid) {
-    if (!d.moved) {
-      const from = findIface(d.fromIndex, d.fromId)
-      if (from?.connection) {
-        follow(d.fromIndex, from)
-        return
-      }
-      togglePending(d.fromId, d.fromIndex, d.fromDir)
-    }
-    return
-  }
-  connectPorts(d.fromId, toId, d.reconnectId)
+  deviceDrag.value = null
+  if (!d || !moved) return
+  if (to < 0 || to === d.fromIndex) return
+  if (!columns.value[to] || !deviceAt(to) || !deviceAt(d.fromIndex)) return
+  openCreate(d.fromIndex, to)
 }
 
-function startDrag(e, iface, index, dir) {
-  if (!showHandle(iface, index, dir)) return
-  if (!props.canWrite) {
-    if (iface.connection) follow(index, iface)
-    return
-  }
-  if (iface.connection && !isAdjacentCable(iface, index)) {
-    follow(index, iface)
-    return
-  }
-  if (iface.connection && cableSide(iface, index) !== dir) return
+function startDeviceDrag(e, index) {
+  if (!props.canWrite || !deviceAt(index)) return
   e.preventDefault()
-  drag.value = {
-    fromId: iface.id,
+  deviceDrag.value = {
     fromIndex: index,
-    fromDir: dir,
     x: e.clientX,
     y: e.clientY,
     originX: e.clientX,
     originY: e.clientY,
     moved: false,
-    reconnectId: cableSide(iface, index) === dir ? iface.connection.id : null,
   }
   lastPointer = { x: e.clientX, y: e.clientY }
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointermove', onDeviceMove)
+  window.addEventListener('pointerup', onDeviceUp)
   window.addEventListener('wheel', onDragWheel, { passive: true })
   dragCleanup = () => {
-    window.removeEventListener('pointermove', onPointerMove)
-    window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointermove', onDeviceMove)
+    window.removeEventListener('pointerup', onDeviceUp)
     window.removeEventListener('wheel', onDragWheel)
   }
 }
 
-function togglePending(ifaceId, index, dir) {
-  if (!props.canWrite) return
-  if (!pending.value) {
-    pending.value = { fromId: ifaceId, fromIndex: index, fromDir: dir, reconnectId: null }
-    return
-  }
-  if (pending.value.fromId === ifaceId && pending.value.fromIndex === index) {
-    pending.value = null
-    return
-  }
-  if (targetIndex(pending.value.fromIndex, pending.value.fromDir) !== index) {
-    pending.value = { fromId: ifaceId, fromIndex: index, fromDir: dir, reconnectId: null }
-    return
-  }
-  const fromId = pending.value.fromId
-  pending.value = null
-  connectPorts(fromId, ifaceId, null)
+function openCreate(fromIndex, toIndex) {
+  createFrom.value = columns.value[fromIndex]
+  createTo.value = columns.value[toIndex]
+  pickA.value = null
+  pickB.value = null
+  createOpen.value = true
 }
 
-function connectPorts(fromId, toId, reconnectId) {
-  if (!props.canWrite) return
-  const payload = { interface_a_id: fromId, interface_b_id: toId, label: '' }
-  const req = reconnectId
-    ? updateConnection(reconnectId, { ...payload, label: labelFor(reconnectId) })
-    : createConnection(payload)
-  req
-    .then(() => load())
-    .catch((err) =>
-      toast.add({ color: 'error', title: 'Could not save cable', description: errMsg(err) }),
-    )
+function chooseIface(deviceId, iface) {
+  if (iface.connection) return
+  if (deviceId === createFrom.value) pickA.value = iface.id
+  else pickB.value = iface.id
 }
 
-function labelFor(id) {
-  return findCable(id)?.label || ''
+function pickedId(deviceId) {
+  return deviceId === createFrom.value ? pickA.value : pickB.value
 }
 
 function selectCable(c) {
@@ -531,6 +456,42 @@ watch(selected, async (cable) => {
 
 function closeSelected() {
   closeCable()
+}
+
+const createGuardOpen = ref(false)
+const createForm = computed(() => ({ a: pickA.value, b: pickB.value }))
+const { close: closeCreateGuard } = useFormGuard(createForm, createGuardOpen, () => {
+  createOpen.value = false
+})
+
+watch(createOpen, async (open) => {
+  createGuardOpen.value = false
+  if (!open) return
+  await nextTick()
+  createGuardOpen.value = true
+})
+
+function closeCreate() {
+  closeCreateGuard()
+}
+
+function saveCreate() {
+  if (!props.canWrite || !pickA.value || !pickB.value) return
+  saving.value = true
+  createConnection({ interface_a_id: pickA.value, interface_b_id: pickB.value, label: '' })
+    .then(() => {
+      pickA.value = null
+      pickB.value = null
+      createGuardOpen.value = false
+      createOpen.value = false
+      return load()
+    })
+    .catch((err) =>
+      toast.add({ color: 'error', title: 'Could not save cable', description: errMsg(err) }),
+    )
+    .finally(() => {
+      saving.value = false
+    })
 }
 
 function saveSelected() {
@@ -611,10 +572,10 @@ watch(drawnCables, () => nextTick(measure))
   <div class="flex min-h-0 flex-1 flex-col gap-3">
     <div class="flex flex-wrap items-center gap-3 shrink-0">
       <p class="text-muted text-sm m-0">
-        Physical interfaces only. Point at a port circle to see where it connects, and click a
-        connected circle to open that device in the next column. Drag between circles on
-        neighbouring devices to create a cable, or click one free port then the other. Click a cable
-        line to change or remove it.
+        Connected physical interfaces only. Point at a port circle to see where it connects, and
+        click it to open that device in the next column. Drag from one device onto another to
+        create a cable, then pick one interface on each side and save. Click a cable line to change
+        or remove it.
       </p>
       <UButton
         label="Add device"
@@ -631,7 +592,7 @@ watch(drawnCables, () => nextTick(measure))
       ref="scroller"
       data-pair-scroller
       class="flex min-h-0 flex-1 gap-3 overflow-auto"
-      :class="drag ? 'select-none cursor-grabbing' : ''"
+      :class="deviceDrag ? 'select-none cursor-grabbing' : ''"
       @scroll="onStageScroll"
     >
       <div ref="stage" class="relative flex min-h-full w-max items-start gap-8 p-2">
@@ -639,8 +600,20 @@ watch(drawnCables, () => nextTick(measure))
           v-for="(deviceId, index) in columns"
           :key="index"
           class="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-default bg-default p-1.5"
+          :class="columnClass(index)"
+          :data-device-col="index"
         >
           <div class="flex items-center gap-0.5">
+            <button
+              v-if="canWrite && deviceAt(index)"
+              type="button"
+              title="Drag onto another device to connect"
+              class="inline-flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted hover:bg-elevated"
+              data-device-grip
+              @pointerdown="startDeviceDrag($event, index)"
+            >
+              <UIcon name="i-lucide-grip-vertical" class="size-4" />
+            </button>
             <USelectMenu
               :model-value="deviceId || undefined"
               :items="deviceChoices(index)"
@@ -668,17 +641,12 @@ watch(drawnCables, () => nextTick(measure))
             <div
               v-for="iface in portsAt(index)"
               :key="iface.id"
-              class="flex items-center gap-1 rounded px-0.5 py-0.5"
-              :class="
-                pending?.fromId === iface.id && pending?.fromIndex === index
-                  ? 'bg-primary/10'
-                  : 'hover:bg-elevated/60'
-              "
+              class="grid grid-cols-[1.25rem_minmax(0,1fr)_1.25rem] items-center gap-1 rounded px-0.5 py-0.5 hover:bg-elevated/60"
             >
               <button
                 v-if="showHandle(iface, index, 'left')"
                 type="button"
-                :class="handleClass(iface, index, 'left')"
+                :class="handleClass(iface)"
                 :data-port-handle="true"
                 :data-port-key="portKey(index, iface.id, 'left')"
                 :data-iface-id="iface.id"
@@ -687,9 +655,10 @@ watch(drawnCables, () => nextTick(measure))
                 @pointerenter="showRingTip($event, iface)"
                 @pointermove="showRingTip($event, iface)"
                 @pointerleave="ringTip = null"
-                @pointerdown="startDrag($event, iface, index, 'left')"
+                @click="follow(index, iface)"
               />
-              <div class="min-w-0 flex-1 leading-tight">
+              <span v-else class="size-5" />
+              <div class="min-w-0 leading-tight text-center">
                 <div class="truncate font-mono text-xs">{{ iface.name }}</div>
                 <div v-if="iface.description" class="truncate text-[10px] text-muted">
                   {{ iface.description }}
@@ -698,7 +667,7 @@ watch(drawnCables, () => nextTick(measure))
               <button
                 v-if="showHandle(iface, index, 'right')"
                 type="button"
-                :class="handleClass(iface, index, 'right')"
+                :class="handleClass(iface) + ' justify-self-end'"
                 :data-port-handle="true"
                 :data-port-key="portKey(index, iface.id, 'right')"
                 :data-iface-id="iface.id"
@@ -707,12 +676,11 @@ watch(drawnCables, () => nextTick(measure))
                 @pointerenter="showRingTip($event, iface)"
                 @pointermove="showRingTip($event, iface)"
                 @pointerleave="ringTip = null"
-                @pointerdown="startDrag($event, iface, index, 'right')"
+                @click="follow(index, iface)"
               />
+              <span v-else class="size-5 justify-self-end" />
             </div>
-            <div v-if="!portsAt(index).length" class="text-xs text-muted">
-              No physical interfaces.
-            </div>
+            <div v-if="!portsAt(index).length" class="text-xs text-muted">No connections.</div>
           </div>
           <div v-else-if="!deviceId" class="text-xs text-muted">Select a device.</div>
         </div>
@@ -744,8 +712,8 @@ watch(drawnCables, () => nextTick(measure))
             stroke-width="2.5"
           />
           <path
-            v-if="dragPath"
-            :d="dragPath"
+            v-if="deviceDragPath"
+            :d="deviceDragPath"
             fill="none"
             stroke="var(--ui-primary)"
             stroke-dasharray="4 4"
@@ -823,6 +791,65 @@ watch(drawnCables, () => nextTick(measure))
             @click="closeSelected"
           />
           <UButton v-if="selectedWritable" label="Save" :loading="saving" @click="saveSelected" />
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="createOpen"
+      :dismissible="false"
+      title="New cable"
+      :ui="wideModal"
+      @update:open="(v) => !v && closeCreate()"
+    >
+      <template #body>
+        <p class="mb-3 text-sm text-muted">
+          Pick one free interface on each device. Connected interfaces cannot take another cable.
+        </p>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div v-for="id in [createFrom, createTo]" :key="id" class="min-w-0">
+            <div class="mb-2 truncate text-sm font-medium">{{ deviceName(id) }}</div>
+            <div class="flex max-h-80 flex-col gap-1 overflow-auto">
+              <button
+                v-for="iface in dialogPorts(id)"
+                :key="iface.id"
+                type="button"
+                class="rounded border px-2 py-1 text-left"
+                :disabled="!!iface.connection"
+                :class="
+                  iface.connection
+                    ? 'cursor-not-allowed border-transparent opacity-60'
+                    : pickedId(id) === iface.id
+                      ? 'border-primary bg-primary/10'
+                      : 'border-transparent hover:bg-elevated'
+                "
+                @click="chooseIface(id, iface)"
+              >
+                <div class="font-mono text-xs">{{ iface.name }}</div>
+                <div v-if="iface.description" class="truncate text-[11px] text-muted">
+                  {{ iface.description }}
+                </div>
+                <div v-if="iface.connection" class="truncate text-[11px] text-muted">
+                  Connected to {{ iface.connection.peer_device_name }}
+                  {{ iface.connection.peer_interface_name }}
+                </div>
+              </button>
+              <div v-if="!dialogPorts(id).length" class="text-xs text-muted">
+                No physical interfaces.
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton label="Cancel" variant="ghost" class="ms-auto" @click="closeCreate" />
+          <UButton
+            label="Save"
+            :loading="saving"
+            :disabled="!pickA || !pickB"
+            @click="saveCreate"
+          />
         </div>
       </template>
     </UModal>
