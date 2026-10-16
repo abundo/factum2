@@ -13,25 +13,23 @@ defineProps({
   >
     <div class="text-sm font-medium truncate">{{ data.label }}</div>
     <div v-if="data.external" class="text-xs text-warning">Outside this view</div>
-    <div class="mt-1 flex max-h-48 flex-col gap-0.5 overflow-auto">
+    <div class="mt-1 flex flex-col">
       <div
-        v-for="(iface, i) in data.interfaces || []"
+        v-for="iface in data.interfaces || []"
         :key="iface.id"
-        class="relative text-[11px] text-muted pr-3"
+        class="relative flex h-4 items-center text-[11px] leading-none text-muted"
       >
-        {{ iface.name }}
         <Handle
           :id="String(iface.id)"
           type="source"
           :position="Position.Right"
-          :style="{ top: `${28 + i * 16}px` }"
         />
         <Handle
           :id="`in-${iface.id}`"
           type="target"
           :position="Position.Left"
-          :style="{ top: `${28 + i * 16}px` }"
         />
+        <span class="min-w-0 truncate">{{ iface.name }}</span>
       </div>
     </div>
   </div>
