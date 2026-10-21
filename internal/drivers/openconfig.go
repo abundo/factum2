@@ -15,6 +15,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -239,6 +240,11 @@ func sshRunCLI(ctx context.Context, p DriverParam, cmds []sshCmd) (string, error
 // sshTestIdleWindow overrides idleWindow in tests. Zero means the production constant.
 var sshTestIdleWindow time.Duration
 
+// sshTestDialPort overrides the legacy SSH CLI port in tests. Empty dials
+// port 22, which is what production must keep doing (DriverParam.Port is
+// the NETCONF port on mixed-transport drivers).
+var sshTestDialPort string
+
 func sshIdleWindow() time.Duration {
 	if sshTestIdleWindow > 0 {
 		return sshTestIdleWindow
@@ -246,16 +252,16 @@ func sshIdleWindow() time.Duration {
 	return idleWindow
 }
 
-// idleWindow is the fallback safety margin for a wait with no recognizable
-// end-of-output marker (e.g. VRP's config-mode commands while running
-// SetInterfaceDescriptions, or Nokia's MD-CLI JSON dumps). It used to be 1
-// second, which was too tight for a full config dump like VRP's "display
-// current-config": on a large config the device can pause mid-render for
-// just over a second before producing the interface/VLAN sections, which
-// got misread as command completion and silently truncated the capture
-// before any interface ever appeared in it (see configEndMarkerIdle below
-// for the fast path that avoids paying this full window on output that has
-// a recognizable end marker).
+// idleWindow is the fallback safety margin for a wait that never reprints
+// the CLI prompt and has no recognizable end-of-output marker (e.g. VRP's
+// config-mode commands while running SetInterfaceDescriptions). It used to
+// be 1 second, which was too tight for a full config dump like VRP's
+// "display current-config": on a large config the device can pause
+// mid-render for just over a second before producing the interface/VLAN
+// sections, which got misread as command completion and silently truncated
+// the capture before any interface ever appeared in it. A prompt match
+// (see promptSatisfied) or an end marker (configEndMarkerIdle) returns
+// without paying this window.
 const idleWindow = 5 * time.Second
 
 // configEndMarkerIdle lets a full config dump (or any other marked output)
@@ -290,6 +296,12 @@ type sshShellSession struct {
 	exited       bool
 	exitOnce     sync.Once
 	done         chan struct{}
+
+	// platform is the canonical CLI family (sros, vrp, ios-xr, cisco) used
+	// to recognize the prompt. promptHost is the hostname learned from the
+	// first prompt, empty until then.
+	platform   string
+	promptHost string
 }
 
 func dialSSHShell(username, password, host, port string) (*sshShellSession, error) {
@@ -414,25 +426,59 @@ func (s *sshShellSession) write(line string) error {
 	return err
 }
 
-// waitIdle blocks until output has gone quiet for idleWindow, or until a
+// waitIdle blocks until the session's CLI prompt is back (see
+// waitIdleCount), until output has gone quiet for idleWindow, or until a
 // line matching endMarker has appeared (in which case it only waits out
-// the much shorter configEndMarkerIdle) - see hasConfigEndMarker.
+// the much shorter configEndMarkerIdle). The prompt check returns on the
+// poll that sees it. idleWindow and overallTimeout stay as the fallback
+// when the prompt is not recognized.
 // Returns errWaitTimeout if ctx is cancelled/expired or overallTimeout
 // elapses first. The 100ms poll selects on ctx.Done() so a cancel does
 // not wait out overallTimeout.
 func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp) error {
+	return s.waitIdleCount(ctx, endMarker, 1)
+}
+
+// waitIdleCount is waitIdle with a prompt count. promptsNeeded is 1 for a
+// single command or the login banner. A pipeline paste passes the number
+// of commands: the device reprints the prompt after each line, and the
+// first reprint is not the end of the paste. Fewer prompts than that falls
+// through to the idle/timeout fallback.
+func (s *sshShellSession) waitIdleCount(ctx context.Context, endMarker *regexp.Regexp, promptsNeeded int) error {
+	if promptsNeeded < 1 {
+		promptsNeeded = 1
+	}
 	idleWant := sshIdleWindow()
 	deadline := time.Now().Add(overallTimeout)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
 		idle := time.Since(s.lastActivity)
 		exited := s.exited
-		tail := s.buf.Bytes()
+		platform := s.platform
+		known := s.promptHost
+		raw := s.buf.Bytes()
+		tail := raw
 		if len(tail) > markerTailBytes {
 			tail = tail[len(tail)-markerTailBytes:]
 		}
 		tailStr := string(tail)
+		var promptBuf string
+		if platform != "" {
+			src := raw
+			if promptsNeeded <= 1 {
+				src = tail
+			}
+			promptBuf = string(src)
+		}
 		s.mu.Unlock()
+		if platform != "" {
+			if host, done := promptSatisfied(platform, known, promptBuf, promptsNeeded); host != "" {
+				s.notePrompt(platform, host)
+				if done {
+					return nil
+				}
+			}
+		}
 		want := idleWant
 		if hasConfigEndMarker(tailStr, endMarker) {
 			want = configEndMarkerIdle
@@ -454,6 +500,19 @@ func (s *sshShellSession) waitIdle(ctx context.Context, endMarker *regexp.Regexp
 		}
 	}
 	return errWaitTimeout
+}
+
+func (s *sshShellSession) notePrompt(platform, host string) {
+	if s == nil || host == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.promptHost != "" {
+		return
+	}
+	s.promptHost = host
+	slog.Info("ssh.prompt", "platform", platform, "host", host)
 }
 
 // resetCapture clears buf and, crucially, lastActivity - without the
@@ -508,14 +567,17 @@ func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string
 }
 
 func sshRunCLIBatchLegacy(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
-	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, sshTestDialPort)
 	if err != nil {
 		return nil, err
 	}
 	defer s.Close()
+	s.setCLIPlatform(p.Platform)
 
 	// drain the login banner/MOTD before sending any command.
 	// Ignore timeout so a 30s drip still returns the buffer.
+	// A recognized prompt returns as soon as it is on screen and records
+	// the hostname for the commands below.
 	_ = s.waitIdle(ctx, nil)
 
 	results := make([]string, len(cmds))
@@ -581,11 +643,12 @@ func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMar
 }
 
 func sshRunCLIPipelineLegacy(ctx context.Context, p DriverParam, cmds []string, endMarker *regexp.Regexp) (string, error) {
-	s, err := dialSSHShell(p.Username, p.Password, p.Name, "")
+	s, err := dialSSHShell(p.Username, p.Password, p.Name, sshTestDialPort)
 	if err != nil {
 		return "", err
 	}
 	defer s.Close()
+	s.setCLIPlatform(p.Platform)
 
 	// drain the login banner/MOTD before sending anything.
 	// Ignore timeout so a 30s drip still returns the buffer.
@@ -595,7 +658,9 @@ func sshRunCLIPipelineLegacy(ctx context.Context, p DriverParam, cmds []string, 
 	if err := s.write(strings.Join(cmds, "\n")); err != nil {
 		return "", err
 	}
-	_ = s.waitIdle(ctx, endMarker)
+	// One prompt per pasted line. A device that only reprints the prompt
+	// once still finishes via idleWindow.
+	_ = s.waitIdleCount(ctx, endMarker, len(cmds))
 	return strings.ReplaceAll(s.capture(), "\r\n", "\n"), nil
 }
 

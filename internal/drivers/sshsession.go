@@ -1063,6 +1063,7 @@ func (s *pooledSession) ensureDialed(ctx context.Context, req sshRunRequest) (lo
 		slog.Info("ssh.dial", "key", s.key, "login_ms", time.Since(start).Milliseconds(), "err", err.Error())
 		return 0, err
 	}
+	shell.setCLIPlatform(req.Param.Platform)
 
 	if err := shell.waitIdle(ctx, nil); err != nil {
 		shell.Close()
@@ -1428,7 +1429,7 @@ func (s *pooledSession) runPipeline(ctx context.Context, shell *sshShellSession,
 		}
 		return []string{""}, err
 	}
-	werr := shell.waitIdle(ctx, marker)
+	werr := shell.waitIdleCount(ctx, marker, len(cmds))
 	out := shell.capture()
 	if hasPagerLeftover(out) {
 		slog.Info("ssh.pager", "key", s.key, "err", "pager leftover")
