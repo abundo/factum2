@@ -228,9 +228,17 @@ function statusColor(status) {
 
 // Devices with no coordinates of their own inherit their site's (see
 // models.Device.Latitude/Longitude), so every device at one site starts
-// out on the exact same point. Fan same-point devices out in a small
-// circle around that point instead of leaving them stacked, so a site
-// with many devices still reads as a distinct cluster on the map.
+// out on the exact same point. Fan same-point devices out around that
+// point instead of leaving them stacked. The ring keeps about the same
+// gap between neighbors, so three devices stay tight and twenty spread
+// onto a wider circle. 0.0009° is about 100 m.
+const SITE_RING_GAP_DEG = 0.0009
+
+function siteRingRadiusDeg(n) {
+  if (n < 2) return 0
+  return SITE_RING_GAP_DEG / (2 * Math.sin(Math.PI / n))
+}
+
 function layoutDevices(devices) {
   const groups = new Map()
   for (const d of devices) {
@@ -242,13 +250,13 @@ function layoutDevices(devices) {
   const out = []
   for (const group of groups.values()) {
     const n = group.length
+    const radiusDeg = siteRingRadiusDeg(n)
     group.forEach((d, i) => {
       if (n === 1) {
         out.push({ ...d, mapLat: d.latitude, mapLng: d.longitude })
         return
       }
       const angle = (2 * Math.PI * i) / n
-      const radiusDeg = (0.0004 / 3) * Math.min(3 + n, 15)
       const latRad = (d.latitude * Math.PI) / 180
       out.push({
         ...d,
