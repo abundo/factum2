@@ -478,6 +478,16 @@ type Settings struct {
 	IcingaHostsFile string `gorm:"column:icinga_hosts_file" form:"icinga_hosts_file" json:"icinga_hosts_file"`
 	IcingaUsersFile string `gorm:"column:icinga_users_file" form:"icinga_users_file" json:"icinga_users_file"`
 	IcingaCertsFile string `gorm:"column:icinga_certs_file" form:"icinga_certs_file" json:"icinga_certs_file"`
+	// IcingaMonitorInterfaces turns on passive per-interface services for
+	// devices with Interface alarms (cf_alarm_interfaces). factum2-icinga
+	// sync writes the objects. factum2-icinga poll collects status and
+	// counters over SNMP and submits the results.
+	IcingaMonitorInterfaces *bool `gorm:"column:icinga_monitor_interfaces" form:"icinga_monitor_interfaces" json:"icinga_monitor_interfaces"`
+	// IcingaInterfacesFile is a worker.paths key for that conf file.
+	IcingaInterfacesFile string `gorm:"column:icinga_interfaces_file" form:"icinga_interfaces_file" json:"icinga_interfaces_file"`
+	// IcingaSNMPCommunities is a newline-separated SNMPv2c community list.
+	// poll tries them in order until a device answers.
+	IcingaSNMPCommunities string `gorm:"column:icinga_snmp_communities;type:text" form:"icinga_snmp_communities" json:"icinga_snmp_communities"`
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
 	// per line) that factum2-icinga's Update() skips entirely.
 	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`

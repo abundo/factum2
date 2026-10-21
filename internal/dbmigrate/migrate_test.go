@@ -210,6 +210,38 @@ func TestMigrationsIncludeIcingaCertChecks(t *testing.T) {
 	}
 }
 
+func TestMigrationsIncludeIcingaInterfaces(t *testing.T) {
+	entries, err := fs.ReadDir(migrationFS, "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "00035_") {
+			found = e.Name()
+		}
+	}
+	if found == "" {
+		t.Fatal("missing 00035_*.sql for icinga interface monitoring")
+	}
+	body, err := fs.ReadFile(migrationFS, "sql/"+found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		"icinga_monitor_interfaces",
+		"icinga_interfaces_file",
+		"icinga_snmp_communities",
+		"IF NOT EXISTS",
+		"-- +goose Up",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: missing %q", found, want)
+		}
+	}
+}
+
 func TestMigrationsIncludeDhcpPrefixesFile(t *testing.T) {
 	entries, err := fs.ReadDir(migrationFS, "sql")
 	if err != nil {

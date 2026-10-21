@@ -8,18 +8,19 @@ import (
 // worker.paths keys. Admin → Destinations stores one of these names.
 // The filesystem path is only in the worker YAML.
 const (
-	KeyLegoBin            = "lego_bin"
-	KeyLegoYaml           = "lego_yaml"
-	KeyLegoEnv            = "lego_env"
-	KeyLegoStorage        = "lego_storage"
-	KeyDNSDestFile        = "dns_dest_file"
-	KeyDNSZonesFile       = "dns_zones_file"
-	KeyDNSPrefixesFile    = "dns_prefixes_file"
-	KeyOxidizedDestFile   = "oxidized_dest_file"
-	KeyPrometheusDestFile = "prometheus_dest_file"
-	KeyIcingaHostsFile    = "icinga_hosts_file"
-	KeyIcingaUsersFile    = "icinga_users_file"
-	KeyIcingaCertsFile    = "icinga_certs_file"
+	KeyLegoBin              = "lego_bin"
+	KeyLegoYaml             = "lego_yaml"
+	KeyLegoEnv              = "lego_env"
+	KeyLegoStorage          = "lego_storage"
+	KeyDNSDestFile          = "dns_dest_file"
+	KeyDNSZonesFile         = "dns_zones_file"
+	KeyDNSPrefixesFile      = "dns_prefixes_file"
+	KeyOxidizedDestFile     = "oxidized_dest_file"
+	KeyPrometheusDestFile   = "prometheus_dest_file"
+	KeyIcingaHostsFile      = "icinga_hosts_file"
+	KeyIcingaUsersFile      = "icinga_users_file"
+	KeyIcingaCertsFile      = "icinga_certs_file"
+	KeyIcingaInterfacesFile = "icinga_interfaces_file"
 )
 
 // pin returns the worker-local value for a known key. known is false when
@@ -50,6 +51,8 @@ func (p ConfigWorkerPaths) pin(key string) (string, bool) {
 		return p.IcingaUsersFile, true
 	case KeyIcingaCertsFile:
 		return p.IcingaCertsFile, true
+	case KeyIcingaInterfacesFile:
+		return p.IcingaInterfacesFile, true
 	default:
 		return "", false
 	}

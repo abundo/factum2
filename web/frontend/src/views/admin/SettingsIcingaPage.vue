@@ -40,6 +40,42 @@ import {
         class="w-full"
       />
     </div>
+    <div class="flex items-center gap-2">
+      <USwitch v-model="settings.icinga_monitor_interfaces" id="icinga_monitor_interfaces" />
+      <label for="icinga_monitor_interfaces" class="font-bold">Monitor interfaces</label>
+    </div>
+    <p class="text-muted-color -mt-4">
+      When on, sync writes one passive Icinga service per interface for devices that have Interface
+      alarms set. <span class="font-mono">factum2-icinga poll --interval 1m</span> reads oper status
+      and traffic counters with one SNMPv2c session per device and submits the results. One session
+      per device is what keeps up with about 40000 interfaces. Set
+      <span class="font-mono">icinga_command_pipe</span> in the worker YAML to the Icinga external
+      command pipe so poll can submit results in bulk.
+    </p>
+    <div>
+      <label for="icinga_snmp_communities" class="block font-bold mb-3">SNMP communities</label>
+      <UTextarea
+        id="icinga_snmp_communities"
+        v-model="settings.icinga_snmp_communities"
+        :rows="3"
+        placeholder="One SNMPv2c community per line, tried in order"
+        class="w-full"
+      />
+    </div>
+    <div>
+      <label for="icinga_interfaces_file" class="block font-bold mb-3">Interfaces file</label>
+      <UInput
+        id="icinga_interfaces_file"
+        v-model="settings.icinga_interfaces_file"
+        placeholder="icinga_interfaces_file"
+        class="w-full"
+      />
+      <small class="text-muted-color"
+        >worker.paths key. The file path is set only in each worker's factum2-worker.yaml. Leave
+        blank to use icinga_interfaces_file. Include that file next to the hosts file. Run
+        factum2-icinga poll on the Icinga host; sync only writes the service objects.</small
+      >
+    </div>
     <GoTemplateField
       id="icinga_default_notification"
       v-model="settings.icinga_default_notification"

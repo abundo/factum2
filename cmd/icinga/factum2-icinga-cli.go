@@ -8,7 +8,14 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 
 	cmdbase "github.com/abundo/factum2/cmd"
 
@@ -27,6 +34,14 @@ type Params struct {
 type SyncParams struct {
 	Params
 	Job bool `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+}
+
+type PollParams struct {
+	Params
+	Job       bool   `descr:"Emit structured job events (JSON lines) on stdout instead of human-readable output" optional:"true"`
+	Interval  string `descr:"Repeat until signal, waiting this long between cycles (for example 1m). Empty runs one cycle" optional:"true"`
+	Workers   int    `descr:"Devices polled at once" optional:"true" default:"32"`
+	StateFile string `descr:"Counter state file. Overrides worker.paths.icinga_interface_state" optional:"true"`
 }
 
 func main() {
@@ -102,6 +117,54 @@ func main() {
 					return nil
 				},
 			},
+			boa.CmdT[PollParams]{
+				Use:   "poll",
+				Short: "Poll interface status and counters over SNMP and submit passive Icinga results",
+				RunFuncE: func(p *PollParams, cmd *cobra.Command, args []string) error {
+					cmdbase.SetupLog(p.CommonParams)
+					client, err := icinga.NewFactumIcingaClient(&p.Config)
+					if err != nil {
+						return err
+					}
+					var interval time.Duration
+					if strings.TrimSpace(p.Interval) != "" {
+						interval, err = time.ParseDuration(p.Interval)
+						if err != nil {
+							return fmt.Errorf("interval: %w", err)
+						}
+						if interval < 10*time.Second {
+							return fmt.Errorf("interval %s is below 10s", interval)
+						}
+					}
+					pipe, err := absoluteOptional(p.Config.Worker.Paths.IcingaCommandPipe, "worker.paths.icinga_command_pipe")
+					if err != nil {
+						return err
+					}
+					state := strings.TrimSpace(p.StateFile)
+					if state == "" {
+						state = p.Config.Worker.Paths.IcingaInterfaceState
+					}
+					state, err = absoluteOptional(state, "interface state file")
+					if err != nil {
+						return err
+					}
+					if state == "" && client.IcingaConfig.InterfacesFile != "" {
+						state = filepath.Join(filepath.Dir(client.IcingaConfig.InterfacesFile), "interfaces.state")
+					}
+					var reporter jobevent.Reporter = jobevent.NewConsoleReporter(os.Stdout)
+					if p.Job {
+						reporter = jobevent.NewStdoutReporter(os.Stdout)
+					}
+					ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+					defer stop()
+					return client.Poll(ctx, icinga.PollOptions{
+						Workers:     p.Workers,
+						Interval:    interval,
+						StateFile:   state,
+						CommandPipe: pipe,
+					}, reporter)
+				},
+			},
 			boa.CmdT[SyncParams]{
 				Use:   "sync",
 				Short: "Sync Icinga with factum",
@@ -124,4 +187,12 @@ func main() {
 			},
 		),
 	})
+}
+
+func absoluteOptional(path, name string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	return util.PinnedPath(path, "", name)
 }

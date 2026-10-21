@@ -20,6 +20,9 @@ type IcingaConfigResponse struct {
 	HostsFile           string                  `json:"hosts_file"`
 	UsersFile           string                  `json:"users_file"`
 	CertsFile           string                  `json:"certs_file"`
+	InterfacesFile      string                  `json:"interfaces_file"`
+	MonitorInterfaces   bool                    `json:"monitor_interfaces"`
+	SNMPCommunities     string                  `json:"snmp_communities"`
 	IgnoreDevices       string                  `json:"ignore_devices"`
 	DefaultNotification string                  `json:"default_notification"`
 	HostTemplate        string                  `json:"host_template"`
@@ -62,6 +65,9 @@ func (ctrl *Controller) ApiIcingaConfig(c *echo.Context) error {
 		HostsFile:           settings.IcingaHostsFile,
 		UsersFile:           settings.IcingaUsersFile,
 		CertsFile:           settings.IcingaCertsFile,
+		InterfacesFile:      settings.IcingaInterfacesFile,
+		MonitorInterfaces:   settings.IcingaMonitorInterfaces != nil && *settings.IcingaMonitorInterfaces,
+		SNMPCommunities:     settings.IcingaSNMPCommunities,
 		IgnoreDevices:       settings.IcingaIgnoreDevices,
 		DefaultNotification: settings.IcingaDefaultNotification,
 		HostTemplate:        settings.IcingaHostTemplate,

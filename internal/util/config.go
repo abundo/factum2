@@ -34,7 +34,8 @@ type ConfigFactum struct {
 // ConfigIcinga is a runtime-only DTO, not part of ConfigRoot - unlike
 // ConfigLibrenms's Sync maps, every field here already has a DB-backed
 // equivalent (Settings.IcingaApiURL/User/Pass/HostsFile/UsersFile/
-// CertsFile/IgnoreDevices/DefaultNotification/HostTemplate/
+// CertsFile/InterfacesFile/MonitorInterfaces/SNMPCommunities/
+// IgnoreDevices/DefaultNotification/HostTemplate/
 // DependencyTemplate/UserTemplate/CertTemplate), so factum2-icinga - which
 // typically runs on a different
 // host than the primary - fetches this entirely over REST
@@ -47,9 +48,16 @@ type ConfigIcinga struct {
 	Username string
 	Password string
 
-	HostsFile string
-	UsersFile string
-	CertsFile string
+	HostsFile      string
+	UsersFile      string
+	CertsFile      string
+	InterfacesFile string
+
+	// MonitorInterfaces writes passive interface services and is what
+	// factum2-icinga poll requires before it polls. SNMPCommunities is a
+	// newline-separated SNMPv2c community list.
+	MonitorInterfaces bool
+	SNMPCommunities   string
 
 	// IgnoreDevices is a newline-separated list of device names to skip
 	// entirely (Settings.IcingaIgnoreDevices).
@@ -250,18 +258,24 @@ type ConfigWorkerCommand struct {
 // icinga_hosts_file). The path is only here. ResolvePinnedKey refuses a
 // filesystem path sent by the primary.
 type ConfigWorkerPaths struct {
-	LegoBin            string `boa:"configonly" yaml:"lego_bin" optional:"true"`
-	LegoYaml           string `boa:"configonly" yaml:"lego_yaml" optional:"true"`
-	LegoEnv            string `boa:"configonly" yaml:"lego_env" optional:"true"`
-	LegoStorage        string `boa:"configonly" yaml:"lego_storage" optional:"true"`
-	DNSDestFile        string `boa:"configonly" yaml:"dns_dest_file" optional:"true"`
-	DNSZonesFile       string `boa:"configonly" yaml:"dns_zones_file" optional:"true"`
-	DNSPrefixesFile    string `boa:"configonly" yaml:"dns_prefixes_file" optional:"true"`
-	OxidizedDestFile   string `boa:"configonly" yaml:"oxidized_dest_file" optional:"true"`
-	PrometheusDestFile string `boa:"configonly" yaml:"prometheus_dest_file" optional:"true"`
-	IcingaHostsFile    string `boa:"configonly" yaml:"icinga_hosts_file" optional:"true"`
-	IcingaUsersFile    string `boa:"configonly" yaml:"icinga_users_file" optional:"true"`
-	IcingaCertsFile    string `boa:"configonly" yaml:"icinga_certs_file" optional:"true"`
+	LegoBin              string `boa:"configonly" yaml:"lego_bin" optional:"true"`
+	LegoYaml             string `boa:"configonly" yaml:"lego_yaml" optional:"true"`
+	LegoEnv              string `boa:"configonly" yaml:"lego_env" optional:"true"`
+	LegoStorage          string `boa:"configonly" yaml:"lego_storage" optional:"true"`
+	DNSDestFile          string `boa:"configonly" yaml:"dns_dest_file" optional:"true"`
+	DNSZonesFile         string `boa:"configonly" yaml:"dns_zones_file" optional:"true"`
+	DNSPrefixesFile      string `boa:"configonly" yaml:"dns_prefixes_file" optional:"true"`
+	OxidizedDestFile     string `boa:"configonly" yaml:"oxidized_dest_file" optional:"true"`
+	PrometheusDestFile   string `boa:"configonly" yaml:"prometheus_dest_file" optional:"true"`
+	IcingaHostsFile      string `boa:"configonly" yaml:"icinga_hosts_file" optional:"true"`
+	IcingaUsersFile      string `boa:"configonly" yaml:"icinga_users_file" optional:"true"`
+	IcingaCertsFile      string `boa:"configonly" yaml:"icinga_certs_file" optional:"true"`
+	IcingaInterfacesFile string `boa:"configonly" yaml:"icinga_interfaces_file" optional:"true"`
+	// IcingaCommandPipe and IcingaInterfaceState are local to this worker.
+	// They are not worker.paths keys: a destination field must not be able
+	// to name the command pipe, or sync could overwrite it.
+	IcingaCommandPipe    string `boa:"configonly" yaml:"icinga_command_pipe" optional:"true"`
+	IcingaInterfaceState string `boa:"configonly" yaml:"icinga_interface_state" optional:"true"`
 }
 
 type ConfigWorker struct {

@@ -89,6 +89,9 @@ worker:
   #   icinga_hosts_file: /etc/icinga2/conf.d/factum2-hosts.conf
   #   icinga_users_file: /etc/icinga2/conf.d/factum2-users.conf
   #   icinga_certs_file: /etc/icinga2/conf.d/factum2-certificates.conf
+  #   icinga_interfaces_file: /etc/icinga2/conf.d/factum2-interfaces.conf
+  #   icinga_command_pipe: /var/run/icinga2/cmd/icinga2.cmd
+  #   icinga_interface_state: /var/lib/factum2/icinga-interface.state
 
 # Optional unix API for factum2-storage start (default
 # /run/factum2-storage/api.sock). Device HTTP/TFTP/SFTP binds are in the

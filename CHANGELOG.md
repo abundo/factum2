@@ -7,6 +7,14 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- Icinga can monitor interfaces. Admin → Destinations → Icinga has
+  Monitor interfaces, SNMP communities, and an interfaces file.
+  Sync writes one passive service per interface on devices with
+  Interface alarms set. `factum2-icinga poll --interval 1m` reads
+  status and counters with one SNMPv2c session per device and submits
+  passive results, including at about 40000 interfaces. Set
+  `icinga_command_pipe` on the Icinga worker so those results go to
+  the external command pipe.
 - Lime sync emails a report when customers, services, or contacts were
   added, updated, or removed. Set the recipients under Admin → Sources →
   Lime. A sync with no changes does not send mail.

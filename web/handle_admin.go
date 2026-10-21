@@ -104,6 +104,7 @@ func validateDestinationKeys(s *models.Settings) error {
 		{"icinga_hosts_file", &s.IcingaHostsFile},
 		{"icinga_users_file", &s.IcingaUsersFile},
 		{"icinga_certs_file", &s.IcingaCertsFile},
+		{"icinga_interfaces_file", &s.IcingaInterfacesFile},
 		{"oxidized_dest_file", &s.OxidizedDestFile},
 		{"prometheus_dest_file", &s.PrometheusDestFile},
 	}

@@ -21,6 +21,9 @@ type remoteConfigResponse struct {
 	HostsFile           string                  `json:"hosts_file"`
 	UsersFile           string                  `json:"users_file"`
 	CertsFile           string                  `json:"certs_file"`
+	InterfacesFile      string                  `json:"interfaces_file"`
+	MonitorInterfaces   bool                    `json:"monitor_interfaces"`
+	SNMPCommunities     string                  `json:"snmp_communities"`
 	IgnoreDevices       string                  `json:"ignore_devices"`
 	DefaultNotification string                  `json:"default_notification"`
 	HostTemplate        string                  `json:"host_template"`
@@ -47,6 +50,9 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigIcinga, err
 		HostsFile:           remote.HostsFile,
 		UsersFile:           remote.UsersFile,
 		CertsFile:           remote.CertsFile,
+		InterfacesFile:      remote.InterfacesFile,
+		MonitorInterfaces:   remote.MonitorInterfaces,
+		SNMPCommunities:     remote.SNMPCommunities,
 		IgnoreDevices:       remote.IgnoreDevices,
 		DefaultNotification: remote.DefaultNotification,
 		HostTemplate:        remote.HostTemplate,

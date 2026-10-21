@@ -85,6 +85,12 @@ func pinIcingaPaths(cfg *util.ConfigIcinga, paths util.ConfigWorkerPaths) error 
 	if cfg.CertsFile, err = util.ResolvePinnedKey(paths, cfg.CertsFile, util.KeyIcingaCertsFile, true, false); err != nil {
 		return err
 	}
+	// An empty interfaces pin is an error only when monitoring is on.
+	// When it is off, a configured pin is still resolved so sync can
+	// clear a file written by an earlier run.
+	if cfg.InterfacesFile, err = util.ResolvePinnedKey(paths, cfg.InterfacesFile, util.KeyIcingaInterfacesFile, !cfg.MonitorInterfaces, false); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -206,15 +212,7 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 
 	written := 0
 	for _, device := range devices {
-		if isIgnoredDevice(device.Name, fic.IcingaConfig.IgnoreDevices) {
-			continue
-		}
-		if !device.Enabled {
-			// reporter.Emit(jobevent.Warning, "Ignoring %s, device is not enabled", device.Name)
-			continue
-		}
-		if device.PrimaryIPv4 == "" {
-			// reporter.Emit(jobevent.Warning, "Ignoring device %q, no primary_ip4", device.Name)
+		if !deviceEligible(device, fic.IcingaConfig.IgnoreDevices) {
 			continue
 		}
 
@@ -460,13 +458,49 @@ func (fic *FactumIcingaClient) writeCerts(reporter jobevent.Reporter) (bool, err
 	return installConfFile(tmpFile, fic.IcingaConfig.CertsFile)
 }
 
+func (fic *FactumIcingaClient) writeInterfaces(devices []*models.Device, reporter jobevent.Reporter) (bool, error) {
+	path := strings.TrimSpace(fic.IcingaConfig.InterfacesFile)
+	if path == "" {
+		return false, nil
+	}
+	var targets []deviceIfaces
+	if fic.IcingaConfig.MonitorInterfaces {
+		targets = selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
+	}
+	n := countIfaces(targets)
+	message := "interface monitoring is off"
+	if fic.IcingaConfig.MonitorInterfaces {
+		message = fmt.Sprintf("%d interface service(s). %s", n, interfaceConfNote)
+	}
+	tmpFile := path + ".tmp"
+	f, err := createConfFile(tmpFile, message)
+	if err != nil {
+		return false, err
+	}
+	if err := renderInterfaceConf(f, fic.IcingaConfig.MonitorInterfaces, targets); err != nil {
+		f.Close()
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	reporter.Emit(jobevent.Info, "wrote %d interface service(s) to %s", n, path)
+	return installConfFile(tmpFile, path)
+}
+
 // Sync fetches devices from the Factum API, writes the icinga2 hosts,
-// users, and certificate-check config files, and asks icinga2 to reload
-// if anything changed.
+// users, certificate-check, and interface config files, and asks icinga2
+// to reload if anything changed.
 func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 	reporter.Emit(jobevent.Info, "Icinga sync started")
 	factumClient := factum.NewFactumClient(fic.Config)
-	allDevices, err := factumClient.GetDevices()
+	var allDevices []*models.Device
+	var err error
+	if fic.IcingaConfig.MonitorInterfaces {
+		allDevices, err = factumClient.GetDevicesWithInterfaces()
+	} else {
+		allDevices, err = factumClient.GetDevices()
+	}
 	if err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -497,8 +531,13 @@ func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 		reporter.EmitErr(err)
 		return err
 	}
+	ifacesChanged, err := fic.writeInterfaces(devices, reporter)
+	if err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
 
-	if hostsChanged || usersChanged || certsChanged {
+	if hostsChanged || usersChanged || certsChanged || ifacesChanged {
 		reporter.Emit(jobevent.Info, "Asking icinga to reload configuration")
 		if _, err := fic.Icinga.Reload(); err != nil {
 			reporter.EmitErr(err)

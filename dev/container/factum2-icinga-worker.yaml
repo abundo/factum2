@@ -14,6 +14,9 @@ worker:
         icinga_hosts_file: /factum/hosts.conf
         icinga_users_file: /factum/users.conf
         icinga_certs_file: /factum/certs.conf
+        icinga_interfaces_file: /factum/interfaces.conf
+        icinga_command_pipe: /var/run/icinga2/cmd/icinga2.cmd
+        icinga_interface_state: /factum/interfaces.state
     commands:
         icinga:
             cmd: /opt/factum2/factum2-icinga
