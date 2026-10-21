@@ -41,7 +41,7 @@ func main() {
 
 			boa.CmdT[ParamsRefresh]{
 				Use:   "sync",
-				Short: "Sync lime with factum",
+				Short: "Sync Lime into Factum and email a report when something changed",
 				RunFuncE: func(p *ParamsRefresh, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 					companies := p.Company

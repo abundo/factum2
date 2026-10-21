@@ -538,6 +538,10 @@ type Settings struct {
 	// Lime
 	LimeApiURL   string `gorm:"column:lime_api_url" form:"lime_api_url" json:"lime_api_url"`
 	LimeApiToken string `gorm:"column:lime_api_token" form:"lime_api_token" json:"lime_api_token"`
+	// LimeReportTo is who receives the Lime sync change report, one address
+	// per line and/or comma-separated. Empty skips the mail. A sync that
+	// adds, updates, or removes nothing does not send mail either.
+	LimeReportTo string `gorm:"column:lime_report_to;type:text" form:"lime_report_to" json:"lime_report_to"`
 
 	// Netbox
 	NetboxApiURL   string `gorm:"column:netbox_api_url" form:"netbox_api_url" json:"netbox_api_url"`

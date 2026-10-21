@@ -31,7 +31,9 @@ is refused; unrealize is allowed. A Lime sync also **removes**
 Factum rows for deliveries that Lime no longer returns (and, on a full
 sync with no company filter, companies Lime no longer returns). Inactive
 Lime persons stay as contact rows but are unlinked so they are not
-mailed.
+mailed. When that run adds, updates, or removes any of those rows, and
+Admin → Sources → Lime lists report recipients, Factum emails the
+changes. A run that only refreshes unchanged rows does not send mail.
 
 ## Create
 

@@ -7,10 +7,34 @@ package mail
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/abundo/factum2/internal/util"
 	"github.com/wneessen/go-mail"
 )
+
+// ParseRecipients splits textarea content into addresses, one per line
+// and/or comma-separated within a line. Blank pieces are dropped.
+// Repeated addresses are kept once, compared case-insensitively.
+func ParseRecipients(raw string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		for _, addr := range strings.Split(line, ",") {
+			addr = strings.TrimSpace(addr)
+			if addr == "" {
+				continue
+			}
+			key := strings.ToLower(addr)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, addr)
+		}
+	}
+	return out
+}
 
 // Send sends body (already-rendered HTML) via the shared SMTP relay
 // settings in smtp.

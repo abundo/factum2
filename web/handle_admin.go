@@ -167,20 +167,6 @@ type SettingsTestEmailRequest struct {
 	EmailSender string `json:"email_sender"`
 }
 
-// parseEmailRecipients splits textarea content into individual addresses,
-// one per line and/or comma-separated within a line.
-func parseEmailRecipients(raw string) []string {
-	var out []string
-	for _, line := range strings.Split(raw, "\n") {
-		for _, addr := range strings.Split(line, ",") {
-			if addr = strings.TrimSpace(addr); addr != "" {
-				out = append(out, addr)
-			}
-		}
-	}
-	return out
-}
-
 // ApiSettingsTestEmail sends a test email using the submitted (or saved) SMTP
 // settings and reports ok/error as a 200 JSON body rather than a 4xx/5xx
 // status - a failed send isn't an application error, it's the answer to the
@@ -191,7 +177,7 @@ func (ctrl *Controller) ApiSettingsTestEmail(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 
-	recipients := parseEmailRecipients(req.To)
+	recipients := mail.ParseRecipients(req.To)
 	if len(recipients) == 0 {
 		return c.JSON(http.StatusOK, map[string]any{"ok": false, "error": "at least one recipient address is required"})
 	}

@@ -22,6 +22,14 @@ type Lime struct {
 	ParamDB  *util.ConfigDB
 	DB       *gorm.DB
 	Limetool *limetool.Lime
+
+	// changes is the added/updated/removed rows from the current sync.
+	// reporter receives one line per change. reportCustomer is the Lime
+	// company name being written, used as the label on its services and
+	// contacts.
+	changes        []syncChange
+	reporter       jobevent.Reporter
+	reportCustomer string
 }
 
 func NewLime(PDB *util.ConfigDB) *Lime {
@@ -45,11 +53,16 @@ func (lime *Lime) SaveCustomer(row *models.Customer) error {
 	var existing models.Customer
 	err := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return lime.DB.Create(row).Error
+		if err := lime.DB.Create(row).Error; err != nil {
+			return err
+		}
+		lime.note(changeAdded, "Customer", row.Name, customerDetail(row))
+		return nil
 	}
 	if err != nil {
 		return err
 	}
+	detail := customerDiff(&existing, row)
 	existing.LastSync = row.LastSync
 	existing.Name = row.Name
 	existing.Postaladdress1 = row.Postaladdress1
@@ -59,7 +72,13 @@ func (lime *Lime) SaveCustomer(row *models.Customer) error {
 	existing.OrganizationNumber = row.OrganizationNumber
 	existing.Country = row.Country
 	row.ID = existing.ID
-	return lime.DB.Save(&existing).Error
+	if err := lime.DB.Save(&existing).Error; err != nil {
+		return err
+	}
+	if detail != "" {
+		lime.note(changeUpdated, "Customer", row.Name, detail)
+	}
+	return nil
 }
 
 // SaveDelivery upserts a service matched by (source, source_id) rather
@@ -76,11 +95,16 @@ func (lime *Lime) SaveDelivery(row *models.Service) error {
 	var existing models.Service
 	err := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return lime.DB.Create(row).Error
+		if err := lime.DB.Create(row).Error; err != nil {
+			return err
+		}
+		lime.note(changeAdded, "Service", serviceChangeLabel(row.ServiceID, row.SourceID, lime.reportCustomer), serviceDetail(row))
+		return nil
 	}
 	if err != nil {
 		return err
 	}
+	detail := lime.serviceDiff(&existing, row)
 	existing.LastSync = row.LastSync
 	existing.CustomerID = row.CustomerID
 	existing.ServiceID = row.ServiceID
@@ -91,7 +115,13 @@ func (lime *Lime) SaveDelivery(row *models.Service) error {
 	existing.Service = row.Service
 	existing.AgreementStatus = row.AgreementStatus
 	row.ID = existing.ID
-	return lime.DB.Save(&existing).Error
+	if err := lime.DB.Save(&existing).Error; err != nil {
+		return err
+	}
+	if detail != "" {
+		lime.note(changeUpdated, "Service", serviceChangeLabel(row.ServiceID, row.SourceID, lime.reportCustomer), detail)
+	}
+	return nil
 }
 
 // SaveContact upserts a contact matched by (source, source_id) rather than
@@ -104,36 +134,59 @@ func (lime *Lime) SaveContact(row *models.Contact) error {
 	err := lime.DB.Where("source = ? AND source_id = ?", row.Source, row.SourceID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		row.NotifyMaintenance = false
-		return lime.DB.Create(row).Error
+		if err := lime.DB.Create(row).Error; err != nil {
+			return err
+		}
+		lime.note(changeAdded, "Contact", contactChangeLabel(row.Name, lime.reportCustomer), contactDetail(row))
+		return nil
 	}
 	if err != nil {
 		return err
 	}
+	detail := contactDiff(&existing, row)
 	existing.LastSync = row.LastSync
 	existing.Name = row.Name
 	existing.Email = row.Email
 	existing.Phone = row.Phone
 	row.ID = existing.ID
 	row.NotifyMaintenance = existing.NotifyMaintenance
-	return lime.DB.Save(&existing).Error
+	if err := lime.DB.Save(&existing).Error; err != nil {
+		return err
+	}
+	if detail != "" {
+		lime.note(changeUpdated, "Contact", contactChangeLabel(row.Name, lime.reportCustomer), detail)
+	}
+	return nil
 }
 
 // replaceContactCustomers makes the Lime company the sole customer link for
 // a Lime-synced contact. The GUI cannot edit those links (ApiContactCustomersPut
 // rejects Source == "lime"), so wiping extras on resync cannot discard
-// operator-added associations.
-func (lime *Lime) replaceContactCustomers(contactID, customerID uint) error {
-	return lime.DB.Transaction(func(tx *gorm.DB) error {
+// operator-added associations. changed is false when that link is already
+// the only one, so a resync does not report a customer-link update.
+func (lime *Lime) replaceContactCustomers(contactID, customerID uint) (bool, error) {
+	var links []models.CustomerContact
+	if err := lime.DB.Where("contact_id = ?", contactID).Find(&links).Error; err != nil {
+		return false, err
+	}
+	if len(links) == 1 && links[0].CustomerID == customerID {
+		return false, nil
+	}
+	if err := lime.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("contact_id = ?", contactID).Delete(&models.CustomerContact{}).Error; err != nil {
 			return err
 		}
 		return tx.Create(&models.CustomerContact{ContactID: contactID, CustomerID: customerID}).Error
-	})
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-func (lime *Lime) unlinkContactCustomer(contactID, customerID uint) error {
-	return lime.DB.Where("contact_id = ? AND customer_id = ?", contactID, customerID).
-		Delete(&models.CustomerContact{}).Error
+func (lime *Lime) unlinkContactCustomer(contactID, customerID uint) (int64, error) {
+	res := lime.DB.Where("contact_id = ? AND customer_id = ?", contactID, customerID).
+		Delete(&models.CustomerContact{})
+	return res.RowsAffected, res.Error
 }
 
 func contactFromPerson(person limetoolmodels.LimePerson, lastSync uint) models.Contact {
@@ -193,14 +246,35 @@ func (lime *Lime) syncPerson(customer *models.Customer, person limetoolmodels.Li
 		if err != nil {
 			return err
 		}
-		return lime.unlinkContactCustomer(existing.ID, customer.ID)
+		n, err := lime.unlinkContactCustomer(existing.ID, customer.ID)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			lime.note(changeRemoved, "Contact", contactChangeLabel(existing.Name, customer.Name), unlinkedDetail(existing.Email))
+		}
+		return nil
+	}
+
+	var existing models.Contact
+	lookupErr := lime.DB.Where("source = ? AND source_id = ?", "lime", fmt.Sprintf("%d", person.ID)).First(&existing).Error
+	isNew := errors.Is(lookupErr, gorm.ErrRecordNotFound)
+	if lookupErr != nil && !isNew {
+		return lookupErr
 	}
 
 	row := contactFromPerson(person, lastSync)
 	if err := lime.SaveContact(&row); err != nil {
 		return err
 	}
-	return lime.replaceContactCustomers(row.ID, customer.ID)
+	linkChanged, err := lime.replaceContactCustomers(row.ID, customer.ID)
+	if err != nil {
+		return err
+	}
+	if !isNew && linkChanged {
+		lime.note(changeUpdated, "Contact", contactChangeLabel(row.Name, customer.Name), "customer link replaced")
+	}
+	return nil
 }
 
 // isFullLimeSync is true when GetCompanies is asked for every company
@@ -244,11 +318,13 @@ func (lime *Lime) pruneStaleDeliveries(customerID, lastSync uint) (int64, error)
 		Find(&stale).Error; err != nil {
 		return 0, err
 	}
+	labelCustomer := lime.companyLabel(customerID)
 	var n int64
 	for i := range stale {
 		if err := lime.deleteLimeService(&stale[i]); err != nil {
 			return n, err
 		}
+		lime.note(changeRemoved, "Service", serviceChangeLabel(stale[i].ServiceID, stale[i].SourceID, labelCustomer), "")
 		n++
 	}
 	return n, nil
@@ -258,13 +334,32 @@ func (lime *Lime) pruneStaleDeliveries(customerID, lastSync uint) (int64, error)
 // that were not seen this run. Contact rows stay (send history), matching
 // inactive persons which are unlinked rather than deleted.
 func (lime *Lime) pruneRemovedPersonLinks(customerID, lastSync uint) (int64, error) {
+	var stale []models.Contact
+	if err := lime.DB.Raw(`
+		SELECT contacts.* FROM contacts
+		JOIN customer_contacts ON customer_contacts.contact_id = contacts.id
+		WHERE customer_contacts.customer_id = ?
+		  AND contacts.source = 'lime'
+		  AND contacts.last_sync < ?`, customerID, lastSync).Scan(&stale).Error; err != nil {
+		return 0, err
+	}
 	res := lime.DB.Exec(`
 		DELETE FROM customer_contacts
 		WHERE customer_id = ?
 		  AND contact_id IN (
 			SELECT id FROM contacts WHERE source = 'lime' AND last_sync < ?
 		  )`, customerID, lastSync)
-	return res.RowsAffected, res.Error
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return 0, nil
+	}
+	name := lime.companyLabel(customerID)
+	for i := range stale {
+		lime.note(changeRemoved, "Contact", contactChangeLabel(stale[i].Name, name), unlinkedDetail(stale[i].Email))
+	}
+	return res.RowsAffected, nil
 }
 
 // pruneStaleCustomers removes Lime companies that a full sync did not see.
@@ -285,6 +380,7 @@ func (lime *Lime) pruneStaleCustomers(lastSync uint) (removedCustomers, removedS
 			if err := lime.deleteLimeService(&svcs[j]); err != nil {
 				return removedCustomers, removedServices, err
 			}
+			lime.note(changeRemoved, "Service", serviceChangeLabel(svcs[j].ServiceID, svcs[j].SourceID, c.Name), "")
 			removedServices++
 		}
 		var remaining int64
@@ -294,12 +390,23 @@ func (lime *Lime) pruneStaleCustomers(lastSync uint) (removedCustomers, removedS
 		if remaining > 0 {
 			continue
 		}
+		var contacts []models.Contact
+		if err := lime.DB.Raw(`
+			SELECT contacts.* FROM contacts
+			JOIN customer_contacts ON customer_contacts.contact_id = contacts.id
+			WHERE customer_contacts.customer_id = ?`, c.ID).Scan(&contacts).Error; err != nil {
+			return removedCustomers, removedServices, err
+		}
 		if err := lime.DB.Where("customer_id = ?", c.ID).Delete(&models.CustomerContact{}).Error; err != nil {
 			return removedCustomers, removedServices, err
 		}
 		if err := lime.DB.Delete(c).Error; err != nil {
 			return removedCustomers, removedServices, err
 		}
+		for i := range contacts {
+			lime.note(changeRemoved, "Contact", contactChangeLabel(contacts[i].Name, c.Name), unlinkedDetail(contacts[i].Email))
+		}
+		lime.note(changeRemoved, "Customer", c.Name, customerDetail(c))
 		removedCustomers++
 	}
 	return removedCustomers, removedServices, nil
@@ -307,8 +414,25 @@ func (lime *Lime) pruneStaleCustomers(lastSync uint) (removedCustomers, removedS
 
 // Fetch data from LIME, store in factum database
 // If refresh is true, refresh data in cache
-func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jobevent.Reporter) error {
-	var err error
+func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jobevent.Reporter) (err error) {
+	lime.changes = nil
+	lime.reporter = reporter
+	lime.reportCustomer = ""
+	var settings *models.Settings
+	defer func() {
+		if settings == nil {
+			return
+		}
+		if rerr := lime.reportChanges(settings, reporter); rerr != nil {
+			if reporter != nil {
+				reporter.EmitErr(rerr)
+			}
+			if err == nil {
+				err = rerr
+			}
+		}
+	}()
+
 	reporter.Emit(jobevent.Info, "Lime sync started")
 	lime.DB, err = util.ConnectDatabase(lime.ParamDB)
 	if err != nil {
@@ -319,7 +443,7 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 	// Lime credentials are database-backed (Settings, admin-editable in the
 	// web UI) rather than in the YAML config file - see
 	// util.GetOrCreateSettings.
-	settings, err := util.GetOrCreateSettings(lime.DB)
+	settings, err = util.GetOrCreateSettings(lime.DB)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err
@@ -335,7 +459,6 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 
 	customerCount := 0
 	contactCount := 0
-	var prunedServices, prunedCustomers, prunedLinks int64
 	for _, companyName := range companyNames {
 		companies, err := lime.Limetool.GetCompanies(companyName, refresh)
 		if err != nil {
@@ -344,6 +467,7 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 		}
 
 		for _, company := range companies {
+			lime.reportCustomer = company.Name
 			slog.Debug("saving", "customer", company.Name)
 			customerCount++
 			var c models.Customer
@@ -386,32 +510,26 @@ func (lime *Lime) SyncCustomers(companyNames []string, refresh bool, reporter jo
 				}
 			}
 
-			n, err := lime.pruneStaleDeliveries(c.ID, new_sync)
-			if err != nil {
+			if _, err = lime.pruneStaleDeliveries(c.ID, new_sync); err != nil {
 				reporter.EmitErr(err)
 				return err
 			}
-			prunedServices += n
-			n, err = lime.pruneRemovedPersonLinks(c.ID, new_sync)
-			if err != nil {
+			if _, err = lime.pruneRemovedPersonLinks(c.ID, new_sync); err != nil {
 				reporter.EmitErr(err)
 				return err
 			}
-			prunedLinks += n
 		}
 	}
 
 	if fullSync {
-		removedCust, removedSvc, err := lime.pruneStaleCustomers(new_sync)
-		if err != nil {
+		if _, _, err = lime.pruneStaleCustomers(new_sync); err != nil {
 			reporter.EmitErr(err)
 			return err
 		}
-		prunedCustomers += removedCust
-		prunedServices += removedSvc
 	}
 
-	reporter.Emit(jobevent.Info, "Lime sync: %d customer(s), %d contact(s) processed; removed %d service(s), %d customer(s), %d contact link(s)",
-		customerCount, contactCount, prunedServices, prunedCustomers, prunedLinks)
+	added, updated, removed := countChanges(lime.changes)
+	reporter.Emit(jobevent.Info, "Lime sync: %d customer(s), %d contact(s) processed; %d added, %d updated, %d removed",
+		customerCount, contactCount, added, updated, removed)
 	return nil
 }

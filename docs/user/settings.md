@@ -40,7 +40,12 @@ name, URL, group, optional icon.
 ## Sources
 
 Enable and credential **BECS**, **NetBox**, and **Lime** under **Admin →
-Sources**. NetBox also has a webhook secret (HMAC on
+Sources**. Lime has a **change report** list: after a sync that adds,
+updates, or removes customers, services, or contacts, Factum emails that
+list. A sync with no changes does not send mail. The message uses the
+SMTP settings on Settings → Factum → Email.
+
+NetBox also has a webhook secret (HMAC on
 `POST /api/netbox-webhook`) and options to sync Factum customers to
 NetBox tenants and Factum contacts to NetBox contacts (assigned onto
 the matching tenant when that tenant exists).

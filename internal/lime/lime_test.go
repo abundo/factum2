@@ -1,6 +1,7 @@
 package lime
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/abundo/factum2/internal/util"
@@ -329,8 +330,39 @@ func TestSyncPersonInactiveUnlinksExisting(t *testing.T) {
 	if links != 0 {
 		t.Errorf("inactive person still linked: %d", links)
 	}
+	if len(l.changes) != 2 || l.changes[1].Action != changeRemoved || !strings.Contains(l.changes[1].Detail, "unlinked") {
+		t.Errorf("inactive unlink report = %+v", l.changes)
+	}
 	if contact.Name != "Was Active" {
 		t.Errorf("inactive resync should not rewrite fields, name=%q", contact.Name)
+	}
+}
+
+func TestSyncPersonReportsReplacedCustomerLink(t *testing.T) {
+	db := newTestDB(t)
+	l := &Lime{DB: db}
+
+	a := models.Customer{Name: "A", Source: "lime", SourceID: "1"}
+	b := models.Customer{Name: "B", Source: "lime", SourceID: "2"}
+	if err := db.Create(&a).Error; err != nil || db.Create(&b).Error != nil {
+		t.Fatalf("seed customers")
+	}
+	person := limetoolmodels.LimePerson{ID: 10, Name: "Ada", Email: "ada@example.com"}
+	if err := l.syncPerson(&a, person, 1); err != nil {
+		t.Fatalf("link A: %v", err)
+	}
+	if err := l.syncPerson(&a, person, 2); err != nil {
+		t.Fatalf("resync A: %v", err)
+	}
+	if len(l.changes) != 1 || l.changes[0].Action != changeAdded {
+		t.Fatalf("unchanged resync should not add a link change: %+v", l.changes)
+	}
+	if err := l.syncPerson(&b, person, 3); err != nil {
+		t.Fatalf("link B: %v", err)
+	}
+	last := l.changes[len(l.changes)-1]
+	if last.Action != changeUpdated || last.Label != "Ada (B)" || last.Detail != "customer link replaced" {
+		t.Fatalf("move report = %+v", l.changes)
 	}
 }
 
@@ -350,10 +382,10 @@ func TestReplaceContactCustomersIsExclusive(t *testing.T) {
 	if err := db.Create(&contact).Error; err != nil {
 		t.Fatalf("seed contact: %v", err)
 	}
-	if err := l.replaceContactCustomers(contact.ID, a.ID); err != nil {
+	if _, err := l.replaceContactCustomers(contact.ID, a.ID); err != nil {
 		t.Fatalf("link A: %v", err)
 	}
-	if err := l.replaceContactCustomers(contact.ID, b.ID); err != nil {
+	if _, err := l.replaceContactCustomers(contact.ID, b.ID); err != nil {
 		t.Fatalf("link B: %v", err)
 	}
 
@@ -395,6 +427,9 @@ func TestPruneStaleDeliveriesRemovesUnseenLimeServices(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("pruned %d, want 1", n)
+	}
+	if len(l.changes) != 1 || l.changes[0].Action != changeRemoved || l.changes[0].Label != "CN2 (Acme)" {
+		t.Errorf("removal report = %+v", l.changes)
 	}
 
 	var ids []string
@@ -443,6 +478,9 @@ func TestPruneRemovedPersonLinksUnlinksStaleLimeContacts(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("unlinked %d, want 1", n)
+	}
+	if len(l.changes) != 1 || l.changes[0].Action != changeRemoved || l.changes[0].Kind != "Contact" || l.changes[0].Label != "Gone (Acme)" {
+		t.Errorf("unlink report = %+v", l.changes)
 	}
 
 	var contacts []models.Contact
@@ -495,6 +533,9 @@ func TestPruneStaleCustomersRemovesUnseenLimeCompanies(t *testing.T) {
 	}
 	if custN != 1 || svcN != 1 {
 		t.Errorf("removed customers=%d services=%d, want 1 and 1", custN, svcN)
+	}
+	if len(l.changes) != 2 || l.changes[0].Label != "CN-gone (Gone)" || l.changes[1].Action != changeRemoved || l.changes[1].Kind != "Customer" || l.changes[1].Label != "Gone" {
+		t.Errorf("removal report = %+v", l.changes)
 	}
 
 	var names []string
