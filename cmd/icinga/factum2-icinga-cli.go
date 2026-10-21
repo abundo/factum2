@@ -119,7 +119,7 @@ func main() {
 			},
 			boa.CmdT[PollParams]{
 				Use:   "poll",
-				Short: "Poll interface status and counters over SNMP and submit passive Icinga results",
+				Short: "Poll interface and ELINE status over SNMP and submit passive Icinga results",
 				RunFuncE: func(p *PollParams, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 					client, err := icinga.NewFactumIcingaClient(&p.Config)

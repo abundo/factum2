@@ -29,21 +29,34 @@ type resultSubmitter interface {
 
 // PollOptions controls one factum2-icinga poll run. Open and Submit are
 // set by tests. A nil Open uses SNMPv2c. A nil Submit uses the command
-// pipe when CommandPipe is set, otherwise the Icinga API.
+// pipe when CommandPipe is set, otherwise the Icinga API. Elines is the
+// applied ELINE inventory. Poll fills it from the Factum API.
 type PollOptions struct {
 	Workers     int
 	Interval    time.Duration
 	StateFile   string
 	CommandPipe string
+	Elines      []models.IcingaEline
 	Open        func(ctx context.Context, addr, community string) (snmpQuerier, error)
 	Submit      resultSubmitter
+	// EOSShow overrides the Arista eAPI call. Nil uses show patch panel.
+	EOSShow eosShowFunc
 }
 
 type pollStats struct {
 	Devices    int
 	Interfaces int
+	Elines     int
 	SNMPErrors int
 	Submitted  int
+}
+
+type pollTarget struct {
+	Host     string
+	Addr     string
+	Platform string
+	Ifaces   []ifaceTarget
+	Elines   []elineTarget
 }
 
 type counterStore struct {
@@ -186,48 +199,155 @@ func dialDevice(ctx context.Context, open func(context.Context, string, string) 
 	return nil, nil, last
 }
 
-func unknownResults(dev deviceIfaces, text string) []checkResult {
-	out := make([]checkResult, len(dev.Ifaces))
-	for i, iface := range dev.Ifaces {
-		out[i] = checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " " + text}
+func unknownTarget(dev pollTarget, text string) []checkResult {
+	out := make([]checkResult, 0, len(dev.Ifaces)+len(dev.Elines))
+	for _, iface := range dev.Ifaces {
+		out = append(out, checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " " + text})
+	}
+	for _, eline := range dev.Elines {
+		out = append(out, checkResult{Host: dev.Host, Service: eline.Service, Status: statusUnknown, Output: elinePrefix(eline) + " " + text})
 	}
 	return out
 }
 
-func pollDevice(ctx context.Context, open func(context.Context, string, string) (snmpQuerier, error), communities []string, dev deviceIfaces, store *counterStore, now time.Time) ([]checkResult, bool) {
+func mergePollTargets(ifaces []deviceIfaces, elines []elineDevice) []pollTarget {
+	byHost := make(map[string]*pollTarget, len(ifaces)+len(elines))
+	order := make([]string, 0, len(ifaces)+len(elines))
+	add := func(host string) *pollTarget {
+		if t := byHost[host]; t != nil {
+			return t
+		}
+		t := &pollTarget{Host: host}
+		byHost[host] = t
+		order = append(order, host)
+		return t
+	}
+	for _, dev := range ifaces {
+		t := add(dev.Host)
+		t.Addr = dev.Addr
+		t.Ifaces = dev.Ifaces
+	}
+	for _, dev := range elines {
+		t := add(dev.Host)
+		if t.Addr == "" {
+			t.Addr = dev.Addr
+		}
+		t.Platform = dev.Platform
+		t.Elines = dev.Elines
+	}
+	out := make([]pollTarget, 0, len(order))
+	for _, host := range order {
+		out = append(out, *byHost[host])
+	}
+	return out
+}
+
+func countPoll(targets []pollTarget) (ifaces, elines int) {
+	for _, t := range targets {
+		ifaces += len(t.Ifaces)
+		elines += len(t.Elines)
+	}
+	return ifaces, elines
+}
+
+func pollDevice(ctx context.Context, open func(context.Context, string, string) (snmpQuerier, error), communities []string, eosUser, eosPass string, eosShow eosShowFunc, dev pollTarget, store *counterStore, now time.Time) ([]checkResult, bool) {
 	if err := ctx.Err(); err != nil {
-		return unknownResults(dev, "poll cancelled"), true
+		return unknownTarget(dev, "poll cancelled"), true
 	}
-	q, names, err := dialDevice(ctx, open, dev.Addr, communities)
-	if err != nil {
-		return unknownResults(dev, "SNMP poll failed: "+err.Error()), true
-	}
-	defer q.Close()
-	samples, err := collectSamples(q, names, dev.Ifaces)
-	if err != nil {
-		return unknownResults(dev, "SNMP poll failed: "+err.Error()), true
-	}
-	out := make([]checkResult, len(dev.Ifaces))
-	for i, iface := range dev.Ifaces {
-		sample, ok := samples[iface.Service]
-		if !ok {
-			out[i] = checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " not in SNMP"}
-			continue
+	eosAPI := eosEAPIReady(dev.Platform, eosUser, eosPass)
+	needSNMP := len(dev.Ifaces) > 0 || (len(dev.Elines) > 0 && !eosAPI)
+	var q snmpQuerier
+	var names map[int]snmpValue
+	var dialErr error
+	if needSNMP {
+		q, names, dialErr = dialDevice(ctx, open, dev.Addr, communities)
+		if q != nil {
+			defer q.Close()
 		}
-		prev := store.get(dev.Host, iface.Service)
-		status, output, perf, next, keep := evalInterface(iface, sample, prev, now)
-		if keep {
-			store.put(dev.Host, iface.Service, next)
-		}
-		out[i] = checkResult{Host: dev.Host, Service: iface.Service, Status: status, Output: output, Perf: perf}
 	}
-	return out, false
+	if dialErr != nil && !eosAPI {
+		return unknownTarget(dev, "SNMP poll failed: "+dialErr.Error()), true
+	}
+	out := make([]checkResult, 0, len(dev.Ifaces)+len(dev.Elines))
+	snmpErr := false
+	if dialErr != nil {
+		snmpErr = true
+		for _, iface := range dev.Ifaces {
+			out = append(out, checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " SNMP poll failed: " + dialErr.Error()})
+		}
+	} else if len(dev.Ifaces) > 0 {
+		samples, err := collectSamples(q, names, dev.Ifaces)
+		if err != nil {
+			snmpErr = true
+			for _, iface := range dev.Ifaces {
+				out = append(out, checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " SNMP poll failed: " + err.Error()})
+			}
+		} else {
+			for _, iface := range dev.Ifaces {
+				sample, ok := samples[iface.Service]
+				if !ok {
+					out = append(out, checkResult{Host: dev.Host, Service: iface.Service, Status: statusUnknown, Output: iface.Name + " not in SNMP"})
+					continue
+				}
+				prev := store.get(dev.Host, iface.Service)
+				status, output, perf, next, keep := evalInterface(iface, sample, prev, now)
+				if keep {
+					store.put(dev.Host, iface.Service, next)
+				}
+				out = append(out, checkResult{Host: dev.Host, Service: iface.Service, Status: status, Output: output, Perf: perf})
+			}
+		}
+	}
+	if len(dev.Elines) > 0 {
+		var readings map[string]elineReading
+		var err error
+		if eosAPI {
+			show := eosShow
+			if show == nil {
+				user, pass := eosUser, eosPass
+				show = func(ctx context.Context, host string) (map[string]eosPatch, error) {
+					return eosShowPatchPanel(ctx, host, user, pass)
+				}
+			}
+			var patches map[string]eosPatch
+			patches, err = show(ctx, dev.Addr)
+			if err == nil {
+				readings = readingsFromEOS(dev.Elines, patches)
+			}
+		} else {
+			readings, err = collectElines(q, dev.Platform, dev.Elines)
+		}
+		if err != nil {
+			snmpErr = true
+			why := "SNMP poll failed: "
+			if eosAPI {
+				why = "eAPI failed: "
+			}
+			msg := strings.NewReplacer("\n", " ", "\r", " ", ";", ",").Replace(err.Error())
+			for _, eline := range dev.Elines {
+				out = append(out, checkResult{Host: dev.Host, Service: eline.Service, Status: statusUnknown, Output: elinePrefix(eline) + " " + why + msg})
+			}
+		} else {
+			for _, eline := range dev.Elines {
+				reading, ok := readings[eline.Service]
+				if !ok {
+					reading = readingFrom(eline, statusUnknown, "no result")
+				}
+				out = append(out, checkResult{Host: dev.Host, Service: eline.Service, Status: reading.Status, Output: reading.Output})
+			}
+		}
+	}
+	return out, snmpErr
 }
 
 func (fic *FactumIcingaClient) pollOnce(ctx context.Context, opt PollOptions, devices []*models.Device, store *counterStore, submit resultSubmitter, now time.Time) (pollStats, error) {
-	targets := selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
-	stats := pollStats{Devices: len(targets), Interfaces: countIfaces(targets)}
-	if stats.Interfaces == 0 {
+	targets := mergePollTargets(
+		selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices),
+		selectElineTargets(opt.Elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices),
+	)
+	nIfaces, nElines := countPoll(targets)
+	stats := pollStats{Devices: len(targets), Interfaces: nIfaces, Elines: nElines}
+	if stats.Interfaces == 0 && stats.Elines == 0 {
 		return stats, nil
 	}
 	open := opt.Open
@@ -248,7 +368,7 @@ func (fic *FactumIcingaClient) pollOnce(ctx context.Context, opt PollOptions, de
 	g.SetLimit(workers)
 	for _, dev := range targets {
 		g.Go(func() error {
-			results, snmpErr := pollDevice(gctx, open, communities, dev, store, now)
+			results, snmpErr := pollDevice(gctx, open, communities, fic.IcingaConfig.EAPIUser, fic.IcingaConfig.EAPIPassword, opt.EOSShow, dev, store, now)
 			if snmpErr {
 				mu.Lock()
 				stats.SNMPErrors++
@@ -275,9 +395,10 @@ func (fic *FactumIcingaClient) pollOnce(ctx context.Context, opt PollOptions, de
 }
 
 // Poll loads Icinga-monitored devices and submits one passive result per
-// interface that has Interface alarms set. Interval greater than zero
-// repeats until ctx is cancelled. Counter state is kept in memory and,
-// when StateFile is set, on disk so a later cycle can compute bit rates.
+// interface that has Interface alarms set, plus one per applied ELINE
+// endpoint on a monitored device. Interval greater than zero repeats
+// until ctx is cancelled. Counter state is kept in memory and, when
+// StateFile is set, on disk so a later cycle can compute bit rates.
 func (fic *FactumIcingaClient) Poll(ctx context.Context, opt PollOptions, reporter jobevent.Reporter) error {
 	if fic.IcingaConfig == nil || !fic.IcingaConfig.MonitorInterfaces {
 		reporter.Emit(jobevent.Info, "Interface monitoring is off")
@@ -323,6 +444,12 @@ func (fic *FactumIcingaClient) Poll(ctx context.Context, opt PollOptions, report
 				monitored = append(monitored, device)
 			}
 		}
+		elines, err := factumClient.GetIcingaElines()
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		opt.Elines = elines
 		stats, err := fic.pollOnce(ctx, opt, monitored, store, submit, time.Now())
 		if saveErr := store.save(opt.StateFile); saveErr != nil {
 			reporter.EmitErr(saveErr)
@@ -330,8 +457,8 @@ func (fic *FactumIcingaClient) Poll(ctx context.Context, opt PollOptions, report
 				err = saveErr
 			}
 		}
-		reporter.Emit(jobevent.Info, "polled %d interface(s) on %d device(s) in %s, snmp errors %d, submitted %d",
-			stats.Interfaces, stats.Devices, time.Since(started).Round(time.Millisecond), stats.SNMPErrors, stats.Submitted)
+		reporter.Emit(jobevent.Info, "polled %d interface(s) and %d ELINE service(s) on %d device(s) in %s, snmp errors %d, submitted %d",
+			stats.Interfaces, stats.Elines, stats.Devices, time.Since(started).Round(time.Millisecond), stats.SNMPErrors, stats.Submitted)
 		if err != nil {
 			reporter.EmitErr(err)
 			if opt.Interval <= 0 {

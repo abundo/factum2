@@ -7,6 +7,13 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- `factum2-icinga poll` also checks ELINE services on monitored
+  devices: IOS-XR xconnects via CISCO-IETF-PW-MIB, Nokia epipes via
+  TIMETRA-SERV-MIB `svcOperStatus`, and any platform that implements
+  PW-STD-MIB (RFC 5601). Arista EOS uses eAPI `show patch panel`
+  with the EOS eAPI account on the Icinga destination. Sync writes one passive `eline <id>`
+  service per applied endpoint. Both ends are checked. Only the earlier host notifies while
+  that end is Warning or Critical, so one failure does not page twice. Admin-down stays OK.
 - Icinga can monitor interfaces. Admin → Destinations → Icinga has
   Monitor interfaces, SNMP communities, and an interfaces file.
   Sync writes one passive service per interface on devices with

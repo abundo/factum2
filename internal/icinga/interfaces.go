@@ -60,6 +60,35 @@ apply Dependency "factum-interface-host" to Service {
   assign where service.vars.factum_interface
 }
 
+template Service "factum-eline" {
+  check_command = "factum-interface-stale"
+  enable_active_checks = true
+  enable_passive_checks = true
+  max_check_attempts = 1
+  check_interval = 5m
+  retry_interval = 1m
+  enable_flapping = false
+  vars.factum_eline = true
+}
+
+apply Dependency "factum-eline-host" to Service {
+  parent_host_name = host.name
+  disable_notifications = true
+  states = [ Up ]
+  assign where service.vars.factum_eline
+}
+
+// The earlier host notifies. Warning or Critical there suppresses the
+// other end. states lists parent states that keep this dependency healthy,
+// so OK and UNKNOWN on the earlier host still let the other end notify.
+apply Dependency "factum-eline-peer" to Service {
+  parent_host_name = service.vars.eline_peer_host
+  parent_service_name = service.vars.eline_peer_service
+  disable_notifications = true
+  states = [ OK, Unknown ]
+  assign where typeof(service.vars.eline_peer_host) == String && service.vars.eline_peer_host != ""
+}
+
 `
 
 type ifaceTarget struct {
@@ -160,7 +189,7 @@ func countIfaces(devices []deviceIfaces) int {
 	return n
 }
 
-func renderInterfaceConf(w io.Writer, monitor bool, devices []deviceIfaces) error {
+func renderInterfaceConf(w io.Writer, monitor bool, devices []deviceIfaces, elines []elineDevice) error {
 	bw := bufio.NewWriterSize(w, 1<<20)
 	if !monitor {
 		if _, err := io.WriteString(bw, "// Interface monitoring is off.\n"); err != nil {
@@ -175,6 +204,18 @@ func renderInterfaceConf(w io.Writer, monitor bool, devices []deviceIfaces) erro
 		for _, iface := range device.Ifaces {
 			if _, err := fmt.Fprintf(bw, "object Service \"%s\" {\n  import \"factum-interface\"\n  host_name = \"%s\"\n  vars.iface_name = \"%s\"\n  vars.iface_description = \"%s\"\n}\n\n",
 				quote(iface.Service), quote(device.Host), quote(iface.Name), quote(iface.Description)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, device := range elines {
+		for _, eline := range device.Elines {
+			peer := ""
+			if eline.PeerHost != "" {
+				peer = fmt.Sprintf("  vars.eline_peer_host = \"%s\"\n  vars.eline_peer_service = \"%s\"\n", quote(eline.PeerHost), quote(eline.PeerService))
+			}
+			if _, err := fmt.Fprintf(bw, "object Service \"%s\" {\n  import \"factum-eline\"\n  host_name = \"%s\"\n  vars.eline_id = \"%s\"\n  vars.eline_pw = \"%d\"\n%s}\n\n",
+				quote(eline.Service), quote(device.Host), quote(eline.ServiceID), eline.PWID, peer); err != nil {
 				return err
 			}
 		}

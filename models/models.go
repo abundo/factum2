@@ -488,6 +488,11 @@ type Settings struct {
 	// IcingaSNMPCommunities is a newline-separated SNMPv2c community list.
 	// poll tries them in order until a device answers.
 	IcingaSNMPCommunities string `gorm:"column:icinga_snmp_communities;type:text" form:"icinga_snmp_communities" json:"icinga_snmp_communities"`
+	// IcingaEAPIUser and IcingaEAPIPassword are the Arista eAPI account
+	// factum2-icinga uses for EOS patch-panel status. A read-only account
+	// is enough. Empty leaves EOS ELINE checks UNKNOWN.
+	IcingaEAPIUser     string `gorm:"column:icinga_eapi_user" form:"icinga_eapi_user" json:"icinga_eapi_user"`
+	IcingaEAPIPassword string `gorm:"column:icinga_eapi_password" form:"icinga_eapi_password" json:"icinga_eapi_password"`
 	// IcingaIgnoreDevices is a newline-separated list of device names (one
 	// per line) that factum2-icinga's Update() skips entirely.
 	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`

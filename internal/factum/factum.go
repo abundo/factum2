@@ -71,6 +71,19 @@ func (factum *FactumClient) GetDevicesWithInterfaces() ([]*models.Device, error)
 	return factum.getDevices("/api/device?include=interfaces")
 }
 
+// GetIcingaElines is GET /api/icinga/elines. factum2-icinga sync and poll
+// use it for passive ELINE services.
+func (factum *FactumClient) GetIcingaElines() ([]models.IcingaEline, error) {
+	var rows []models.IcingaEline
+	if err := factum.doJSON(http.MethodGet, "/api/icinga/elines", nil, &rows); err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []models.IcingaEline{}
+	}
+	return rows, nil
+}
+
 // getDevices GETs path and decodes a []*models.Device body. Shared by
 // GetDeviceHelper (list or by-name) and GetDevicesWithInterfaces. Transport
 // is util.FactumHTTP (unix hub socket when the probe succeeds, else HTTPS).

@@ -45,7 +45,7 @@ func TestSelectInterfaceTargets(t *testing.T) {
 
 func TestRenderInterfaceConfOff(t *testing.T) {
 	var b bytes.Buffer
-	if err := renderInterfaceConf(&b, false, []deviceIfaces{{Host: "r1", Ifaces: []ifaceTarget{{Name: "Ethernet1", Service: "iface Ethernet1"}}}}); err != nil {
+	if err := renderInterfaceConf(&b, false, []deviceIfaces{{Host: "r1", Ifaces: []ifaceTarget{{Name: "Ethernet1", Service: "iface Ethernet1"}}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(b.String(), "object Service") {
@@ -65,7 +65,7 @@ func TestWriteInterfaces(t *testing.T) {
 		Name: "r1", Enabled: true, PrimaryIPv4: "10.1.0.1/24", CfAlarmInterfaces: true,
 		Interfaces: []models.Interface{{Name: "Ethernet1/1", Description: "uplink"}},
 	}}
-	changed, err := fic.writeInterfaces(devices, jobevent.NewConsoleReporter(io.Discard))
+	changed, err := fic.writeInterfaces(devices, nil, jobevent.NewConsoleReporter(io.Discard))
 	if err != nil || !changed {
 		t.Fatalf("write: changed=%v err=%v", changed, err)
 	}
@@ -92,7 +92,7 @@ func TestWriteInterfaces(t *testing.T) {
 		t.Fatal("interface conf must not use per-interface SNMP checks")
 	}
 	fic.IcingaConfig.MonitorInterfaces = false
-	if _, err := fic.writeInterfaces(devices, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+	if _, err := fic.writeInterfaces(devices, nil, jobevent.NewConsoleReporter(io.Discard)); err != nil {
 		t.Fatal(err)
 	}
 	body, err = os.ReadFile(path)
@@ -118,7 +118,7 @@ func TestRenderInterfaceConf40000(t *testing.T) {
 	}
 	start := time.Now()
 	var b bytes.Buffer
-	if err := renderInterfaceConf(&b, true, devices); err != nil {
+	if err := renderInterfaceConf(&b, true, devices, nil); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
@@ -210,13 +210,20 @@ func TestPinIcingaInterfacePath(t *testing.T) {
 }
 
 type memSNMP struct {
-	cols  map[string]map[int]snmpValue
-	walks []string
-	gets  int
+	cols    map[string]map[int]snmpValue
+	scalars map[string]snmpValue
+	walks   []string
+	gets    int
+	walkErr map[string]error
 }
 
 func (m *memSNMP) Walk(base string) (map[int]snmpValue, error) {
 	m.walks = append(m.walks, base)
+	if m.walkErr != nil {
+		if err := m.walkErr[base]; err != nil {
+			return nil, err
+		}
+	}
 	if col, ok := m.cols[base]; ok {
 		cp := make(map[int]snmpValue, len(col))
 		for k, v := range col {
@@ -231,14 +238,29 @@ func (m *memSNMP) Get(oids []string) (map[string]snmpValue, error) {
 	m.gets++
 	out := make(map[string]snmpValue, len(oids))
 	for _, oid := range oids {
+		oid = normalizeOID(oid)
+		if m.scalars != nil {
+			if v, ok := m.scalars[oid]; ok {
+				out[oid] = v
+				continue
+			}
+		}
 		dot := strings.LastIndex(oid, ".")
 		if dot < 0 {
 			continue
 		}
 		base, idxText := oid[:dot], oid[dot+1:]
 		idx := 0
+		okIdx := true
 		for _, r := range idxText {
+			if r < '0' || r > '9' {
+				okIdx = false
+				break
+			}
 			idx = idx*10 + int(r-'0')
+		}
+		if !okIdx {
+			continue
 		}
 		if col, ok := m.cols[base]; ok {
 			if v, ok := col[idx]; ok {

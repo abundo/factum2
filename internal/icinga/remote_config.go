@@ -24,6 +24,8 @@ type remoteConfigResponse struct {
 	InterfacesFile      string                  `json:"interfaces_file"`
 	MonitorInterfaces   bool                    `json:"monitor_interfaces"`
 	SNMPCommunities     string                  `json:"snmp_communities"`
+	EAPIUser            string                  `json:"eapi_user"`
+	EAPIPassword        string                  `json:"eapi_password"`
 	IgnoreDevices       string                  `json:"ignore_devices"`
 	DefaultNotification string                  `json:"default_notification"`
 	HostTemplate        string                  `json:"host_template"`
@@ -53,6 +55,8 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigIcinga, err
 		InterfacesFile:      remote.InterfacesFile,
 		MonitorInterfaces:   remote.MonitorInterfaces,
 		SNMPCommunities:     remote.SNMPCommunities,
+		EAPIUser:            remote.EAPIUser,
+		EAPIPassword:        remote.EAPIPassword,
 		IgnoreDevices:       remote.IgnoreDevices,
 		DefaultNotification: remote.DefaultNotification,
 		HostTemplate:        remote.HostTemplate,

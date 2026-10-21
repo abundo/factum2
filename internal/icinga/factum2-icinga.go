@@ -458,33 +458,39 @@ func (fic *FactumIcingaClient) writeCerts(reporter jobevent.Reporter) (bool, err
 	return installConfFile(tmpFile, fic.IcingaConfig.CertsFile)
 }
 
-func (fic *FactumIcingaClient) writeInterfaces(devices []*models.Device, reporter jobevent.Reporter) (bool, error) {
+func (fic *FactumIcingaClient) writeInterfaces(devices []*models.Device, elines []models.IcingaEline, reporter jobevent.Reporter) (bool, error) {
 	path := strings.TrimSpace(fic.IcingaConfig.InterfacesFile)
 	if path == "" {
 		return false, nil
 	}
 	var targets []deviceIfaces
+	var elineTargets []elineDevice
 	if fic.IcingaConfig.MonitorInterfaces {
 		targets = selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
+		elineTargets = selectElineTargets(elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
 	}
 	n := countIfaces(targets)
+	nElines := 0
+	for _, dev := range elineTargets {
+		nElines += len(dev.Elines)
+	}
 	message := "interface monitoring is off"
 	if fic.IcingaConfig.MonitorInterfaces {
-		message = fmt.Sprintf("%d interface service(s). %s", n, interfaceConfNote)
+		message = fmt.Sprintf("%d interface service(s), %d ELINE service(s). %s", n, nElines, interfaceConfNote)
 	}
 	tmpFile := path + ".tmp"
 	f, err := createConfFile(tmpFile, message)
 	if err != nil {
 		return false, err
 	}
-	if err := renderInterfaceConf(f, fic.IcingaConfig.MonitorInterfaces, targets); err != nil {
+	if err := renderInterfaceConf(f, fic.IcingaConfig.MonitorInterfaces, targets, elineTargets); err != nil {
 		f.Close()
 		return false, err
 	}
 	if err := f.Close(); err != nil {
 		return false, err
 	}
-	reporter.Emit(jobevent.Info, "wrote %d interface service(s) to %s", n, path)
+	reporter.Emit(jobevent.Info, "wrote %d interface service(s) and %d ELINE service(s) to %s", n, nElines, path)
 	return installConfFile(tmpFile, path)
 }
 
@@ -513,6 +519,14 @@ func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 		}
 		devices = append(devices, device)
 	}
+	var elines []models.IcingaEline
+	if fic.IcingaConfig.MonitorInterfaces {
+		elines, err = factumClient.GetIcingaElines()
+		if err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+	}
 
 	fic.Users = make(map[string]bool)
 
@@ -531,7 +545,7 @@ func (fic *FactumIcingaClient) Sync(reporter jobevent.Reporter) error {
 		reporter.EmitErr(err)
 		return err
 	}
-	ifacesChanged, err := fic.writeInterfaces(devices, reporter)
+	ifacesChanged, err := fic.writeInterfaces(devices, elines, reporter)
 	if err != nil {
 		reporter.EmitErr(err)
 		return err

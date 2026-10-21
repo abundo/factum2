@@ -23,6 +23,7 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/common-config`, nil},
 	{http.MethodGet, `/api/librenms-config`, []string{"librenms"}},
 	{http.MethodGet, `/api/icinga-config`, []string{"icinga"}},
+	{http.MethodGet, `/api/icinga/elines`, []string{"icinga"}},
 	{http.MethodGet, `/api/dns-config`, []string{"dns"}},
 	{http.MethodGet, `/api/certs-config`, []string{"certs"}},
 	{http.MethodGet, `/api/oxidized-config`, []string{"oxidized"}},

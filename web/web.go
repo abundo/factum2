@@ -265,6 +265,7 @@ func GUI(p *GuiParams) error {
 	api.DELETE("/librenms/pending-deletes/:device_id", ctrl.ApiLibrenmsPendingDeleteRemove, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.POST("/librenms/pending-deletes/:device_id/delete-next-sync", ctrl.ApiLibrenmsPendingDeleteNextSync, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/icinga-config", ctrl.ApiIcingaConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.GET("/icinga/elines", ctrl.ApiIcingaElines, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/dns-config", ctrl.ApiDNSConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/certs-config", ctrl.ApiCertsConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/oxidized-config", ctrl.ApiOxidizedConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)

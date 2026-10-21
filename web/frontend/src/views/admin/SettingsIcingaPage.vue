@@ -53,6 +53,18 @@ import {
       command pipe so poll can submit results in bulk.
     </p>
     <div>
+      <label for="icinga_eapi_user" class="block font-bold mb-3">EOS eAPI user</label>
+      <UInput id="icinga_eapi_user" v-model="settings.icinga_eapi_user" class="w-full" />
+      <small class="text-muted-color"
+        >Read-only Arista eAPI account. factum2-icinga poll uses it for EOS patch-panel
+        status. Leave blank and those ELINE checks stay UNKNOWN.</small
+      >
+    </div>
+    <div>
+      <label for="icinga_eapi_password" class="block font-bold mb-3">EOS eAPI password</label>
+      <PasswordInput id="icinga_eapi_password" v-model="settings.icinga_eapi_password" />
+    </div>
+    <div>
       <label for="icinga_snmp_communities" class="block font-bold mb-3">SNMP communities</label>
       <UTextarea
         id="icinga_snmp_communities"

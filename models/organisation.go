@@ -167,6 +167,20 @@ type Service struct {
 	SourceID string `json:"source_id"`
 }
 
+// IcingaEline is one applied ELINE endpoint for factum2-icinga. It is not
+// a table. Device is the short device name. Address may be CIDR. Platform
+// is the catalog slug when the device has one, otherwise the stored
+// platform string. Local is a same-device patch (no pseudowire).
+type IcingaEline struct {
+	Device    string `json:"device"`
+	Address   string `json:"address"`
+	Platform  string `json:"platform"`
+	Monitor   bool   `json:"monitor"`
+	ServiceID string `json:"service_id"`
+	PWID      int    `json:"pw_id"`
+	Local     bool   `json:"local"`
+}
+
 // BeforeCreate defaults a service's Source to "factum" when nothing set it
 // already. The Lime sync job (internal/lime/lime.go) always sets Source to
 // "lime" itself before saving, so this only ever fires for services created

@@ -55,9 +55,12 @@ type ConfigIcinga struct {
 
 	// MonitorInterfaces writes passive interface services and is what
 	// factum2-icinga poll requires before it polls. SNMPCommunities is a
-	// newline-separated SNMPv2c community list.
+	// newline-separated SNMPv2c community list. EAPIUser/EAPIPassword are
+	// the Arista eAPI account for EOS patch-panel status.
 	MonitorInterfaces bool
 	SNMPCommunities   string
+	EAPIUser          string
+	EAPIPassword      string
 
 	// IgnoreDevices is a newline-separated list of device names to skip
 	// entirely (Settings.IcingaIgnoreDevices).

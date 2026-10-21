@@ -14,6 +14,7 @@ func TestAllowHubAPI(t *testing.T) {
 		{http.MethodGet, "/api/common-config", true},
 		{http.MethodGet, "/api/librenms-config", true},
 		{http.MethodGet, "/api/icinga-config", true},
+		{http.MethodGet, "/api/icinga/elines", true},
 		{http.MethodGet, "/api/dns-config", true},
 		{http.MethodGet, "/api/certs-config", true},
 		{http.MethodGet, "/api/oxidized-config", true},
@@ -113,6 +114,12 @@ func TestAllowHubAPIForRoles(t *testing.T) {
 	}
 	if AllowHubAPIForRoles(http.MethodGet, "/api/icinga-config", nil) {
 		t.Fatal("icinga-config requires the icinga role")
+	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/icinga/elines", []string{"icinga"}) {
+		t.Fatal("icinga poll needs the eline inventory")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/icinga/elines", []string{"dns"}) {
+		t.Fatal("dns must not read the eline inventory")
 	}
 	if !AllowHubAPIForRoles(http.MethodGet, "/api/common-config", []string{"dns"}) {
 		t.Fatal("common-config stays available to every worker")
