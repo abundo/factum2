@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import {
   getOxidizedConfig,
@@ -46,6 +46,9 @@ const tabItems = [
 const configText = ref('')
 const configLoading = ref(false)
 const configError = ref(null)
+const configSearch = ref('')
+const configMatchIndex = ref(0)
+const configPre = ref(null)
 
 const versions = ref([])
 const versionsLoading = ref(false)
@@ -88,6 +91,8 @@ function versionOptionLabel(version) {
 
 function resetContent() {
   tab.value = 'config'
+  configSearch.value = ''
+  configMatchIndex.value = 0
   versionSearch.value = ''
   oidNew.value = ''
   oidOld.value = PARENT_OID
@@ -275,6 +280,76 @@ const diffLines = computed(() => {
   }
   return patch.replace(/\n$/, '').split('\n')
 })
+
+// Case-insensitive phrase search over the loaded configuration. Each hit
+// gets a stable index so Previous and Next can scroll to that mark.
+const configView = computed(() => {
+  const raw = configText.value || ''
+  const lines = raw ? raw.replace(/\n$/, '').split('\n') : []
+  const needle = configSearch.value.trim()
+  const lowerNeedle = needle.toLowerCase()
+  let hit = 0
+  const view = lines.map((line) => {
+    if (!lowerNeedle) {
+      return { parts: [{ text: line, hit: -1 }] }
+    }
+    if (!line) {
+      return { parts: [{ text: ' ', hit: -1 }] }
+    }
+    const lower = line.toLowerCase()
+    const parts = []
+    let i = 0
+    while (i < line.length) {
+      const at = lower.indexOf(lowerNeedle, i)
+      if (at < 0) {
+        parts.push({ text: line.slice(i), hit: -1 })
+        break
+      }
+      if (at > i) {
+        parts.push({ text: line.slice(i, at), hit: -1 })
+      }
+      parts.push({ text: line.slice(at, at + needle.length), hit })
+      hit += 1
+      i = at + needle.length
+    }
+    return { parts }
+  })
+  return { lines: view, total: hit }
+})
+
+function scrollToConfigMatch() {
+  nextTick(() => {
+    const root = configPre.value
+    if (!root) {
+      return
+    }
+    const el = root.querySelector(`[data-hit="${configMatchIndex.value}"]`)
+    el?.scrollIntoView({ block: 'center' })
+  })
+}
+
+watch([() => configSearch.value.trim(), configText], () => {
+  configMatchIndex.value = 0
+  if (configSearch.value.trim() && configText.value) {
+    scrollToConfigMatch()
+  }
+})
+
+function stepConfigMatch(delta) {
+  const total = configView.value.total
+  if (!total) {
+    return
+  }
+  configMatchIndex.value = (configMatchIndex.value + delta + total) % total
+  scrollToConfigMatch()
+}
+
+function onConfigSearchEnter(event) {
+  if (!configSearch.value.trim() || !configView.value.total) {
+    return
+  }
+  stepConfigMatch(event.shiftKey ? -1 : 1)
+}
 </script>
 
 <template>
@@ -300,7 +375,42 @@ const diffLines = computed(() => {
     <UTabs v-model="tab" :items="tabItems" class="min-h-0 flex-1">
       <template #config>
         <div class="flex flex-col gap-2 pt-3 min-h-0">
-          <div class="flex justify-end">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <div class="flex flex-wrap gap-2 items-center">
+              <SearchInput
+                v-model="configSearch"
+                size="sm"
+                class="w-56"
+                placeholder="Search configuration..."
+                @keydown.enter="onConfigSearchEnter"
+              />
+              <span
+                v-if="configSearch.trim()"
+                class="text-sm text-muted-color tabular-nums"
+              >
+                {{ configView.total ? configMatchIndex + 1 : 0 }} / {{ configView.total }}
+              </span>
+              <UButton
+                icon="i-lucide-chevron-up"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                aria-label="Previous match"
+                title="Previous match"
+                :disabled="!configView.total"
+                @click="stepConfigMatch(-1)"
+              />
+              <UButton
+                icon="i-lucide-chevron-down"
+                size="sm"
+                variant="outline"
+                color="neutral"
+                aria-label="Next match"
+                title="Next match"
+                :disabled="!configView.total"
+                @click="stepConfigMatch(1)"
+              />
+            </div>
             <UButton
               label="Copy"
               icon="i-lucide-copy"
@@ -316,9 +426,28 @@ const diffLines = computed(() => {
           </div>
           <UAlert v-else-if="configError" color="error" variant="subtle" :title="configError" />
           <pre
-            v-else
+            v-else-if="!configSearch.trim()"
             class="font-mono text-xs overflow-auto max-h-[calc(90vh-260px)] p-3 rounded-md bg-muted whitespace-pre"
             >{{ configText || '(empty)' }}</pre
+          >
+          <pre
+            v-else
+            ref="configPre"
+            class="font-mono text-xs overflow-auto max-h-[calc(90vh-260px)] p-3 rounded-md bg-muted"
+            ><span
+              v-for="(line, i) in configView.lines"
+              :key="i"
+              class="block whitespace-pre"
+              ><template v-for="(part, j) in line.parts" :key="j"
+                ><mark
+                  v-if="part.hit >= 0"
+                  :data-hit="part.hit"
+                  class="rounded-sm bg-warning/40 text-inherit"
+                  :class="part.hit === configMatchIndex ? 'ring-1 ring-warning' : ''"
+                  >{{ part.text }}</mark
+                ><template v-else>{{ part.text }}</template></template
+              ></span
+            ></pre
           >
         </div>
       </template>
