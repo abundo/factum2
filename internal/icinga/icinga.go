@@ -153,13 +153,30 @@ type Response struct {
 }
 
 type icingaClient struct {
-	c util.ConfigIcinga
+	c    util.ConfigIcinga
+	http *http.Client
 }
 
 func NewIcingaClient(c util.ConfigIcinga) *icingaClient {
-	client := new(icingaClient)
-	client.c = c
-	return client
+	return &icingaClient{c: c, http: newIcingaHTTPClient()}
+}
+
+// newIcingaHTTPClient is one keep-alive HTTP/1.1 client for an Icinga API.
+// Icinga accepts one process-check-result per request and reuses the TLS
+// connection for the next request on that socket. HTTP/2 is turned off so a
+// later Icinga that offered it would not change this to a multiplexed session.
+// The idle pool is sized for poll workers: each worker posts one device's
+// results serially, and the next cycle reuses those connections.
+func newIcingaHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConns:        maxPollWorkers,
+			MaxIdleConnsPerHost: maxPollWorkers,
+			IdleConnTimeout:     2 * time.Minute,
+			TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{},
+		},
+	}
 }
 
 /*
@@ -229,7 +246,7 @@ func (icinga *icingaClient) reloadViaAPI() ([]byte, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 	req.SetBasicAuth(icinga.c.Username, icinga.c.Password)
-	resp, err := icingaAPIClient().Do(req)
+	resp, err := icinga.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -255,14 +272,6 @@ func quote(s string) string {
 	return s
 }
 
-// icingaAPIClient is shared by GetHostsDown/GetServicesDown - Icinga's API
-// is normally reached over its self-signed cert, hence InsecureSkipVerify.
-func icingaAPIClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}
-}
-
 // postFilter POSTs an Icinga object-query filter (with the GET method
 // override Icinga's API requires for a filtered query with a body) and
 // returns the raw response body.
@@ -281,7 +290,7 @@ func (icinga *icingaClient) postFilter(url, filter string) ([]byte, error) {
 	req.Header.Set("X-HTTP-Method-Override", "GET")
 	req.SetBasicAuth(icinga.c.Username, icinga.c.Password)
 
-	resp, err := icingaAPIClient().Do(req)
+	resp, err := icinga.http.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -117,11 +117,16 @@ func (icinga *icingaClient) SubmitServiceResult(ctx context.Context, r checkResu
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(icinga.c.Username, icinga.c.Password)
-	resp, err := icingaAPIClient().Do(req)
+	resp, err := icinga.http.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	// Read the whole body. A partial read stops the transport from returning
+	// this connection to the idle pool, so the next result would dial again.
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("icinga process-check-result %s: %s", resp.Status, bytes.TrimSpace(respBody))
@@ -129,6 +134,10 @@ func (icinga *icingaClient) SubmitServiceResult(ctx context.Context, r checkResu
 	return nil
 }
 
+// apiSubmitter posts one process-check-result per service on the Icinga
+// client's HTTP/1.1 connection. Poll runs one Submit per device at a time
+// inside a worker, so that device's results stay on one socket. Workers do
+// not share a socket with each other.
 type apiSubmitter struct {
 	icinga *icingaClient
 }

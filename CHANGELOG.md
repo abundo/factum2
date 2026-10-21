@@ -37,6 +37,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- Icinga passive results sent through the API reuse one HTTP/1.1
+  connection per poll worker. Each interface is still its own
+  `process-check-result` request. The command pipe remains the path
+  while Icinga provides it.
 - Admin → Destinations file fields store a `worker.paths` key, such as
   `icinga_hosts_file`. The filesystem path is only in each worker's
   `factum2-worker.yaml`. A field may name any pinned key. A blank field
