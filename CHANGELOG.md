@@ -28,6 +28,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- `factum2-netbox check --update` assigns the `destination` custom field
+  to interfaces as well as devices and virtual machines. A LibreNMS id
+  stored on `dcim.interface` can then be copied into `destination`.
 - Opening a DNS zone's records and leaving without edits no longer asks
   to discard unsaved changes. The blank row at the bottom of the grid
   stays local until you type in it.

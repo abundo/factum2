@@ -202,7 +202,7 @@ func allDeviceCFs() map[string]*netboxtool.NBCustomField {
 	add("monitor_icinga", "boolean", dev)
 	add("monitor_librenms", "boolean", dev)
 	add("monitor_grafana", "boolean", dev)
-	add("destination", "text", []string{"dcim.device", "virtualization.virtualmachine"})
+	add("destination", "text", []string{"dcim.device", "dcim.interface", "virtualization.virtualmachine"})
 	add("parents", "text", dev)
 	add("role", "select", []string{"dcim.interface"})
 	add("orgno", "text", []string{"tenancy.tenant"})
@@ -372,11 +372,36 @@ func TestCheckDB_DestinationField(t *testing.T) {
 	if got.Type != "text" {
 		t.Fatalf("destination type = %q, want text", got.Type)
 	}
-	if !contains(got.ObjectTypes, "dcim.device") || !contains(got.ObjectTypes, "virtualization.virtualmachine") {
-		t.Fatalf("destination object_types = %v", got.ObjectTypes)
+	for _, want := range []string{"dcim.device", "dcim.interface", "virtualization.virtualmachine"} {
+		if !contains(got.ObjectTypes, want) {
+			t.Fatalf("destination object_types = %v, want %s", got.ObjectTypes, want)
+		}
 	}
 	if api.fields["librenms_id"] != nil {
 		t.Fatal("librenms_id must not be created; destination holds librenms:<id>")
+	}
+}
+
+func TestCheckDB_DestinationAddsInterface(t *testing.T) {
+	fields := allDeviceCFs()
+	fields["destination"].ObjectTypes = []string{"dcim.device", "virtualization.virtualmachine"}
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{fullRule()},
+		fields: fields,
+	}
+	s := baseSettings()
+	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
+		t.Fatal("destination missing dcim.interface must fail without --update")
+	}
+	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("should add dcim.interface with --update: %v", err)
+	}
+	got := api.fields["destination"].ObjectTypes
+	for _, want := range []string{"dcim.device", "dcim.interface", "virtualization.virtualmachine"} {
+		if !contains(got, want) {
+			t.Fatalf("destination object_types = %v, want %s", got, want)
+		}
 	}
 }
 

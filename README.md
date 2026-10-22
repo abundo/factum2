@@ -396,8 +396,8 @@ machines. It stores a single origin, for example `factum:42` or
 `becs:3641645`. A new source system writes this field; it does not get
 its own custom field. `becs_oid` is no longer created. BECS sync still
 matches a device that only has the old integer until you copy it.
-`destination` is created on devices and virtual machines and stores every
-downstream system's id in one text value, for example `librenms:42 zabbix:7`
+`destination` is created on devices, interfaces, and virtual machines and
+stores every downstream system's id in one text value, for example `librenms:42 zabbix:7`
 (a JSON object is accepted too). Each integration updates only its own
 id. `librenms_id` is no longer created. Copy existing `librenms_id` and
 `librenms_device_id` values with `examples/netbox_migrate_destination_field.py`.
