@@ -15,25 +15,24 @@ for devices, then applying BIND/Kea through the dnsmgr2 library).
 
 ## What you edit
 
-| Page | Role |
+| Tab | Role |
 | --- | --- |
-| **SOA templates** | MNAME, RNAME, refresh/retry/expire/minimum. Serial is not stored; dnsmgr2 assigns `YYYYMMDDnn` on sync. |
-| **DNS templates** | Named `dns_template`: which SOA, default TTL, NS hostnames with an optional IPv4 or IPv6 address, optional DNSSEC policy |
-| **DNSSEC policies** | BIND `dnssec-policy` name and key/signature timings. On sync, `factum2-dns` writes the policy into the zone include. dnsmgr2 emits the block in `named.conf` and sets `dnssec-policy "…"` plus `inline-signing` on each zone whose DNS template uses it. |
 | **Zones** | Name, type (`forward` / `reverse4` / `reverse6`), DNS template, records |
+| **DNS templates** | Named `dns_template`: which SOA, default TTL, NS hostnames with an optional IPv4 or IPv6 address, optional DNSSEC policy |
+| **SOA templates** | MNAME, RNAME, refresh/retry/expire/minimum. Serial is not stored; dnsmgr2 assigns `YYYYMMDDnn` on sync. |
+| **DNSSEC policies** | BIND `dnssec-policy` name and key/signature timings. On sync, `factum2-dns` writes the policy into the zone include. dnsmgr2 emits the block in `named.conf` and sets `dnssec-policy "…"` plus `inline-signing` on each zone whose DNS template uses it. |
 
 A zone's SOA and apex NS come from its DNS template. Each nameserver row
 is a hostname and an optional IPv4 or IPv6 address. Add another row with
-the same hostname for another address. The zone file and the JSON records
-file get one apex NS per hostname, plus an A or AAAA when that hostname
-is inside the zone. An address on a nameserver outside the zone is kept
-on the template and is not written into the zone. The record editor is
-for everything else (A, AAAA, MX, TXT, …). Leave TTL empty to use the
-template default.
-
-The dnsmgr2 zone template still writes its own NS list into the zone
-file. Nameservers from the Factum DNS template are additional records in
-the JSON records file, so the same hostname in both places appears twice.
+the same hostname for another address. On sync, `factum2-dns` writes the
+SOA template, the DNS template (default TTL, NS hostnames, DNSSEC policy),
+and every DNSSEC policy into the zone include. dnsmgr2 uses that DNS
+template when it writes the BIND zone file, so the zone file gets one
+apex NS per hostname. An A or AAAA is added to the JSON records file only
+when that hostname is inside the zone. An address on a nameserver outside
+the zone is kept on the template and is not written into the zone. The
+record editor is for everything else (A, AAAA, MX, TXT, …). Leave TTL
+empty to use the template default.
 
 ## DHCP
 
@@ -78,16 +77,15 @@ Reverse zones use a prefix as the name (`192.168.0.0/16`,
 ## Include file for dnsmgr2
 
 `/etc/dnsmgr2/dnsmgr2.yaml` is maintained by the operator (BIND/Kea
-paths, sqlite serial DB, SOA templates, zone templates, host templates).
-Zone template names in the Factum zone editor must match names in that
-file.
+paths, sqlite serial DB, and host templates). SOA templates and DNS
+templates are written by `factum2-dns`. A template in the include
+replaces a template of the same name in the main file.
 
 When the zone editor is on and **Destinations → DNS → Include file** names
 a `worker.paths` key (usually `dns_zones_file`), `factum2-dns` writes the
-path that key has on the worker as a YAML zone list (`zones:`) plus
-`dnssec_policies:` for every DNSSEC policy. Each zone carries
-`dnssec_policy` when its DNS template has one. List that worker path from
-the main config:
+path that key has on the worker as `soa_templates:`, `zone_templates:`,
+`dnssec_policies:`, and `zones:`. Each zone carries `dnssec_policy` when
+its DNS template has one. List that worker path from the main config:
 
     dnsmgr2:
       - host_dns_template: isc_bind
@@ -102,7 +100,8 @@ worker YAML. An empty include-file field with the zone editor off means
 ## Sync
 
 A DNS job writes the JSON records file (devices plus zone-editor
-records), the zone include (zones and DNSSEC policies), and (if DHCP is
+records), the zone include (SOA templates, DNS templates, DNSSEC
+policies, and zones), and (if DHCP is
 on) the prefix include, then `factum2-dns` applies the
 administrator-managed `dnsmgr2.yaml` in-process (BIND zone files,
 `rndc`, optional Kea). No separate `dnsmgr2` binary is required on the

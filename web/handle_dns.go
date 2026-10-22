@@ -24,6 +24,8 @@ type DNSConfigResponse struct {
 	ZonesFile       string                   `json:"zones_file"`
 	PrefixesFile    string                   `json:"prefixes_file"`
 	Zones           []dns.ConfigDNSZone      `json:"zones"`
+	SOATemplates    []dns.ConfigSOATemplate  `json:"soa_templates,omitempty"`
+	ZoneTemplates   []dns.ConfigZoneTemplate `json:"zone_templates,omitempty"`
 	DNSSECPolicies  []dns.ConfigDNSSECPolicy `json:"dnssec_policies,omitempty"`
 	DHCP            dns.ConfigDHCP           `json:"dhcp"`
 }
@@ -60,11 +62,21 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
+		soas, err := loadSOATemplates(ctrl.DB)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		templates, err := loadZoneTemplates(ctrl.DB)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
 		policies, err := loadDNSSECPolicies(ctrl.DB)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 		resp.Zones = zones
+		resp.SOATemplates = soas
+		resp.ZoneTemplates = templates
 		resp.DNSSECPolicies = policies
 	}
 	return c.JSON(http.StatusOK, resp)
@@ -110,6 +122,55 @@ func loadDNSSyncPayload(db *gorm.DB) ([]dns.ConfigDNSZone, error) {
 		})
 	}
 	return zones, nil
+}
+
+func loadSOATemplates(db *gorm.DB) ([]dns.ConfigSOATemplate, error) {
+	var rows []models.DnsSOATemplate
+	if err := db.Order("name").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]dns.ConfigSOATemplate, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, dns.ConfigSOATemplate{
+			Name:    row.Name,
+			Mname:   row.Mname,
+			Rname:   row.Rname,
+			Refresh: row.Refresh,
+			Retry:   row.Retry,
+			Expire:  row.Expire,
+			Minimum: row.TTL,
+		})
+	}
+	return out, nil
+}
+
+func loadZoneTemplates(db *gorm.DB) ([]dns.ConfigZoneTemplate, error) {
+	var rows []models.DnsTemplate
+	if err := db.Preload("SOATemplate").
+		Preload("DNSSECPolicy").
+		Preload("Nameservers", func(tx *gorm.DB) *gorm.DB { return tx.Order("rank") }).
+		Order("name").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]dns.ConfigZoneTemplate, 0, len(rows))
+	for _, row := range rows {
+		ns := make([]dns.ConfigDNSNameserver, 0, len(row.Nameservers))
+		for _, n := range row.Nameservers {
+			ns = append(ns, dns.ConfigDNSNameserver{Hostname: n.Hostname, Address: n.Address})
+		}
+		policy := ""
+		if row.DNSSECPolicy != nil {
+			policy = row.DNSSECPolicy.Name
+		}
+		out = append(out, dns.ConfigZoneTemplate{
+			Name:         row.Name,
+			SOA:          row.SOATemplate.Name,
+			DefaultTTL:   row.DefaultTTL,
+			DNSSECPolicy: policy,
+			Nameservers:  ns,
+		})
+	}
+	return out, nil
 }
 
 func loadDNSSECPolicies(db *gorm.DB) ([]dns.ConfigDNSSECPolicy, error) {

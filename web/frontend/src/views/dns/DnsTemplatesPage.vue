@@ -174,6 +174,7 @@ onMounted(load)
         <div class="font-semibold text-lg">DNS templates</div>
         <p class="text-muted-color text-sm">
           SOA, default TTL, nameservers with an optional address, and an optional DNSSEC policy.
+          Sync writes this template into the zone include.
         </p>
       </div>
       <UButton

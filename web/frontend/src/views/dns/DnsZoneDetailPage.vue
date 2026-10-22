@@ -246,7 +246,7 @@ async function remove() {
   try {
     await deleteDnsZone(route.params.id)
     mark()
-    router.push('/dns/zones')
+    router.push('/dns')
   } catch (err) {
     toast.add({ title: errMsg(err, 'Failed to delete zone'), color: 'error' })
   } finally {
@@ -258,7 +258,7 @@ async function remove() {
 <template>
   <div v-if="loaded">
     <div class="flex items-center gap-2 mb-4">
-      <UButton to="/dns/zones" color="neutral" variant="ghost" icon="i-lucide-arrow-left" />
+      <UButton to="/dns" color="neutral" variant="ghost" icon="i-lucide-arrow-left" />
       <div class="font-semibold text-lg">{{ form.name }}</div>
       <UBadge color="neutral" variant="subtle">{{ typeLabel }}</UBadge>
     </div>

@@ -18,6 +18,7 @@ import (
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
+	goyaml "github.com/goccy/go-yaml"
 )
 
 type DNSClient struct {
@@ -190,17 +191,69 @@ func (dns *DNSClient) runUpdate() error {
 	if dns.update != nil {
 		return dns.update()
 	}
-	return runDnsmgrUpdate(dns.dnsmgrConfigPath())
+	return runDnsmgrUpdate(dns.dnsmgrConfigPath(), dns.DNS.ZonesFile)
 }
 
 func (dns *DNSClient) dnsmgrConfigPath() string {
 	return "/etc/dnsmgr2/dnsmgr2.yaml"
 }
 
-func runDnsmgrUpdate(configFile string) error {
+// applyIncludeTemplates copies soa_templates and zone_templates from the
+// zone include onto cfg. A template in the include replaces one of the
+// same name from the administrator-managed dnsmgr2.yaml.
+func applyIncludeTemplates(cfg *dnsmgr.ConfigRoot, zonesFile string) error {
+	zonesFile = strings.TrimSpace(zonesFile)
+	if cfg == nil || zonesFile == "" {
+		return nil
+	}
+	data, err := os.ReadFile(zonesFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("zone include %s: %w", zonesFile, err)
+	}
+	var doc struct {
+		SOA  map[string]dnsmgr.ConfigDNS_SOA_template `yaml:"soa_templates"`
+		Zone map[string]dnsmgr.ConfigDNS_ZoneTemplate `yaml:"zone_templates"`
+	}
+	if err := goyaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("zone include %s: %w", zonesFile, err)
+	}
+	if len(doc.SOA) == 0 && len(doc.Zone) == 0 {
+		return nil
+	}
+	if cfg.DNS.SOATemplates == nil {
+		cfg.DNS.SOATemplates = map[string]dnsmgr.ConfigDNS_SOA_template{}
+	}
+	for name, tpl := range doc.SOA {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		cfg.DNS.SOATemplates[name] = tpl
+	}
+	if cfg.DNS.ZoneTemplates == nil {
+		cfg.DNS.ZoneTemplates = map[string]dnsmgr.ConfigDNS_ZoneTemplate{}
+	}
+	for name, tpl := range doc.Zone {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		cfg.DNS.ZoneTemplates[name] = tpl
+	}
+	return nil
+}
+
+func runDnsmgrUpdate(configFile, zonesFile string) error {
 	cfg, err := dnsmgr.LoadConfigFile(configFile)
 	if err != nil {
 		return fmt.Errorf("dnsmgr2 config %s: %w", configFile, err)
+	}
+	// The zone include carries soa_templates and zone_templates. Apply
+	// them here as well, so a dnsmgr2 that only loads zones and
+	// dnssec_policies from an include still uses the Factum templates.
+	if err := applyIncludeTemplates(&cfg, zonesFile); err != nil {
+		return err
 	}
 	dm, err := dnsmgr.NewDnsManager(cfg)
 	if err != nil {

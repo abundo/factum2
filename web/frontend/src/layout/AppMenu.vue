@@ -21,20 +21,12 @@ function section(label, children) {
   ]
 }
 
-// DNS and Certificates are submenus. The heading is omitted when both features are off.
+// DNS and Certificates sit under Services. The heading is omitted when both features are off.
+// DNS zones, templates, SOA templates, and DNSSEC policies are tabs on /dns.
 function servicesSection(authStore) {
   const children = []
   if (authStore.dnsZonesEnabled) {
-    children.push({
-      label: 'DNS',
-      icon: 'i-lucide-globe-2',
-      children: [
-        { label: 'Zones', icon: 'i-lucide-globe-2', to: '/dns/zones' },
-        { label: 'DNS templates', icon: 'i-lucide-layers', to: '/dns/templates' },
-        { label: 'SOA templates', icon: 'i-lucide-file-text', to: '/dns/soa-templates' },
-        { label: 'DNSSEC policies', icon: 'i-lucide-shield', to: '/dns/dnssec-policies' },
-      ],
-    })
+    children.push({ label: 'DNS', icon: 'i-lucide-globe-2', to: '/dns' })
   }
   if (authStore.certsEnabled) {
     children.push({

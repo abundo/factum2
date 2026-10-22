@@ -113,12 +113,10 @@ func TestWriteRecordsWithZonesIncludesNameserverAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := parseRecordsJSON(t, []byte(buf.String()))
-	if n != 5 {
-		t.Fatalf("wrote %d records, want 5\n%s", n, buf.String())
+	if n != 3 {
+		t.Fatalf("wrote %d records, want 3\n%s", n, buf.String())
 	}
 	if !recordsJSONEqual(got.Domains[0].Records, []recordsJSONRecord{
-		{Name: "@", Type: "NS", Value: "ns1.example.com."},
-		{Name: "@", Type: "NS", Value: "ns2.other.net."},
 		{Name: "ns1", Type: "A", Value: "192.0.2.53"},
 		{Name: "ns1", Type: "AAAA", Value: "2001:db8::53"},
 		{Name: "www", Type: "A", Value: "192.0.2.10"},
@@ -181,6 +179,57 @@ func TestWriteZoneRecordsJSONTXT(t *testing.T) {
 	}
 	if len(got.Domains) != 1 || !recordsJSONEqual(got.Domains[0].Records, want) {
 		t.Fatalf("records = %#v", got.Domains)
+	}
+}
+
+func TestRenderZoneIncludeTemplates(t *testing.T) {
+	cfg := &Config{
+		SOATemplates: []ConfigSOATemplate{{
+			Name: "default", Mname: "ns1.example.com", Rname: "hostmaster.example.com",
+			Refresh: 36000, Retry: 3600, Expire: 604800, Minimum: 900,
+		}},
+		ZoneTemplates: []ConfigZoneTemplate{{
+			Name: "default_dns", SOA: "default", DefaultTTL: 900, DNSSECPolicy: "lab",
+			Nameservers: []ConfigDNSNameserver{
+				{Hostname: "ns1.example.com", Address: "192.0.2.53"},
+				{Hostname: "ns1.example.com.", Address: "2001:db8::53"},
+				{Hostname: "ns2.example.com"},
+			},
+		}},
+		Zones: []ConfigDNSZone{
+			{Name: "example.com", Type: "forward", DnsTemplate: "default_dns", DNSSECPolicy: "lab"},
+		},
+		DNSSECPolicies: []ConfigDNSSECPolicy{{
+			Name: "lab", KSKAlgorithm: "ecdsap256sha256", ZSKAlgorithm: "ecdsap256sha256",
+		}},
+	}
+	out, err := RenderZoneInclude(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"soa_templates:",
+		"default:",
+		"mname: ns1.example.com.",
+		"rname: hostmaster.example.com.",
+		"serial_format: date_serial",
+		"minimum: 900",
+		"zone_templates:",
+		"default_dns:",
+		"soa: default",
+		"default_ttl:",
+		"dnssec_policy: lab",
+		"value: ns1.example.com.",
+		"value: ns2.example.com.",
+		"dnssec_policies:",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("yaml missing %q\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "value: ns1.example.com.") != 1 {
+		t.Errorf("duplicate nameserver hostname should be one NS\n%s", s)
 	}
 }
 

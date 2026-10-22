@@ -145,25 +145,16 @@ func isReverseZoneType(typ string) bool {
 	}
 }
 
-// templateNameserverRecords emits one apex NS per hostname, then an A or
-// AAAA for each address whose hostname belongs in zone. An address on a
+// templateNameserverRecords emits an A or AAAA for each nameserver address
+// whose hostname belongs in zone. Apex NS records are not written here:
+// they come from the DNS template in the zone include. An address on a
 // nameserver outside the zone is not written here.
 func templateNameserverRecords(zone string, rows []ConfigDNSNameserver) []recordsJSONRecord {
-	var out []recordsJSONRecord
-	seen := make(map[string]struct{}, len(rows))
 	var glue []recordsJSONRecord
 	for _, row := range rows {
 		host := strings.TrimSpace(row.Hostname)
-		if host == "" {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSuffix(host, "."))
-		if _, ok := seen[key]; !ok {
-			seen[key] = struct{}{}
-			out = append(out, recordsJSONRecord{Name: "@", Type: "NS", Value: nameserverRdata(host)})
-		}
 		addr := strings.TrimSpace(row.Address)
-		if addr == "" {
+		if host == "" || addr == "" {
 			continue
 		}
 		ip, rrtype, ok := parseRecord(addr)
@@ -176,7 +167,7 @@ func templateNameserverRecords(zone string, rows []ConfigDNSNameserver) []record
 		}
 		glue = append(glue, recordsJSONRecord{Name: owner, Type: rrtype, Value: ip})
 	}
-	return append(out, glue...)
+	return glue
 }
 
 func zoneRecordsJSON(recs []ConfigDNSRecord) []recordsJSONRecord {

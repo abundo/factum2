@@ -175,10 +175,14 @@ const router = createRouter({
           component: () => import('@/views/ipam/IpamAddressList.vue'),
         },
         {
+          path: '/dns',
+          name: 'dns',
+          meta: { title: 'DNS', requiresRead: true, requiresDnsZones: true },
+          component: () => import('@/views/dns/DnsPage.vue'),
+        },
+        {
           path: '/dns/zones',
-          name: 'dns-zones',
-          meta: { title: 'Zones', requiresRead: true, requiresDnsZones: true },
-          component: () => import('@/views/dns/DnsZonesPage.vue'),
+          redirect: '/dns',
         },
         {
           path: '/dns/zones/:id',
@@ -188,21 +192,15 @@ const router = createRouter({
         },
         {
           path: '/dns/templates',
-          name: 'dns-templates',
-          meta: { title: 'DNS templates', requiresRead: true, requiresDnsZones: true },
-          component: () => import('@/views/dns/DnsTemplatesPage.vue'),
+          redirect: '/dns?tab=templates',
         },
         {
           path: '/dns/soa-templates',
-          name: 'dns-soa-templates',
-          meta: { title: 'SOA templates', requiresRead: true, requiresDnsZones: true },
-          component: () => import('@/views/dns/DnsSOATemplatesPage.vue'),
+          redirect: '/dns?tab=soa',
         },
         {
           path: '/dns/dnssec-policies',
-          name: 'dns-dnssec-policies',
-          meta: { title: 'DNSSEC policies', requiresRead: true, requiresDnsZones: true },
-          component: () => import('@/views/dns/DnsDNSSECPoliciesPage.vue'),
+          redirect: '/dns?tab=dnssec',
         },
         {
           path: '/certs',

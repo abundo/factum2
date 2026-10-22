@@ -25,7 +25,7 @@ currently on GitHub.
 | Network map / Configuration / Devices / Interfaces / Interface types / Oxidized | DCIM | Inventory, topology, live configuration, config backups |
 | Packet capture / Software | Tools | Port mirror and NOS images |
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
-| Zones / DNS templates | Services → DNS | Only if **DNS zone editor** is enabled |
+| DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
 | Certificates / Accounts / Challenges | Services → Certificates | Only if **Certificates** is enabled (Destinations) |
 | Job overview / status / scheduler | Jobs | Trigger and watch syncs |
 | Settings, users, workers | Admin | Administrators only |

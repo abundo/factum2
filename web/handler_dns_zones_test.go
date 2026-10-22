@@ -175,6 +175,12 @@ func TestDnsZoneEditorLifecycle(t *testing.T) {
 	if cfg.Zones[0].DNSSECPolicy != "dnssec-policy" || len(cfg.DNSSECPolicies) != 1 || cfg.DNSSECPolicies[0].Name != "dnssec-policy" {
 		t.Fatalf("dns-config dnssec = zone %q policies %+v", cfg.Zones[0].DNSSECPolicy, cfg.DNSSECPolicies)
 	}
+	if len(cfg.SOATemplates) != 1 || cfg.SOATemplates[0].Name != "default" || cfg.SOATemplates[0].Minimum != 900 {
+		t.Fatalf("dns-config soa = %+v", cfg.SOATemplates)
+	}
+	if len(cfg.ZoneTemplates) != 1 || cfg.ZoneTemplates[0].Name != "default_dns" || cfg.ZoneTemplates[0].SOA != "default" || cfg.ZoneTemplates[0].DNSSECPolicy != "dnssec-policy" || len(cfg.ZoneTemplates[0].Nameservers) != 3 {
+		t.Fatalf("dns-config zone templates = %+v", cfg.ZoneTemplates)
+	}
 	if cfg.DNSSECPolicies[0].KSKAlgorithm != "ecdsap256sha256" {
 		t.Fatalf("dns-config policy = %+v", cfg.DNSSECPolicies[0])
 	}

@@ -13,6 +13,13 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- Services → DNS is one page. Zones, DNS templates, SOA templates, and
+  DNSSEC policies are tabs. The old paths redirect to the matching tab.
+- `factum2-dns` writes SOA templates and DNS templates into the zone
+  include, next to the DNSSEC policies. dnsmgr2 uses those templates
+  when it writes the BIND zone file. A template in the include replaces
+  a template of the same name in `dnsmgr2.yaml`. Apex NS records are no
+  longer copied into the JSON records file.
 - NetBox delta sync always runs the `netbox` worker command with
   `--delta`. A `worker.commands` entry named `netbox-delta` is ignored.
 - BECS sync names an interface that sits under another interface the way

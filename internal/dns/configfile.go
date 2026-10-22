@@ -2,6 +2,7 @@ package dns
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/internal/util"
@@ -20,8 +21,33 @@ type Config struct {
 	ZonesFile      string
 	PrefixesFile   string
 	Zones          []ConfigDNSZone
+	SOATemplates   []ConfigSOATemplate
+	ZoneTemplates  []ConfigZoneTemplate
 	DNSSECPolicies []ConfigDNSSECPolicy
 	DHCP           ConfigDHCP
+}
+
+// ConfigSOATemplate is one dnsmgr2 soa_templates entry. Serial is not
+// stored; sync always writes serial_format date_serial.
+type ConfigSOATemplate struct {
+	Name    string `json:"name"`
+	Mname   string `json:"mname"`
+	Rname   string `json:"rname"`
+	Refresh uint   `json:"refresh"`
+	Retry   uint   `json:"retry"`
+	Expire  uint   `json:"expire"`
+	Minimum uint   `json:"minimum"`
+}
+
+// ConfigZoneTemplate is one dnsmgr2 zone_templates entry (a Factum DNS
+// template). Nameservers are hostnames; addresses stay in the JSON records
+// file as in-zone A/AAAA glue.
+type ConfigZoneTemplate struct {
+	Name         string                `json:"name"`
+	SOA          string                `json:"soa"`
+	DefaultTTL   uint                  `json:"default_ttl"`
+	DNSSECPolicy string                `json:"dnssec_policy,omitempty"`
+	Nameservers  []ConfigDNSNameserver `json:"nameservers,omitempty"`
 }
 
 // ConfigDHCP is the prefix list written into the DHCP include when DhcpEnabled.
@@ -100,9 +126,34 @@ type yamlPrefix struct {
 	DnsServers []string `yaml:"dns_servers,omitempty"`
 }
 
+type yamlSOATemplate struct {
+	Mname        string `yaml:"mname"`
+	Rname        string `yaml:"rname"`
+	SerialFormat string `yaml:"serial_format"`
+	Refresh      uint   `yaml:"refresh"`
+	Retry        uint   `yaml:"retry"`
+	Expire       uint   `yaml:"expire"`
+	Minimum      uint   `yaml:"minimum"`
+}
+
+type yamlTemplateNS struct {
+	Name  string `yaml:"name"`
+	Type  string `yaml:"type"`
+	Value string `yaml:"value"`
+}
+
+type yamlZoneTemplate struct {
+	SOA          string           `yaml:"soa"`
+	DefaultTTL   string           `yaml:"default_ttl,omitempty"`
+	NS           []yamlTemplateNS `yaml:"ns,omitempty"`
+	DNSSECPolicy string           `yaml:"dnssec_policy,omitempty"`
+}
+
 type yamlZoneInclude struct {
-	DNSSECPolicies []yamlDNSSECPolicy `yaml:"dnssec_policies,omitempty"`
-	Zones          []yamlZone         `yaml:"zones"`
+	SOATemplates   map[string]yamlSOATemplate  `yaml:"soa_templates,omitempty"`
+	ZoneTemplates  map[string]yamlZoneTemplate `yaml:"zone_templates,omitempty"`
+	DNSSECPolicies []yamlDNSSECPolicy          `yaml:"dnssec_policies,omitempty"`
+	Zones          []yamlZone                  `yaml:"zones"`
 }
 
 type yamlPrefixInclude struct {
@@ -154,9 +205,75 @@ func RenderZoneInclude(cfg *Config) ([]byte, error) {
 		return nil, fmt.Errorf("dns config is not loaded")
 	}
 	return marshalInclude(yamlZoneInclude{
+		SOATemplates:   soaTemplatesYAML(cfg.SOATemplates),
+		ZoneTemplates:  zoneTemplatesYAML(cfg.ZoneTemplates),
 		DNSSECPolicies: dnssecPoliciesYAML(cfg.DNSSECPolicies),
 		Zones:          zoneListYAML(cfg.Zones),
 	})
+}
+
+func soaTemplatesYAML(items []ConfigSOATemplate) map[string]yamlSOATemplate {
+	out := make(map[string]yamlSOATemplate, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		out[name] = yamlSOATemplate{
+			Mname:        nameserverRdata(item.Mname),
+			Rname:        nameserverRdata(item.Rname),
+			SerialFormat: "date_serial",
+			Refresh:      item.Refresh,
+			Retry:        item.Retry,
+			Expire:       item.Expire,
+			Minimum:      item.Minimum,
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func zoneTemplatesYAML(items []ConfigZoneTemplate) map[string]yamlZoneTemplate {
+	out := make(map[string]yamlZoneTemplate, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		tpl := yamlZoneTemplate{
+			SOA:          strings.TrimSpace(item.SOA),
+			NS:           zoneTemplateNS(item.Nameservers),
+			DNSSECPolicy: strings.TrimSpace(item.DNSSECPolicy),
+		}
+		if item.DefaultTTL > 0 {
+			tpl.DefaultTTL = strconv.FormatUint(uint64(item.DefaultTTL), 10)
+		}
+		out[name] = tpl
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func zoneTemplateNS(rows []ConfigDNSNameserver) []yamlTemplateNS {
+	seen := make(map[string]struct{}, len(rows))
+	out := make([]yamlTemplateNS, 0, len(rows))
+	for _, row := range rows {
+		host := strings.TrimSpace(row.Hostname)
+		if host == "" {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSuffix(host, "."))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, yamlTemplateNS{Name: "@", Type: "NS", Value: nameserverRdata(host)})
+	}
+	return out
 }
 
 func dnssecPoliciesYAML(policies []ConfigDNSSECPolicy) []yamlDNSSECPolicy {

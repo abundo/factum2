@@ -21,6 +21,8 @@ type remoteConfigResponse struct {
 	ZonesFile       string               `json:"zones_file"`
 	PrefixesFile    string               `json:"prefixes_file"`
 	Zones           []ConfigDNSZone      `json:"zones"`
+	SOATemplates    []ConfigSOATemplate  `json:"soa_templates"`
+	ZoneTemplates   []ConfigZoneTemplate `json:"zone_templates"`
 	DNSSECPolicies  []ConfigDNSSECPolicy `json:"dnssec_policies"`
 	DHCP            ConfigDHCP           `json:"dhcp"`
 }
@@ -45,6 +47,8 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*Config, error) {
 		ZonesFile:      remote.ZonesFile,
 		PrefixesFile:   remote.PrefixesFile,
 		Zones:          remote.Zones,
+		SOATemplates:   remote.SOATemplates,
+		ZoneTemplates:  remote.ZoneTemplates,
 		DNSSECPolicies: remote.DNSSECPolicies,
 		DHCP:           remote.DHCP,
 	}, nil

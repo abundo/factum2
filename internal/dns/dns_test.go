@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/abundo/dnsmgr2/dnsmgr"
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/abundo/factum2/models"
@@ -300,6 +301,46 @@ func TestSyncDevicesWritesZoneInclude(t *testing.T) {
 	}
 	if strings.Contains(s, "prefixes:") {
 		t.Fatalf("zone include has prefixes:\n%s", s)
+	}
+}
+
+func TestApplyIncludeTemplates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "zones.yaml")
+	body, err := RenderZoneInclude(&Config{
+		SOATemplates: []ConfigSOATemplate{{
+			Name: "default", Mname: "ns1.example.com", Rname: "hostmaster.example.com",
+			Refresh: 36000, Retry: 3600, Expire: 604800, Minimum: 900,
+		}},
+		ZoneTemplates: []ConfigZoneTemplate{{
+			Name: "default_dns", SOA: "default", DefaultTTL: 900,
+			Nameservers: []ConfigDNSNameserver{{Hostname: "ns1.example.com"}},
+		}},
+		Zones: []ConfigDNSZone{{Name: "example.com", Type: "forward", DnsTemplate: "default_dns"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := dnsmgr.ConfigRoot{
+		DNS: dnsmgr.ConfigDNS{
+			SOATemplates: map[string]dnsmgr.ConfigDNS_SOA_template{
+				"default": {Mname: "old."},
+			},
+		},
+	}
+	if err := applyIncludeTemplates(&cfg, path); err != nil {
+		t.Fatal(err)
+	}
+	soa := cfg.DNS.SOATemplates["default"]
+	if soa.Mname != "ns1.example.com." || soa.Minimum != 900 || soa.SerialFormat != "date_serial" {
+		t.Fatalf("soa = %+v", soa)
+	}
+	zt := cfg.DNS.ZoneTemplates["default_dns"]
+	if zt.SOA != "default" || zt.DefaultTTL != "900" || len(zt.NS) != 1 || zt.NS[0].Value != "ns1.example.com." {
+		t.Fatalf("zone template = %+v", zt)
 	}
 }
 
