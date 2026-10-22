@@ -21,6 +21,7 @@ const (
 	KeyIcingaUsersFile      = "icinga_users_file"
 	KeyIcingaCertsFile      = "icinga_certs_file"
 	KeyIcingaInterfacesFile = "icinga_interfaces_file"
+	KeyStorageRoot          = "storage_root"
 )
 
 // pin returns the worker-local value for a known key. known is false when
@@ -53,6 +54,8 @@ func (p ConfigWorkerPaths) pin(key string) (string, bool) {
 		return p.IcingaCertsFile, true
 	case KeyIcingaInterfacesFile:
 		return p.IcingaInterfacesFile, true
+	case KeyStorageRoot:
+		return p.StorageRoot, true
 	default:
 		return "", false
 	}

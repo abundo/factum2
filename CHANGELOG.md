@@ -3,6 +3,22 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
+## Unreleased
+
+### Changed
+
+- Admin → Settings → Factum → Software stores a `worker.paths` key
+  (`storage_root`) for the repository directory. The path is only in the
+  storage host's `factum2-worker.yaml`. A blank field uses `storage_root`.
+
+### Upgrading
+
+- Install applies goose migration `00037`. It rewrites `storage_root`
+  from a filesystem path to the key `storage_root`. On the host that runs
+  `factum2-storage`, set `worker.paths.storage_root` to the directory that
+  was in the GUI (often `/var/lib/factum2/storage`) before migrating. The
+  migration does not keep a custom path.
+
 ## v1.3.0
 
 ### New

@@ -46,7 +46,6 @@ func (ctrl *Controller) ApiStorageConfig(c *echo.Context) error {
 		SFTPUser:     settings.StorageSFTPUser,
 		SFTPPassword: settings.StorageSFTPPassword,
 	}
-	storage.ApplyConfigDefaults(&resp)
 	return c.JSON(http.StatusOK, resp)
 }
 

@@ -274,6 +274,7 @@ type ConfigWorkerPaths struct {
 	IcingaUsersFile      string `boa:"configonly" yaml:"icinga_users_file" optional:"true"`
 	IcingaCertsFile      string `boa:"configonly" yaml:"icinga_certs_file" optional:"true"`
 	IcingaInterfacesFile string `boa:"configonly" yaml:"icinga_interfaces_file" optional:"true"`
+	StorageRoot          string `boa:"configonly" yaml:"storage_root" optional:"true"`
 	// IcingaCommandPipe and IcingaInterfaceState are local to this worker.
 	// They are not worker.paths keys: a destination field must not be able
 	// to name the command pipe, or sync could overwrite it.
@@ -365,8 +366,9 @@ type ConfigLdapWriteback struct {
 // explicit 0 / "" mean compiled defaults. platforms omitted → vrp,ciscosmb;
 // [] or [none] (or [none, ...]) turns pooling off.
 // ConfigStorage is optional YAML for factum2-storage start (unix API
-// socket). Listen addresses and the repository root come from Settings
-// (GET /api/storage-config), not this file.
+// socket). Listen addresses come from Settings (GET /api/storage-config).
+// The repository directory is worker.paths.storage_root; Settings stores
+// that key, not the path.
 type ConfigStorage struct {
 	Socket string `boa:"configonly" yaml:"socket" optional:"true"`
 }

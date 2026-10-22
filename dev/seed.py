@@ -465,7 +465,7 @@ UPDATE settings SET
   prometheus_dest_file = {_sql_lit("prometheus_dest_file")},
   prometheus_reload_url = 'http://127.0.0.1:9090/-/reload',
   storage_enabled = true,
-  storage_root = {_sql_lit("/var/lib/factum2/storage")},
+  storage_root = {_sql_lit("storage_root")},
   storage_http_listen = ':8088',
   storage_http_url = {_sql_lit("http://factum-storage:8088")},
   storage_tftp_listen = '',

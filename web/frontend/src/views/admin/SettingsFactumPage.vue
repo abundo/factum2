@@ -51,7 +51,7 @@ function removeLogo() {
 }
 
 function fillStorageDefaults() {
-  if (!settings.storage_root) settings.storage_root = '/var/lib/factum2/storage'
+  if (!settings.storage_root) settings.storage_root = 'storage_root'
   if (!settings.storage_http_listen) settings.storage_http_listen = ':8088'
   if (!settings.storage_tftp_listen) settings.storage_tftp_listen = ':69'
   if (!settings.storage_sftp_listen) settings.storage_sftp_listen = ':2222'
@@ -291,11 +291,12 @@ function testEmail() {
               <UInput
                 id="storage_root"
                 v-model="settings.storage_root"
-                placeholder="/var/lib/factum2/storage"
+                placeholder="storage_root"
                 class="w-full"
               />
               <small class="text-muted-color"
-                >Path on the storage host, not this GUI process.</small
+                >worker.paths key. The directory is set only in the storage host's
+                factum2-worker.yaml. Leave blank to use storage_root.</small
               >
             </div>
             <div>

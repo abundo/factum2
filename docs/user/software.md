@@ -16,8 +16,9 @@ under Admin → Settings → Factum → Software. The compose lab seeds it on
 ## Where files live
 
 Files are **not** in Postgres. `factum2-storage start` keeps them in the
-repository directory on the **storage host** — the primary, or a remote
-server that already runs `factum2-worker`.
+directory named by `worker.paths.storage_root` on the **storage host** —
+the primary, or a remote server that already runs `factum2-worker`. Admin
+→ Settings → Factum → Software stores that key, not the path.
 
 The GUI talks to that host through the worker hub (or a unix socket when
 storage runs on the same machine as `factum2-web`). Device HTTP/TFTP/SFTP

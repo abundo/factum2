@@ -420,7 +420,9 @@ with no Postgres access at all - same shape as the
 DNS/Icinga/LibreNMS/Oxidized tools above.
 
 **Software repository (`factum2-storage`):** NOS images live on disk on the
-storage host (primary or a worker), not in Postgres. `factum2-storage
+storage host (primary or a worker), not in Postgres. `Settings.StorageRoot`
+is a `worker.paths` key (`storage_root`); the directory is only
+`worker.paths.storage_root` in that host's YAML. `factum2-storage
 start` serves a unix control API (`/run/factum2-storage/api.sock`) plus
 optional device-facing HTTP/TFTP/SFTP from Settings (`GET
 /api/storage-config`, hub-allowlisted). The GUI (`/software`,

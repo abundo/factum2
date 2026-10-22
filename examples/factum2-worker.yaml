@@ -90,6 +90,7 @@ worker:
   #   icinga_users_file: /etc/icinga2/conf.d/factum2-users.conf
   #   icinga_certs_file: /etc/icinga2/conf.d/factum2-certificates.conf
   #   icinga_interfaces_file: /etc/icinga2/conf.d/factum2-interfaces.conf
+  #   storage_root: /var/lib/factum2/storage
   #   icinga_command_pipe: /var/run/icinga2/cmd/icinga2.cmd
   #   icinga_interface_state: /var/lib/factum2/icinga-interface.state
 

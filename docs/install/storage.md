@@ -11,15 +11,23 @@ invocation so logs stream like other worker jobs.
 ## 1. Enable in the GUI
 
 Admin → Settings → Factum → Software. Turn **Software repository** on.
-Set the repository directory (on the storage host) and the device-facing
-HTTP/TFTP/SFTP listen addresses. **HTTP URL** and **TFTP host** are what
-devices put in `copy http://…` / `tftp://…` — they must be reachable from
-the network devices, not from the operator browser.
+**Repository directory** is a `worker.paths` key (`storage_root`), not a
+filesystem path. Set the directory only in the storage host's
+`factum2-worker.yaml`. Also set the device-facing HTTP/TFTP/SFTP listen
+addresses. **HTTP URL** and **TFTP host** are what devices put in
+`copy http://…` / `tftp://…` — they must be reachable from the network
+devices, not from the operator browser.
 
 ## 2. systemd
 
 `install.py` copies `factum2-storage.service` on the primary and on
 workers but does **not** enable it.
+
+```yaml
+worker:
+  paths:
+    storage_root: /var/lib/factum2/storage
+```
 
 ```sh
 sudo mkdir -p /var/lib/factum2/storage

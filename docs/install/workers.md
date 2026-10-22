@@ -43,8 +43,7 @@ sudo visudo -cf /etc/sudoers.d/factum2-install
 ```
 
 The sudoers file is `examples/factum2-install.sudoers` in the repo and
-the release tarball, and
-`/usr/share/doc/factum2/factum2-install.sudoers` in the deb. It is
+the release tarball. It is
 root-equivalent (`NOPASSWD: ALL`) so upgrades stay non-interactive.
 `PermitRootLogin` can stay off. Check from the primary:
 
@@ -69,9 +68,11 @@ Start from `examples/factum2-worker.yaml` on the worker host:
 - `worker.tls_cert` / `worker.tls_key` — required. SAN must match the
   hostname or IP in Address (Go ignores CN)
 - `worker.paths` — files and the lego binary this host will write or
-  run. The GUI stores the key (`icinga_hosts_file`), and this block stores
-  the path. A sync that names a missing key fails. Restart
-  `factum2-worker` after editing it
+  run, plus `storage_root` on a host that runs `factum2-storage`. The GUI
+  stores the key (`icinga_hosts_file`, `storage_root`), and this block
+  stores the path. A sync that names a missing key fails. Restart
+  `factum2-worker` after editing it. `factum2-storage` reads the same file
+  at start, so restart that unit too when `storage_root` changes
 - `worker.commands` — only the tools this host should run. Add `--job` to
   a command's `args` for structured job events. NetBox changes (job
   `netbox-delta`) reuse the `netbox` command: set

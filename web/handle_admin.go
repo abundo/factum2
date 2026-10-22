@@ -107,6 +107,7 @@ func validateDestinationKeys(s *models.Settings) error {
 		{"icinga_interfaces_file", &s.IcingaInterfacesFile},
 		{"oxidized_dest_file", &s.OxidizedDestFile},
 		{"prometheus_dest_file", &s.PrometheusDestFile},
+		{"storage_root", &s.StorageRoot},
 	}
 	for _, f := range fields {
 		trimmed := strings.TrimSpace(*f.value)

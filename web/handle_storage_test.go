@@ -35,7 +35,7 @@ func TestApiStorageConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.StorageRoot = "/data/images"
+	s.StorageRoot = "storage_root"
 	s.StorageHTTPURL = "http://10.0.0.5:8088"
 	if err := db.Save(s).Error; err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestApiStorageConfig(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["root"] != "/data/images" {
+	if got["root"] != "storage_root" {
 		t.Fatalf("root %v", got["root"])
 	}
 	if got["http_url"] != "http://10.0.0.5:8088" {

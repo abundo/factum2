@@ -341,8 +341,9 @@ type Settings struct {
 	// (nil/false) is the default. Turning it off only hides the UI — files
 	// on the storage host are not deleted.
 	StorageEnabled *bool `gorm:"column:storage_enabled" form:"storage_enabled" json:"storage_enabled"`
-	// StorageRoot is the repository directory on the storage host
-	// (factum2-storage start). Empty is /var/lib/factum2/storage.
+	// StorageRoot is a worker.paths key (storage_root). factum2-storage
+	// resolves it on the storage host. Empty uses that key. The directory
+	// is only in the worker YAML.
 	StorageRoot string `gorm:"column:storage_root" form:"storage_root" json:"storage_root"`
 	// StorageHTTPListen is the device-facing HTTP bind (e.g. ":8088").
 	// Empty disables the HTTP server.

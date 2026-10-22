@@ -62,7 +62,11 @@ func main() {
 					if err != nil {
 						return err
 					}
-					repo, err := storage.NewRepo(cfg.Root)
+					root, err := storage.ResolveRoot(p.Config.Worker.Paths, cfg)
+					if err != nil {
+						return err
+					}
+					repo, err := storage.NewRepo(root)
 					if err != nil {
 						return err
 					}
@@ -153,7 +157,11 @@ func openRepo(p *Params) (*storage.Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewRepo(cfg.Root)
+	root, err := storage.ResolveRoot(p.Config.Worker.Paths, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return storage.NewRepo(root)
 }
 
 func runCopy(p *Params, reporter jobevent.Reporter, name, rel, protocol, dest string) error {
@@ -165,7 +173,11 @@ func runCopy(p *Params, reporter jobevent.Reporter, name, rel, protocol, dest st
 	if err != nil {
 		return err
 	}
-	repo, err := storage.NewRepo(cfg.Root)
+	root, err := storage.ResolveRoot(p.Config.Worker.Paths, cfg)
+	if err != nil {
+		return err
+	}
+	repo, err := storage.NewRepo(root)
 	if err != nil {
 		return err
 	}

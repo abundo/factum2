@@ -17,8 +17,8 @@ const (
 )
 
 // Config is what factum2-storage fetches from the primary
-// (GET /api/storage-config). Paths and listen addresses apply on the
-// storage host, which may be the primary or a remote worker.
+// (GET /api/storage-config). Root is a worker.paths key. Listen addresses
+// apply on the storage host, which may be the primary or a remote worker.
 type Config struct {
 	util.CommonConfig
 	Root         string `json:"root"`
@@ -32,19 +32,25 @@ type Config struct {
 	SFTPPassword string `json:"sftp_password"`
 }
 
-func ApplyConfigDefaults(c *Config) {
-	if c.Root == "" {
-		c.Root = DefaultRoot
+// ResolveRoot maps Settings.StorageRoot to this host's repository directory.
+// remote is a worker.paths key. Empty selects storage_root.
+func ResolveRoot(paths util.ConfigWorkerPaths, cfg *Config) (string, error) {
+	remote := ""
+	if cfg != nil {
+		remote = cfg.Root
 	}
+	return util.ResolvePinnedKey(paths, remote, util.KeyStorageRoot, false, false)
 }
 
-// ApplySettingsDefaults fills empty storage paths when the feature is on.
+// ApplySettingsDefaults fills an empty repository field with the
+// storage_root key when the feature is on. The directory stays in the
+// worker YAML.
 func ApplySettingsDefaults(s *models.Settings) {
 	if s == nil {
 		return
 	}
 	if strings.TrimSpace(s.StorageRoot) == "" {
-		s.StorageRoot = DefaultRoot
+		s.StorageRoot = util.KeyStorageRoot
 	}
 }
 

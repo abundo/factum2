@@ -21,7 +21,9 @@ Feature switches (all off by default except as noted):
 - **DNS zone editor** — zones, DNS templates, SOA templates, DNSSEC
   policies. Distinct from Admin → Destinations → DNS (device-record sync).
 - **Software repository** — NOS images for routers and switches
-  ([Software](software.md)). Files live on the `factum2-storage` host.
+  ([Software](software.md)). The repository field is the `worker.paths`
+  key `storage_root`. The directory is only in the storage host's
+  `factum2-worker.yaml`.
 
 Also set the **API token** (service-to-service, not a user password),
 **default domain** (used when matching short device names to FQDNs),
