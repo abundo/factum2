@@ -1,15 +1,18 @@
 package netbox
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/internal/dcim"
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -19,18 +22,95 @@ type nbNestedName struct {
 	Name string `json:"name"`
 }
 
+// nbChoiceInt accepts a NetBox choice that is an integer on the wire:
+// a bare number (NetBox 3) or {"value","label"} (NetBox 4).
+type nbChoiceInt int
+
+func (n *nbChoiceInt) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		*n = 0
+		return nil
+	}
+	switch b[0] {
+	case '{':
+		var obj struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.Unmarshal(b, &obj); err != nil {
+			return err
+		}
+		if len(obj.Value) == 0 || string(obj.Value) == "null" {
+			*n = 0
+			return nil
+		}
+		return n.UnmarshalJSON(obj.Value)
+	case '"':
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if s == "" {
+			*n = 0
+			return nil
+		}
+		v, err := strconv.Atoi(s)
+		if err != nil {
+			return fmt.Errorf("netbox choice int %q: %w", s, err)
+		}
+		*n = nbChoiceInt(v)
+		return nil
+	default:
+		var v int
+		if err := json.Unmarshal(b, &v); err != nil {
+			var f float64
+			if err2 := json.Unmarshal(b, &f); err2 != nil {
+				return err
+			}
+			*n = nbChoiceInt(math.Round(f))
+			return nil
+		}
+		*n = nbChoiceInt(v)
+		return nil
+	}
+}
+
 type nbRackREST struct {
-	ID           uint          `json:"id"`
-	Name         string        `json:"name"`
-	Site         nbNestedName  `json:"site"`
-	Location     *nbNestedName `json:"location"`
-	UHeight      int           `json:"u_height"`
-	Width        int           `json:"width"`
-	Depth        int           `json:"depth"`
-	OuterWidth   *int          `json:"outer_width"`
-	OuterDepth   *int          `json:"outer_depth"`
-	StartingUnit int           `json:"starting_unit"`
-	DescUnits    bool          `json:"desc_units"`
+	ID           uint               `json:"id"`
+	Name         string             `json:"name"`
+	Site         nbNestedName       `json:"site"`
+	Location     *nbNestedName      `json:"location"`
+	UHeight      int                `json:"u_height"`
+	Width        nbChoiceInt        `json:"width"` // rail width in inches, not millimetres
+	OuterWidth   *int               `json:"outer_width"`
+	OuterDepth   *int               `json:"outer_depth"`
+	OuterUnit    netboxChoiceString `json:"outer_unit"`
+	StartingUnit int                `json:"starting_unit"`
+	DescUnits    bool               `json:"desc_units"`
+}
+
+// rackFootprintMM is the cabinet size in millimetres. NetBox width is the
+// rail width (10, 19, 21, or 23 inches). The footprint is outer_width and
+// outer_depth, converted when outer_unit is inches.
+func rackFootprintMM(row nbRackREST) (width, depth int) {
+	width = outerDimMM(row.OuterWidth, row.OuterUnit)
+	depth = outerDimMM(row.OuterDepth, row.OuterUnit)
+	if width <= 0 {
+		width = 600
+	}
+	if depth <= 0 {
+		depth = 1000
+	}
+	return width, depth
+}
+
+func outerDimMM(n *int, unit netboxChoiceString) int {
+	if n == nil || *n <= 0 {
+		return 0
+	}
+	if string(unit) == "in" {
+		return int(math.Round(float64(*n) * 25.4))
+	}
+	return *n
 }
 
 type nbDeviceTypeREST struct {
@@ -113,20 +193,7 @@ func syncRacks(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Repor
 		if height <= 0 {
 			height = 42
 		}
-		width := row.Width
-		if row.OuterWidth != nil && *row.OuterWidth > 0 {
-			width = *row.OuterWidth
-		}
-		if width <= 0 {
-			width = 600
-		}
-		depth := row.Depth
-		if row.OuterDepth != nil && *row.OuterDepth > 0 {
-			depth = *row.OuterDepth
-		}
-		if depth <= 0 {
-			depth = 1000
-		}
+		width, depth := rackFootprintMM(row)
 		start := row.StartingUnit
 		if start <= 0 {
 			start = 1

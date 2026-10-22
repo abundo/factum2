@@ -37,6 +37,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- NetBox rack sync reads `width` when NetBox 4 returns it as
+  `{"value": 19, "label": "19 inches"}`. The cabinet size still comes
+  from `outer_width` and `outer_depth` (millimetres, or inches when
+  `outer_unit` says so). A rack with no outer size stays 600 mm by
+  1000 mm.
 - BECS sync keeps every IPv4 address on an interface. A second
   `resource-inet` on the same port is added beside the one already in
   NetBox, instead of replacing it.
