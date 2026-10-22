@@ -92,6 +92,70 @@ func TestIndexAndDevices(t *testing.T) {
 	}
 }
 
+func TestIBOSShortName(t *testing.T) {
+	cases := map[string]string{
+		"gigabitethernet3":      "gi3",
+		"gigabitethernet 3":     "gi3",
+		"tengigabitethernet1":   "te1",
+		"fortygigabitethernet2": "fo2",
+		"loopback0":             "loopback0",
+		"gi3":                   "gi3",
+	}
+	for in, want := range cases {
+		if got := ibosShortName(in); got != want {
+			t.Errorf("ibosShortName(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNestedVidInterface(t *testing.T) {
+	c := NewClient("http://unused", "u", "p")
+	c.Index([]Object{
+		{OID: 50, Class: elementClass, ElementType: elementType, Name: "au14-javre"},
+		{OID: 10, ParentOID: 50, Class: "interface", Name: "gigabitethernet3"},
+		{OID: 11, ParentOID: 10, Class: "interface", Name: "vid511"},
+		{OID: 12, ParentOID: 10, Class: "interface", Name: "vid777", Flags: "disable"},
+		{OID: 13, ParentOID: 50, Class: "interface", Name: "loopback0"},
+		{OID: 14, ParentOID: 11, Class: "resource-inet", Name: "host", Resource: &Resource{Address: "10.1.1.1", PrefixLen: 32}},
+	})
+	d, err := c.deviceFromElement(c.objects[50], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := d.Interfaces["gigabitethernet3"]
+	if parent == nil || parent.Parent != "" {
+		t.Fatalf("gigabitethernet3=%+v", parent)
+	}
+	vid := d.Interfaces["gi3/vid511"]
+	if vid == nil {
+		t.Fatalf("interfaces=%v", ifaceNames(d))
+	}
+	if vid.OID != 11 || vid.Parent != "gigabitethernet3" {
+		t.Errorf("vid=%+v", vid)
+	}
+	if len(vid.Prefix4) != 1 || vid.Prefix4[0].Address != "10.1.1.1/32" {
+		t.Errorf("prefix=%v", vid.Prefix4)
+	}
+	off := d.Interfaces["gi3/vid777"]
+	if off == nil || off.Enabled {
+		t.Errorf("vid777=%+v", off)
+	}
+	if d.Interfaces["vid511"] != nil {
+		t.Error("bare vid511 should not be a NetBox name")
+	}
+	if d.Interfaces["loopback0"] == nil {
+		t.Error("missing loopback0")
+	}
+}
+
+func ifaceNames(d *Device) []string {
+	var names []string
+	for name := range d.Interfaces {
+		names = append(names, name)
+	}
+	return names
+}
+
 func TestSearchParentOpaque(t *testing.T) {
 	c := NewClient("http://unused", "u", "p")
 	c.Index(loadFixture(t))

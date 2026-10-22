@@ -13,6 +13,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- BECS sync names an interface that sits under another interface the way
+  iBOS shows it (`gi3/vid511` for `vid511` under `gigabitethernet3`) and
+  sets that interface's NetBox parent to `gigabitethernet3`. A row the
+  old sync stored as `vid511` is renamed when it still has the same BECS
+  id.
 - Admin → Settings → Factum → Software stores a `worker.paths` key
   (`storage_root`) for the repository directory. The path is only in the
   storage host's `factum2-worker.yaml`. A blank field uses `storage_root`.

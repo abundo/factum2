@@ -277,6 +277,9 @@ func applyInterfaceChanges(iface *netboxtool.NBInterface, changes map[string]any
 	if en, ok := changes["enabled"].(bool); ok {
 		iface.Enabled = en
 	}
+	if parent, ok := asUint(changes["parent"]); ok {
+		iface.ParentID = parent
+	}
 	if cf, ok := changes["custom_fields"].(map[string]any); ok {
 		if iface.CustomFields == nil {
 			iface.CustomFields = map[string]any{}

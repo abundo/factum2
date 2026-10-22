@@ -87,10 +87,40 @@ type Device struct {
 
 type Interface struct {
 	OID     int
-	Name    string
+	Name    string // NetBox name. A subinterface is "<short parent>/<name>", e.g. gi3/vid511.
+	Parent  string // NetBox name of the parent interface, empty for a top-level interface.
 	Role    string
 	Enabled bool
 	Prefix4 []Prefix
+}
+
+// ibosIfPrefixes are the show-command abbreviations iBOS uses for a
+// physical interface. Longer names come first so "tengigabitethernet"
+// is not shortened as "te" plus a leftover "ngigabitethernet".
+var ibosIfPrefixes = []struct{ long, short string }{
+	{"hundredgigabitethernet", "hu"},
+	{"fortygigabitethernet", "fo"},
+	{"twentyfivegigabitethernet", "tf"},
+	{"tengigabitethernet", "te"},
+	{"fivegigabitethernet", "fi"},
+	{"twogigabitethernet", "tw"},
+	{"gigabitethernet", "gi"},
+	{"fastethernet", "fe"},
+	{"ethernet", "et"},
+}
+
+// ibosShortName is the name iBOS prints for a physical interface.
+// gigabitethernet3 and "gigabitethernet 3" are both gi3. A name with no
+// known prefix is returned unchanged (spaces removed).
+func ibosShortName(name string) string {
+	compact := strings.ReplaceAll(strings.TrimSpace(name), " ", "")
+	lower := strings.ToLower(compact)
+	for _, p := range ibosIfPrefixes {
+		if strings.HasPrefix(lower, p.long) {
+			return p.short + compact[len(p.long):]
+		}
+	}
+	return compact
 }
 
 type Prefix struct {
@@ -403,7 +433,11 @@ func (c *Client) prefixlen(obj *Object) (int, error) {
 	return prefixlen, nil
 }
 
-// Interfaces returns the interfaces of an element-attach, keyed by name.
+// Interfaces returns the interfaces of an element-attach, keyed by the
+// NetBox name. An interface object parented under another interface is a
+// subinterface: iBOS shows it as "<short parent>/<name>" (gi3/vid511 for
+// vid511 under gigabitethernet3) and NetBox stores that string with
+// parent gigabitethernet3.
 func (c *Client) Interfaces(elementOID int) (map[string]*Interface, error) {
 	el, err := c.GetObject(elementOID)
 	if err != nil {
@@ -414,24 +448,42 @@ func (c *Client) Interfaces(elementOID int) (map[string]*Interface, error) {
 	}
 
 	out := make(map[string]*Interface)
-	for _, childOID := range el.ChildrenOID {
+	if err := c.collectInterfaces(el, "", out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// collectInterfaces walks interface children of obj. parentNetbox is the
+// NetBox name of obj when obj is itself an interface, and empty when obj
+// is the element. The iBOS short name is taken from obj.Name, which is
+// the BECS object name (gigabitethernet3), not the NetBox name.
+func (c *Client) collectInterfaces(obj *Object, parentNetbox string, out map[string]*Interface) error {
+	for _, childOID := range obj.ChildrenOID {
 		child, err := c.GetObject(childOID)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if child == nil || child.Class != "interface" {
 			continue
 		}
+		name := child.Name
+		parent := ""
+		if parentNetbox != "" {
+			name = ibosShortName(obj.Name) + "/" + child.Name
+			parent = parentNetbox
+		}
 		iface := &Interface{
 			OID:     child.OID,
-			Name:    child.Name,
+			Name:    name,
+			Parent:  parent,
 			Role:    child.Role,
 			Enabled: !hasFlag(child.Flags, "disable"),
 		}
 		for _, rcOID := range child.ChildrenOID {
 			rc, err := c.GetObject(rcOID)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if rc == nil || rc.Class != "resource-inet" || rc.Resource == nil {
 				continue
@@ -441,7 +493,7 @@ func (c *Client) Interfaces(elementOID int) (map[string]*Interface, error) {
 			}
 			prefixlen, err := c.prefixlen(rc)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			iface.Prefix4 = append(iface.Prefix4, Prefix{
 				Address: fmt.Sprintf("%s/%d", rc.Resource.Address, prefixlen),
@@ -449,8 +501,11 @@ func (c *Client) Interfaces(elementOID int) (map[string]*Interface, error) {
 			})
 		}
 		out[iface.Name] = iface
+		if err := c.collectInterfaces(child, iface.Name, out); err != nil {
+			return err
+		}
 	}
-	return out, nil
+	return nil
 }
 
 func splitParents(s, domain string) []string {

@@ -156,6 +156,15 @@ func (f *fakeNetbox) InterfaceUpdate(interfaceID int, changes map[string]any) er
 			if name, ok := changes["name"].(string); ok {
 				d.Interfaces[i].Name = name
 			}
+			if typ, ok := changes["type"].(string); ok {
+				d.Interfaces[i].Type = typ
+			}
+			if en, ok := changes["enabled"].(bool); ok {
+				d.Interfaces[i].Enabled = en
+			}
+			if parent, ok := changes["parent"].(uint); ok {
+				d.Interfaces[i].ParentID = parent
+			}
 			if cf, ok := changes["custom_fields"].(map[string]any); ok {
 				if d.Interfaces[i].CustomFields == nil {
 					d.Interfaces[i].CustomFields = map[string]any{}
@@ -353,6 +362,53 @@ func TestSyncInterfacesCreateAndSkipEthernet0(t *testing.T) {
 	}
 	if len(nb.createdIfs) < 2 {
 		t.Fatalf("created ifs=%v, want loopback0 and vlan1", nb.createdIfs)
+	}
+}
+
+func TestSyncRenamesVidSubinterface(t *testing.T) {
+	c := NewClient("http://unused", "u", "p")
+	c.Index([]Object{
+		{OID: 50, Class: elementClass, ElementType: elementType, Name: "au14-javre"},
+		{OID: 10, ParentOID: 50, Class: "interface", Name: "gigabitethernet3"},
+		{OID: 11, ParentOID: 10, Class: "interface", Name: "vid511"},
+	})
+	becsDev, err := c.deviceFromElement(c.objects[50], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := &netboxtool.NBDevice{
+		NetboxID: 20,
+		Name:     "au14-javre",
+		Interfaces: []netboxtool.NBInterface{
+			{NetboxID: 1, Name: "gigabitethernet3", Type: "1000base-t", CustomFields: map[string]any{"source": "becs:10"}},
+			{NetboxID: 2, Name: "vid511", Type: "virtual", CustomFields: map[string]any{"source": "becs:11"}},
+		},
+	}
+	nb := &fakeNetbox{devices: []*netboxtool.NBDevice{dev}}
+	s := &Syncer{
+		becs:     c,
+		nb:       nb,
+		reporter: &testReporter{},
+		nbByOID:  map[uint]*netboxtool.NBDevice{50: dev},
+		nbByName: map[string]*netboxtool.NBDevice{},
+	}
+	s.syncInterfaces(dev, becsDev)
+	if len(nb.deletedIfs) != 0 {
+		t.Fatalf("deleted %v; the vid511 row still has becs:11", nb.deletedIfs)
+	}
+	if len(nb.createdIfs) != 0 {
+		t.Fatalf("created %v; vid511 should be renamed", nb.createdIfs)
+	}
+	s.nbByOID[50] = dev
+	s.syncInterfaceSettings(dev, becsDev)
+	var renamed *netboxtool.NBInterface
+	for i := range dev.Interfaces {
+		if dev.Interfaces[i].NetboxID == 2 {
+			renamed = &dev.Interfaces[i]
+		}
+	}
+	if renamed == nil || renamed.Name != "gi3/vid511" || renamed.ParentID != 1 {
+		t.Fatalf("vid511 row=%+v", renamed)
 	}
 }
 

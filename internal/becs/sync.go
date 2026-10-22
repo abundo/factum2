@@ -733,6 +733,7 @@ func (s *Syncer) syncInterfaces(d *netboxtool.NBDevice, b *Device) {
 func (s *Syncer) syncInterfaceSettings(d *netboxtool.NBDevice, b *Device) {
 	dt := s.deviceType(b.Model)
 	byOID := ifaceByOID(d)
+	byName := ifaceByName(d)
 
 	type pending struct {
 		id      uint
@@ -755,6 +756,13 @@ func (s *Syncer) syncInterfaceSettings(d *netboxtool.NBDevice, b *Device) {
 		}
 		if iface.Enabled != bIface.Enabled {
 			changes["enabled"] = bIface.Enabled
+		}
+		if bIface.Parent != "" {
+			if parent, ok := byName[bIface.Parent]; ok && parent.NetboxID != 0 && iface.ParentID != parent.NetboxID {
+				changes["parent"] = parent.NetboxID
+			} else if !ok {
+				s.reporter.Emit(jobevent.Warning, "%s: interface %s: parent %s not found in netbox", d.Name, bIface.Name, bIface.Parent)
+			}
 		}
 		if len(changes) == 0 {
 			continue
