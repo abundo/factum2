@@ -50,9 +50,6 @@ worker:
     librenms:
       cmd: /opt/factum2/factum2-librenms
       args: ["sync", "--job"]
-    prometheus:
-      cmd: /opt/factum2/factum2-prometheus
-      args: ["sync", "--job"]
     lime:
       cmd: /opt/factum2/factum2-lime
       args: ["sync", "--job", "--refresh"]
@@ -63,6 +60,9 @@ worker:
       # A separate netbox-delta command is not required. One that is still
       # defined keeps running sync-delta instead.
       allow_args: ["--delta"]
+    prometheus:
+      cmd: /opt/factum2/factum2-prometheus
+      args: ["sync", "--job"]
     # RADIUS for switch and router login. The name starts an in-process UDP
     # listener; cmd is not executed. Policy is Admin → Services → RADIUS.
     # radius:
