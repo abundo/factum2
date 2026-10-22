@@ -432,12 +432,12 @@ New, Changed, Fixed, Upgrading). The notes on GitHub are that section
     git tag -a v0.1.0 -m "v0.1.0"
     git push origin v0.1.0
 
-Each release is one `tar.gz` (and a `.deb`) per linux/amd64 and
-linux/arm64, containing every `cmd/*` binary plus `LICENSE`, `README.md`,
-`examples/`, and `install.py`. GoReleaser runs `make wiregasm` before
-compiling `factum2-web`, so the pinned Wiregasm files are inside that
-binary and packet capture works after install. The `.deb` installs binaries to `/opt/factum2`,
-systemd units to `/lib/systemd/system`, and the installer to
+Each release is one linux/amd64 `tar.gz`, containing every `cmd/*`
+binary plus `LICENSE`, `README.md`, `examples/`, and `install.py`.
+GoReleaser runs `make wiregasm` before compiling `factum2-web`, so the
+pinned Wiregasm files are inside that binary and packet capture works
+after install. `install.py` installs the binaries to `/opt/factum2`,
+the systemd units to `/lib/systemd/system`, and itself to
 `/etc/factum2/install.py`.
 
 Local dry-run (writes `dist/`, does not publish):

@@ -1,7 +1,7 @@
 # Production install
 
 No Go or Node is required on the host. Tagged releases ship linux/amd64
-and linux/arm64 binaries, systemd units, and `install.py`.
+binaries, systemd units, and `install.py`.
 
 The copy at `/etc/factum2/install.py` is only a launcher: after you pick a
 tag it runs **that release's** `install.py` so install steps match those

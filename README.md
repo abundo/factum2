@@ -29,8 +29,8 @@ The config-tree architecture is
 
 ### Production (GitHub release)
 
-No Go or Node needed. Tagged releases ship linux/amd64 and linux/arm64
-binaries, systemd units, and `install.py`. The copy at
+No Go or Node needed. Tagged releases ship linux/amd64 binaries,
+systemd units, and `install.py`. The copy at
 `/etc/factum2/install.py` is only a launcher: after you pick a tag it
 runs **that release's** `install.py` (from the tarball, or the git tag
 if the archive is older) so install steps match those binaries.

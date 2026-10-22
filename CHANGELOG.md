@@ -10,6 +10,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 - Admin → Settings → Factum → Software stores a `worker.paths` key
   (`storage_root`) for the repository directory. The path is only in the
   storage host's `factum2-worker.yaml`. A blank field uses `storage_root`.
+- Releases ship a linux/amd64 `tar.gz` only. There is no linux/arm64
+  build and no `.deb`.
 
 ### Upgrading
 
