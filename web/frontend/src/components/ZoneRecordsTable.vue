@@ -433,10 +433,52 @@ function t(key, params = {}) {
   return s
 }
 
-const records = defineModel({ type: Array, default: () => [] })
+// The trailing blank row is only an editing affordance. It stays local until
+// the operator types in it, so opening the grid does not dirty the page form.
+const model = defineModel({ type: Array, default: () => [] })
 const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
+const records = ref(Array.isArray(model.value) ? model.value.slice() : [])
+let draftKey = null
+let publishing = false
+
+function sameRecordList(a, b) {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+function withoutDraft(list) {
+  const last = list[list.length - 1]
+  if (last && last._key === draftKey && !isSpanningRecord(last) && isBlankRecord(last)) {
+    return list.slice(0, -1)
+  }
+  return list
+}
+
+function publishRecords() {
+  const next = withoutDraft(records.value)
+  if (sameRecordList(next, model.value ?? [])) return
+  publishing = true
+  model.value = next
+  publishing = false
+}
+
+watch(records, publishRecords)
+
+watch(
+  model,
+  (value) => {
+    if (publishing) return
+    const base = value ?? []
+    if (sameRecordList(base, withoutDraft(records.value))) return
+    draftKey = null
+    records.value = base.slice()
+  },
+  { flush: 'sync' },
+)
 
 const {
   search: recordSearch,
@@ -999,7 +1041,9 @@ function isDraftRow(index) {
 
 function appendDraftRow() {
   if (props.disabled) return
-  records.value = [...records.value, emptyZoneRecord()]
+  const row = emptyZoneRecord()
+  draftKey = row._key
+  records.value = [...records.value, row]
 }
 
 function focusCell(rowIndex, col) {

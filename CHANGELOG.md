@@ -26,6 +26,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 - Releases ship a linux/amd64 `tar.gz` only. There is no linux/arm64
   build and no `.deb`.
 
+### Fixed
+
+- Opening a DNS zone's records and leaving without edits no longer asks
+  to discard unsaved changes. The blank row at the bottom of the grid
+  stays local until you type in it.
+
 ### Upgrading
 
 - Install applies goose migration `00037`. It rewrites `storage_root`
