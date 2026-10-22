@@ -527,6 +527,50 @@ func TestDevicesToSyncFetchesAllWhenNameEmpty(t *testing.T) {
 	}
 }
 
+func TestDeviceStateMatchIgnoresCase(t *testing.T) {
+	ds, _ := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), &util.ConfigDeviceSync{
+		DeviceStates: []string{"Active", "Decommissioning"},
+	})
+	active := &models.Device{Name: "sw1", Platform: "ciscosmb", Status: "active"}
+	if got := ds.rejectReason(active); got != "" {
+		t.Fatalf("active rejected: %s", got)
+	}
+	down := &models.Device{Name: "sw2", Platform: "ciscosmb", Status: "decommissioning"}
+	if got := ds.rejectReason(down); got != "" {
+		t.Fatalf("decommissioning rejected: %s", got)
+	}
+	planned := &models.Device{Name: "sw3", Platform: "ciscosmb", Status: "planned"}
+	if got := ds.rejectReason(planned); got == "" {
+		t.Fatal("planned was selected")
+	}
+}
+
+func TestRunReportsWhenNothingSelected(t *testing.T) {
+	fakeFactum := newFakeFactumAPI()
+	fakeFactum.devices["sw1"] = &models.Device{Name: "sw1", Platform: "not-a-driver", Status: "active"}
+	fakeFactum.devices["sw2"] = &models.Device{Name: "sw2", Platform: "ciscosmb", Status: "planned"}
+	ds, reporter := newTestDeviceSync(newFakeNetboxAPI(), fakeFactum, &util.ConfigDeviceSync{
+		DeviceStates: []string{"active"},
+	})
+
+	if err := ds.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	joined := strings.Join(reporter.lines, "\n")
+	if !strings.Contains(joined, "2 devices from factum, 0 selected") {
+		t.Fatalf("missing selection summary:\n%s", joined)
+	}
+	if !strings.Contains(joined, `platform "not-a-driver" (e.g. sw1)`) {
+		t.Fatalf("missing platform skip:\n%s", joined)
+	}
+	if !strings.Contains(joined, `status "planned" (e.g. sw2)`) {
+		t.Fatalf("missing status skip:\n%s", joined)
+	}
+	if strings.Contains(joined, "connecting") {
+		t.Fatalf("a rejected device was connected:\n%s", joined)
+	}
+}
+
 func TestDevicesToSyncUnknownNameReportsError(t *testing.T) {
 	ds, reporter := newTestDeviceSync(newFakeNetboxAPI(), newFakeFactumAPI(), nil)
 	ds.opts.Name = "does-not-exist"

@@ -280,7 +280,10 @@ onMounted(loadDeviceSyncAuths)
             class="w-full"
           />
         </UFormField>
-        <UFormField label="Netbox device states to sync">
+        <UFormField
+          label="Netbox device states to sync"
+          help="One status per line. Active matches the NetBox status active. Leave empty to sync every status."
+        >
           <UTextarea
             v-model="settings.device_sync_device_states"
             :rows="4"

@@ -639,8 +639,9 @@ type Settings struct {
 	// rejections in Netbox) - device-sync compares/creates addresses in
 	// those VRFs as if they had no VRF at all.
 	DeviceSyncVRFInGlobal string `gorm:"column:device_sync_vrf_in_global;type:text" form:"device_sync_vrf_in_global" json:"device_sync_vrf_in_global"`
-	// DeviceSyncDeviceStates lists the Netbox device status values (e.g.
-	// "Active") eligible for sync - a device in any other state is skipped.
+	// DeviceSyncDeviceStates lists the Netbox device status values eligible
+	// for sync. "Active" matches the stored slug "active". A device in any
+	// other state is skipped. Empty means every status.
 	DeviceSyncDeviceStates string `gorm:"column:device_sync_device_states;type:text" form:"device_sync_device_states" json:"device_sync_device_states"`
 	// DeviceSyncDeviceIgnore lists device names to always skip.
 	DeviceSyncDeviceIgnore string `gorm:"column:device_sync_device_ignore;type:text" form:"device_sync_device_ignore" json:"device_sync_device_ignore"`

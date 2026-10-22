@@ -136,13 +136,15 @@ func (ds *DeviceSync) run() error {
 		return err
 	}
 
-	var toConnect []*models.Device
-	for _, d := range devices {
-		if ds.deviceSelected(d) {
-			toConnect = append(toConnect, d)
-		}
+	toConnect, skipped := ds.selectDevices(devices)
+	ds.reporter.Emit(jobevent.Info, "device-sync: %d devices from factum, %d selected", len(devices), len(toConnect))
+	if len(toConnect) == 0 && len(skipped) > 0 {
+		ds.reporter.Emit(jobevent.Warning, "device-sync: no devices selected: %s", formatSkipCounts(skipped))
 	}
 	ds.connectDevices(toConnect)
+	if len(toConnect) > 0 {
+		ds.reporter.Emit(jobevent.Info, "device-sync: connected %d of %d", len(ds.pairs), len(toConnect))
+	}
 
 	// VLAN group, resolved once up front (not per device) - every VLAN-
 	// touching phase below no-ops if VlanGroupName is unset, making VLAN
@@ -198,9 +200,9 @@ func (ds *DeviceSync) run() error {
 // device (a single, server-side-filtered factum query) when opts.Name is
 // set, or the full device list otherwise - a --name run has no reason to
 // fetch every other device from factum first. This is the shallow list
-// (no interfaces/addresses - deviceSelected only needs Name/Status/
+// (no interfaces/addresses - selectDevices only needs Name/Status/
 // Platform); connectDevice fetches each selected device's full snapshot
-// separately. deviceSelected still applies its usual filters
+// separately. selectDevices still applies its usual filters
 // (ignore-list/states/platform) to the result either way.
 func (ds *DeviceSync) devicesToSync() ([]*models.Device, error) {
 	if ds.opts.Name == "" {
@@ -249,29 +251,80 @@ func (ds *DeviceSync) forEachPair(fn func(*devicePair)) {
 	g.Wait() //nolint:errcheck // fn never returns an error
 }
 
-// deviceSelected reports whether d passes the device-states/ignore-list/
-// name/platform filters.
-func (ds *DeviceSync) deviceSelected(d *models.Device) bool {
+// selectDevices keeps devices that pass the device-states/ignore-list/
+// name/platform filters. skipped counts the rest by reason, with one
+// example device name, so a run that syncs nothing says why.
+func (ds *DeviceSync) selectDevices(devices []*models.Device) ([]*models.Device, map[string]skipCount) {
+	var selected []*models.Device
+	skipped := map[string]skipCount{}
+	for _, d := range devices {
+		reason := ds.rejectReason(d)
+		if reason == "" {
+			selected = append(selected, d)
+			continue
+		}
+		if reason == "no name" {
+			ds.reporter.Emit(jobevent.Error, "factum device id=%d has no name, ignored", d.NetboxID)
+		}
+		entry := skipped[reason]
+		entry.n++
+		if entry.example == "" && d.Name != "" {
+			entry.example = d.Name
+		}
+		skipped[reason] = entry
+	}
+	return selected, skipped
+}
+
+type skipCount struct {
+	n       int
+	example string
+}
+
+func formatSkipCounts(skipped map[string]skipCount) string {
+	reasons := make([]string, 0, len(skipped))
+	for reason := range skipped {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		entry := skipped[reason]
+		part := fmt.Sprintf("%d %s", entry.n, reason)
+		if entry.example != "" {
+			part += " (e.g. " + entry.example + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// rejectReason reports why d is not synced. Empty means sync it.
+func (ds *DeviceSync) rejectReason(d *models.Device) string {
 	if d.Name == "" {
-		ds.reporter.Emit(jobevent.Error, "factum device id=%d has no name, ignored", d.NetboxID)
-		return false
+		return "no name"
 	}
 	if ds.opts.Name != "" && d.Name != ds.opts.Name {
-		return false
+		return "name filter"
 	}
 	if contains(ds.cfg.DeviceIgnore, d.Name) {
-		return false
+		return "ignore list"
 	}
-	if len(ds.cfg.DeviceStates) > 0 && !contains(ds.cfg.DeviceStates, d.Status) {
-		return false
+	// NetBox stores the status slug (active, decommissioning). The admin
+	// field is labeled with the display form (Active, Decommissioning).
+	if len(ds.cfg.DeviceStates) > 0 && !containsFold(ds.cfg.DeviceStates, d.Status) {
+		return fmt.Sprintf("status %q", d.Status)
 	}
 	if ds.opts.Platform != "" && !strings.EqualFold(d.Platform, ds.opts.Platform) {
-		return false
+		return fmt.Sprintf("platform filter %q", d.Platform)
 	}
 	if _, ok := drivers.SupportedPlatforms[strings.ToLower(d.Platform)]; !ok {
-		return false
+		if strings.TrimSpace(d.Platform) == "" {
+			return "no platform"
+		}
+		return fmt.Sprintf("platform %q", d.Platform)
 	}
-	return true
+	return ""
 }
 
 // connectDevices connects to every device in devices concurrently, up to
@@ -311,6 +364,7 @@ func (ds *DeviceSync) connectDevices(devices []*models.Device) {
 // the full snapshot from factum before using it, since that's the one place
 // in the run a full per-device fetch happens (see ds.factumDevice).
 func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
+	ds.reporter.Emit(jobevent.Info, "%s: connecting", nbDevice.Name)
 	slog.Debug("connect", "device", nbDevice.Name)
 	full, err := ds.factumDevice(nbDevice.Name)
 	if err != nil {
@@ -1501,6 +1555,15 @@ func interfaceNameSet(interfaces []models.Interface) map[string]bool {
 func contains(list []string, val string) bool {
 	for _, v := range list {
 		if v == val {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(list []string, val string) bool {
+	for _, v := range list {
+		if strings.EqualFold(v, val) {
 			return true
 		}
 	}

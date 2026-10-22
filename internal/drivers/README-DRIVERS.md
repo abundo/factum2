@@ -385,10 +385,14 @@ Reads:
   Active-image `Version:`), `show inventory` (PID/VID/SN), `show system`
   (MAC).
 - **`GetInterfacesStatus`** — `show interfaces description` plus status
-  and configuration tables. Abbreviated names (`gi1`, `po1`, `vlan 1`) are
-  expanded to the long form running-config uses (`GigabitEthernet1`,
-  `Port-channel1`, `Vlan1`) so they match `GetDeviceConfig`.
-- **`GetDeviceConfig`** — `show running-config`. Cisco SMB CLI is
+  and configuration tables. Also reads `show running-config` so an
+  abbreviated table token (`gi1`, `po1`, `vlan 1`) is replaced with the
+  interface name exactly as running-config prints it. A token with no
+  running-config interface is left as printed.
+- **`GetDeviceConfig`** — `show running-config`. An interface keeps the
+  name from that output (`interface gigabitethernet1` stays
+  `gigabitethernet1`); nothing rewrites it to upper, lower, or camel case.
+  Cisco SMB CLI is
   exit-delimited (and only sometimes indented), so this does **not** use
   `ParseConfigContext`; `smbParseExitConfig` builds the `ConfigNode` tree
   from `interface` / `vlan database` blocks, then tagparse.go fills

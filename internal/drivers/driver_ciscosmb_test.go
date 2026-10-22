@@ -21,22 +21,42 @@ func TestCiscoSMBRegister(t *testing.T) {
 	}
 }
 
-func TestSmbCanonicalIfName(t *testing.T) {
+func TestSmbIfMatchKey(t *testing.T) {
 	cases := map[string]string{
-		"gi1":              "GigabitEthernet1",
-		"gi1/0/1":          "GigabitEthernet1/0/1",
-		"GigabitEthernet1": "GigabitEthernet1",
-		"te1/0/1":          "TenGigabitEthernet1/0/1",
-		"po1":              "Port-channel1",
-		"Port-channel1":    "Port-channel1",
-		"vlan 1":           "Vlan1",
-		"vlan1":            "Vlan1",
-		"Vlan10":           "Vlan10",
-		"fa1":              "FastEthernet1",
+		"gi1":              "gigabitethernet1",
+		"gi1/0/1":          "gigabitethernet1/0/1",
+		"gigabitethernet1": "gigabitethernet1",
+		"GigabitEthernet1": "gigabitethernet1",
+		"te1/0/1":          "tengigabitethernet1/0/1",
+		"po1":              "port-channel1",
+		"Port-channel1":    "port-channel1",
+		"vlan 1":           "vlan1",
+		"vlan1":            "vlan1",
+		"Vlan10":           "vlan10",
+		"fa1":              "fastethernet1",
 	}
 	for in, want := range cases {
-		if got := smbCanonicalIfName(in); got != want {
-			t.Errorf("smbCanonicalIfName(%q) = %q, want %q", in, got, want)
+		if got := smbIfMatchKey(in); got != want {
+			t.Errorf("smbIfMatchKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSmbResolveIfName(t *testing.T) {
+	literals := map[string]string{
+		smbIfMatchKey("gigabitethernet1"): "gigabitethernet1",
+		smbIfMatchKey("port-channel1"):    "port-channel1",
+	}
+	cases := map[string]string{
+		"gi1":              "gigabitethernet1",
+		"GigabitEthernet1": "gigabitethernet1",
+		"Po1":              "port-channel1",
+		"gi9":              "gi9",
+		"vlan 1":           "vlan 1",
+	}
+	for in, want := range cases {
+		if got := smbResolveIfName(in, literals); got != want {
+			t.Errorf("smbResolveIfName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

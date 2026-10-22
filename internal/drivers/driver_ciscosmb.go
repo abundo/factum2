@@ -50,37 +50,69 @@ var (
 	smbReDescHeader     = regexp.MustCompile(`(?i)^(Port|Ch)\s+Description\s*$`)
 )
 
-// smbIfPrefixes maps abbreviated show-command names onto the long form
-// running-config uses. Longer prefixes are listed first so "gigabitethernet"
-// wins over "gi".
+// smbIfPrefixes joins an abbreviated show-table token (gi1, po1, vlan 1)
+// to the interface that show running-config names. Longer prefixes are
+// listed first so "gigabitethernet" wins over "gi". The long form here is
+// only a match key. The name stored for NetBox is the running-config text,
+// unchanged.
 var smbIfPrefixes = []struct{ short, long string }{
-	{"gigabitethernet", "GigabitEthernet"},
-	{"tengigabitethernet", "TenGigabitEthernet"},
-	{"fastethernet", "FastEthernet"},
-	{"port-channel", "Port-channel"},
-	{"vlan", "Vlan"},
-	{"gi", "GigabitEthernet"},
-	{"te", "TenGigabitEthernet"},
-	{"fa", "FastEthernet"},
-	{"po", "Port-channel"},
-	{"vl", "Vlan"},
+	{"tengigabitethernet", "tengigabitethernet"},
+	{"gigabitethernet", "gigabitethernet"},
+	{"fastethernet", "fastethernet"},
+	{"port-channel", "port-channel"},
+	{"vlan", "vlan"},
+	{"te", "tengigabitethernet"},
+	{"gi", "gigabitethernet"},
+	{"fa", "fastethernet"},
+	{"po", "port-channel"},
+	{"vl", "vlan"},
 }
 
-// smbCanonicalIfName expands abbreviated interface names (gi1, po1, vlan 1)
-// to the long form used in running-config (GigabitEthernet1, Port-channel1,
-// Vlan1) so GetInterfacesStatus/GetNeighbors and GetDeviceConfig agree.
-func smbCanonicalIfName(name string) string {
-	name = strings.ReplaceAll(strings.TrimSpace(name), " ", "")
-	if name == "" {
-		return name
-	}
-	lower := strings.ToLower(name)
+// smbIfMatchKey is the case-insensitive identity of an interface name.
+// It is never written to NetBox.
+func smbIfMatchKey(name string) string {
+	name = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), " ", ""))
 	for _, p := range smbIfPrefixes {
-		if strings.HasPrefix(lower, p.short) {
+		if strings.HasPrefix(name, p.short) {
 			return p.long + name[len(p.short):]
 		}
 	}
 	return name
+}
+
+// smbResolveIfName returns the show running-config spelling of name when
+// literals has it. Otherwise it returns name with surrounding space
+// removed and no other change.
+func smbResolveIfName(name string, literals map[string]string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if lit, ok := literals[smbIfMatchKey(name)]; ok {
+		return lit
+	}
+	return name
+}
+
+// smbLiteralIfNames maps each interface's match key to the name exactly as
+// show running-config prints it.
+func smbLiteralIfNames(config string) map[string]string {
+	var top struct {
+		Interfaces map[string]smbInterfaceCfg `cfg:"interface {:toend}"`
+	}
+	UnmarshalNodes(smbConfigNodes(config), &top)
+	out := make(map[string]string, len(top.Interfaces))
+	for _, ifname := range sortedKeys(top.Interfaces) {
+		name := strings.TrimSpace(ifname)
+		if name == "" || strings.HasPrefix(strings.ToLower(name), "range ") {
+			continue
+		}
+		if smbInterfaceType(name) == "" {
+			continue
+		}
+		out[smbIfMatchKey(name)] = name
+	}
+	return out
 }
 
 func smbPreamble() []sshCmd {
@@ -166,6 +198,7 @@ func (driver *CiscoSMBDriver) RunningConfigSave() error {
 
 func (driver *CiscoSMBDriver) GetInterfacesStatus() ([]*netboxtool.NBInterface, error) {
 	outputs, err := driver.runCLIBatch(
+		sshCmd{Cmd: "show running-config"},
 		sshCmd{Cmd: "show interfaces description"},
 		sshCmd{Cmd: "show interfaces status"},
 		sshCmd{Cmd: "show interfaces configuration"},
@@ -174,7 +207,8 @@ func (driver *CiscoSMBDriver) GetInterfacesStatus() ([]*netboxtool.NBInterface, 
 		return nil, err
 	}
 	n := len(outputs)
-	return smbParseInterfaceStatus(outputs[n-3], outputs[n-2], outputs[n-1]), nil
+	literals := smbLiteralIfNames(outputs[n-4])
+	return smbParseInterfaceStatus(outputs[n-3], outputs[n-2], outputs[n-1], literals), nil
 }
 
 func smbAdminOperStatus(s string) string {
@@ -289,11 +323,11 @@ func smbSplitColumns(line string, ends []int) []string {
 	return row
 }
 
-func smbParseInterfaceStatus(descOut, statusOut, configOut string) []*netboxtool.NBInterface {
+func smbParseInterfaceStatus(descOut, statusOut, configOut string, literals map[string]string) []*netboxtool.NBInterface {
 	byName := map[string]*netboxtool.NBInterface{}
 	var order []string
 	add := func(name string) *netboxtool.NBInterface {
-		name = smbCanonicalIfName(name)
+		name = smbResolveIfName(name, literals)
 		if name == "" {
 			return nil
 		}
@@ -682,29 +716,30 @@ func smbParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 	}
 	UnmarshalNodes(nodes, &top)
 
+	literals := map[string]string{}
 	for _, ifname := range sortedKeys(top.Interfaces) {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(ifname)), "range ") {
+		name := strings.TrimSpace(ifname)
+		if strings.HasPrefix(strings.ToLower(name), "range ") {
 			continue
 		}
-		canon := smbCanonicalIfName(ifname)
-		kind := smbInterfaceType(canon)
+		kind := smbInterfaceType(name)
 		if kind == "" {
 			continue
 		}
+		literals[smbIfMatchKey(name)] = name
 		ic := top.Interfaces[ifname]
 		mode := ic.SwitchportMode
 		if mode == "customer" {
 			mode = "dot1q-tunnel"
 		}
 		iface := &Interface{
-			Name:           canon,
+			Name:           name,
 			Type:           kind,
 			Description:    ic.Description,
 			SwitchportMode: mode,
 		}
 		if cg := strings.Fields(ic.ChannelGroup); len(cg) > 0 {
 			iface.LagID = cg[0]
-			iface.LagParent = "Port-channel" + cg[0]
 		}
 		switch {
 		case ic.CustomerVlan != 0:
@@ -728,6 +763,15 @@ func smbParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 		}
 		dc.AddInterface(iface)
 	}
+	for _, iface := range dc.InterfacesByName {
+		if iface.LagID == "" {
+			continue
+		}
+		parent, ok := literals[smbIfMatchKey("po"+iface.LagID)]
+		if ok && parent != iface.Name {
+			iface.LagParent = parent
+		}
+	}
 }
 
 func (driver *CiscoSMBDriver) GetDeviceConfig() (*DeviceConfig, error) {
@@ -743,21 +787,25 @@ func (driver *CiscoSMBDriver) GetDeviceConfig() (*DeviceConfig, error) {
 }
 
 func (driver *CiscoSMBDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := driver.runCLI(sshCmd{Cmd: "show lldp neighbors"})
+	outputs, err := driver.runCLIBatch(
+		sshCmd{Cmd: "show running-config"},
+		sshCmd{Cmd: "show lldp neighbors"},
+	)
 	if err != nil {
 		return nil, err
 	}
-	return smbParseNeighbors(output), nil
+	n := len(outputs)
+	return smbParseNeighbors(outputs[n-1], smbLiteralIfNames(outputs[n-2])), nil
 }
 
 // smbParseNeighbors parses "show lldp neighbors": columns Port, Device ID,
 // Port ID, System Name. Device ID is used as SystemID; an empty System Name
 // is allowed (C1300 neighbors that only advertise a chassis ID).
-func smbParseNeighbors(output string) []*Neighbor {
+func smbParseNeighbors(output string, literals map[string]string) []*Neighbor {
 	var neighbors []*Neighbor
 	for _, table := range smbParseDashTables(output) {
 		for _, row := range table {
-			local := smbCanonicalIfName(smbRowAt(row, 0))
+			local := smbResolveIfName(smbRowAt(row, 0), literals)
 			if local == "" {
 				continue
 			}

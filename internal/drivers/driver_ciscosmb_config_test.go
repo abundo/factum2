@@ -140,15 +140,15 @@ func TestSmbParseIndentedConfig(t *testing.T) {
 		t.Errorf("customer vlan = %d, want 200", qinq.UntaggedVLAN)
 	}
 
-	svi, ok := dc.InterfacesByName["Vlan1"]
+	svi, ok := dc.InterfacesByName["vlan 1"]
 	if !ok {
-		t.Fatalf("Vlan1 not parsed; have %v", dc.InterfacesByName)
+		t.Fatalf("vlan 1 not parsed; have %v", dc.InterfacesByName)
 	}
 	if svi.Type != "virtual" {
-		t.Errorf("Vlan1 Type = %q, want virtual", svi.Type)
+		t.Errorf("vlan 1 Type = %q, want virtual", svi.Type)
 	}
 	if len(svi.IPAddresses) != 1 || svi.IPAddresses[0].Address.String() != "10.3.100.1/24" {
-		t.Errorf("Vlan1 addresses = %+v", svi.IPAddresses)
+		t.Errorf("vlan 1 addresses = %+v", svi.IPAddresses)
 	}
 
 	lag, ok := dc.InterfacesByName["Port-channel1"]
@@ -181,19 +181,47 @@ func TestSmbParseExitConfig(t *testing.T) {
 			t.Errorf("interface range leaked as %q", name)
 		}
 	}
-	access, ok := dc.InterfacesByName["GigabitEthernet1/0/10"]
+	access, ok := dc.InterfacesByName["gi1/0/10"]
 	if !ok {
-		t.Fatalf("GigabitEthernet1/0/10 not parsed; have %v", dc.InterfacesByName)
+		t.Fatalf("gi1/0/10 not parsed; have %v", dc.InterfacesByName)
 	}
 	if access.Description != "access-port" || access.SwitchportMode != "access" || access.UntaggedVLAN != 20 {
 		t.Errorf("access = %+v", access)
 	}
-	svi, ok := dc.InterfacesByName["Vlan1"]
+	svi, ok := dc.InterfacesByName["vlan 1"]
 	if !ok {
-		t.Fatalf("Vlan1 not parsed; have %v", dc.InterfacesByName)
+		t.Fatalf("vlan 1 not parsed; have %v", dc.InterfacesByName)
 	}
 	if len(svi.IPAddresses) != 1 || svi.IPAddresses[0].Address.String() != "1.1.1.1/8" {
-		t.Errorf("Vlan1 addresses = %+v", svi.IPAddresses)
+		t.Errorf("vlan 1 addresses = %+v", svi.IPAddresses)
+	}
+}
+
+func TestSmbParseKeepsRunningConfigNames(t *testing.T) {
+	cfg := `
+interface gigabitethernet1
+ channel-group 1 mode on
+!
+interface tengigabitethernet1/0/1
+!
+interface port-channel1
+!
+interface vlan 1
+ ip address 10.0.0.1 255.255.255.0
+!
+`
+	nodes := smbConfigNodes(cfg)
+	dc := NewDeviceConfig()
+	smbParseInterfaces(dc, nodes)
+
+	for _, name := range []string{"gigabitethernet1", "tengigabitethernet1/0/1", "port-channel1", "vlan 1"} {
+		if _, ok := dc.InterfacesByName[name]; !ok {
+			t.Errorf("missing %q; have %v", name, dc.InterfacesByName)
+		}
+	}
+	member := dc.InterfacesByName["gigabitethernet1"]
+	if member == nil || member.LagID != "1" || member.LagParent != "port-channel1" {
+		t.Fatalf("gigabitethernet1 lag = %+v", member)
 	}
 }
 
@@ -270,21 +298,31 @@ func TestSmbParseInterfaceStatus(t *testing.T) {
 		"gi2      1G-Copper      Full    Auto Enabled  Off      Down    Disabled Auto     Auto",
 	}, "\n")
 
-	ifaces := smbParseInterfaceStatus(desc, status, config)
+	ifaces := smbParseInterfaceStatus(desc, status, config, nil)
 	if len(ifaces) != 3 {
 		t.Fatalf("got %d interfaces, want 3: %+v", len(ifaces), ifaces)
 	}
-	if ifaces[0].Name != "GigabitEthernet1" || ifaces[0].Description != "TO_QC_NOPOE" {
+	if ifaces[0].Name != "gi1" || ifaces[0].Description != "TO_QC_NOPOE" {
 		t.Errorf("ifaces[0] = %+v", ifaces[0])
 	}
 	if ifaces[0].InterfaceStatus != "UP" || ifaces[0].LineProtocolStatus != "UP" {
 		t.Errorf("ifaces[0] status = %+v", ifaces[0])
 	}
-	if ifaces[1].Name != "GigabitEthernet2" || ifaces[1].InterfaceStatus != "DOWN" || ifaces[1].LineProtocolStatus != "DOWN" {
+	if ifaces[1].Name != "gi2" || ifaces[1].InterfaceStatus != "DOWN" || ifaces[1].LineProtocolStatus != "DOWN" {
 		t.Errorf("ifaces[1] = %+v", ifaces[1])
 	}
-	if ifaces[2].Name != "Port-channel1" || ifaces[2].Description != "lag-uplink" {
+	if ifaces[2].Name != "Po1" || ifaces[2].Description != "lag-uplink" {
 		t.Errorf("ifaces[2] = %+v", ifaces[2])
+	}
+
+	literals := smbLiteralIfNames(strings.Join([]string{
+		"interface gigabitethernet1",
+		"interface gigabitethernet2",
+		"interface port-channel1",
+	}, "\n"))
+	named := smbParseInterfaceStatus(desc, status, config, literals)
+	if named[0].Name != "gigabitethernet1" || named[1].Name != "gigabitethernet2" || named[2].Name != "port-channel1" {
+		t.Errorf("resolved names = %q %q %q", named[0].Name, named[1].Name, named[2].Name)
 	}
 }
 
@@ -300,13 +338,18 @@ func TestSmbParseNeighbors(t *testing.T) {
 		"gi1          QXN4100162           ETH1                                        113",
 	}, "\n")
 
-	neighbors := smbParseNeighbors(output)
+	neighbors := smbParseNeighbors(output, nil)
 	if len(neighbors) != 3 {
 		t.Fatalf("got %d neighbors, want 3: %+v", len(neighbors), neighbors)
 	}
 	n := neighbors[0]
-	if n.LocalInterface != "GigabitEthernet3" {
+	if n.LocalInterface != "gi3" {
 		t.Errorf("LocalInterface = %q", n.LocalInterface)
+	}
+	literals := smbLiteralIfNames("interface gigabitethernet3\n")
+	resolved := smbParseNeighbors(output, literals)
+	if resolved[0].LocalInterface != "gigabitethernet3" {
+		t.Errorf("resolved LocalInterface = %q", resolved[0].LocalInterface)
 	}
 	if n.SystemID != "78:45:aa:15:fa:89" {
 		t.Errorf("SystemID = %q", n.SystemID)
