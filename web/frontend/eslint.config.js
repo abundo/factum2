@@ -11,7 +11,14 @@ export default defineConfig([
     files: ['**/*.{vue,js,mjs,jsx}'],
   },
 
-  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**']),
+  globalIgnores([
+    '**/dist/**',
+    '**/dist-ssr/**',
+    '**/coverage/**',
+    // Copied from maplibre-gl by predev/prebuild. See web/frontend/.gitignore.
+    'public/maplibre-gl-worker.mjs',
+    'public/maplibre-gl-shared.mjs',
+  ]),
 
   {
     languageOptions: {

@@ -3,9 +3,6 @@ import http from './http'
 function list(path) {
   return http.get(path).then((res) => res.data)
 }
-function get(path) {
-  return http.get(path).then((res) => res.data)
-}
 function create(path, payload) {
   return http.post(path, payload).then((res) => res.data)
 }

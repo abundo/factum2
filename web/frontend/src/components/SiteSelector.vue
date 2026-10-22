@@ -116,10 +116,9 @@ function parentItems() {
   return items
 }
 
-const createParentItems = computed(() => {
-  treeRev.value
-  return parentItems()
-})
+// FancyTree mutates outside Vue. Reading treeRev keeps this list in sync
+// after loadTree rebuilds the tree.
+const createParentItems = computed(() => (treeRev.value, parentItems()))
 
 function parseCoord(v) {
   if (v === '' || v == null) return 0
