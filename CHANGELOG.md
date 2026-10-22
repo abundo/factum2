@@ -18,6 +18,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   sets that interface's NetBox parent to `gigabitethernet3`. A row the
   old sync stored as `vid511` is renamed when it still has the same BECS
   id.
+- `factum2-worker start` runs with an empty `worker.commands` map, so a
+  host can connect to the primary before any command is configured.
 - Admin → Settings → Factum → Software stores a `worker.paths` key
   (`storage_root`) for the repository directory. The path is only in the
   storage host's `factum2-worker.yaml`. A blank field uses `storage_root`.

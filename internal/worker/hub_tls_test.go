@@ -167,6 +167,20 @@ func TestConnectOnceWSSRejectsInvalidCA(t *testing.T) {
 	}
 }
 
+func TestStartAllowsEmptyCommands(t *testing.T) {
+	w := New(&util.ConfigWorker{})
+	err := w.Start(context.Background())
+	if err == nil {
+		t.Fatal("Start succeeded without listen")
+	}
+	if strings.Contains(err.Error(), "at least one command") {
+		t.Fatalf("empty commands rejected: %v", err)
+	}
+	if !strings.Contains(err.Error(), "listen") {
+		t.Fatalf("err = %v, want listen", err)
+	}
+}
+
 func TestStartRefusesMissingTLS(t *testing.T) {
 	w := New(&util.ConfigWorker{
 		Listen:   "127.0.0.1:0",

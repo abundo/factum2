@@ -78,17 +78,20 @@ func (w *Worker) SetStorageSocket(socket string) {
 	w.storageSocket = socket
 }
 
-// Start validates this instance's command allowlist and runs the hub
-// listener and unix API until ctx is cancelled or either fails.
+// Start runs the hub listener and unix API until ctx is cancelled or
+// either fails. worker.commands may be empty: the process still connects
+// to the primary and advertises no command names. A later dispatch for a
+// name that is not in the map is rejected.
 func (w *Worker) Start(ctx context.Context) error {
 	if len(w.cfg.Commands) == 0 {
-		return fmt.Errorf("worker.commands must configure at least one command")
+		fmt.Println("Handling commands: (none)")
+	} else {
+		fmt.Printf("Handling commands: ")
+		for k := range w.cfg.Commands {
+			fmt.Printf("%s ", k)
+		}
+		fmt.Println()
 	}
-	fmt.Printf("Handling commands: ")
-	for k := range w.cfg.Commands {
-		fmt.Printf("%s ", k)
-	}
-	fmt.Println()
 	w.runCtx = ctx
 
 	if w.cfg.Listen == "" {

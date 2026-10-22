@@ -50,7 +50,7 @@ func main() {
 
 			boa.CmdT[Params]{
 				Use:   "start",
-				Short: "Start the worker (commands per worker.commands in configuration) and run until stopped",
+				Short: "Start the worker and run until stopped. worker.commands may be empty",
 				RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
 					cmdbase.SetupLog(p.CommonParams)
 

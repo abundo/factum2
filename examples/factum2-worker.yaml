@@ -11,7 +11,9 @@ factum:
   token: <change-me>
   # socket: none   # force HTTPS (same as FACTUM_WORKER_API_SOCKET=none)
 
-# on each worker, adjust the commands to what the worker handles
+# on each worker, adjust the commands to what the worker handles.
+# commands may be empty or omitted: the worker still listens and the
+# primary can connect. It advertises no command names until entries exist.
 # this token is for the primary server accessing this worker
 #
 # Hub is WSS only. install.py generates a CA on the primary and writes

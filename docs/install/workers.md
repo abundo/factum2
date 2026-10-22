@@ -73,7 +73,10 @@ Start from `examples/factum2-worker.yaml` on the worker host:
   stores the path. A sync that names a missing key fails. Restart
   `factum2-worker` after editing it. `factum2-storage` reads the same file
   at start, so restart that unit too when `storage_root` changes
-- `worker.commands` — only the tools this host should run. Add `--job` to
+- `worker.commands` — only the tools this host should run. An empty map
+  is valid: the worker still listens, and the primary can connect before
+  any command is configured. It advertises no command names until you add
+  entries and restart. Add `--job` to
   a command's `args` for structured job events. NetBox changes (job
   `netbox-delta`) reuse the `netbox` command: set
   `allow_args: ["--delta"]`. A second `netbox-delta` command is not
