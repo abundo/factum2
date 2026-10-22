@@ -18,9 +18,8 @@ const HousekeepingTarget = "housekeeping"
 // scheduled and triggered on its own. It is not a SyncTargets entry, so
 // "Sync all" keeps running the full netbox inventory sync only.
 //
-// The worker command is still "netbox". Dispatch appends "--delta" when
-// the node does not advertise a separate netbox-delta command. That older
-// command (factum2-netbox sync-delta) keeps working when it is present.
+// The worker command is "netbox". Dispatch appends "--delta". A
+// worker.commands entry named netbox-delta is not used.
 const NetboxDeltaTarget = "netbox-delta"
 
 // commandForJobTarget maps a job target onto one worker command and the
@@ -28,9 +27,6 @@ const NetboxDeltaTarget = "netbox-delta"
 // A normal target matches a command of the same name and sends no args.
 func commandForJobTarget(target string, roles []string) (command string, args []string, ok bool) {
 	if target == NetboxDeltaTarget {
-		if slices.Contains(roles, NetboxDeltaTarget) {
-			return NetboxDeltaTarget, nil, true
-		}
 		if slices.Contains(roles, "netbox") {
 			return "netbox", []string{"--delta"}, true
 		}

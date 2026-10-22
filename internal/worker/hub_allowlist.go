@@ -28,7 +28,7 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/certs-config`, []string{"certs"}},
 	{http.MethodGet, `/api/oxidized-config`, []string{"oxidized"}},
 	{http.MethodGet, `/api/prometheus-config`, []string{"prometheus"}},
-	{http.MethodGet, `/api/netbox-config`, []string{"netbox", "netbox-delta", "librenms", "becs", "device-sync"}},
+	{http.MethodGet, `/api/netbox-config`, []string{"netbox", "librenms", "becs", "device-sync"}},
 	{http.MethodGet, `/api/device-sync-config`, []string{"device-sync", "storage"}},
 	{http.MethodGet, `/api/storage-config`, []string{"storage"}},
 	{http.MethodGet, `/api/radius-config`, []string{"radius"}},

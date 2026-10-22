@@ -81,8 +81,11 @@ func TestCommandForJobTarget(t *testing.T) {
 		t.Fatalf("delta on netbox: cmd=%q args=%v ok=%v", cmd, args, ok)
 	}
 	cmd, args, ok = commandForJobTarget(NetboxDeltaTarget, []string{"netbox", NetboxDeltaTarget})
-	if !ok || cmd != NetboxDeltaTarget || args != nil {
-		t.Fatalf("legacy netbox-delta command: cmd=%q args=%v ok=%v", cmd, args, ok)
+	if !ok || cmd != "netbox" || len(args) != 1 || args[0] != "--delta" {
+		t.Fatalf("netbox-delta command ignored: cmd=%q args=%v ok=%v", cmd, args, ok)
+	}
+	if _, _, ok = commandForJobTarget(NetboxDeltaTarget, []string{NetboxDeltaTarget}); ok {
+		t.Fatal("a netbox-delta command is not a delta worker")
 	}
 	if _, _, ok = commandForJobTarget(NetboxDeltaTarget, []string{"dns"}); ok {
 		t.Fatal("delta must not match a worker with no netbox command")

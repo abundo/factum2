@@ -13,6 +13,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- NetBox delta sync always runs the `netbox` worker command with
+  `--delta`. A `worker.commands` entry named `netbox-delta` is ignored.
 - BECS sync names an interface that sits under another interface the way
   iBOS shows it (`gi3/vid511` for `vid511` under `gigabitethernet3`) and
   sets that interface's NetBox parent to `gigabitethernet3`. A row the
@@ -40,6 +42,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Upgrading
 
+- Delete any `netbox-delta` entry from `worker.commands`. Delta sync uses
+  the `netbox` command and `allow_args: ["--delta"]`.
 - Install applies goose migration `00037`. It rewrites `storage_root`
   from a filesystem path to the key `storage_root`. On the host that runs
   `factum2-storage`, set `worker.paths.storage_root` to the directory that

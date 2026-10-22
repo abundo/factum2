@@ -79,8 +79,8 @@ Start from `examples/factum2-worker.yaml` on the worker host:
   entries and restart. Add `--job` to
   a command's `args` for structured job events. NetBox changes (job
   `netbox-delta`) reuse the `netbox` command: set
-  `allow_args: ["--delta"]`. A second `netbox-delta` command is not
-  required; one that is already there keeps running `sync-delta`
+  `allow_args: ["--delta"]`. Do not add a `netbox-delta` command; it is
+  ignored
 - `factum.url` / `factum.token` — HTTPS fallback if the unix socket is
   missing; omit on start-only hosts
 

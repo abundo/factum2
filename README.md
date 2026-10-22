@@ -334,8 +334,8 @@ inventory, it runs a full sync instead. The changelog does not keep
 deletes forever (`CHANGELOG_RETENTION`, 90 days by default); the periodic
 full sync is what picks up anything the cursor missed. The job runs the
 `netbox` worker command with `--delta` appended. List that flag in
-`allow_args` on the `netbox` entry. A worker that still defines a
-`netbox-delta` command keeps using that command.
+`allow_args` on the `netbox` entry. A `worker.commands` entry named
+`netbox-delta` is ignored.
 
 `POST /api/netbox-webhook` queues create/update events for one quiet
 period (3 seconds with no further event), then runs that same delta sync.

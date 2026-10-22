@@ -272,8 +272,8 @@ firewall step, not something the process unbinds.
   `netbox-delta` is a job target but not a `worker.commands` key: dispatch
   (`commandForJobTarget`) sends the `netbox` command with `--delta`, which
   that entry must list in `allow_args`. `CommandMsg.Report` keeps the log
-  source and the running-target lock on `netbox-delta`. A node that still
-  advertises a `netbox-delta` command is sent that command with no args.
+  source and the running-target lock on `netbox-delta`. A `worker.commands`
+  entry named `netbox-delta` is ignored.
   The "Sync all" button instead calls `POST /api/sync/all`
   (`web.ApiSyncTriggerAll`), which orders every enabled target sources-
   first via `worker.SequencedSyncAllTargets` and calls the same `StartJob`

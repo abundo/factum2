@@ -10,8 +10,8 @@ single target, or **Sync all**) made of one **task** per target. The
 primary dispatches each task to a connected worker that handles that
 target. Housekeeping runs in-process on the primary. NetBox changes
 (`netbox-delta`) reuse the `netbox` command and append `--delta` (list it
-in that command's `allow_args`). A worker that still defines a
-`netbox-delta` command keeps using it.
+in that command's `allow_args`). A `worker.commands` entry named
+`netbox-delta` is ignored.
 
 ## Job overview
 
