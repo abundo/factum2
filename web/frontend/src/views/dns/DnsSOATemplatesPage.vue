@@ -156,31 +156,35 @@ onMounted(load)
   >
     <template #body>
       <form id="soa-template-form" class="space-y-3" @submit.prevent="save">
-          <UFormField label="Name">
-            <UInput v-model="form.name" class="w-full" required />
-          </UFormField>
-          <div class="grid grid-cols-2 gap-3">
-            <UFormField label="Primary nameserver (MNAME)">
-              <UInput v-model="form.mname" class="w-full" placeholder="ns1.example.com." />
-            </UFormField>
-            <UFormField label="Email (RNAME)">
-              <UInput v-model="form.rname" class="w-full" placeholder="hostmaster.example.com." />
-            </UFormField>
-          </div>
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <UFormField label="TTL">
-              <UInput v-model.number="form.ttl" type="number" class="w-full" />
-            </UFormField>
-            <UFormField label="Refresh">
-              <UInput v-model.number="form.refresh" type="number" class="w-full" />
-            </UFormField>
-            <UFormField label="Retry">
-              <UInput v-model.number="form.retry" type="number" class="w-full" />
-            </UFormField>
-            <UFormField label="Expire">
-              <UInput v-model.number="form.expire" type="number" class="w-full" />
-            </UFormField>
-          </div>
+        <UFormField label="Name">
+          <UInput v-model="form.name" class="w-full" required />
+        </UFormField>
+        <UFormField label="Primary nameserver (MNAME)">
+          <UInput
+            v-model="form.mname"
+            class="w-full font-mono"
+            placeholder="ns1.example.com."
+          />
+        </UFormField>
+        <UFormField label="Email (RNAME)">
+          <UInput
+            v-model="form.rname"
+            class="w-full font-mono"
+            placeholder="hostmaster.example.com."
+          />
+        </UFormField>
+        <UFormField label="TTL">
+          <UInput v-model.number="form.ttl" type="number" class="w-full" />
+        </UFormField>
+        <UFormField label="Refresh">
+          <UInput v-model.number="form.refresh" type="number" class="w-full" />
+        </UFormField>
+        <UFormField label="Retry">
+          <UInput v-model.number="form.retry" type="number" class="w-full" />
+        </UFormField>
+        <UFormField label="Expire">
+          <UInput v-model.number="form.expire" type="number" class="w-full" />
+        </UFormField>
       </form>
     </template>
     <template #footer="{ close }">
