@@ -46,11 +46,17 @@ docs:
 LAB_DIR := internal/drivers/testdata/clab
 LAB_TOPOLOGY := $(LAB_DIR)/eos.clab.yml
 
+# A setuid containerlab keeps the caller's HOME. Its cEOS post-deploy runs
+# `podman exec` as root, Podman rejects ~/.config because that directory is
+# not owned by root, and the retry loop never finishes. Use /root only then.
+CLAB_BIN := $(shell command -v containerlab)
+CLAB_HOME := $(shell if [ -u "$(CLAB_BIN)" ]; then printf /root; else printf %s "$$HOME"; fi)
+
 lab-up:
-	containerlab deploy --topo $(LAB_TOPOLOGY)
+	HOME=$(CLAB_HOME) containerlab deploy --runtime podman --topo $(LAB_TOPOLOGY)
 
 lab-down:
-	containerlab destroy --topo $(LAB_TOPOLOGY) --cleanup
+	HOME=$(CLAB_HOME) containerlab destroy --runtime podman --topo $(LAB_TOPOLOGY) --cleanup
 
 test-integration:
 	FACTUM_TEST_EOS_HOST=$${FACTUM_TEST_EOS_HOST:-clab-factum-eos-sw1} \
