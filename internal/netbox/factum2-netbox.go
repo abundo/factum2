@@ -1027,8 +1027,12 @@ func reconcileInterfaces(db *gorm.DB, deviceID uint, deviceName string, nb_inter
 	return nil
 }
 
+// interfaceSyncTempName is a name no operator or NetBox interface can have.
+// The leading SOH (U+0001) keeps it off idx_interfaces_device_id_name while
+// two rows swap names. A NUL (U+0000) would do the same in SQLite, but
+// PostgreSQL rejects it in a UTF-8 column (SQLSTATE 22021).
 func interfaceSyncTempName(id uint) string {
-	return "\x00factum-sync-" + strconv.FormatUint(uint64(id), 10)
+	return "\x01factum-sync-" + strconv.FormatUint(uint64(id), 10)
 }
 
 func interfaceFromNetbox(deviceID uint, nb netboxtool.NBInterface, existing *models.Interface) models.Interface {

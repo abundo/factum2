@@ -28,6 +28,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- NetBox sync can rename two interfaces that swap names. The temporary
+  name no longer starts with a NUL byte, which PostgreSQL rejects
+  (`invalid byte sequence for encoding "UTF8": 0x00`).
 - `factum2-netbox check --update` assigns the `destination` custom field
   to interfaces as well as devices and virtual machines. A LibreNMS id
   stored on `dcim.interface` can then be copied into `destination`.

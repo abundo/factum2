@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/abundo/factum2/internal/jobevent"
 	"github.com/abundo/factum2/internal/netboxtool"
@@ -804,6 +805,20 @@ func TestSyncInterfaces_AdoptsLocalInterfaceByName(t *testing.T) {
 	}
 	if got.NetboxID != 50 || got.Name != "Ethernet1" {
 		t.Fatalf("iface = %+v, want netbox id 50 kept on the local row", got)
+	}
+}
+
+func TestInterfaceSyncTempName_IsPostgresText(t *testing.T) {
+	a := interfaceSyncTempName(6412)
+	b := interfaceSyncTempName(6413)
+	if a == b {
+		t.Fatalf("temp names collide: %q", a)
+	}
+	if strings.IndexByte(a, 0) >= 0 || !utf8.ValidString(a) {
+		t.Fatalf("temp name %q is not PostgreSQL UTF-8 text", a)
+	}
+	if a != "\x01factum-sync-6412" {
+		t.Fatalf("temp name = %q", a)
 	}
 }
 
