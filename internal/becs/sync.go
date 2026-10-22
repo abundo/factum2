@@ -126,18 +126,17 @@ func ifaceType(dt *netboxtool.NetboxDeviceTypeDetail, ifname string) string {
 	return "virtual"
 }
 
-func firstAddr(addrs []netboxtool.NBAddress) *netboxtool.NBAddress {
-	if len(addrs) == 0 {
-		return nil
+// wantedPrefixes is every IPv4 CIDR on the BECS interface. An interface
+// can carry more than one resource-inet (two uplinks on the same port).
+func wantedPrefixes(p []Prefix) map[string]struct{} {
+	out := make(map[string]struct{}, len(p))
+	for i := range p {
+		if p[i].Address == "" {
+			continue
+		}
+		out[p[i].Address] = struct{}{}
 	}
-	return &addrs[0]
-}
-
-func firstPrefix(p []Prefix) *Prefix {
-	if len(p) == 0 {
-		return nil
-	}
-	return &p[0]
+	return out
 }
 
 func ifaceByOID(d *netboxtool.NBDevice) map[uint]*netboxtool.NBInterface {
@@ -816,27 +815,27 @@ func (s *Syncer) syncAddressesDelete(d *netboxtool.NBDevice, b *Device) {
 		if !ok {
 			continue
 		}
-		have := firstAddr(iface.Addresses)
-		want := firstPrefix(bIface.Prefix4)
-		if have == nil {
-			continue
+		want := wantedPrefixes(bIface.Prefix4)
+		// Copy before deleting. AddressDelete compacts the same slice.
+		var drop []netboxtool.NBAddress
+		for i := range iface.Addresses {
+			have := iface.Addresses[i]
+			if _, ok := want[have.Address]; ok {
+				continue
+			}
+			drop = append(drop, have)
 		}
-		del := want == nil
-		if !del && have.Address != want.Address {
-			del = true
-		}
-		if !del {
-			continue
-		}
-		s.emitWrite("delete address %s/%s %s (id=%d)", d.Name, iface.Name, have.Address, have.NetboxID)
-		if err := s.nb.AddressDelete(int(have.NetboxID)); err != nil {
-			s.note(fmt.Errorf("delete address %s/%s %s: %w", d.Name, iface.Name, have.Address, err))
-			continue
-		}
-		removed = true
-		s.changed = true
-		if strings.EqualFold(iface.Name, "loopback0") && d.PrimaryIPv4ID == have.NetboxID {
-			clearedPrimary = true
+		for _, have := range drop {
+			s.emitWrite("delete address %s/%s %s (id=%d)", d.Name, iface.Name, have.Address, have.NetboxID)
+			if err := s.nb.AddressDelete(int(have.NetboxID)); err != nil {
+				s.note(fmt.Errorf("delete address %s/%s %s: %w", d.Name, iface.Name, have.Address, err))
+				continue
+			}
+			removed = true
+			s.changed = true
+			if strings.EqualFold(iface.Name, "loopback0") && d.PrimaryIPv4ID == have.NetboxID {
+				clearedPrimary = true
+			}
 		}
 	}
 	if clearedPrimary {
@@ -858,26 +857,43 @@ func (s *Syncer) syncAddressesCreate(d *netboxtool.NBDevice, b *Device) {
 		if !ok {
 			continue
 		}
-		have := firstAddr(iface.Addresses)
-		want := firstPrefix(bIface.Prefix4)
-		if want == nil {
-			continue
+		have := map[string]*netboxtool.NBAddress{}
+		for i := range iface.Addresses {
+			addr := &iface.Addresses[i]
+			if _, ok := have[addr.Address]; !ok {
+				have[addr.Address] = addr
+			}
 		}
-		if have == nil {
-			payload := map[string]any{"custom_fields": map[string]any{netboxtool.SourceField: becsSourceValue(uint(want.OID))}}
-			s.emitWrite("create address %s/%s %s: %s", d.Name, iface.Name, want.Address, formatPayload(payload))
-			created, err := s.nb.CreateInterfaceAddress(iface.NetboxID, want.Address, payload)
-			if err != nil {
-				s.note(fmt.Errorf("create address %s/%s %s: %w", d.Name, iface.Name, want.Address, err))
+		// loopback0's primary is the first resource-inet, even when the
+		// interface has more than one address.
+		primaryChecked := false
+		for i := range bIface.Prefix4 {
+			want := &bIface.Prefix4[i]
+			if want.Address == "" {
 				continue
 			}
-			have = created
-			s.changed = true
-		}
-		if strings.EqualFold(iface.Name, "loopback0") && have != nil {
-			if d.PrimaryIPv4ID == 0 || d.PrimaryIPv4ID != have.NetboxID {
-				s.emitWrite("set primary_ip4 on %s to %s", d.Name, have.Address)
-				deviceUpdate["primary_ip4"] = have.NetboxID
+			got := have[want.Address]
+			if got == nil {
+				payload := map[string]any{"custom_fields": map[string]any{netboxtool.SourceField: becsSourceValue(uint(want.OID))}}
+				s.emitWrite("create address %s/%s %s: %s", d.Name, iface.Name, want.Address, formatPayload(payload))
+				created, err := s.nb.CreateInterfaceAddress(iface.NetboxID, want.Address, payload)
+				if err != nil {
+					s.note(fmt.Errorf("create address %s/%s %s: %w", d.Name, iface.Name, want.Address, err))
+					if strings.EqualFold(iface.Name, "loopback0") {
+						primaryChecked = true
+					}
+					continue
+				}
+				have[want.Address] = created
+				got = created
+				s.changed = true
+			}
+			if strings.EqualFold(iface.Name, "loopback0") && !primaryChecked && got != nil {
+				primaryChecked = true
+				if d.PrimaryIPv4ID == 0 || d.PrimaryIPv4ID != got.NetboxID {
+					s.emitWrite("set primary_ip4 on %s to %s", d.Name, got.Address)
+					deviceUpdate["primary_ip4"] = got.NetboxID
+				}
 			}
 		}
 	}

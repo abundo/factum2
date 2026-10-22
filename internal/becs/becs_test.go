@@ -92,6 +92,35 @@ func TestIndexAndDevices(t *testing.T) {
 	}
 }
 
+func TestInterfaceMultiplePrefixes(t *testing.T) {
+	c := NewClient("http://unused", "u", "p")
+	c.Index([]Object{
+		{OID: 50, Class: elementClass, ElementType: elementType, Name: "au6-larssamuelsgatan"},
+		{OID: 10, ParentOID: 50, Class: "interface", Name: "tengigabitethernet2"},
+		{OID: 3840031, ParentOID: 10, Class: "resource-inet", Name: "11-Link-Dcr-11", Flags: "useparentmask", Resource: &Resource{RCParentOID: 21, Address: "10.131.0.117", PrefixLen: 32}},
+		{OID: 3840001, ParentOID: 10, Class: "resource-inet", Name: "5-Link-Dcr-05", Flags: "useparentmask", Resource: &Resource{RCParentOID: 20, Address: "10.125.0.6", PrefixLen: 32}},
+		{OID: 20, ParentOID: 1, Class: "resource-inet", Name: "parent-a", Resource: &Resource{Address: "10.125.0.4", PrefixLen: 30}},
+		{OID: 21, ParentOID: 1, Class: "resource-inet", Name: "parent-b", Resource: &Resource{Address: "10.131.0.116", PrefixLen: 30}},
+	})
+	d, err := c.deviceFromElement(c.objects[50], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iface := d.Interfaces["tengigabitethernet2"]
+	if iface == nil {
+		t.Fatal("missing tengigabitethernet2")
+	}
+	if len(iface.Prefix4) != 2 {
+		t.Fatalf("prefix=%v, want both link addresses", iface.Prefix4)
+	}
+	if iface.Prefix4[0].Address != "10.131.0.117/30" || iface.Prefix4[0].OID != 3840031 {
+		t.Errorf("first=%+v", iface.Prefix4[0])
+	}
+	if iface.Prefix4[1].Address != "10.125.0.6/30" || iface.Prefix4[1].OID != 3840001 {
+		t.Errorf("second=%+v", iface.Prefix4[1])
+	}
+}
+
 func TestIBOSShortName(t *testing.T) {
 	cases := map[string]string{
 		"gigabitethernet3":      "gi3",

@@ -628,6 +628,74 @@ func TestDryRunUpdateShowsExactPayload(t *testing.T) {
 	}
 }
 
+func TestSyncKeepsEveryInterfaceAddress(t *testing.T) {
+	c := NewClient("http://unused", "u", "p")
+	c.Index([]Object{
+		{OID: 50, Class: elementClass, ElementType: elementType, Name: "au6-larssamuelsgatan"},
+		{OID: 10, ParentOID: 50, Class: "interface", Name: "tengigabitethernet2"},
+		{OID: 3840031, ParentOID: 10, Class: "resource-inet", Name: "11-Link-Dcr-11", Resource: &Resource{Address: "10.131.0.117", PrefixLen: 30}},
+		{OID: 3840001, ParentOID: 10, Class: "resource-inet", Name: "5-Link-Dcr-05", Resource: &Resource{Address: "10.125.0.6", PrefixLen: 30}},
+	})
+	becsDev, err := c.deviceFromElement(c.objects[50], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := &netboxtool.NBDevice{
+		NetboxID:     20,
+		Name:         "au6-larssamuelsgatan",
+		CustomFields: map[string]any{"source": "becs:50"},
+		Interfaces: []netboxtool.NBInterface{{
+			NetboxID:     40,
+			Name:         "tengigabitethernet2",
+			Type:         "10gbase-x-sfpp",
+			Enabled:      true,
+			CustomFields: map[string]any{"source": "becs:10"},
+			Addresses:    []netboxtool.NBAddress{{NetboxID: 15297, Address: "10.125.0.6/30"}},
+		}},
+	}
+	nb := &fakeNetbox{devices: []*netboxtool.NBDevice{dev}}
+	s := &Syncer{
+		becs:     c,
+		nb:       nb,
+		reporter: &testReporter{},
+		dryRun:   true,
+		nbByOID:  map[uint]*netboxtool.NBDevice{50: dev},
+		nbByName: map[string]*netboxtool.NBDevice{"au6-larssamuelsgatan": dev},
+	}
+	s.syncAddressesDelete(dev, becsDev)
+	s.syncAddressesCreate(dev, becsDev)
+	out := reporterText(s)
+	if strings.Contains(out, "delete address") {
+		t.Fatalf("kept address was deleted:\n%s", out)
+	}
+	assertContains(t, out, "dry-run: would create address au6-larssamuelsgatan/tengigabitethernet2 10.131.0.117/30:")
+	assertContains(t, out, `"source":"becs:3840031"`)
+	if len(nb.deletedAddrs) != 0 {
+		t.Fatalf("deleted=%v", nb.deletedAddrs)
+	}
+	if len(nb.createdAddrs) != 1 || nb.createdAddrs[0] != "10.131.0.117/30" {
+		t.Fatalf("created=%v", nb.createdAddrs)
+	}
+
+	// Both addresses already present, plus one BECS no longer has.
+	dev.Interfaces[0].Addresses = []netboxtool.NBAddress{
+		{NetboxID: 15297, Address: "10.125.0.6/30"},
+		{NetboxID: 15298, Address: "10.131.0.117/30"},
+		{NetboxID: 15299, Address: "192.0.2.1/30"},
+	}
+	nb.createdAddrs = nil
+	nb.deletedAddrs = nil
+	s.reporter = &testReporter{}
+	s.changed = false
+	s.syncAddressesDelete(dev, becsDev)
+	s.syncAddressesCreate(dev, becsDev)
+	out = reporterText(s)
+	assertContains(t, out, "dry-run: would delete address au6-larssamuelsgatan/tengigabitethernet2 192.0.2.1/30 (id=15299)")
+	if strings.Contains(out, "10.125.0.6/30") || strings.Contains(out, "10.131.0.117/30") || strings.Contains(out, "create address") {
+		t.Fatalf("wanted addresses changed:\n%s", out)
+	}
+}
+
 func TestDryRunAddressReplaceDoesNotWrite(t *testing.T) {
 	existing := &netboxtool.NBDevice{
 		NetboxID:           20,

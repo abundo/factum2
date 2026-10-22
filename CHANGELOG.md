@@ -30,6 +30,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- BECS sync keeps every IPv4 address on an interface. A second
+  `resource-inet` on the same port is added beside the one already in
+  NetBox, instead of replacing it.
 - NetBox sync can rename two interfaces that swap names. The temporary
   name no longer starts with a NUL byte, which PostgreSQL rejects
   (`invalid byte sequence for encoding "UTF8": 0x00`).
