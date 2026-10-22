@@ -7,6 +7,7 @@ import { getDevices } from '@/api/devices'
 import {
   copySoftware,
   deleteSoftware,
+  downloadSoftware,
   listSoftware,
   mkdirSoftware,
   moveSoftware,
@@ -29,8 +30,11 @@ const selected = ref(null)
 const loading = ref(true)
 const error = ref(null)
 const uploading = ref(false)
+const downloading = ref(false)
 const fileInput = ref(null)
+const menu = ref({ open: false, x: 0, y: 0, node: null })
 let tree
+let onContextMenu
 
 const mkdirOpen = ref(false)
 const mkdirName = ref('')
@@ -67,8 +71,49 @@ const deviceItems = computed(() => devices.value.map((d) => ({ label: d.name, va
 const selectedIsFile = computed(() => selected.value && !selected.value.is_dir)
 const selectedIsNode = computed(() => !!selected.value)
 
+const menuItems = computed(() => {
+  if (!menu.value.open) return []
+  const node = menu.value.node
+  const write = canWrite.value
+  if (!node) {
+    return write
+      ? [
+          { id: 'mkdir', label: 'New folder' },
+          { id: 'upload', label: 'Upload file' },
+        ]
+      : []
+  }
+  if (node.is_dir) {
+    if (!write) return []
+    return [
+      { id: 'mkdir', label: 'New folder' },
+      { id: 'rename', label: 'Rename folder' },
+      { id: 'delete', label: 'Delete folder', danger: true },
+      { id: 'upload', label: 'Upload file' },
+    ]
+  }
+  const items = []
+  if (write) {
+    items.push(
+      { id: 'rename', label: 'Rename file' },
+      { id: 'delete', label: 'Delete file', danger: true },
+    )
+  }
+  items.push({ id: 'download', label: 'Download file' })
+  return items
+})
+
 function errMsg(err, fallback) {
-  return err.response?.data?.error ?? err.message ?? fallback
+  const data = err.response?.data
+  if (data instanceof ArrayBuffer) {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(data))
+      if (parsed?.error) return parsed.error
+    } catch {
+      /* not JSON */
+    }
+  }
+  return data?.error ?? err.message ?? fallback
 }
 
 function joinPath(dir, name) {
@@ -159,10 +204,33 @@ function renderCell(e) {
 }
 
 function destroyTree() {
+  if (el.value && onContextMenu) {
+    el.value.removeEventListener('contextmenu', onContextMenu)
+    onContextMenu = null
+  }
   if (tree) {
     tree.resizeObserver?.disconnect()
     tree = null
   }
+}
+
+function closeMenu() {
+  menu.value = { ...menu.value, open: false }
+}
+
+function bindContextMenu() {
+  if (!el.value || onContextMenu) return
+  onContextMenu = (ev) => {
+    ev.preventDefault()
+    const wb = Wunderbaum.getNode(ev)
+    const node = wb ? payload(wb) : null
+    if (wb) wb.setActive()
+    selected.value = node
+    const x = Math.max(8, Math.min(ev.clientX, window.innerWidth - 220))
+    const y = Math.max(8, Math.min(ev.clientY, window.innerHeight - 220))
+    menu.value = { open: true, x, y, node }
+  }
+  el.value.addEventListener('contextmenu', onContextMenu)
 }
 
 function isDescendantPath(parent, child) {
@@ -202,6 +270,14 @@ function buildTree(source) {
     },
     lazyLoad: (e) => listSoftware(e.node.key).then((rows) => sortEntries(rows).map(toWbNode)),
     render: renderCell,
+    click: (e) => {
+      const expander = e.event?.target?.closest?.('i.wb-expander')
+      if (!expander || expander.classList.contains('wb-indent')) return
+      const node = e.node
+      if (!node || node.type !== 'folder') return
+      node.setExpanded(!node.isExpanded())
+      return false
+    },
     activate: (e) => {
       selected.value = payload(e.node)
     },
@@ -227,6 +303,7 @@ function buildTree(source) {
         }
       : undefined,
   })
+  bindContextMenu()
 }
 
 function load() {
@@ -317,23 +394,48 @@ function saveRename() {
     })
 }
 
-async function remove() {
-  if (!renameOpen.value || !renameFrom.value) return
-  const kind = renameIsDir.value ? 'folder' : 'file'
-  const name = renameTo.value.trim() || renameFrom.value
-  if (!(await confirmDelete(`${kind} ${name}`))) return
-  const parent = parentPath(renameFrom.value)
+async function removeNode(node) {
+  if (!node?.path) return
+  const kind = node.is_dir ? 'folder' : 'file'
+  const detail = node.is_dir ? 'The folder must be empty.' : ''
+  if (!(await confirmDelete(`${kind} ${node.name || node.path}`, detail))) return
+  const parent = parentPath(node.path)
   deleting.value = true
-  deleteSoftware(renameFrom.value)
+  deleteSoftware(node.path)
     .then(() => {
       renameOpen.value = false
-      selected.value = null
+      if (selected.value?.path === node.path) selected.value = null
       return refreshDir(parent)
     })
     .catch((err) => toast.add({ title: errMsg(err, 'Could not delete'), color: 'error' }))
     .finally(() => {
       deleting.value = false
     })
+}
+
+function removeSelected() {
+  return removeNode(selected.value)
+}
+
+function downloadNode(node) {
+  if (!node || node.is_dir) return
+  downloading.value = true
+  downloadSoftware(node.path, node.name)
+    .catch((err) => toast.add({ title: errMsg(err, 'Download failed'), color: 'error' }))
+    .finally(() => {
+      downloading.value = false
+    })
+}
+
+function runMenu(id) {
+  const node = menu.value.node
+  closeMenu()
+  if (node) selected.value = node
+  if (id === 'mkdir') openMkdir()
+  else if (id === 'rename') openRename()
+  else if (id === 'delete') removeNode(node)
+  else if (id === 'upload') pickFiles()
+  else if (id === 'download') downloadNode(node)
 }
 
 function pickFiles() {
@@ -394,10 +496,18 @@ function saveCopy() {
     })
 }
 
+function onDocClick() {
+  if (menu.value.open) closeMenu()
+}
+
 onMounted(() => {
+  document.addEventListener('click', onDocClick)
   nextTick(() => load())
 })
-onBeforeUnmount(destroyTree)
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
+  destroyTree()
+})
 </script>
 
 <template>
@@ -435,14 +545,26 @@ onBeforeUnmount(destroyTree)
           :disabled="!selectedIsNode"
           @click="openRename"
         />
+        <UButton
+          label="Delete"
+          icon="i-lucide-trash"
+          color="error"
+          variant="outline"
+          :disabled="!selectedIsNode"
+          :loading="deleting"
+          @click="removeSelected"
+        />
         <input ref="fileInput" type="file" class="hidden" multiple @change="onFiles" />
       </div>
     </div>
 
-    <p v-if="canWrite" class="text-sm text-muted-color mb-3">
-      New folder and upload go into
-      <span class="font-mono">{{ targetDir() }}</span
-      >. Drag a row onto a folder to move it.
+    <p class="text-sm text-muted-color mb-3">
+      Click + or − to expand or collapse a folder. Right-click a row for folder and file actions.
+      <template v-if="canWrite">
+        New folder and upload go into
+        <span class="font-mono">{{ targetDir() }}</span
+        >. Drag a row onto a folder to move it.
+      </template>
     </p>
 
     <div v-if="error" class="mb-4">
@@ -492,7 +614,13 @@ onBeforeUnmount(destroyTree)
           color="error"
           variant="ghost"
           :loading="deleting"
-          @click="remove"
+          @click="
+            removeNode({
+              path: renameFrom,
+              name: renameTo.trim() || renameFrom,
+              is_dir: renameIsDir,
+            })
+          "
         />
         <UButton class="ms-auto" color="neutral" variant="ghost" type="button" @click="close"
           >Cancel</UButton
@@ -526,6 +654,24 @@ onBeforeUnmount(destroyTree)
       </div>
     </template>
   </FormModal>
+
+  <div
+    v-if="menu.open && menuItems.length"
+    class="ipam-context-menu"
+    :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
+    @click.stop
+  >
+    <button
+      v-for="item in menuItems"
+      :key="item.id"
+      :class="{ danger: item.danger }"
+      type="button"
+      :disabled="item.id === 'download' && downloading"
+      @click="runMenu(item.id)"
+    >
+      {{ item.label }}
+    </button>
+  </div>
 </template>
 
 <style scoped>

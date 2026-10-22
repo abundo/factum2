@@ -25,6 +25,12 @@ storage runs on the same machine as `factum2-web`). Device HTTP/TFTP/SFTP
 is served on the storage host so boxes can pull images without going
 through the primary.
 
+Click **+** or **−** in front of a folder to expand or collapse it.
+Right-click a folder for **New folder**, **Rename folder**, **Delete
+folder**, and **Upload file**. Right-click a file for **Rename file**,
+**Delete file**, and **Download file**. Delete asks for confirmation. A
+folder must be empty.
+
 ## Copy to a device
 
 Pick a file → copy. Protocols:

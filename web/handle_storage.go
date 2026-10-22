@@ -57,6 +57,32 @@ func (ctrl *Controller) ApiSoftwareList(c *echo.Context) error {
 	return c.Blob(res.Status, headerOr(res.Header, "Content-Type", "application/json"), res.Body)
 }
 
+func (ctrl *Controller) ApiSoftwareContent(c *echo.Context) error {
+	rel := strings.TrimSpace(c.QueryParam("path"))
+	if rel == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "path is required"})
+	}
+	q := "/files/content?path=" + url.QueryEscape(rel)
+	if off := strings.TrimSpace(c.QueryParam("offset")); off != "" {
+		q += "&offset=" + url.QueryEscape(off)
+	}
+	if lim := strings.TrimSpace(c.QueryParam("limit")); lim != "" {
+		q += "&limit=" + url.QueryEscape(lim)
+	}
+	res, err := ctrl.storageDo(c.Request().Context(), http.MethodGet, q, nil, nil)
+	if err != nil {
+		return storageProxyError(c, err)
+	}
+	if v := headerOr(res.Header, "X-Storage-Size", ""); v != "" {
+		c.Response().Header().Set("X-Storage-Size", v)
+	}
+	if v := headerOr(res.Header, "X-Storage-Name", ""); v != "" {
+		c.Response().Header().Set("X-Storage-Name", v)
+		c.Response().Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(v, `"`, ``)+`"`)
+	}
+	return c.Blob(res.Status, headerOr(res.Header, "Content-Type", "application/octet-stream"), res.Body)
+}
+
 func (ctrl *Controller) ApiSoftwareMkdir(c *echo.Context) error {
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
 	if err != nil {
@@ -236,9 +262,14 @@ func (ctrl *Controller) storageLocal(ctx context.Context, method, path string, h
 	if err != nil {
 		return worker.CallResultMsg{}, true, err
 	}
+	if len(raw) > workerHubBodyCap() {
+		return worker.CallResultMsg{}, true, fmt.Errorf("storage response too large")
+	}
 	hdr := map[string]string{}
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		hdr["Content-Type"] = ct
+	for _, k := range []string{"Content-Type", "X-Storage-Size", "X-Storage-Name"} {
+		if v := resp.Header.Get(k); v != "" {
+			hdr[k] = v
+		}
 	}
 	return worker.CallResultMsg{Status: resp.StatusCode, Header: hdr, Body: raw}, true, nil
 }

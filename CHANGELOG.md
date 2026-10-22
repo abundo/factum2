@@ -5,6 +5,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ## Unreleased
 
+### New
+
+- The Software page expands and collapses a folder from its **+** / **−**
+  control. Right-click a folder to create, rename, delete, or upload, and
+  a file to rename, delete, or download. Delete asks for confirmation.
+
 ### Changed
 
 - Admin → Settings → Factum → Software stores a `worker.paths` key

@@ -29,6 +29,17 @@ func TestRequireStorageEnabled_OffIs404(t *testing.T) {
 	}
 }
 
+func TestApiSoftwareContentRequiresPath(t *testing.T) {
+	ctrl := &Controller{DB: newTestDB(t)}
+	c, rec := jsonRequest(t, http.MethodGet, "/api/software/files/content", nil, nil, nil)
+	if err := ctrl.ApiSoftwareContent(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiStorageConfig(t *testing.T) {
 	db := newTestDB(t)
 	s, err := util.GetOrCreateSettings(db)

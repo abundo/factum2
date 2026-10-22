@@ -286,6 +286,7 @@ func GUI(p *GuiParams) error {
 
 	softg := api.Group("/software", ctrl.RequireAPIAuth, ctrl.RequireStorageEnabled)
 	softg.GET("/files", ctrl.ApiSoftwareList, ctrl.RequireRead)
+	softg.GET("/files/content", ctrl.ApiSoftwareContent, ctrl.RequireRead)
 	softg.PUT("/files", ctrl.ApiSoftwareUpload, ctrl.RequireWrite)
 	softg.DELETE("/files", ctrl.ApiSoftwareDelete, ctrl.RequireWrite)
 	softg.POST("/mkdir", ctrl.ApiSoftwareMkdir, ctrl.RequireWrite)
