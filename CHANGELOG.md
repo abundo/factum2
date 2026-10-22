@@ -3,6 +3,13 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
+## Unreleased
+
+### Fixed
+
+- The Software page **+** / **−** control expands and collapses a folder
+  even when the pointer moves slightly between press and release.
+
 ## v1.4.0
 
 ### New

@@ -35,6 +35,9 @@ const fileInput = ref(null)
 const menu = ref({ open: false, x: 0, y: 0, node: null })
 let tree
 let onContextMenu
+let onExpanderDown
+let onExpanderUp
+let expanderPress = null
 
 const mkdirOpen = ref(false)
 const mkdirName = ref('')
@@ -203,11 +206,31 @@ function renderCell(e) {
   }
 }
 
+function eventElement(ev) {
+  const target = ev.target
+  return target?.nodeType === 3 ? target.parentElement : target
+}
+
+function expanderFromEvent(ev) {
+  const expander = eventElement(ev)?.closest?.('i.wb-expander')
+  if (!expander || expander.classList.contains('wb-indent')) return null
+  return expander
+}
+
 function destroyTree() {
   if (el.value && onContextMenu) {
     el.value.removeEventListener('contextmenu', onContextMenu)
     onContextMenu = null
   }
+  if (el.value && onExpanderDown) {
+    el.value.removeEventListener('mousedown', onExpanderDown, true)
+    onExpanderDown = null
+  }
+  if (onExpanderUp) {
+    document.removeEventListener('mouseup', onExpanderUp, true)
+    onExpanderUp = null
+  }
+  expanderPress = null
   if (tree) {
     tree.resizeObserver?.disconnect()
     tree = null
@@ -231,6 +254,33 @@ function bindContextMenu() {
     menu.value = { open: true, x, y, node }
   }
   el.value.addEventListener('contextmenu', onContextMenu)
+}
+
+// The name cell is draggable. Chrome then drops a click when the pointer
+// moves a couple of pixels between press and release, which is what happens
+// on the 14px +/− control. Toggle on mouseup instead, and cancel the press
+// so that gesture does not start a drag.
+function bindExpander() {
+  if (!el.value || onExpanderDown) return
+  onExpanderDown = (ev) => {
+    if (ev.button !== 0 || !expanderFromEvent(ev)) return
+    const node = Wunderbaum.getNode(ev)
+    if (!node || node.type !== 'folder') return
+    ev.preventDefault()
+    ev.stopPropagation()
+    expanderPress = { node, x: ev.clientX, y: ev.clientY }
+  }
+  onExpanderUp = (ev) => {
+    const press = expanderPress
+    expanderPress = null
+    if (!press || ev.button !== 0) return
+    const dx = ev.clientX - press.x
+    const dy = ev.clientY - press.y
+    if (dx * dx + dy * dy > 12 * 12) return
+    press.node.setExpanded(!press.node.isExpanded())
+  }
+  el.value.addEventListener('mousedown', onExpanderDown, true)
+  document.addEventListener('mouseup', onExpanderUp, true)
 }
 
 function isDescendantPath(parent, child) {
@@ -271,12 +321,9 @@ function buildTree(source) {
     lazyLoad: (e) => listSoftware(e.node.key).then((rows) => sortEntries(rows).map(toWbNode)),
     render: renderCell,
     click: (e) => {
-      const expander = e.event?.target?.closest?.('i.wb-expander')
-      if (!expander || expander.classList.contains('wb-indent')) return
-      const node = e.node
-      if (!node || node.type !== 'folder') return
-      node.setExpanded(!node.isExpanded())
-      return false
+      // mouseup already toggled. Returning false keeps the grid click from
+      // toggling the folder a second time.
+      if (e.event && expanderFromEvent(e.event)) return false
     },
     activate: (e) => {
       selected.value = payload(e.node)
@@ -304,6 +351,7 @@ function buildTree(source) {
       : undefined,
   })
   bindContextMenu()
+  bindExpander()
 }
 
 function load() {
@@ -692,5 +740,15 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+:deep(.ipam-tree span.wb-node i.wb-expander:not(.wb-indent)) {
+  position: relative;
+}
+
+:deep(.ipam-tree span.wb-node i.wb-expander:not(.wb-indent)::after) {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 </style>
