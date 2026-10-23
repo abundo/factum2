@@ -622,6 +622,96 @@ func TestInterfacesCreateAndDelete(t *testing.T) {
 	}
 }
 
+// TestInterfaceNamesFollowDeviceCasing covers Cisco SMB (and any other
+// platform) where NetBox and the device spell the same interface
+// differently. gi5 is expanded before the lowercase compare, then NetBox
+// is renamed to the device's spelling. The old name is not deleted and the
+// device name is not created again.
+func TestInterfaceNamesFollowDeviceCasing(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{
+		NetboxID: 1, Name: "sw1", Platform: "ciscosmb",
+		Interfaces: []models.Interface{
+			{NetboxID: 10, Name: "Vlan777"},
+			{NetboxID: 11, Name: "gi5"},
+			{NetboxID: 12, Name: "GigabitEthernet9"},
+		},
+	}
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "vlan777", Type: "virtual"})
+	dc.AddInterface(&drivers.Interface{Name: "GigabitEthernet5", Type: "1000base-t"})
+	dc.AddInterface(&drivers.Interface{Name: "gigabitethernet9", Type: "1000base-t"})
+
+	pair := &devicePair{nbDevice: nbDevice, config: dc}
+	ds.syncInterfaceNames(pair)
+	ds.interfacesDelete(pair)
+	ds.interfacesCreate(pair)
+
+	got := map[string]bool{}
+	for _, iface := range nbDevice.Interfaces {
+		got[iface.Name] = true
+	}
+	for _, want := range []string{"vlan777", "GigabitEthernet5", "gigabitethernet9"} {
+		if !got[want] {
+			t.Errorf("netbox interfaces = %v, missing %s", got, want)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("netbox interfaces = %v, want 3", got)
+	}
+	if len(fake.deletedInterfaceIDs) != 0 {
+		t.Errorf("deletedInterfaceIDs = %v, want none", fake.deletedInterfaceIDs)
+	}
+	if len(fake.createdInterfaces) != 0 {
+		t.Errorf("createdInterfaces = %v, want none", fake.createdInterfaces)
+	}
+	renamed := map[string]bool{}
+	for _, changes := range fake.updatedInterfaces {
+		if name, ok := changes["name"].(string); ok {
+			renamed[name] = true
+		}
+	}
+	for _, want := range []string{"vlan777", "GigabitEthernet5", "gigabitethernet9"} {
+		if !renamed[want] {
+			t.Errorf("renames = %v, missing %s", renamed, want)
+		}
+	}
+}
+
+// A NetBox row that already uses the device's exact name is kept. The
+// short-name duplicate is deleted, and nothing is created.
+func TestInterfaceShortNameDuplicateIsDeleted(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, _ := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{
+		NetboxID: 1, Name: "sw1", Platform: "ios-xe",
+		Interfaces: []models.Interface{
+			{NetboxID: 10, Name: "GigabitEthernet5"},
+			{NetboxID: 11, Name: "gi5"},
+		},
+	}
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "GigabitEthernet5", Type: "1000base-t"})
+
+	pair := &devicePair{nbDevice: nbDevice, config: dc}
+	ds.syncInterfaceNames(pair)
+	ds.interfacesDelete(pair)
+	ds.interfacesCreate(pair)
+
+	if len(fake.deletedInterfaceIDs) != 1 || fake.deletedInterfaceIDs[0] != 11 {
+		t.Errorf("deletedInterfaceIDs = %v, want [11]", fake.deletedInterfaceIDs)
+	}
+	if len(fake.createdInterfaces) != 0 {
+		t.Errorf("createdInterfaces = %v, want none", fake.createdInterfaces)
+	}
+	if len(nbDevice.Interfaces) != 1 || nbDevice.Interfaces[0].Name != "GigabitEthernet5" {
+		t.Errorf("interfaces = %+v, want only GigabitEthernet5", nbDevice.Interfaces)
+	}
+}
+
 // TestInterfacesCreateAppendsInMemoryForAddressSync covers the gap
 // RefreshDevice used to paper over: since reads now come from factum
 // (cron-synced, not live), interfacesCreate must record the newly created
@@ -1505,6 +1595,40 @@ func TestSyncConnectionsCiscoSMBShortName(t *testing.T) {
 		config:   drivers.NewDeviceConfig(),
 		driver: &fakeDriver{neighbors: []*drivers.Neighbor{
 			{LocalInterface: "gigabitethernet9", RemoteName: "sw-3474", RemoteInterface: "gi9"},
+		}},
+	}
+	ds.syncConnections(pair)
+
+	if len(fake.createdCables) != 1 || fake.createdCables[0] != [2]uint{100, 200} {
+		t.Fatalf("createdCables = %v, want [[100 200]]", fake.createdCables)
+	}
+	for _, line := range reporter.lines {
+		if strings.Contains(line, "does not exist") {
+			t.Errorf("unexpected warning: %s", line)
+		}
+	}
+}
+
+// LLDP's gi9 has to find NetBox GigabitEthernet9. The short name is expanded
+// for the remote platform, then both sides are compared lowercase.
+func TestSyncConnectionsCaseInsensitiveShortName(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fakeFactum := newFakeFactumAPI()
+	ds, reporter := newTestDeviceSync(fake, fakeFactum, nil)
+
+	device := &models.Device{NetboxID: 1, Name: "sw-3459", Platform: "ciscosmb", Interfaces: []models.Interface{
+		{NetboxID: 100, Name: "GigabitEthernet9"},
+	}}
+	remote := &models.Device{NetboxID: 2, Name: "sw-3474", Platform: "ciscosmb", Interfaces: []models.Interface{
+		{NetboxID: 200, Name: "gigabitethernet9"},
+	}}
+	fakeFactum.devices["sw-3474"] = remote
+
+	pair := &devicePair{
+		nbDevice: device,
+		config:   drivers.NewDeviceConfig(),
+		driver: &fakeDriver{neighbors: []*drivers.Neighbor{
+			{LocalInterface: "gi9", RemoteName: "sw-3474", RemoteInterface: "Gi9"},
 		}},
 	}
 	ds.syncConnections(pair)

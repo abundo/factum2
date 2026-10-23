@@ -157,7 +157,7 @@ func (m *NetboxMgr) CreateInterface(device *models.Device, iface *drivers.Interf
 		extra["label"] = iface.Label
 	}
 	if iface.Parent != "" {
-		if parent := findInterfaceByName(device.Interfaces, iface.Parent); parent != nil {
+		if parent := findInterfaceByName(device.Platform, device.Interfaces, iface.Parent); parent != nil {
 			extra["parent"] = parent.NetboxID
 		} else {
 			m.reporter.Emit(jobevent.Warning, "%s: create interface %s: parent %s not found in netbox, leaving unset", device.Name, iface.Name, iface.Parent)

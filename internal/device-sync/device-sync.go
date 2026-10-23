@@ -192,8 +192,11 @@ func (ds *DeviceSync) run() error {
 	// VRFs first so interface/address VRF-by-name writes can resolve.
 	ds.forEachPair(ds.syncVRFs)
 
-	// Interfaces, order matters: delete before create so a moved
-	// interface can't collide with itself, description/vrf sync last.
+	// Interfaces, order matters: adopt the device's spelling before
+	// delete, or a case-only mismatch (Vlan777 vs vlan777) is deleted
+	// and created again. Delete still runs before create so a moved
+	// interface can't collide with itself. Description/VRF sync last.
+	ds.forEachPair(ds.syncInterfaceNames)
 	ds.forEachPair(ds.interfacesDelete)
 	ds.forEachPair(ds.interfacesCreate)
 	ds.forEachPair(ds.syncInterfaceValues)
@@ -432,17 +435,75 @@ func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
 
 // ----- Interfaces -----
 
+// syncInterfaceNames gives a NetBox interface the device's spelling when
+// the two names are the same interface. Comparison expands a short token
+// first (gi5 -> GigabitEthernet5 on IOS, gi5 -> gigabitethernet5 on Cisco
+// SMB) and then compares lowercase. Vlan777 and vlan777 match; the NetBox
+// name is patched to whichever casing the device uses. A second NetBox
+// row that already has the device's exact name is left for interfacesDelete.
+func (ds *DeviceSync) syncInterfaceNames(pair *devicePair) {
+	platform := pair.nbDevice.Platform
+	devByKey := deviceInterfacesByKey(platform, pair.config)
+	grouped := map[string][]int{}
+	for i := range pair.nbDevice.Interfaces {
+		key := interfaceMatchKey(platform, pair.nbDevice.Interfaces[i].Name)
+		if key == "" {
+			continue
+		}
+		grouped[key] = append(grouped[key], i)
+	}
+	for key, idxs := range grouped {
+		dev := devByKey[key]
+		if dev == nil || dev.Name == "" {
+			continue
+		}
+		pick := -1
+		for _, i := range idxs {
+			name := pair.nbDevice.Interfaces[i].Name
+			if name == dev.Name {
+				pick = -1
+				break
+			}
+			if pick < 0 || strings.EqualFold(name, dev.Name) {
+				pick = i
+			}
+		}
+		if pick < 0 {
+			continue
+		}
+		nbIface := &pair.nbDevice.Interfaces[pick]
+		if err := ds.nb.UpdateInterface(pair.nbDevice, nbIface, map[string]any{"name": dev.Name}); err != nil {
+			continue
+		}
+		nbIface.Name = dev.Name
+	}
+}
+
 // interfacesDelete removes Netbox interfaces that don't exist in the
 // device's parsed config, except ones defined by the device type's
 // template: an interface Netbox created because it's part of the device
 // type's template is left alone (Netbox, or an admin re-applying the
-// template, would just recreate it).
+// template, would just recreate it). A NetBox interface whose name matches
+// a device interface after short-name expansion and a lowercase compare is
+// kept, so a rename that did not land is not deleted and recreated. A
+// second NetBox row for an interface that already has the device's exact
+// name is still deleted.
 func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
+	platform := pair.nbDevice.Platform
+	devByKey := deviceInterfacesByKey(platform, pair.config)
+	exactNB := map[string]bool{}
+	for _, nbIface := range pair.nbDevice.Interfaces {
+		exactNB[nbIface.Name] = true
+	}
 	var toDelete []string
 	for _, nbIface := range pair.nbDevice.Interfaces {
-		if _, ok := pair.config.InterfacesByName[nbIface.Name]; !ok {
-			toDelete = append(toDelete, nbIface.Name)
+		key := interfaceMatchKey(platform, nbIface.Name)
+		if dev := devByKey[key]; dev != nil {
+			if nbIface.Name == dev.Name || !exactNB[dev.Name] {
+				continue
+			}
 		}
+		toDelete = append(toDelete, nbIface.Name)
 	}
 	sort.Strings(toDelete)
 	if len(toDelete) == 0 {
@@ -456,10 +517,10 @@ func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
 
 	deleted := map[string]bool{}
 	for _, name := range toDelete {
-		if _, ok := templateTypes[name]; ok {
+		if templateDefines(platform, templateTypes, name) {
 			continue
 		}
-		nbIface := findInterfaceByName(pair.nbDevice.Interfaces, name)
+		nbIface := findInterfaceByName(platform, pair.nbDevice.Interfaces, name)
 		if nbIface == nil {
 			continue
 		}
@@ -494,12 +555,19 @@ func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
 // (admin/vendor-curated per-port data) is used instead of the driver's
 // guessed one - see NetboxMgr.TemplateInterfaceTypes.
 func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
-	nbNames := interfaceNameSet(pair.nbDevice.Interfaces)
-	var toCreate []string
-	for name := range pair.config.InterfacesByName {
-		if !nbNames[name] {
-			toCreate = append(toCreate, name)
+	platform := pair.nbDevice.Platform
+	nbKeys := map[string]bool{}
+	for _, iface := range pair.nbDevice.Interfaces {
+		if key := interfaceMatchKey(platform, iface.Name); key != "" {
+			nbKeys[key] = true
 		}
+	}
+	var toCreate []string
+	for _, iface := range deviceInterfacesByKey(platform, pair.config) {
+		if nbKeys[interfaceMatchKey(platform, iface.Name)] {
+			continue
+		}
+		toCreate = append(toCreate, iface.Name)
 	}
 	sort.Strings(toCreate)
 
@@ -517,7 +585,7 @@ func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
 				iface = &copied
 			}
 		}
-		if templateType, ok := templateTypes[name]; ok && templateType != "" && templateType != iface.Type {
+		if templateType, ok := templateTypeFor(platform, templateTypes, name); ok && templateType != iface.Type {
 			ifaceCopy := *iface
 			ifaceCopy.Type = templateType
 			iface = &ifaceCopy
@@ -563,8 +631,8 @@ func (ds *DeviceSync) syncInterfaceValues(pair *devicePair) {
 
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
-		deviceIface, ok := pair.config.InterfacesByName[nbIface.Name]
-		if !ok {
+		deviceIface := pair.deviceInterface(nbIface.Name)
+		if deviceIface == nil {
 			continue
 		}
 		changes := map[string]any{}
@@ -576,14 +644,14 @@ func (ds *DeviceSync) syncInterfaceValues(pair *devicePair) {
 				changes["vrf"] = map[string]string{"name": deviceIface.VRF}
 			}
 		}
-		if templateType, ok := templateTypes[nbIface.Name]; ok && templateType != "" && nbIface.Type != templateType {
+		if templateType, ok := templateTypeFor(pair.nbDevice.Platform, templateTypes, nbIface.Name); ok && templateType != nbIface.Type {
 			changes["type"] = templateType
 		}
 		if deviceIface.Label != "" && nbIface.Label != deviceIface.Label {
 			changes["label"] = deviceIface.Label
 		}
 		if deviceIface.Parent != "" {
-			if id, ok := resolveParentID(pair.nbDevice.Interfaces, deviceIface.Parent); ok {
+			if id, ok := resolveParentID(pair.nbDevice.Platform, pair.nbDevice.Interfaces, deviceIface.Parent); ok {
 				if nbIface.ParentID != id {
 					changes["parent"] = id
 				}
@@ -686,7 +754,7 @@ func (ds *DeviceSync) retargetAddressVRF(pair *devicePair, nbIface *models.Inter
 func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
-		deviceIface := pair.config.InterfacesByName[nbIface.Name]
+		deviceIface := pair.deviceInterface(nbIface.Name)
 		deletedIDs := map[uint]bool{}
 		// dev index claimed by a Netbox address that already matches
 		// prefix+VRF, so a second Netbox row for the same prefix is not
@@ -842,7 +910,7 @@ func (ds *DeviceSync) reportAddressDeleteReason(deviceName string, nbIface *mode
 // yet in Netbox
 func (ds *DeviceSync) addressesCreate(pair *devicePair) {
 	for _, deviceIface := range pair.config.Interfaces {
-		nbIface := findInterfaceByName(pair.nbDevice.Interfaces, deviceIface.Name)
+		nbIface := findInterfaceByName(pair.nbDevice.Platform, pair.nbDevice.Interfaces, deviceIface.Name)
 		if nbIface == nil {
 			ds.reporter.Emit(jobevent.Error, "%s: netbox interface %s not found for address sync", pair.nbDevice.Name, deviceIface.Name)
 			continue
@@ -942,15 +1010,17 @@ func (ds *DeviceSync) syncConnections(pair *devicePair) {
 			continue // unknown remote device, ignore
 		}
 
-		localIf := findInterfaceByName(pair.nbDevice.Interfaces, n.LocalInterface)
+		localIf := findInterfaceByName(pair.nbDevice.Platform, pair.nbDevice.Interfaces, n.LocalInterface)
 		if localIf == nil {
 			ds.reporter.Emit(jobevent.Warning, "%s: LLDP local interface %s does not exist in netbox", pair.nbDevice.Name, n.LocalInterface)
 			continue
 		}
 		// The remote platform's driver owns the short-name spelling.
+		// findInterfaceByName expands again (a no-op once expanded) and
+		// then compares lowercase, so GigabitEthernet9 matches gi9.
 		remoteInterface := drivers.ExpandInterfaceName(remoteDevice.Platform, n.RemoteInterface)
 
-		remoteIf := findInterfaceByName(remoteDevice.Interfaces, remoteInterface)
+		remoteIf := findInterfaceByName(remoteDevice.Platform, remoteDevice.Interfaces, remoteInterface)
 		if remoteIf == nil {
 			ds.reporter.Emit(jobevent.Warning, "%s: interface %s: LLDP remote device %s interface %s does not exist in netbox", pair.nbDevice.Name, n.LocalInterface, n.RemoteName, remoteInterface)
 			continue
@@ -1253,8 +1323,8 @@ func (ds *DeviceSync) syncInterfaceVlans(pair *devicePair) {
 	}
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
-		deviceIface, ok := pair.config.InterfacesByName[nbIface.Name]
-		if !ok {
+		deviceIface := pair.deviceInterface(nbIface.Name)
+		if deviceIface == nil {
 			continue
 		}
 
@@ -1583,7 +1653,7 @@ func (ds *DeviceSync) syncL2Attachments(pair *devicePair, l2vpnType string, atta
 		}
 
 		for _, ifaceName := range att.ifaceNames {
-			nbIface := findInterfaceByName(pair.nbDevice.Interfaces, ifaceName)
+			nbIface := findInterfaceByName(pair.nbDevice.Platform, pair.nbDevice.Interfaces, ifaceName)
 			if nbIface == nil {
 				ds.reporter.Emit(jobevent.Warning, "%s: %s %q: interface %s not in netbox yet, skipping termination", pair.nbDevice.Name, att.kind, att.name, ifaceName)
 				continue
@@ -1599,13 +1669,147 @@ func (ds *DeviceSync) syncL2Attachments(pair *devicePair, l2vpnType string, atta
 
 // ----- Shared helpers -----
 
-func findInterfaceByName(interfaces []models.Interface, name string) *models.Interface {
+// interfaceMatchKey is the identity of an interface name on platform.
+// Short tokens are expanded first (gi5 -> GigabitEthernet5, vl777 ->
+// vlan777). The expanded name is then lowercased, so GigabitEthernet5
+// and gigabitethernet5 are the same interface. The result is never written
+// to NetBox; the device's own spelling is.
+func interfaceMatchKey(platform, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return strings.ToLower(drivers.ExpandInterfaceName(platform, name))
+}
+
+// deviceInterfacesByKey indexes the device's interfaces by interfaceMatchKey.
+// Two parsed names that collapse to one key keep the long form.
+func deviceInterfacesByKey(platform string, dc *drivers.DeviceConfig) map[string]*drivers.Interface {
+	out := map[string]*drivers.Interface{}
+	if dc == nil {
+		return out
+	}
+	for _, iface := range dc.Interfaces {
+		if iface == nil {
+			continue
+		}
+		key := interfaceMatchKey(platform, iface.Name)
+		if key == "" {
+			continue
+		}
+		if prev := out[key]; prev != nil {
+			out[key] = preferDeviceInterface(platform, prev, iface)
+			continue
+		}
+		out[key] = iface
+	}
+	return out
+}
+
+// preferDeviceInterface chooses which parsed spelling represents the port.
+// A name that is already in long form wins over a short token (gi5 vs
+// GigabitEthernet5). Otherwise the longer spelling wins.
+func preferDeviceInterface(platform string, a, b *drivers.Interface) *drivers.Interface {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	aLong := drivers.ExpandInterfaceName(platform, a.Name) == a.Name
+	bLong := drivers.ExpandInterfaceName(platform, b.Name) == b.Name
+	switch {
+	case aLong && !bLong:
+		return a
+	case bLong && !aLong:
+		return b
+	case len(a.Name) != len(b.Name):
+		if len(a.Name) > len(b.Name) {
+			return a
+		}
+		return b
+	case a.Name <= b.Name:
+		return a
+	default:
+		return b
+	}
+}
+
+// deviceInterface returns the parsed interface name refers to. Exact
+// spelling wins. Otherwise the name is expanded and compared lowercase.
+func (pair *devicePair) deviceInterface(name string) *drivers.Interface {
+	if pair == nil || pair.config == nil || strings.TrimSpace(name) == "" {
+		return nil
+	}
+	if iface := pair.config.InterfacesByName[name]; iface != nil {
+		return iface
+	}
+	platform := ""
+	if pair.nbDevice != nil {
+		platform = pair.nbDevice.Platform
+	}
+	return deviceInterfacesByKey(platform, pair.config)[interfaceMatchKey(platform, name)]
+}
+
+// findInterfaceByName returns the NetBox interface name refers to on
+// platform. An exact spelling wins. Otherwise short names are expanded
+// and the result is compared lowercase.
+func findInterfaceByName(platform string, interfaces []models.Interface, name string) *models.Interface {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	want := interfaceMatchKey(platform, name)
+	fold := -1
 	for i := range interfaces {
 		if interfaces[i].Name == name {
 			return &interfaces[i]
 		}
+		if interfaceMatchKey(platform, interfaces[i].Name) != want {
+			continue
+		}
+		if fold < 0 || strings.EqualFold(interfaces[i].Name, name) {
+			fold = i
+		}
 	}
-	return nil
+	if fold < 0 {
+		return nil
+	}
+	return &interfaces[fold]
+}
+
+// templateDefines reports whether name is one of the device type's template
+// interfaces, using the same expand-then-lowercase match as device interfaces.
+func templateDefines(platform string, types map[string]string, name string) bool {
+	if _, ok := types[name]; ok {
+		return true
+	}
+	want := interfaceMatchKey(platform, name)
+	if want == "" {
+		return false
+	}
+	for n := range types {
+		if interfaceMatchKey(platform, n) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// templateTypeFor returns the device type template's interface type for name.
+func templateTypeFor(platform string, types map[string]string, name string) (string, bool) {
+	if t, ok := types[name]; ok && t != "" {
+		return t, true
+	}
+	want := interfaceMatchKey(platform, name)
+	if want == "" {
+		return "", false
+	}
+	for n, t := range types {
+		if t != "" && interfaceMatchKey(platform, n) == want {
+			return t, true
+		}
+	}
+	return "", false
 }
 
 // resolveParentID looks up parentName (a drivers.Interface.Parent value,
@@ -1614,20 +1818,12 @@ func findInterfaceByName(interfaces []models.Interface, name string) *models.Int
 // interface (NetboxMgr.CreateInterface) and when correcting one that
 // already exists (syncInterfaceValues). false if parentName isn't present
 // yet (e.g. the port itself hasn't been synced to Netbox).
-func resolveParentID(interfaces []models.Interface, parentName string) (uint, bool) {
-	parent := findInterfaceByName(interfaces, parentName)
+func resolveParentID(platform string, interfaces []models.Interface, parentName string) (uint, bool) {
+	parent := findInterfaceByName(platform, interfaces, parentName)
 	if parent == nil {
 		return 0, false
 	}
 	return parent.NetboxID, true
-}
-
-func interfaceNameSet(interfaces []models.Interface) map[string]bool {
-	set := make(map[string]bool, len(interfaces))
-	for _, iface := range interfaces {
-		set[iface.Name] = true
-	}
-	return set
 }
 
 func contains(list []string, val string) bool {

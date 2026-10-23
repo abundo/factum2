@@ -9,13 +9,16 @@ func init() {
 	registerInterfaceNames("ios", iosXEExpandInterfaceName)
 }
 
+// The short prefix is matched in either case (gi5 and Gi5). The replacement
+// is the running-config CamelCase form. A name that is already long
+// (GigabitEthernet5) does not match, because a digit has to follow the prefix.
 var iosXEInterfaceNames = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
-	{regexp.MustCompile(`^Te(\d.*)$`), "TenGigabitEthernet$1"},
-	{regexp.MustCompile(`^Gi(\d.*)$`), "GigabitEthernet$1"},
-	{regexp.MustCompile(`^Fa(\d.*)$`), "FastEthernet$1"},
+	{regexp.MustCompile(`(?i)^Te(\d.*)$`), "TenGigabitEthernet$1"},
+	{regexp.MustCompile(`(?i)^Gi(\d.*)$`), "GigabitEthernet$1"},
+	{regexp.MustCompile(`(?i)^Fa(\d.*)$`), "FastEthernet$1"},
 }
 
 func iosXEExpandInterfaceName(name string) string {
