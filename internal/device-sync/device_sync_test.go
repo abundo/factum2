@@ -971,6 +971,148 @@ func TestAddressesDelete(t *testing.T) {
 	}
 }
 
+// The primary address is what DNS and management use. Sync must not
+// delete it, even unattended, when the device config no longer has it.
+// A different address on the same interface is still removed. The
+// primary id may be the NetBox ipam id or the Factum address row id.
+func TestAddressesDeleteRefusesPrimary(t *testing.T) {
+	cases := []struct {
+		name    string
+		device  models.Device
+		address models.Address
+		want    string
+	}{
+		{
+			name:    "netbox id ipv4",
+			device:  models.Device{PrimaryIPv4: "10.0.0.1/24", PrimaryIPv4ID: 100},
+			address: models.Address{NetboxID: 100, Address: "10.0.0.1/24"},
+			want:    "primary IPv4",
+		},
+		{
+			name:    "factum id ipv4",
+			device:  models.Device{PrimaryIPv4: "10.0.0.1/24", PrimaryIPv4ID: 7},
+			address: models.Address{FactumModel: models.FactumModel{ID: 7}, NetboxID: 100, Address: "10.0.0.1/24"},
+			want:    "primary IPv4",
+		},
+		{
+			name:    "string fallback ipv6",
+			device:  models.Device{PrimaryIPv6: "2001:db8::1/128"},
+			address: models.Address{NetboxID: 200, Address: "2001:db8::1/128"},
+			want:    "primary IPv6",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeNetboxAPI()
+			ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+			nbDevice := &models.Device{
+				NetboxID: 1, Name: "sw1",
+				PrimaryIPv4: tc.device.PrimaryIPv4, PrimaryIPv4ID: tc.device.PrimaryIPv4ID,
+				PrimaryIPv6: tc.device.PrimaryIPv6, PrimaryIPv6ID: tc.device.PrimaryIPv6ID,
+				Interfaces: []models.Interface{{
+					NetboxID: 10, Name: "Ethernet1",
+					Addresses: []models.Address{
+						tc.address,
+						{NetboxID: 101, Address: "10.9.9.9/32"},
+					},
+				}},
+			}
+			dc := drivers.NewDeviceConfig()
+			dc.AddInterface(&drivers.Interface{Name: "Ethernet1"})
+
+			ds.addressesDelete(&devicePair{nbDevice: nbDevice, config: dc})
+
+			if len(fake.deletedAddressIDs) != 1 || fake.deletedAddressIDs[0] != 101 {
+				t.Fatalf("deletedAddressIDs = %v, want [101]", fake.deletedAddressIDs)
+			}
+			kept := nbDevice.Interfaces[0].Addresses
+			if len(kept) != 1 || kept[0].NetboxID != tc.address.NetboxID {
+				t.Fatalf("kept addresses = %+v, want primary netbox id %d", kept, tc.address.NetboxID)
+			}
+			var saw bool
+			for _, line := range reporter.lines {
+				if strings.HasPrefix(line, "warning:") && strings.Contains(line, tc.want) && strings.Contains(line, "refusing to delete address") {
+					saw = true
+				}
+			}
+			if !saw {
+				t.Fatalf("warnings = %v, want a refuse line containing %q", reporter.lines, tc.want)
+			}
+		})
+	}
+}
+
+// A second NetBox row with the same text as the primary is not the
+// primary object. It is still deleted.
+func TestAddressesDeleteDropsDuplicateThatIsNotPrimary(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{
+		NetboxID: 1, Name: "sw1",
+		PrimaryIPv4: "10.0.0.1/24", PrimaryIPv4ID: 100,
+		Interfaces: []models.Interface{{
+			NetboxID: 10, Name: "Ethernet1",
+			Addresses: []models.Address{
+				{NetboxID: 100, Address: "10.0.0.1/24", VRF: "MGMT"},
+				{NetboxID: 101, Address: "10.0.0.1/24"},
+			},
+		}},
+	}
+	dc := drivers.NewDeviceConfig()
+	dc.AddInterface(&drivers.Interface{Name: "Ethernet1", IPAddresses: []drivers.InterfaceAddress{
+		{Address: mustPrefix(t, "10.0.0.1/24"), VRF: "MGMT"},
+	}})
+
+	ds.addressesDelete(&devicePair{nbDevice: nbDevice, config: dc})
+
+	if len(fake.deletedAddressIDs) != 1 || fake.deletedAddressIDs[0] != 101 {
+		t.Fatalf("deletedAddressIDs = %v, want [101]", fake.deletedAddressIDs)
+	}
+	for _, line := range reporter.lines {
+		if strings.Contains(line, "refusing") {
+			t.Errorf("unexpected refuse: %s", line)
+		}
+	}
+}
+
+func TestInterfacesDeleteRefusesPrimaryAddress(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	nbDevice := &models.Device{
+		NetboxID: 1, Name: "sw1",
+		PrimaryIPv4: "10.0.0.1/24", PrimaryIPv4ID: 100,
+		Interfaces: []models.Interface{
+			{NetboxID: 10, Name: "Vlan100", Addresses: []models.Address{
+				{NetboxID: 100, Address: "10.0.0.1/24"},
+			}},
+			{NetboxID: 11, Name: "Vlan200", Addresses: []models.Address{
+				{NetboxID: 101, Address: "10.0.0.2/24"},
+			}},
+		},
+	}
+
+	ds.interfacesDelete(&devicePair{nbDevice: nbDevice, config: drivers.NewDeviceConfig()})
+
+	if len(fake.deletedInterfaceIDs) != 1 || fake.deletedInterfaceIDs[0] != 11 {
+		t.Fatalf("deletedInterfaceIDs = %v, want [11]", fake.deletedInterfaceIDs)
+	}
+	if len(nbDevice.Interfaces) != 1 || nbDevice.Interfaces[0].Name != "Vlan100" {
+		t.Fatalf("interfaces left = %+v, want Vlan100", nbDevice.Interfaces)
+	}
+	var saw bool
+	for _, line := range reporter.lines {
+		if strings.HasPrefix(line, "warning:") && strings.Contains(line, "refusing to delete interface") && strings.Contains(line, "primary IPv4") {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("warnings = %v, want a refuse line for the primary interface", reporter.lines)
+	}
+}
+
 // TestAddressesVRFChangeUpdatesInPlace: the same prefix in a different VRF
 // is patched onto the existing Netbox address. Replacing the object would
 // mint a new id and drop device.primary_ip4 / primary_ip6.

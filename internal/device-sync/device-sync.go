@@ -463,6 +463,13 @@ func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
 		if nbIface == nil {
 			continue
 		}
+		// Deleting the interface deletes its addresses. A primary address
+		// has to stay: DNS, monitoring, and management all use it.
+		if addr, family := primaryAddressOn(pair.nbDevice, nbIface.Addresses); family != "" {
+			ds.reporter.Emit(jobevent.Warning, "%s: refusing to delete interface %s: address %s is the device primary %s",
+				pair.nbDevice.Name, name, addr, family)
+			continue
+		}
 		if !ds.confirmDelete("interface", pair.nbDevice.Name, name, "") {
 			continue
 		}
@@ -671,6 +678,11 @@ func (ds *DeviceSync) retargetAddressVRF(pair *devicePair, nbIface *models.Inter
 // primary_ip4/primary_ip6 (the "primary IP for the device" flag) points
 // at that id, and losing it drops the management address that LibreNMS,
 // Icinga, and the other dests key off.
+//
+// An address that already is primary_ip4 or primary_ip6 is never
+// deleted, including in an unattended run. The device no longer has it
+// in its config, but removing the NetBox row drops DNS and management
+// access. The operator has to clear or move the primary first.
 func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
@@ -711,6 +723,11 @@ func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 					continue
 				}
 			}
+			if family := primaryAddressFamily(pair.nbDevice, nbAddr); family != "" {
+				ds.reporter.Emit(jobevent.Warning, "%s: interface %s: refusing to delete address %s: it is the device primary %s",
+					pair.nbDevice.Name, nbIface.Name, nbAddr.Address, family)
+				continue
+			}
 			ds.reportAddressDeleteReason(pair.nbDevice.Name, nbIface, nbAddr, deviceIface)
 			if !ds.confirmDelete("address", pair.nbDevice.Name, nbAddr.Address, "interface "+nbIface.Name) {
 				continue
@@ -729,6 +746,64 @@ func (ds *DeviceSync) addressesDelete(pair *devicePair) {
 			nbIface.Addresses = kept
 		}
 	}
+}
+
+// primaryAddressFamily reports "IPv4" or "IPv6" when addr is that
+// device's primary address, or "" when it is not. PrimaryIPv4ID and
+// PrimaryIPv6ID are whichever id last wrote them: the NetBox ipam id
+// (netbox sync) or the Factum address row id (DCIM). When the id is 0,
+// the denormalized address string is the only reference. A non-zero id
+// that matches neither addr.ID nor addr.NetboxID is not this row, even
+// when the address text is the same — a second NetBox row for the same
+// prefix can still be removed.
+func primaryAddressFamily(device *models.Device, addr *models.Address) string {
+	if device == nil || addr == nil {
+		return ""
+	}
+	v4, parsed := addressIsIPv4(addr.Address)
+	if !parsed || v4 {
+		if primaryRefersTo(device.PrimaryIPv4ID, device.PrimaryIPv4, addr) {
+			return "IPv4"
+		}
+	}
+	if !parsed || !v4 {
+		if primaryRefersTo(device.PrimaryIPv6ID, device.PrimaryIPv6, addr) {
+			return "IPv6"
+		}
+	}
+	return ""
+}
+
+func addressIsIPv4(address string) (v4 bool, ok bool) {
+	pfx, err := netip.ParsePrefix(address)
+	if err != nil {
+		return false, false
+	}
+	return pfx.Addr().Is4(), true
+}
+
+func primaryRefersTo(id uint, text string, addr *models.Address) bool {
+	if id != 0 {
+		if addr.ID != 0 && id == addr.ID {
+			return true
+		}
+		if addr.NetboxID != 0 && id == addr.NetboxID {
+			return true
+		}
+		return false
+	}
+	return text != "" && text == addr.Address
+}
+
+// primaryAddressOn returns the first address in addrs that is the
+// device's primary, and which family it is.
+func primaryAddressOn(device *models.Device, addrs []models.Address) (string, string) {
+	for i := range addrs {
+		if family := primaryAddressFamily(device, &addrs[i]); family != "" {
+			return addrs[i].Address, family
+		}
+	}
+	return "", ""
 }
 
 // reportAddressDeleteReason explains, before addressesDelete removes it, why
