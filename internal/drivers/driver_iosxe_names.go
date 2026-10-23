@@ -2,10 +2,11 @@ package drivers
 
 import "regexp"
 
-// IOS-XE has no driver here. Neighbors on that platform still advertise
-// Te/Gi/Fa, and NetBox stores the running-config CamelCase name.
+// IOS and IOS-XE have no driver here. Neighbors on those platforms still
+// advertise Te/Gi/Fa, and NetBox stores the running-config CamelCase name.
 func init() {
 	registerInterfaceNames("ios-xe", iosXEExpandInterfaceName)
+	registerInterfaceNames("ios", iosXEExpandInterfaceName)
 }
 
 var iosXEInterfaceNames = []struct {
