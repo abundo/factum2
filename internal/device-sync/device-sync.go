@@ -11,6 +11,7 @@ package devicesync
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -74,6 +75,13 @@ type DeviceSync struct {
 	// concurrently.
 	connMu sync.Mutex
 
+	// promptMu keeps delete prompts and reporter lines from different
+	// workers off the same screen line. promptIn is the one stdin reader
+	// those prompts share; a fresh bufio.Reader per prompt would discard
+	// keystrokes the previous reader had already buffered.
+	promptMu sync.Mutex
+	promptIn *bufio.Reader
+
 	// deviceCache memoizes factum.GetDeviceByName within one run: it's
 	// called both to build each pair's full snapshot (connectDevice) and to
 	// resolve LLDP neighbors (syncConnections), and the same device
@@ -93,14 +101,41 @@ type DeviceSync struct {
 // interfaces/addresses/connections/prefixes back to Netbox.
 func Sync(api NetboxAPI, factumAPI FactumAPI, cfg *util.ConfigDeviceSync, reporter jobevent.Reporter, opts SyncOptions) error {
 	ds := &DeviceSync{
-		nb:          NewNetboxMgr(api, reporter),
 		factum:      factumAPI,
 		cfg:         cfg,
-		reporter:    reporter,
 		opts:        opts,
 		deviceCache: map[string]*models.Device{},
 	}
+	// One lock for prompts and progress lines. forEachPair runs several
+	// devices at once; without it every worker prints "Delete ...? [y/N]"
+	// on the same line and they all read stdin together.
+	reporter = lockedReporter{inner: reporter, mu: &ds.promptMu}
+	ds.reporter = reporter
+	ds.nb = NewNetboxMgr(api, reporter)
 	return ds.run()
+}
+
+// lockedReporter serializes Emit with confirmDelete's prompt so a progress
+// line cannot land in the middle of a question.
+type lockedReporter struct {
+	inner jobevent.Reporter
+	mu    *sync.Mutex
+}
+
+func (r lockedReporter) Emit(level jobevent.Level, format string, args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inner != nil {
+		r.inner.Emit(level, format, args...)
+	}
+}
+
+func (r lockedReporter) EmitErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inner != nil {
+		r.inner.EmitErr(err)
+	}
 }
 
 // factumDevice returns the named device (with interfaces/addresses
@@ -193,6 +228,8 @@ func (ds *DeviceSync) run() error {
 	// sync (or webhook) so the same names exist in Factum.
 	ds.forEachPair(ds.syncOpticalInventory)
 
+	ds.reporter.Emit(jobevent.Info, "device-sync: netbox writes %d", ds.nb.WriteCount())
+	slog.Info("device-sync finished", "netbox_writes", ds.nb.WriteCount())
 	return nil
 }
 
@@ -1586,12 +1623,24 @@ func (ds *DeviceSync) confirmDelete(kind, deviceName, name, detail string) bool 
 	if err != nil || (stat.Mode()&os.ModeCharDevice) == 0 {
 		return true
 	}
+	return ds.askDelete(os.Stdout, kind, deviceName, name, detail)
+}
+
+// askDelete prints one question and reads one answer. Callers may run it
+// from several goroutines; the prompt lock makes the questions appear one
+// at a time, each on its own line.
+func (ds *DeviceSync) askDelete(w io.Writer, kind, deviceName, name, detail string) bool {
+	ds.promptMu.Lock()
+	defer ds.promptMu.Unlock()
+	if ds.promptIn == nil {
+		ds.promptIn = bufio.NewReader(os.Stdin)
+	}
 	prompt := fmt.Sprintf("Delete %s %q on device %s", kind, name, deviceName)
 	if detail != "" {
 		prompt += " (" + detail + ")"
 	}
-	fmt.Fprintf(os.Stdout, "%s? [y/N] ", prompt)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	fmt.Fprintf(w, "\n%s? [y/N] ", prompt)
+	line, _ := ds.promptIn.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "y" || line == "yes"
 }

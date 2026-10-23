@@ -52,7 +52,9 @@ func TestSmbResolveIfName(t *testing.T) {
 		"GigabitEthernet1": "gigabitethernet1",
 		"Po1":              "port-channel1",
 		"gi9":              "gi9",
-		"vlan 1":           "vlan 1",
+		"vlan 1":           "vlan1",
+		"vlan 777":         "vlan777",
+		"Vlan10":           "vlan10",
 	}
 	for in, want := range cases {
 		if got := smbResolveIfName(in, literals); got != want {
@@ -151,6 +153,26 @@ func TestSmbInterfaceDescriptionsCommands(t *testing.T) {
 		"end",
 	}
 	if got := smbCmdStrings(cmds); !reflect.DeepEqual(got, want) {
+		t.Errorf("cmds = %v\nwant %v", got, want)
+	}
+}
+
+func TestSmbCLIInterfaceNameInsertsVlanSpace(t *testing.T) {
+	cmds, err := smbInterfaceDescriptionsCommands(
+		[]string{"vlan777", "gigabitethernet1"},
+		[]*netboxtool.NBInterface{{Description: "svi"}, {Description: "uplink"}},
+	)
+	if err != nil {
+		t.Fatalf("smbInterfaceDescriptionsCommands: %v", err)
+	}
+	got := smbCmdStrings(cmds)
+	want := []string{
+		"configure",
+		"interface vlan 777", "description svi", "exit",
+		"interface gigabitethernet1", "description uplink", "exit",
+		"end",
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("cmds = %v\nwant %v", got, want)
 	}
 }

@@ -387,11 +387,14 @@ Reads:
 - **`GetInterfacesStatus`** — `show interfaces description` plus status
   and configuration tables. Also reads `show running-config` so an
   abbreviated table token (`gi1`, `po1`, `vlan 1`) is replaced with the
-  interface name exactly as running-config prints it. A token with no
-  running-config interface is left as printed.
+  stored interface name. A token with no running-config interface is left
+  as printed, except an SVI, which is still stored as `vlanN`.
 - **`GetDeviceConfig`** — `show running-config`. An interface keeps the
   name from that output (`interface gigabitethernet1` stays
   `gigabitethernet1`); nothing rewrites it to upper, lower, or camel case.
+  The one exception is an SVI: `interface vlan 777` is stored as `vlan777`
+  (the space running-config prints is dropped). CLI writes put the space
+  back (`interface vlan 777`).
   Cisco SMB CLI is
   exit-delimited (and only sometimes indented), so this does **not** use
   `ParseConfigContext`; `smbParseExitConfig` builds the `ConfigNode` tree

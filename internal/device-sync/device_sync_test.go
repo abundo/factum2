@@ -1,6 +1,8 @@
 package devicesync
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -905,6 +907,38 @@ func TestSyncInterfaceValuesWarnsOnUnresolvedParent(t *testing.T) {
 	}
 	if len(reporter.lines) == 0 {
 		t.Error("expected a warning reported for the unresolved parent")
+	}
+}
+
+// Workers used to print every "Delete ...? [y/N]" on one line and read
+// stdin at the same time. Each question has to occupy its own line.
+func TestDeletePromptsAreOneAtATime(t *testing.T) {
+	var answers strings.Builder
+	const n = 20
+	for i := 0; i < n; i++ {
+		answers.WriteString("n\n")
+	}
+	ds := &DeviceSync{promptIn: bufio.NewReader(strings.NewReader(answers.String()))}
+	var out bytes.Buffer
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if ds.askDelete(&out, "interface", fmt.Sprintf("sw-%d", i), "GigabitEthernet1", "") {
+				t.Errorf("sw-%d: want the answer to stay no", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+	lines := strings.Split(strings.TrimPrefix(out.String(), "\n"), "\n")
+	if len(lines) != n {
+		t.Fatalf("got %d prompt lines, want %d:\n%s", len(lines), n, out.String())
+	}
+	for _, line := range lines {
+		if strings.Count(line, "Delete ") != 1 || strings.Count(line, "[y/N]") != 1 {
+			t.Errorf("interleaved prompt: %q", line)
+		}
 	}
 }
 

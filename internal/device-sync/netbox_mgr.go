@@ -86,6 +86,18 @@ type NetboxMgr struct {
 	vlanIDsByVID map[int]uint
 }
 
+// WriteCount is how many NetBox REST writes succeeded, when api is a
+// *netboxtool.NetboxClient. A test fake reports 0.
+func (m *NetboxMgr) WriteCount() uint64 {
+	type counter interface {
+		WriteCount() uint64
+	}
+	if c, ok := m.api.(counter); ok {
+		return c.WriteCount()
+	}
+	return 0
+}
+
 func NewNetboxMgr(api NetboxAPI, reporter jobevent.Reporter) *NetboxMgr {
 	return &NetboxMgr{
 		api:      api,

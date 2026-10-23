@@ -1,9 +1,12 @@
 package netboxtool
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +23,37 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *NetboxClient {
 	nb, err := NewNetboxClient(ConfigNetbox{URL: srv.URL, Token: "test-token"})
 	require.NoError(t, err)
 	return nb
+}
+
+func TestRESTWriteLoggedAndCounted(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	nb := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	err := nb.restPost("/api/dcim/interfaces/", map[string]any{"name": "vlan777"}, nil)
+	require.NoError(t, err)
+	if nb.WriteCount() != 1 {
+		t.Fatalf("WriteCount = %d, want 1", nb.WriteCount())
+	}
+	log := buf.String()
+	if !strings.Contains(log, "netbox write") || !strings.Contains(log, "POST") || !strings.Contains(log, "vlan777") {
+		t.Fatalf("debug log = %s", log)
+	}
+
+	nb2 := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	})
+	if _, err := nb2.GetTenant("inventory", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if nb2.WriteCount() != 0 {
+		t.Fatalf("GET WriteCount = %d, want 0", nb2.WriteCount())
+	}
 }
 
 func TestGetTenant_Found(t *testing.T) {

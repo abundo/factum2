@@ -140,15 +140,21 @@ func TestSmbParseIndentedConfig(t *testing.T) {
 		t.Errorf("customer vlan = %d, want 200", qinq.UntaggedVLAN)
 	}
 
-	svi, ok := dc.InterfacesByName["vlan 1"]
+	svi, ok := dc.InterfacesByName["vlan1"]
 	if !ok {
-		t.Fatalf("vlan 1 not parsed; have %v", dc.InterfacesByName)
+		t.Fatalf("vlan1 not parsed; have %v", dc.InterfacesByName)
+	}
+	if _, spaced := dc.InterfacesByName["vlan 1"]; spaced {
+		t.Error(`interface "vlan 1" stored with the running-config space`)
+	}
+	if _, ok := dc.InterfacesByName["vlan10"]; !ok {
+		t.Error("vlan10 not parsed from interface vlan 10")
 	}
 	if svi.Type != "virtual" {
-		t.Errorf("vlan 1 Type = %q, want virtual", svi.Type)
+		t.Errorf("vlan1 Type = %q, want virtual", svi.Type)
 	}
 	if len(svi.IPAddresses) != 1 || svi.IPAddresses[0].Address.String() != "10.3.100.1/24" {
-		t.Errorf("vlan 1 addresses = %+v", svi.IPAddresses)
+		t.Errorf("vlan1 addresses = %+v", svi.IPAddresses)
 	}
 
 	lag, ok := dc.InterfacesByName["Port-channel1"]
@@ -188,12 +194,12 @@ func TestSmbParseExitConfig(t *testing.T) {
 	if access.Description != "access-port" || access.SwitchportMode != "access" || access.UntaggedVLAN != 20 {
 		t.Errorf("access = %+v", access)
 	}
-	svi, ok := dc.InterfacesByName["vlan 1"]
+	svi, ok := dc.InterfacesByName["vlan1"]
 	if !ok {
-		t.Fatalf("vlan 1 not parsed; have %v", dc.InterfacesByName)
+		t.Fatalf("vlan1 not parsed; have %v", dc.InterfacesByName)
 	}
 	if len(svi.IPAddresses) != 1 || svi.IPAddresses[0].Address.String() != "1.1.1.1/8" {
-		t.Errorf("vlan 1 addresses = %+v", svi.IPAddresses)
+		t.Errorf("vlan1 addresses = %+v", svi.IPAddresses)
 	}
 }
 
@@ -214,7 +220,7 @@ interface vlan 1
 	dc := NewDeviceConfig()
 	smbParseInterfaces(dc, nodes)
 
-	for _, name := range []string{"gigabitethernet1", "tengigabitethernet1/0/1", "port-channel1", "vlan 1"} {
+	for _, name := range []string{"gigabitethernet1", "tengigabitethernet1/0/1", "port-channel1", "vlan1"} {
 		if _, ok := dc.InterfacesByName[name]; !ok {
 			t.Errorf("missing %q; have %v", name, dc.InterfacesByName)
 		}

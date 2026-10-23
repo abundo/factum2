@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"text/template"
 )
 
@@ -49,6 +50,29 @@ type NetboxClient struct {
 	P          ConfigNetbox
 	Device     []*NBDevice
 	httpClient *http.Client
+	// writes counts successful REST mutations (POST, PATCH, DELETE).
+	writes atomic.Uint64
+}
+
+// WriteCount is how many NetBox REST writes have succeeded on this client.
+func (nb *NetboxClient) WriteCount() uint64 {
+	return nb.writes.Load()
+}
+
+// logNetboxWrite records one mutating REST call. -d shows it on stderr;
+// reads stay quiet. A 2xx response counts as a write.
+func logNetboxWrite(nb *NetboxClient, method, endpoint string, body []byte, status int, callErr error) {
+	if status >= 200 && status < 300 && callErr == nil {
+		nb.writes.Add(1)
+	}
+	attrs := []any{"method", method, "path", endpoint, "status", status}
+	if len(body) > 0 {
+		attrs = append(attrs, "body", string(body))
+	}
+	if callErr != nil {
+		attrs = append(attrs, "err", callErr)
+	}
+	slog.Debug("netbox write", attrs...)
 }
 
 // API structures
@@ -617,17 +641,23 @@ func (nb *NetboxClient) restPatchOut(endpoint string, payload, out any) error {
 
 	resp, err := nb.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("netbox PATCH %s: %w", endpoint, err)
+		err = fmt.Errorf("netbox PATCH %s: %w", endpoint, err)
+		logNetboxWrite(nb, "PATCH", endpoint, jsonPayload, 0, err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logNetboxWrite(nb, "PATCH", endpoint, jsonPayload, resp.StatusCode, err)
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("netbox PATCH %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		err = fmt.Errorf("netbox PATCH %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		logNetboxWrite(nb, "PATCH", endpoint, jsonPayload, resp.StatusCode, err)
+		return err
 	}
+	logNetboxWrite(nb, "PATCH", endpoint, jsonPayload, resp.StatusCode, nil)
 	if out == nil {
 		return nil
 	}
@@ -702,17 +732,23 @@ func (nb *NetboxClient) restPost(endpoint string, payload any, out any) error {
 
 	resp, err := nb.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("netbox POST %s: %w", endpoint, err)
+		err = fmt.Errorf("netbox POST %s: %w", endpoint, err)
+		logNetboxWrite(nb, "POST", endpoint, jsonPayload, 0, err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logNetboxWrite(nb, "POST", endpoint, jsonPayload, resp.StatusCode, err)
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("netbox POST %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		err = fmt.Errorf("netbox POST %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		logNetboxWrite(nb, "POST", endpoint, jsonPayload, resp.StatusCode, err)
+		return err
 	}
+	logNetboxWrite(nb, "POST", endpoint, jsonPayload, resp.StatusCode, nil)
 	if out == nil {
 		return nil
 	}
@@ -733,17 +769,23 @@ func (nb *NetboxClient) restDelete(endpoint string) error {
 
 	resp, err := nb.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("netbox DELETE %s: %w", endpoint, err)
+		err = fmt.Errorf("netbox DELETE %s: %w", endpoint, err)
+		logNetboxWrite(nb, "DELETE", endpoint, nil, 0, err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logNetboxWrite(nb, "DELETE", endpoint, nil, resp.StatusCode, err)
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("netbox DELETE %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		err = fmt.Errorf("netbox DELETE %s failed: %s: %s", endpoint, resp.Status, string(respData))
+		logNetboxWrite(nb, "DELETE", endpoint, nil, resp.StatusCode, err)
+		return err
 	}
+	logNetboxWrite(nb, "DELETE", endpoint, nil, resp.StatusCode, nil)
 	return nil
 }
 

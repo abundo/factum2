@@ -54,7 +54,7 @@ var (
 // to the interface that show running-config names. Longer prefixes are
 // listed first so "gigabitethernet" wins over "gi". The long form here is
 // only a match key. The name stored for NetBox is the running-config text,
-// unchanged.
+// unchanged, except an SVI: "interface vlan 777" is stored as "vlan777".
 var smbIfPrefixes = []struct{ short, long string }{
 	{"tengigabitethernet", "tengigabitethernet"},
 	{"gigabitethernet", "gigabitethernet"},
@@ -80,9 +80,10 @@ func smbIfMatchKey(name string) string {
 	return name
 }
 
-// smbResolveIfName returns the show running-config spelling of name when
-// literals has it. Otherwise it returns name with surrounding space
-// removed and no other change.
+// smbResolveIfName returns the stored spelling of name when literals has
+// it. Otherwise it returns name with surrounding space removed. An SVI is
+// always stored without the space running-config prints ("vlan 777" ->
+// "vlan777").
 func smbResolveIfName(name string, literals map[string]string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -91,11 +92,48 @@ func smbResolveIfName(name string, literals map[string]string) string {
 	if lit, ok := literals[smbIfMatchKey(name)]; ok {
 		return lit
 	}
+	return smbStoredIfName(name)
+}
+
+// smbReVlanIf matches an SVI name with or without the space Cisco SMB
+// prints in "interface vlan 777".
+var smbReVlanIf = regexp.MustCompile(`(?i)^vlan\s*(\d+)$`)
+
+func smbVlanInterfaceID(name string) (int, bool) {
+	m := smbReVlanIf.FindStringSubmatch(strings.TrimSpace(name))
+	if m == nil {
+		return 0, false
+	}
+	id, err := strconv.Atoi(m[1])
+	if err != nil || id < 1 || id > 4094 {
+		return 0, false
+	}
+	return id, true
+}
+
+// smbStoredIfName is the interface name factum keeps. Running-config
+// prints an SVI as "vlan 777"; the space is dropped so device-sync creates
+// "vlan777". Every other interface keeps the running-config text.
+func smbStoredIfName(name string) string {
+	name = strings.TrimSpace(name)
+	if id, ok := smbVlanInterfaceID(name); ok {
+		return "vlan" + strconv.Itoa(id)
+	}
 	return name
 }
 
-// smbLiteralIfNames maps each interface's match key to the name exactly as
-// show running-config prints it.
+// smbCLIInterfaceName is the token after "interface" on the wire.
+// Factum stores "vlan777"; the switch wants "vlan 777".
+func smbCLIInterfaceName(name string) string {
+	if id, ok := smbVlanInterfaceID(name); ok {
+		return "vlan " + strconv.Itoa(id)
+	}
+	return name
+}
+
+// smbLiteralIfNames maps each interface's match key to the name factum
+// stores. Physical and LAG names stay as show running-config prints them.
+// An SVI is stored as "vlan777".
 func smbLiteralIfNames(config string) map[string]string {
 	var top struct {
 		Interfaces map[string]smbInterfaceCfg `cfg:"interface {:toend}"`
@@ -110,7 +148,7 @@ func smbLiteralIfNames(config string) map[string]string {
 		if smbInterfaceType(name) == "" {
 			continue
 		}
-		out[smbIfMatchKey(name)] = name
+		out[smbIfMatchKey(name)] = smbStoredIfName(name)
 	}
 	return out
 }
@@ -399,7 +437,7 @@ func smbInterfaceDescriptionsCommands(name []string, intf []*netboxtool.NBInterf
 	}
 	cmds := []sshCmd{{Cmd: "configure"}}
 	for ix, ifname := range name {
-		cmds = append(cmds, sshCmd{Cmd: "interface " + ifname})
+		cmds = append(cmds, sshCmd{Cmd: "interface " + smbCLIInterfaceName(ifname)})
 		if intf[ix].Description != "" {
 			cmds = append(cmds, sshCmd{Cmd: "description " + intf[ix].Description})
 		} else {
@@ -466,7 +504,7 @@ func smbInterfaceVLANsCommands(name []string, params []*VLANConfig) ([]sshCmd, e
 	}
 	for ix, ifname := range name {
 		p := params[ix]
-		cmds = append(cmds, sshCmd{Cmd: "interface " + ifname})
+		cmds = append(cmds, sshCmd{Cmd: "interface " + smbCLIInterfaceName(ifname)})
 		switch p.SwitchportMode {
 		case "access":
 			cmds = append(cmds, sshCmd{Cmd: "switchport mode access"})
@@ -726,14 +764,15 @@ func smbParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 		if kind == "" {
 			continue
 		}
-		literals[smbIfMatchKey(name)] = name
+		stored := smbStoredIfName(name)
+		literals[smbIfMatchKey(name)] = stored
 		ic := top.Interfaces[ifname]
 		mode := ic.SwitchportMode
 		if mode == "customer" {
 			mode = "dot1q-tunnel"
 		}
 		iface := &Interface{
-			Name:           name,
+			Name:           stored,
 			Type:           kind,
 			Description:    ic.Description,
 			SwitchportMode: mode,
