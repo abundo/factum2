@@ -670,10 +670,16 @@ func (librenms *LibrenmsClient) PortsGet(deviceID int) ([]*LibrenmsPort, error) 
 	var ports []*LibrenmsPort
 	for rows.Next() {
 		var port LibrenmsPort
-		err = rows.Scan(&port.PortID, &port.IfName, &port.IfAlias, &port.IfDescr, &port.Ignore)
+		// LibreNMS leaves ifName, ifAlias, and ifDescr NULL until SNMP fills
+		// them. database/sql will not scan NULL into a plain string.
+		var ifName, ifAlias, ifDescr sql.NullString
+		err = rows.Scan(&port.PortID, &ifName, &ifAlias, &ifDescr, &port.Ignore)
 		if err != nil {
 			return nil, err
 		}
+		port.IfName = ifName.String
+		port.IfAlias = ifAlias.String
+		port.IfDescr = ifDescr.String
 		ports = append(ports, &port)
 	}
 	err = rows.Err()

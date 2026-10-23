@@ -7,6 +7,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- LibreNMS sync no longer fails when a port has no interface alias.
+  `ports.ifAlias` (and `ifName` / `ifDescr`) may be NULL until SNMP fills
+  them in. Those columns are read as empty strings.
 - The Software page **+** / **−** control expands and collapses a folder
   even when the pointer moves slightly between press and release.
 
