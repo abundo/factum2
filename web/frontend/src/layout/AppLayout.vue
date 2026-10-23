@@ -3,6 +3,7 @@ import { watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useLayout } from '@/layout/composables/layout'
 import { useLogPanel } from '@/layout/composables/logPanel'
+import { useAuthStore } from '@/stores/auth'
 import AppLogPanel from './AppLogPanel.vue'
 import AppMenu from './AppMenu.vue'
 import AppSidebar from './AppSidebar.vue'
@@ -11,6 +12,7 @@ import BuildInfo from '@/components/BuildInfo.vue'
 
 const { layoutState, closeMobileMenu } = useLayout()
 const { state: logPanelState } = useLogPanel()
+const authStore = useAuthStore()
 const route = useRoute()
 
 watch(
@@ -34,7 +36,7 @@ watch(
         </router-view>
       </main>
     </div>
-    <AppLogPanel v-if="logPanelState.open" />
+    <AppLogPanel v-if="logPanelState.open && authStore.canWrite" />
   </div>
 
   <USlideover v-model:open="layoutState.mobileMenuOpen" side="left" title="Menu">

@@ -31,9 +31,9 @@ type logHistoryFrame struct {
 }
 
 // ApiLogsWebSocket streams live slog records (published via hubHandler in
-// logstream.go) to the frontend's log window. Gated by RequireAdmin in
-// web.go: log lines can carry details (hostnames, internal error text) not
-// meant for a non-admin user.
+// logstream.go) to the frontend's log window. Gated by RequireWrite in
+// web.go: admin and operator can follow the tail; a viewer cannot. Lines
+// can carry hostnames and internal error text.
 func (ctrl *Controller) ApiLogsWebSocket(c *echo.Context) error {
 	conn, err := logsUpgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {

@@ -632,7 +632,9 @@ func GUI(p *GuiParams) error {
 	api.PUT("/me", ctrl.ApiMeUpdate, ctrl.RequireAPIAuth)
 
 	// ----- API: live log stream for the frontend's log window -----
-	api.GET("/logs/ws", ctrl.ApiLogsWebSocket, ctrl.RequireAPIAuth, ctrl.RequireAdmin)
+	// Operators run syncs and need the same tail as admins. Viewers stay out:
+	// lines can carry hostnames and internal error text.
+	api.GET("/logs/ws", ctrl.ApiLogsWebSocket, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	// Without this, an unmatched /api/* request (typo'd endpoint, removed
 	// route, ...) would fall through to the "/*" SPA catch-all below and get

@@ -77,7 +77,7 @@ const userMenuItems = computed(() => [
         <span class="text-xs text-muted">{{ authStore.user?.email }}</span>
       </div>
       <UButton
-        v-if="authStore.isAdmin"
+        v-if="authStore.canWrite"
         icon="i-lucide-terminal"
         variant="ghost"
         color="neutral"
