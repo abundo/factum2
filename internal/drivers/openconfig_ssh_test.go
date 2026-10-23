@@ -4,10 +4,35 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
+
+func TestSSHClientConfigOffersLegacyCBCAfterModernCiphers(t *testing.T) {
+	cfg := sshClientConfig("user", "password")
+	modern := ssh.SupportedAlgorithms().Ciphers
+	if len(cfg.Ciphers) < len(modern) {
+		t.Fatalf("ciphers %v shorter than supported %v", cfg.Ciphers, modern)
+	}
+	for i, want := range modern {
+		if cfg.Ciphers[i] != want {
+			t.Fatalf("cipher[%d]=%q, want %q (full %v)", i, cfg.Ciphers[i], want, cfg.Ciphers)
+		}
+	}
+	legacy := cfg.Ciphers[len(modern):]
+	if !slices.Equal(legacy, []string{ssh.InsecureCipherAES128CBC, ssh.InsecureCipherTripleDESCBC}) {
+		t.Fatalf("legacy ciphers = %v", legacy)
+	}
+	for _, disabled := range []string{ssh.InsecureCipherRC4, ssh.InsecureCipherRC4128, ssh.InsecureCipherRC4256, "aes192-cbc", "aes256-cbc"} {
+		if slices.Contains(cfg.Ciphers, disabled) {
+			t.Fatalf("cipher list includes %s: %v", disabled, cfg.Ciphers)
+		}
+	}
+}
 
 func TestWaitIdleAlreadyQuiet(t *testing.T) {
 	s := &sshShellSession{lastActivity: time.Now().Add(-idleWindow)}

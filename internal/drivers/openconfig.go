@@ -59,13 +59,17 @@ func sshPasswordAuthMethods(password string) []ssh.AuthMethod {
 }
 
 // sshClientConfig builds the ssh.ClientConfig shared by netconfDial and
-// sshRunCLI. KeyExchanges appends two legacy algorithms (implemented by
-// x/crypto/ssh but excluded from its default list for being weak - SHA-1-
-// based, or, for group1, a 1024-bit MODP group) after the library's own
-// defaults, so a modern algorithm is always negotiated when the peer offers
-// one, and these only kick in for old network gear (observed: a Nokia SR OS
-// device offering only diffie-hellman-group-exchange-sha1/group1-sha1) that
-// speaks nothing newer.
+// sshRunCLI. KeyExchanges and Ciphers append legacy algorithms (implemented
+// by x/crypto/ssh but excluded from its default list for being weak) after
+// the library's own secure algorithms, so a modern algorithm is always
+// negotiated when the peer offers one. The legacy entries only match old
+// network gear that speaks nothing newer.
+//
+// Observed peers: a Nokia SR OS device offering only
+// diffie-hellman-group-exchange-sha1/group1-sha1, and a Cisco SMB switch
+// (sw-1101) offering only aes128-cbc, 3des-cbc, arcfour, aes192-cbc, and
+// aes256-cbc. x/crypto/ssh implements aes128-cbc and 3des-cbc. It does not
+// implement aes192-cbc or aes256-cbc, and arcfour stays off.
 func sshClientConfig(username, password string) *ssh.ClientConfig {
 	config := &ssh.ClientConfig{
 		User:            username,
@@ -75,6 +79,8 @@ func sshClientConfig(username, password string) *ssh.ClientConfig {
 	}
 	config.KeyExchanges = append(ssh.SupportedAlgorithms().KeyExchanges,
 		ssh.InsecureKeyExchangeDHGEXSHA1, ssh.InsecureKeyExchangeDH1SHA1)
+	config.Ciphers = append(ssh.SupportedAlgorithms().Ciphers,
+		ssh.InsecureCipherAES128CBC, ssh.InsecureCipherTripleDESCBC)
 	return config
 }
 
