@@ -1345,6 +1345,38 @@ func TestSyncConnectionsEndToEnd(t *testing.T) {
 	}
 }
 
+func TestSyncConnectionsCiscoSMBShortName(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fakeFactum := newFakeFactumAPI()
+	ds, reporter := newTestDeviceSync(fake, fakeFactum, nil)
+
+	device := &models.Device{NetboxID: 1, Name: "sw-3459", Interfaces: []models.Interface{
+		{NetboxID: 100, Name: "gigabitethernet9"},
+	}}
+	remote := &models.Device{NetboxID: 2, Name: "sw-3474", Platform: "ciscosmb", Interfaces: []models.Interface{
+		{NetboxID: 200, Name: "gigabitethernet9"},
+	}}
+	fakeFactum.devices["sw-3474"] = remote
+
+	pair := &devicePair{
+		nbDevice: device,
+		config:   drivers.NewDeviceConfig(),
+		driver: &fakeDriver{neighbors: []*drivers.Neighbor{
+			{LocalInterface: "gigabitethernet9", RemoteName: "sw-3474", RemoteInterface: "gi9"},
+		}},
+	}
+	ds.syncConnections(pair)
+
+	if len(fake.createdCables) != 1 || fake.createdCables[0] != [2]uint{100, 200} {
+		t.Fatalf("createdCables = %v, want [[100 200]]", fake.createdCables)
+	}
+	for _, line := range reporter.lines {
+		if strings.Contains(line, "does not exist") {
+			t.Errorf("unexpected warning: %s", line)
+		}
+	}
+}
+
 // ----- prefixes -----
 
 func TestSyncPrefixesCreatesMissingSkipsHostRoutes(t *testing.T) {

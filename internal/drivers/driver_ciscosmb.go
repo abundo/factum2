@@ -25,6 +25,7 @@ type CiscoSMBDriver struct {
 
 func init() {
 	registerDriver("ciscosmb", func(p DriverParam) (DriverClient, error) { return NewCiscoSMBDriver(p) })
+	registerInterfaceNames("ciscosmb", smbExpandInterfaceName)
 }
 
 func NewCiscoSMBDriver(p DriverParam) (*CiscoSMBDriver, error) {
@@ -55,6 +56,7 @@ var (
 // listed first so "gigabitethernet" wins over "gi". The long form here is
 // only a match key. The name stored for NetBox is the running-config text,
 // unchanged, except an SVI: "interface vlan 777" is stored as "vlan777".
+// smbExpandInterfaceName uses the same table for a neighbor's LLDP port id.
 var smbIfPrefixes = []struct{ short, long string }{
 	{"tengigabitethernet", "tengigabitethernet"},
 	{"gigabitethernet", "gigabitethernet"},
@@ -76,6 +78,32 @@ func smbIfMatchKey(name string) string {
 		if strings.HasPrefix(name, p.short) {
 			return p.long + name[len(p.short):]
 		}
+	}
+	return name
+}
+
+// smbExpandInterfaceName turns an LLDP port id into the name factum stores.
+// Short tokens grow (gi9 -> gigabitethernet9, vl777 -> vlan777) and an SVI
+// loses its space (vlan 777 -> vlan777). A name that is already the long
+// form, or that is not an interface token (ETH1), is returned unchanged.
+func smbExpandInterfaceName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if id, ok := smbVlanInterfaceID(name); ok {
+		return "vlan" + strconv.Itoa(id)
+	}
+	folded := strings.ToLower(strings.ReplaceAll(name, " ", ""))
+	for _, p := range smbIfPrefixes {
+		if p.short == p.long || !strings.HasPrefix(folded, p.short) {
+			continue
+		}
+		rest := folded[len(p.short):]
+		if rest == "" || rest[0] < '0' || rest[0] > '9' {
+			continue
+		}
+		return p.long + rest
 	}
 	return name
 }

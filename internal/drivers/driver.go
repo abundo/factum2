@@ -103,6 +103,30 @@ func registerDriver(platform string, factory DriverFactory) {
 	SupportedPlatforms[platform] = factory
 }
 
+// interfaceNameExpanders turns an LLDP port id into the interface name that
+// platform stores. A driver registers one in its init when show lldp (or
+// the neighbor's own advertisement) uses a shorter token than running-config.
+// Platforms that already advertise the stored name register nothing.
+var interfaceNameExpanders = map[string]func(string) string{}
+
+func registerInterfaceNames(platform string, expand func(string) string) {
+	if _, exists := interfaceNameExpanders[platform]; exists {
+		panic("drivers: duplicate interface names for platform " + platform)
+	}
+	interfaceNameExpanders[platform] = expand
+}
+
+// ExpandInterfaceName returns the stored interface name for an LLDP port id
+// on platform. Unknown platforms, and names that are already stored form,
+// come back unchanged.
+func ExpandInterfaceName(platform, name string) string {
+	expand, ok := interfaceNameExpanders[strings.ToLower(strings.TrimSpace(platform))]
+	if !ok || expand == nil {
+		return name
+	}
+	return expand(name)
+}
+
 type MyDevice struct {
 	Id           int
 	Name         string

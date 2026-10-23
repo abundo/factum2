@@ -21,6 +21,36 @@ func TestCiscoSMBRegister(t *testing.T) {
 	}
 }
 
+func TestExpandInterfaceNameCiscoSMB(t *testing.T) {
+	cases := map[string]string{
+		"gi9":                     "gigabitethernet9",
+		"Gi9":                     "gigabitethernet9",
+		"gi1/0/10":                "gigabitethernet1/0/10",
+		"te1/0/1":                 "tengigabitethernet1/0/1",
+		"fa1":                     "fastethernet1",
+		"po1":                     "port-channel1",
+		"Po1":                     "port-channel1",
+		"vl777":                   "vlan777",
+		"vlan 777":                "vlan777",
+		"vlan777":                 "vlan777",
+		"gigabitethernet9":        "gigabitethernet9",
+		"GigabitEthernet9":        "GigabitEthernet9",
+		"tengigabitethernet1/0/1": "tengigabitethernet1/0/1",
+		"ETH1":                    "ETH1",
+	}
+	for in, want := range cases {
+		if got := ExpandInterfaceName("ciscosmb", in); got != want {
+			t.Errorf("ExpandInterfaceName(ciscosmb, %q) = %q, want %q", in, got, want)
+		}
+		if got := ExpandInterfaceName("CiscoSMB", in); got != want {
+			t.Errorf("ExpandInterfaceName(CiscoSMB, %q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := ExpandInterfaceName("eos", "gi9"); got != "gi9" {
+		t.Errorf("eos gi9 = %q, want unchanged", got)
+	}
+}
+
 func TestSmbIfMatchKey(t *testing.T) {
 	cases := map[string]string{
 		"gi1":              "gigabitethernet1",

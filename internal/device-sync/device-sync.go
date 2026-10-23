@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -873,9 +872,8 @@ func (ds *DeviceSync) syncConnections(pair *devicePair) {
 			ds.reporter.Emit(jobevent.Warning, "%s: LLDP local interface %s does not exist in netbox", pair.nbDevice.Name, n.LocalInterface)
 			continue
 		}
-		// some devices report their interface shortname over LLDP instead of
-		// the full name that exists in Netbox - expand it per-platform.
-		remoteInterface := expandInterfaceName(remoteDevice.Platform, n.RemoteInterface)
+		// The remote platform's driver owns the short-name spelling.
+		remoteInterface := drivers.ExpandInterfaceName(remoteDevice.Platform, n.RemoteInterface)
 
 		remoteIf := findInterfaceByName(remoteDevice.Interfaces, remoteInterface)
 		if remoteIf == nil {
@@ -1525,38 +1523,6 @@ func (ds *DeviceSync) syncL2Attachments(pair *devicePair, l2vpnType string, atta
 }
 
 // ----- Shared helpers -----
-
-// interfaceRename maps a shortname pattern (as reported by LLDP) to the
-// full interface name Netbox expects, e.g. "Te0/0/27" -> "TenGigabitEthernet0/0/27".
-// Repl follows regexp.ReplaceAllString syntax ($1 etc).
-type interfaceRename struct {
-	re   *regexp.Regexp
-	repl string
-}
-
-// interfaceShortNames holds, per platform (lowercased), the ordered list of
-// shortname patterns to try. First match wins. Add an entry here whenever a
-// new platform's LLDP neighbor output is observed using a shortname that
-// doesn't match its Netbox interface name.
-var interfaceShortNames = map[string][]interfaceRename{
-	"ios-xe": {
-		{regexp.MustCompile(`^Te(\d.*)$`), "TenGigabitEthernet$1"},
-		{regexp.MustCompile(`^Gi(\d.*)$`), "GigabitEthernet$1"},
-		{regexp.MustCompile(`^Fa(\d.*)$`), "FastEthernet$1"},
-	},
-}
-
-// expandInterfaceName converts a platform-specific LLDP interface shortname
-// to the full name used in Netbox, if a rule matches. Returns name
-// unchanged if no rule applies.
-func expandInterfaceName(platform, name string) string {
-	for _, r := range interfaceShortNames[strings.ToLower(platform)] {
-		if r.re.MatchString(name) {
-			return r.re.ReplaceAllString(name, r.repl)
-		}
-	}
-	return name
-}
 
 func findInterfaceByName(interfaces []models.Interface, name string) *models.Interface {
 	for i := range interfaces {
