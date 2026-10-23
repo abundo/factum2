@@ -224,6 +224,9 @@ type sshCmd struct {
 	// "^end$", SR OS's "^}$"), letting a slow command complete as soon as it
 	// actually finishes instead of always waiting out idleWindow below. Nil
 	// for commands with no such recognizable terminator.
+	//
+	// VRP's marker is required, not only a fast path: waitIdle does not
+	// treat a prompt or an idle gap as success until "^return$" is present.
 	EndMarker *regexp.Regexp
 }
 
@@ -268,7 +271,18 @@ func sshIdleWindow() time.Duration {
 // the capture before any interface ever appeared in it. A prompt match
 // (see promptSatisfied) or an end marker (configEndMarkerIdle) returns
 // without paying this window.
+//
+// VRP "display current-config" is the exception: a pause or an early
+// prompt reprint is not completion. That wait stays open until the lone
+// "return" line is in the capture, or until vrpConfigTimeout.
 const idleWindow = 5 * time.Second
+
+// vrpConfigTimeout is how long a VRP "display current-config" may run
+// before the missing "return" is a failure. Longer than overallTimeout
+// because many devices dump at once and a single box can pause for more
+// than idleWindow without being finished. Short enough to finish inside
+// the session HTTP client's 180s limit.
+const vrpConfigTimeout = 150 * time.Second
 
 // configEndMarkerIdle lets a full config dump (or any other marked output)
 // complete as soon as it actually finishes instead of always waiting out
@@ -454,8 +468,17 @@ func (s *sshShellSession) waitIdleCount(ctx context.Context, endMarker *regexp.R
 	if promptsNeeded < 1 {
 		promptsNeeded = 1
 	}
+	// Pointer equality: the daemon rebuilds this from the "vrp_config" token
+	// as the package variable, and legacy callers pass that same variable.
+	requireReturn := endMarker == vrpConfigEndMarker
 	idleWant := sshIdleWindow()
 	deadline := time.Now().Add(overallTimeout)
+	if requireReturn {
+		deadline = time.Now().Add(vrpConfigTimeout)
+		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+			deadline = d
+		}
+	}
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
 		idle := time.Since(s.lastActivity)
@@ -468,6 +491,12 @@ func (s *sshShellSession) waitIdleCount(ctx context.Context, endMarker *regexp.R
 			tail = tail[len(tail)-markerTailBytes:]
 		}
 		tailStr := string(tail)
+		// The VRP terminator can sit more than markerTailBytes behind the
+		// prompt, so that check has to see the whole capture.
+		full := ""
+		if requireReturn {
+			full = string(raw)
+		}
 		var promptBuf string
 		if platform != "" {
 			src := raw
@@ -477,7 +506,13 @@ func (s *sshShellSession) waitIdleCount(ctx context.Context, endMarker *regexp.R
 			promptBuf = string(src)
 		}
 		s.mu.Unlock()
-		if platform != "" {
+		markerSeen := hasConfigEndMarker(tailStr, endMarker)
+		if requireReturn {
+			markerSeen = hasConfigEndMarker(full, endMarker)
+		}
+		// An early "<HOST>" reprint, or a 5s pause while forty dumps run
+		// at once, used to finish this wait before "return".
+		if platform != "" && (!requireReturn || markerSeen) {
 			if host, done := promptSatisfied(platform, known, promptBuf, promptsNeeded); host != "" {
 				s.notePrompt(platform, host)
 				if done {
@@ -486,10 +521,10 @@ func (s *sshShellSession) waitIdleCount(ctx context.Context, endMarker *regexp.R
 			}
 		}
 		want := idleWant
-		if hasConfigEndMarker(tailStr, endMarker) {
+		if markerSeen {
 			want = configEndMarkerIdle
 		}
-		if idle >= want {
+		if idle >= want && (!requireReturn || markerSeen) {
 			return nil
 		}
 		if exited {
@@ -559,10 +594,11 @@ func (s *sshShellSession) capture() string {
 func sshRunCLIBatch(ctx context.Context, p DriverParam, cmds []sshCmd) ([]string, error) {
 	if sshUseMemoryPool(p.Platform) {
 		res, err := runPooled(ctx, sshRunRequest{
-			Param: p,
-			Mode:  sshRunBatch,
-			Cmds:  cmds,
-			Actor: p.actor,
+			Param:   p,
+			Mode:    sshRunBatch,
+			Cmds:    cmds,
+			Actor:   p.actor,
+			Timeout: vrpConfigRunTimeout(cmds),
 		})
 		if err != nil {
 			return nil, err
@@ -594,6 +630,9 @@ func sshRunCLIBatchLegacy(ctx context.Context, p DriverParam, cmds []sshCmd) ([]
 		}
 		_ = s.waitIdle(ctx, cmd.EndMarker)
 		results[i] = s.capture()
+		if cmd.EndMarker == vrpConfigEndMarker {
+			noteRetrievedVRPConfig(p.Name, results[i])
+		}
 	}
 	// The PTY session emits CRLF line endings, but every caller splits
 	// output on "\n" alone - left in, the trailing "\r" ends up glued onto
@@ -632,10 +671,11 @@ func sshRunCLIPipeline(ctx context.Context, p DriverParam, cmds []string, endMar
 			sshCmds[len(sshCmds)-1].EndMarker = endMarker
 		}
 		res, err := runPooled(ctx, sshRunRequest{
-			Param: p,
-			Mode:  sshRunPipeline,
-			Cmds:  sshCmds,
-			Actor: p.actor,
+			Param:   p,
+			Mode:    sshRunPipeline,
+			Cmds:    sshCmds,
+			Actor:   p.actor,
+			Timeout: vrpConfigRunTimeout(sshCmds),
 		})
 		if err != nil {
 			return "", err

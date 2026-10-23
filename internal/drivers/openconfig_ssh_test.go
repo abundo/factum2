@@ -34,6 +34,31 @@ func TestSSHClientConfigOffersLegacyCBCAfterModernCiphers(t *testing.T) {
 	}
 }
 
+func TestWaitIdleVRPRequiresReturn(t *testing.T) {
+	s := &sshShellSession{
+		lastActivity: time.Now().Add(-time.Hour),
+		platform:     "vrp",
+		promptHost:   "DR-25.Lassa",
+	}
+	s.buf.WriteString("interface Vbdif777\n ip address 10.119.25.1 255.255.255.0\n<DR-25.Lassa>\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := s.waitIdle(ctx, vrpConfigEndMarker)
+	if !errors.Is(err, errWaitTimeout) {
+		t.Fatalf("waitIdle: got %v, want errWaitTimeout", err)
+	}
+}
+
+func TestWaitIdleVRPReturnCompletes(t *testing.T) {
+	s := &sshShellSession{lastActivity: time.Now().Add(-time.Hour), platform: "vrp", promptHost: "DR-25.Lassa"}
+	s.buf.WriteString("interface Nve1\n source 10.110.10.25\n#\nreturn\n")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.waitIdle(ctx, vrpConfigEndMarker); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWaitIdleAlreadyQuiet(t *testing.T) {
 	s := &sshShellSession{lastActivity: time.Now().Add(-idleWindow)}
 	if err := s.waitIdle(context.Background(), nil); err != nil {

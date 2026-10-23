@@ -1,9 +1,74 @@
 package drivers
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestVrpCurrentConfigRequiresReturn(t *testing.T) {
+	if err := vrpRequireConfigEnd("interface Vbdif777\n ip address 10.119.25.1 255.255.255.0\n"); err == nil {
+		t.Fatal("capture without return should fail")
+	}
+	if err := vrpRequireConfigEnd("interface Nve1\n source 10.110.10.25\n#\nreturn\n<DR-25.Lassa>"); err != nil {
+		t.Fatal(err)
+	}
+	if err := vrpRequireConfigEnd("description return\n"); err == nil {
+		t.Fatal("return must be the whole line")
+	}
+}
+
+func TestSaveRetrievedVRPConfig(t *testing.T) {
+	dir := t.TempDir()
+	prev := vrpRetrievedConfigDir
+	vrpRetrievedConfigDir = dir
+	t.Cleanup(func() { vrpRetrievedConfigDir = prev })
+
+	body := "interface Vbdif777\n#\nreturn\n"
+	path, err := saveRetrievedVRPConfig("dr-25.example.net", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(dir, "dr-25.example.net.cfg") {
+		t.Fatalf("path = %s", path)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("file = %q", got)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o", st.Mode().Perm())
+	}
+
+	if _, err := saveRetrievedVRPConfig("host/name", "partial\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "host_name.cfg")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVrpConfigRunTimeout(t *testing.T) {
+	if got := vrpConfigRunTimeout([]sshCmd{{Cmd: "display version"}}); got != 0 {
+		t.Fatalf("timeout = %s, want 0", got)
+	}
+	got := vrpConfigRunTimeout([]sshCmd{{Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	if got != vrpConfigTimeout {
+		t.Fatalf("timeout = %s, want %s", got, vrpConfigTimeout)
+	}
+	if vrpConfigTimeout <= 30*time.Second || vrpConfigTimeout >= 180*time.Second {
+		t.Fatalf("vrpConfigTimeout = %s, want between 30s and 180s", vrpConfigTimeout)
+	}
+}
 
 func TestVrpInterfaceType(t *testing.T) {
 	cases := map[string]string{

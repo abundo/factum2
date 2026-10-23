@@ -6,10 +6,14 @@ package drivers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/abundo/factum2/internal/netboxtool"
 )
@@ -40,8 +44,14 @@ var vrpIgnoreInterfaces = map[string]bool{"NULL0": true}
 
 // vrpConfigEndMarker matches the lone "return" line VRP prints at the end
 // of a "display current-config" (or scoped variant) dump, right before the
-// prompt reappears - see sshCmd.EndMarker.
+// prompt reappears - see sshCmd.EndMarker. A capture without this line is
+// incomplete and must not be parsed.
 var vrpConfigEndMarker = regexp.MustCompile(`^return$`)
+
+// vrpRetrievedConfigDir is where each display current-config capture is
+// written, one file per device, including dumps that fail the return check.
+// Tests point this at a temp directory.
+var vrpRetrievedConfigDir = "/var/lib/factum2/retrieved-config"
 
 // ----------------------------------------------------------------------
 // External methods
@@ -83,7 +93,7 @@ func (driver *VrpDriver) Version() (*VersionModel, error) {
 }
 
 func (driver *VrpDriver) RunningConfigGet(jsonformat bool) (*RunningConfigModel, error) {
-	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	output, err := driver.fetchCurrentConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +505,7 @@ func vrpParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 }
 
 func (driver *VrpDriver) GetDeviceConfig() (*DeviceConfig, error) {
-	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	output, err := driver.fetchCurrentConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +514,111 @@ func (driver *VrpDriver) GetDeviceConfig() (*DeviceConfig, error) {
 	vrpParseGlobalVlans(dc, nodes)
 	vrpParseInterfaces(dc, nodes)
 	return dc, nil
+}
+
+// fetchCurrentConfig runs "display current-config". The capture is written
+// under vrpRetrievedConfigDir by the SSH session before this returns. A
+// dump that never printed the trailing "return" is an error, so device-sync
+// skips the device instead of deleting interfaces that were not in the capture.
+func (driver *VrpDriver) fetchCurrentConfig() (string, error) {
+	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display current-config", EndMarker: vrpConfigEndMarker}})
+	if err != nil {
+		return "", err
+	}
+	if err := vrpRequireConfigEnd(output); err != nil {
+		return "", fmt.Errorf("display current-config on %s: %w (saved %s)", driver.p.Name, err, vrpRetrievedConfigPath(driver.p.Name))
+	}
+	return output, nil
+}
+
+func vrpRequireConfigEnd(output string) error {
+	if hasConfigEndMarker(output, vrpConfigEndMarker) {
+		return nil
+	}
+	return fmt.Errorf("did not end with return")
+}
+
+func vrpConfigRunTimeout(cmds []sshCmd) time.Duration {
+	for _, c := range cmds {
+		if c.EndMarker == vrpConfigEndMarker {
+			return vrpConfigTimeout
+		}
+	}
+	return 0
+}
+
+func vrpRetrievedConfigPath(host string) string {
+	return filepath.Join(vrpRetrievedConfigDir, retrievedConfigName(host))
+}
+
+func retrievedConfigName(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "unknown"
+	}
+	var b strings.Builder
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "unknown.cfg"
+	}
+	return b.String() + ".cfg"
+}
+
+// noteRetrievedVRPConfig writes output for host and logs the path. A write
+// failure does not fail the fetch; the return check still does.
+func noteRetrievedVRPConfig(host, output string) {
+	if vrpRetrievedConfigDir == "" {
+		return
+	}
+	path, err := saveRetrievedVRPConfig(host, output)
+	complete := vrpRequireConfigEnd(output) == nil
+	if err != nil {
+		slog.Warn("ssh.config", "host", host, "path", path, "bytes", len(output), "complete", complete, "err", err.Error())
+		return
+	}
+	slog.Info("ssh.config", "host", host, "path", path, "bytes", len(output), "complete", complete)
+}
+
+func saveRetrievedVRPConfig(host, output string) (string, error) {
+	dir := vrpRetrievedConfigDir
+	final := vrpRetrievedConfigPath(host)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return final, err
+	}
+	f, err := os.CreateTemp(dir, retrievedConfigName(host)+".*.tmp")
+	if err != nil {
+		return final, err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := f.WriteString(output); err != nil {
+		_ = f.Close()
+		return final, err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return final, err
+	}
+	if err := f.Close(); err != nil {
+		return final, err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		return final, err
+	}
+	ok = true
+	return final, nil
 }
 
 var (

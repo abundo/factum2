@@ -1325,11 +1325,14 @@ func (s *pooledSession) runJob(ctx context.Context, req sshRunRequest, allowStal
 
 	var outputs []string
 	var err error
+	s.mu.Lock()
+	host := s.lastHost
+	s.mu.Unlock()
 	switch req.Mode {
 	case sshRunPipeline:
-		outputs, err = s.runPipeline(jobCtx, shell, cmds, norig, allowStale)
+		outputs, err = s.runPipeline(jobCtx, shell, cmds, norig, allowStale, host)
 	default:
-		outputs, err = s.runBatch(jobCtx, shell, cmds, norig, allowStale)
+		outputs, err = s.runBatch(jobCtx, shell, cmds, norig, allowStale, host)
 	}
 	if err != nil {
 		if errors.Is(err, errStaleWrite) || errors.Is(err, io.EOF) || errors.Is(err, errWaitTimeout) || errors.Is(err, errPagerLeftover) {
@@ -1371,7 +1374,7 @@ func padOutputs(prefix int, ran []string, total int) []string {
 	return out
 }
 
-func (s *pooledSession) runBatch(ctx context.Context, shell *sshShellSession, cmds []sshCmd, norig int, allowStale bool) ([]string, error) {
+func (s *pooledSession) runBatch(ctx context.Context, shell *sshShellSession, cmds []sshCmd, norig int, allowStale bool, host string) ([]string, error) {
 	prefix := norig - len(cmds)
 	if prefix < 0 {
 		prefix = 0
@@ -1387,6 +1390,9 @@ func (s *pooledSession) runBatch(ctx context.Context, shell *sshShellSession, cm
 		}
 		werr := shell.waitIdle(ctx, cmd.EndMarker)
 		out := shell.capture()
+		if cmd.EndMarker == vrpConfigEndMarker {
+			noteRetrievedVRPConfig(host, out)
+		}
 		if hasPagerLeftover(out) {
 			slog.Info("ssh.pager", "key", s.key, "err", "pager leftover")
 			ran = append(ran, out)
@@ -1409,7 +1415,7 @@ func (s *pooledSession) runBatch(ctx context.Context, shell *sshShellSession, cm
 	return padOutputs(prefix, ran, norig), nil
 }
 
-func (s *pooledSession) runPipeline(ctx context.Context, shell *sshShellSession, cmds []sshCmd, norig int, allowStale bool) ([]string, error) {
+func (s *pooledSession) runPipeline(ctx context.Context, shell *sshShellSession, cmds []sshCmd, norig int, allowStale bool, host string) ([]string, error) {
 	_ = norig
 	if len(cmds) == 0 {
 		return []string{""}, nil
@@ -1431,6 +1437,9 @@ func (s *pooledSession) runPipeline(ctx context.Context, shell *sshShellSession,
 	}
 	werr := shell.waitIdleCount(ctx, marker, len(cmds))
 	out := shell.capture()
+	if marker == vrpConfigEndMarker {
+		noteRetrievedVRPConfig(host, out)
+	}
 	if hasPagerLeftover(out) {
 		slog.Info("ssh.pager", "key", s.key, "err", "pager leftover")
 		return []string{out}, errPagerLeftover

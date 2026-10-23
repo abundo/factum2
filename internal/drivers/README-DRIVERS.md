@@ -359,7 +359,13 @@ to discard uncommitted changes) is not supported, matching the existing
 
 `GetDeviceConfig` parses `display current-config` via the same hierarchical
 CLI parser (`config_context.go`) and `tagparse.go` engine IOS-XR uses (with
-VRP's own comment character, `#`). VRP has no ELINE/ELAN/VRF/L3VPN parsing
+VRP's own comment character, `#`). The fetch is successful only when the
+capture contains the lone trailing `return`. A prompt reprint or a multi-second
+pause does not finish the read. The raw capture, complete or not, is written
+to `/var/lib/factum2/retrieved-config/<host>.cfg` (mode 0600) by the process
+that holds the SSH session, which is `factum2-driver` when device-sync is
+using the session socket. That daemon has to be restarted with this binary
+before the wait change applies. VRP has no ELINE/ELAN/VRF/L3VPN parsing
 
 - only interfaces and global VLANs are populated; those maps stay empty.
   VRP also has no `ApplyELINE`/`RemoveELINE` (no `driver_vrp_eline.go`) -
