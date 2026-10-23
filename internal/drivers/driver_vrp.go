@@ -349,15 +349,18 @@ func (driver *VrpDriver) ApplyCLISession(_ string, cmds []string, _ string) erro
 // shape as IOS-XR's "ipv4 address", which is why the original hand-written
 // code already called iosxrParseIPv4WithMask here too.
 type vrpInterfaceCfg struct {
-	Description      string           `cfg:"description {:toend}"`
-	VRF              string           `cfg:"vrf {:toend}"`
-	IPv4             *iosxrIPv4Prefix `cfg:"ip address {} {}"`
-	IPv6             *netip.Prefix    `cfg:"ipv6 address {}"`
-	SwitchportMode   string           `cfg:"port link-type {}"`
-	AccessVlan       int              `cfg:"port default vlan {}"`
-	TrunkPVID        int              `cfg:"port trunk pvid vlan {}"`
-	TrunkAllowedVlan string           `cfg:"port trunk allow-pass vlan {:toend}"`
-	L2Transport      bool             `cfg:"mode l2"`
+	Description string           `cfg:"description {:toend}"`
+	VRF         string           `cfg:"vrf {:toend}"`
+	IPv4        *iosxrIPv4Prefix `cfg:"ip address {} {}"`
+	// A slice: VRP allows several "ipv6 address" lines on one interface.
+	// A single value kept only the last line, and device-sync then deleted
+	// the others from NetBox.
+	IPv6             []netip.Prefix `cfg:"ipv6 address {}"`
+	SwitchportMode   string         `cfg:"port link-type {}"`
+	AccessVlan       int            `cfg:"port default vlan {}"`
+	TrunkPVID        int            `cfg:"port trunk pvid vlan {}"`
+	TrunkAllowedVlan string         `cfg:"port trunk allow-pass vlan {:toend}"`
+	L2Transport      bool           `cfg:"mode l2"`
 }
 
 // vrpVlanBlockCfg is a top-level "vlan <id>" block - only its optional
@@ -484,8 +487,8 @@ func vrpParseInterfaces(dc *DeviceConfig, nodes []*ConfigNode) {
 		if ic.IPv4 != nil {
 			iface.IPAddresses = append(iface.IPAddresses, InterfaceAddress{Address: netip.Prefix(*ic.IPv4), VRF: iface.VRF})
 		}
-		if ic.IPv6 != nil {
-			iface.IPAddresses = append(iface.IPAddresses, InterfaceAddress{Address: *ic.IPv6, VRF: iface.VRF})
+		for _, prefix := range ic.IPv6 {
+			iface.IPAddresses = append(iface.IPAddresses, InterfaceAddress{Address: prefix, VRF: iface.VRF})
 		}
 		dc.AddInterface(iface)
 	}

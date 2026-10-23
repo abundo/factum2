@@ -23,6 +23,7 @@ func TestVrpParseInterfaces(t *testing.T) {
  vrf MGMT
  ip address 10.0.0.1 255.255.255.0
  ipv6 address 2001:db8::1/64
+ ipv6 address 2001:db8::2/64
 #
 interface NULL0
  description should-be-ignored
@@ -51,8 +52,8 @@ interface GigabitEthernet0/0/1.100 mode l2
 	if iface.VRF != "MGMT" {
 		t.Errorf("VRF = %q", iface.VRF)
 	}
-	if len(iface.IPAddresses) != 2 {
-		t.Fatalf("got %d addresses, want 2: %+v", len(iface.IPAddresses), iface.IPAddresses)
+	if len(iface.IPAddresses) != 3 {
+		t.Fatalf("got %d addresses, want 3: %+v", len(iface.IPAddresses), iface.IPAddresses)
 	}
 	if got := iface.IPAddresses[0].Address.String(); got != "10.0.0.1/24" {
 		t.Errorf("ipv4 address = %q", got)
@@ -62,6 +63,9 @@ interface GigabitEthernet0/0/1.100 mode l2
 	}
 	if got := iface.IPAddresses[1].Address.String(); got != "2001:db8::1/64" {
 		t.Errorf("ipv6 address = %q", got)
+	}
+	if got := iface.IPAddresses[2].Address.String(); got != "2001:db8::2/64" {
+		t.Errorf("second ipv6 address = %q", got)
 	}
 	if iface.L2Transport {
 		t.Error("GigabitEthernet0/0/1 L2Transport = true, want false (no 'mode l2')")
