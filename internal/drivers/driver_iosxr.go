@@ -149,9 +149,9 @@ func (driver *IOSXRDriver) SetInterfaceVLANs(name []string, params []*VLANConfig
 }
 
 // ----------------------------------------------------------------------
-// GetDeviceConfig / GetNeighbors - parse running config (via
-// config_context.go's hierarchical parser) and LLDP neighbors into the
-// shared drivers.DeviceConfig/Neighbor shapes, for internal/device-sync.
+// GetDeviceConfig parses running config (via config_context.go's
+// hierarchical parser) into the shared DeviceConfig shape, for
+// internal/device-sync. GetNeighbors is SNMP, not this CLI parse.
 // ----------------------------------------------------------------------
 
 // iosxrInterfaceCfg is one "interface X [l2transport]" block, tag-bound by
@@ -478,53 +478,8 @@ func (driver *IOSXRDriver) GetDeviceConfig() (*DeviceConfig, error) {
 	return dc, nil
 }
 
-var (
-	iosxrReNeighborSep    = "---"
-	iosxrReLocalInterface = regexp.MustCompile(`^Local Interface\s*:(.*)$`)
-	iosxrRePortID         = regexp.MustCompile(`^Port id\s*:(.*)$`)
-	iosxrReSystemName     = regexp.MustCompile(`^System Name\s*:(.*)$`)
-)
-
-// GetNeighbors runs "show lldp neighbors detail" and parses the "---"-
-// separated blocks. Local interfaces that are subinterfaces (name contains
-// ".") are skipped.
+// GetNeighbors reads IEEE LLDP-MIB (LLDP-V2-MIB if the original is absent)
+// over SNMPv2c. The community is DriverParam.SNMPCommunities.
 func (driver *IOSXRDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "terminal length 0"}, {Cmd: "show lldp neighbors detail"}})
-	if err != nil {
-		return nil, err
-	}
-	return iosxrParseNeighbors(output), nil
-}
-
-// iosxrParseNeighbors parses "show lldp neighbors detail"'s "---"-separated
-// blocks. Local interfaces that are subinterfaces (name contains ".") are
-// skipped.
-func iosxrParseNeighbors(output string) []*Neighbor {
-	var neighbors []*Neighbor
-	n := &Neighbor{}
-	flush := func() {
-		if n.LocalInterface != "" && !strings.Contains(n.LocalInterface, ".") {
-			neighbors = append(neighbors, n)
-		}
-		n = &Neighbor{}
-	}
-	for _, line := range strings.Split(output, "\n") {
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, iosxrReNeighborSep) {
-			flush()
-			continue
-		}
-		switch {
-		case iosxrReLocalInterface.MatchString(line):
-			n.LocalInterface = strings.TrimSpace(iosxrReLocalInterface.FindStringSubmatch(line)[1])
-		case iosxrRePortID.MatchString(line):
-			n.RemoteInterface = strings.TrimSpace(iosxrRePortID.FindStringSubmatch(line)[1])
-		case iosxrReSystemName.MatchString(line):
-			n.RemoteName = strings.TrimSpace(iosxrReSystemName.FindStringSubmatch(line)[1])
-		}
-	}
-	flush()
-	return neighbors
+	return lldpNeighbors(driver.p.Name, driver.p.SNMPCommunities)
 }

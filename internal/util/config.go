@@ -169,6 +169,9 @@ type ConfigNetbox struct {
 type ConfigDeviceSyncAuth struct {
 	Username string
 	Password string
+	// SNMPCommunity is the SNMPv2c community for LLDP-MIB neighbor reads.
+	// Empty means those reads fail. EOS does not use it.
+	SNMPCommunity string
 }
 
 // ConfigDeviceSync is a runtime-only DTO, not part of ConfigRoot - same

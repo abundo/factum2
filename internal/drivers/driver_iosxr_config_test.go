@@ -210,26 +210,3 @@ func TestIOSXRParseElan(t *testing.T) {
 	}
 }
 
-func TestIOSXRParseNeighbors(t *testing.T) {
-	output := strings.Join([]string{
-		"Local Interface: GigabitEthernet100/0/0/7",
-		"Chassis id: 744a.a40e.457c",
-		"Port id: gei-0/1/1/23",
-		"System Name: MIR-EXT-SW01",
-		"---------------------------------------------------------------------",
-		"Local Interface: GigabitEthernet100/0/0/8.100",
-		"Port id: gei-0/1/1/24",
-		"System Name: SUBIF-IGNORED",
-		"---------------------------------------------------------------------",
-		"",
-	}, "\n")
-
-	neighbors := iosxrParseNeighbors(output)
-	if len(neighbors) != 1 {
-		t.Fatalf("got %d neighbors, want 1 (subinterface should be skipped): %+v", len(neighbors), neighbors)
-	}
-	n := neighbors[0]
-	if n.LocalInterface != "GigabitEthernet100/0/0/7" || n.RemoteInterface != "gei-0/1/1/23" || n.RemoteName != "MIR-EXT-SW01" {
-		t.Errorf("neighbor = %+v", n)
-	}
-}

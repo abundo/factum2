@@ -202,9 +202,9 @@ func newNokiaEditPortDescriptions(names []string, descriptions []string) nokiaEd
 }
 
 // ----------------------------------------------------------------------
-// GetDeviceConfig / GetNeighbors - parse the MD-CLI JSON running config and
-// LLDP neighbors into the shared drivers.DeviceConfig/Neighbor shapes, for
-// internal/device-sync.
+// GetDeviceConfig parses the MD-CLI JSON running config into the shared
+// DeviceConfig shape, for internal/device-sync. GetNeighbors is SNMP, not
+// this CLI parse.
 // ----------------------------------------------------------------------
 
 // srosMap/srosSlice/srosStr/srosInt are best-effort accessors into the
@@ -536,72 +536,8 @@ func (driver *NokiaDriver) GetDeviceConfig() (*DeviceConfig, error) {
 	return dc, nil
 }
 
-// srosNextNonBlankLine advances *idx past lines[*idx] to the next
-// non-blank line - returns "", false once lines is exhausted.
-func srosNextNonBlankLine(lines []string, idx *int) (string, bool) {
-	for *idx < len(lines) {
-		line := lines[*idx]
-		*idx++
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		return line, true
-	}
-	return "", false
-}
-
-// GetNeighbors runs "show port * ethernet lldp remote-info" and block-
-// parses it - each neighbor starts at a "Port 1..." line, and "Port Id"'s
-// real value (unlike every other field) is on the line *after* its header,
-// quoted.
+// GetNeighbors reads IEEE LLDP-MIB (LLDP-V2-MIB if the original is absent)
+// over SNMPv2c. The community is DriverParam.SNMPCommunities.
 func (driver *NokiaDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{
-		{Cmd: "//environment no more"},
-		{Cmd: "show port * ethernet lldp remote-info"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return srosParseNeighbors(output), nil
-}
-
-// srosParseNeighbors block-parses "show port * ethernet lldp remote-info" -
-// each neighbor starts at a "Port 1..." line, and "Port Id"'s real value
-// (unlike every other field) is on the line *after* its header, quoted.
-func srosParseNeighbors(output string) []*Neighbor {
-	lines := strings.Split(output, "\n")
-	idx := 0
-	var neighbors []*Neighbor
-	n := &Neighbor{}
-	for {
-		line, ok := srosNextNonBlankLine(lines, &idx)
-		if !ok {
-			break
-		}
-		if strings.HasPrefix(line, "Port 1") {
-			if n.RemoteName != "" {
-				neighbors = append(neighbors, n)
-			}
-			n = &Neighbor{}
-			if fields := strings.Fields(line); len(fields) > 1 {
-				n.LocalInterface = fields[1]
-			}
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		switch strings.TrimSpace(parts[0]) {
-		case "Port Id":
-			if valLine, ok := srosNextNonBlankLine(lines, &idx); ok {
-				n.RemoteInterface = strings.Trim(strings.TrimSpace(valLine), `"`)
-			}
-		case "System Name":
-			if len(parts) > 1 {
-				n.RemoteName = strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	if n.RemoteName != "" {
-		neighbors = append(neighbors, n)
-	}
-	return neighbors
+	return lldpNeighbors(driver.p.Name, driver.p.SNMPCommunities)
 }

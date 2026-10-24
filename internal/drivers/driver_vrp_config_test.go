@@ -244,38 +244,6 @@ interface GigabitEthernet0/0/10
 	}
 }
 
-func TestVrpParseNeighbors(t *testing.T) {
-	output := strings.Join([]string{
-		"GigabitEthernet0/0/1 has 1 neighbor(s):",
-		"",
-		"Neighbor index :1",
-		"Chassis type   :macAddress",
-		"Chassis ID     :bca5-11af-298c",
-		"Port ID type   :local",
-		"Port ID        :1/g48",
-		"System name         :accesssw1_bhus",
-		"GigabitEthernet0/0/2 has 0 neighbor(s)",
-	}, "\n")
-
-	neighbors := vrpParseNeighbors(output)
-	if len(neighbors) != 1 {
-		t.Fatalf("got %d neighbors, want 1: %+v", len(neighbors), neighbors)
-	}
-	n := neighbors[0]
-	if n.LocalInterface != "GigabitEthernet0/0/1" {
-		t.Errorf("LocalInterface = %q", n.LocalInterface)
-	}
-	if n.SystemID != "bca5-11af-298c" {
-		t.Errorf("SystemID = %q", n.SystemID)
-	}
-	if n.RemoteInterface != "1/g48" {
-		t.Errorf("RemoteInterface = %q", n.RemoteInterface)
-	}
-	if n.RemoteName != "accesssw1_bhus" {
-		t.Errorf("RemoteName = %q", n.RemoteName)
-	}
-}
-
 func TestVrpParseInterfaceDescriptions(t *testing.T) {
 	output := strings.Join([]string{
 		"PHY: Physical",

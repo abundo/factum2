@@ -324,7 +324,8 @@ onMounted(loadDeviceSyncAuths)
         Login credentials used to connect directly to devices: device-sync, service
         push/delete/unrealize, Config-tree rebind, and GUI interface refresh/VLAN push. Name is
         either a device name (an override for that one device) or the literal <code>default</code>,
-        used for any device without its own entry.
+        used for any device without its own entry. The SNMP community is what device-sync uses to
+        read LLDP neighbors. EOS keeps using its REST API and ignores the community.
       </p>
 
       <UTable
@@ -379,6 +380,12 @@ onMounted(loadDeviceSyncAuths)
         <UFormField label="Password">
           <PasswordInput v-model="auth.password" class="w-full" />
           <small v-if="auth.id" class="text-muted-color">Leave blank to keep the current password.</small>
+        </UFormField>
+        <UFormField
+          label="SNMP community"
+          help="SNMPv2c community for IEEE LLDP-MIB neighbor reads on VRP, IOS-XR, SR OS, and Cisco SMB. Leave empty to skip neighbor sync for devices that use this row. EOS does not use it."
+        >
+          <UInput v-model="auth.snmp_community" class="w-full" />
         </UFormField>
       </div>
     </template>

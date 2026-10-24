@@ -416,10 +416,11 @@ func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
 	}
 	platform := strings.ToLower(full.Platform)
 	driver, err := drivers.NewDriver(drivers.WithActor(drivers.DriverParam{
-		Name:     drivers.DeviceFQDN(full.Name, ds.cfg.DefaultDomain),
-		Platform: platform,
-		Username: auth.Username,
-		Password: auth.Password,
+		Name:            drivers.DeviceFQDN(full.Name, ds.cfg.DefaultDomain),
+		Platform:        platform,
+		Username:        auth.Username,
+		Password:        auth.Password,
+		SNMPCommunities: snmpCommunities(auth),
 	}, "device-sync"))
 	if err != nil {
 		ds.reporter.Emit(jobevent.Error, "%s: unknown platform %s: %v", full.Name, full.Platform, err)
@@ -431,6 +432,16 @@ func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
 		return nil
 	}
 	return &devicePair{nbDevice: full, config: config, driver: driver}
+}
+
+// snmpCommunities is the SNMPv2c community LLDP-MIB neighbor reads use.
+// One credential row carries one community. Blank means no read.
+func snmpCommunities(auth util.ConfigDeviceSyncAuth) []string {
+	c := strings.TrimSpace(auth.SNMPCommunity)
+	if c == "" {
+		return nil
+	}
+	return []string{c}
 }
 
 // ----- Interfaces -----

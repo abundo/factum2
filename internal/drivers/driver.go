@@ -71,6 +71,9 @@ type DriverClient interface {
 	// to compare against Netbox.
 	GetDeviceConfig() (*DeviceConfig, error)
 	// GetNeighbors returns the device's LLDP-discovered neighbors.
+	// EOS uses eAPI. Open ROADM uses its YANG external-link list. The
+	// other platforms read IEEE LLDP-MIB over SNMPv2c
+	// (DriverParam.SNMPCommunities).
 	GetNeighbors() ([]*Neighbor, error)
 }
 
@@ -142,7 +145,11 @@ type DriverParam struct {
 	Username string
 	Password string
 	Platform string
-	actor    string // audit label; set via WithActor, empty is fine
+	// SNMPCommunities is the SNMPv2c community list tried, in order, when
+	// GetNeighbors reads LLDP-MIB. EOS and Open ROADM ignore it. Empty
+	// makes that read fail.
+	SNMPCommunities []string
+	actor           string // audit label; set via WithActor, empty is fine
 }
 
 // WithActor returns a copy of p with the SSH session actor set. The field

@@ -49,6 +49,29 @@ func TestApiDeviceSyncConfigInventoryMaps(t *testing.T) {
 	}
 }
 
+func TestApiDeviceSyncConfigSNMPCommunity(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	if err := db.Create(&models.DeviceSyncAuth{
+		Name: "default", Username: "sync", Password: "secret", SNMPCommunity: "mon",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/device-sync-config", nil, nil, nil)
+	if err := ctrl.ApiDeviceSyncConfig(c); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	var body DeviceSyncConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := body.Auth["default"]
+	if got.Username != "sync" || got.Password != "secret" || got.SNMPCommunity != "mon" {
+		t.Fatalf("auth = %+v", got)
+	}
+}
+
 func TestApiDeviceSyncConfigServiceSources(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

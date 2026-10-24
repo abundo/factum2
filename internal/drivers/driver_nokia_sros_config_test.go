@@ -1,7 +1,6 @@
 package drivers
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -174,27 +173,3 @@ func TestSROSParseL3VPN(t *testing.T) {
 	}
 }
 
-func TestSROSParseNeighbors(t *testing.T) {
-	output := strings.Join([]string{
-		"Port 1/1/3 Bridge nearest-bridge Remote Peer Information",
-		"PortId Subtype        : 5 (interfaceName)",
-		"Port Id               : 78:67:65:69:2D:30:2F:31:2F:30:2F:31:34",
-		`                        "xgei-0/1/0/14"`,
-		"System Name           : 8905-Arvidsjaur",
-	}, "\n")
-
-	neighbors := srosParseNeighbors(output)
-	if len(neighbors) != 1 {
-		t.Fatalf("got %d neighbors, want 1: %+v", len(neighbors), neighbors)
-	}
-	n := neighbors[0]
-	if n.LocalInterface != "1/1/3" {
-		t.Errorf("LocalInterface = %q", n.LocalInterface)
-	}
-	if n.RemoteInterface != "xgei-0/1/0/14" {
-		t.Errorf("RemoteInterface = %q, want unquoted value from the line after Port Id", n.RemoteInterface)
-	}
-	if n.RemoteName != "8905-Arvidsjaur" {
-		t.Errorf("RemoteName = %q", n.RemoteName)
-	}
-}

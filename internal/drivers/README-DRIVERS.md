@@ -35,6 +35,18 @@ driver's comments just to keep a comparison table up to date.
 | Cisco SMB    | SSH CLI only                                                          | SSH CLI                    | SSH CLI `copy running-config startup-config` + `y` |
 | Open ROADM   | NETCONF `org-openroadm-device` (read-only)                            | NETCONF YANG XML           | not supported (read-only)                 |
 
+## LLDP neighbors
+
+`GetNeighbors` feeds device-sync's cable pass.
+
+| Platform | How neighbors are read |
+| --- | --- |
+| Arista EOS | eAPI `show lldp neighbors` (JSON). No SNMP. |
+| Open ROADM | NETCONF `external-link` list. Not LLDP. |
+| IOS-XR, SR OS, VRP, Cisco SMB | SNMPv2c walk of IEEE 802.1AB **LLDP-MIB** `lldpRemTable` (`1.0.8802.1.1.2`). **LLDP-V2-MIB** (`1.3.111.2.802.1.1.13`) is used only when the original MIB is absent. |
+
+The community is `DriverParam.SNMPCommunities`, filled from the device-sync credential's SNMP community (`device_sync_auths.snmp_community`, the per-device row or `default`). An empty community makes `GetNeighbors` fail; interface sync still runs. A port id whose subtype is a MAC, a network address, or an agent circuit id is dropped. `interfaceAlias`, `interfaceName`, and `local` are kept, still short names when the box advertises them (`gi9`), so `ExpandInterfaceName` still applies.
+
 Three of the six platforms (EOS, IOS-XR, SR OS) expose the standard
 `openconfig-interfaces`/`openconfig-platform` YANG models over NETCONF, so
 they share one filter/reply shape and one set of dial/edit helpers
@@ -408,8 +420,8 @@ Reads:
   interfaces and global VLANs. VLAN names live on `interface vlan N` /
   `name` as well as `vlan N name ...` inside `vlan database`. `interface
   range ...` lines are skipped. No ELINE/ELAN/VRF/L3VPN parsing.
-- **`GetNeighbors`** — `show lldp neighbors` (column table: Port, Device
-  ID, Port ID, System Name). Empty System Name is allowed.
+- **`GetNeighbors`** — SNMPv2c LLDP-MIB, same as VRP, IOS-XR, and SR OS.
+  See [LLDP neighbors](#lldp-neighbors).
 
 Writes:
 

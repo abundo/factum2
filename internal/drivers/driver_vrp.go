@@ -335,12 +335,11 @@ func (driver *VrpDriver) ApplyCLISession(_ string, cmds []string, _ string) erro
 }
 
 // ----------------------------------------------------------------------
-// GetDeviceConfig / GetNeighbors - parse running config (via
-// config_context.go's hierarchical parser, comment char "#") and LLDP
-// neighbors into the shared drivers.DeviceConfig/Neighbor shapes, for
-// internal/device-sync. VRP has no ELINE/ELAN/VRF/L3VPN parsing, so only
-// interfaces are parsed here; DeviceConfig's VRF/ELINE/ELAN/L3VPN maps stay
-// empty.
+// GetDeviceConfig parses running config (via config_context.go's
+// hierarchical parser, comment char "#") into the shared DeviceConfig
+// shape, for internal/device-sync. VRP has no ELINE/ELAN/VRF/L3VPN parsing,
+// so only interfaces are parsed here; those maps stay empty. GetNeighbors
+// is SNMP, not this CLI parse.
 // ----------------------------------------------------------------------
 
 // vrpInterfaceCfg is one "interface X [mode l2]" block, tag-bound by
@@ -621,50 +620,8 @@ func saveRetrievedVRPConfig(host, output string) (string, error) {
 	return final, nil
 }
 
-var (
-	vrpReNeighborHeader = regexp.MustCompile(`^(\S+) has \d+ neighbor`)
-	vrpReSystemName     = regexp.MustCompile(`^System name\s*:(.*)$`)
-	vrpReChassisID      = regexp.MustCompile(`^Chassis ID\s*:(.*)$`)
-	vrpRePortID         = regexp.MustCompile(`^Port ID\s*:(.*)$`)
-)
-
-// GetNeighbors runs "display lldp neighbor" and parses it: each "<ifname>
-// has N neighbor(s):" line starts a new neighbor block.
+// GetNeighbors reads IEEE LLDP-MIB (LLDP-V2-MIB if the original is absent)
+// over SNMPv2c. The community is DriverParam.SNMPCommunities.
 func (driver *VrpDriver) GetNeighbors() ([]*Neighbor, error) {
-	output, err := sshRunCLI(context.Background(), driver.p, []sshCmd{{Cmd: "screen-length 0 temporary"}, {Cmd: "display lldp neighbor"}})
-	if err != nil {
-		return nil, err
-	}
-	return vrpParseNeighbors(output), nil
-}
-
-// vrpParseNeighbors parses "display lldp neighbor": each "<ifname> has N
-// neighbor(s):" line starts a new neighbor block.
-func vrpParseNeighbors(output string) []*Neighbor {
-	var neighbors []*Neighbor
-	var n *Neighbor
-	for _, line := range strings.Split(output, "\n") {
-		if line == "" {
-			continue
-		}
-		switch {
-		case vrpReNeighborHeader.MatchString(line):
-			if n != nil && n.RemoteInterface != "" {
-				neighbors = append(neighbors, n)
-			}
-			n = &Neighbor{LocalInterface: vrpReNeighborHeader.FindStringSubmatch(line)[1]}
-		case n == nil:
-			continue
-		case vrpReSystemName.MatchString(line):
-			n.RemoteName = strings.TrimSpace(vrpReSystemName.FindStringSubmatch(line)[1])
-		case vrpReChassisID.MatchString(line):
-			n.SystemID = strings.TrimSpace(vrpReChassisID.FindStringSubmatch(line)[1])
-		case vrpRePortID.MatchString(line):
-			n.RemoteInterface = strings.TrimSpace(vrpRePortID.FindStringSubmatch(line)[1])
-		}
-	}
-	if n != nil && n.RemoteInterface != "" {
-		neighbors = append(neighbors, n)
-	}
-	return neighbors
+	return lldpNeighbors(driver.p.Name, driver.p.SNMPCommunities)
 }

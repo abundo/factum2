@@ -14,8 +14,9 @@ import "github.com/abundo/factum2/internal/util"
 
 // remoteConfigAuthEntry mirrors web.DeviceSyncAuthEntry.
 type remoteConfigAuthEntry struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	SNMPCommunity string `json:"snmp_community"`
 }
 
 // remoteConfigResponse mirrors web.DeviceSyncConfigResponse.
@@ -40,7 +41,11 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigDeviceSync,
 	}
 	auth := make(map[string]util.ConfigDeviceSyncAuth, len(remote.Auth))
 	for name, entry := range remote.Auth {
-		auth[name] = util.ConfigDeviceSyncAuth{Username: entry.Username, Password: entry.Password}
+		auth[name] = util.ConfigDeviceSyncAuth{
+			Username:      entry.Username,
+			Password:      entry.Password,
+			SNMPCommunity: entry.SNMPCommunity,
+		}
 	}
 	return &util.ConfigDeviceSync{
 		CommonConfig:   remote.CommonConfig,

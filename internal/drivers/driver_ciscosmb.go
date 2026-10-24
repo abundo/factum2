@@ -299,10 +299,9 @@ func smbRowAt(row []string, i int) string {
 }
 
 // smbParseDashTables splits Cisco SMB "show" tables whose header is
-// underlined with dashes (description/status/configuration/LLDP). Each
-// table is a list of column-split rows; continuation lines (empty first
-// column) are concatenated onto the previous row, matching wrapped Port ID
-// / System Name cells.
+// underlined with dashes (description, status, configuration). Each table
+// is a list of column-split rows; continuation lines (empty first column)
+// are concatenated onto the previous row.
 func smbParseDashTables(output string) [][][]string {
 	lines := strings.Split(output, "\n")
 	var tables [][][]string
@@ -624,7 +623,7 @@ func (driver *CiscoSMBDriver) ApplyCLISession(_ string, cmds []string, _ string)
 }
 
 // ----------------------------------------------------------------------
-// GetDeviceConfig / GetNeighbors
+// GetDeviceConfig. GetNeighbors is SNMP (LLDP-MIB), not this CLI parse.
 // ----------------------------------------------------------------------
 
 type smbInterfaceCfg struct {
@@ -853,40 +852,8 @@ func (driver *CiscoSMBDriver) GetDeviceConfig() (*DeviceConfig, error) {
 	return dc, nil
 }
 
+// GetNeighbors reads IEEE LLDP-MIB (LLDP-V2-MIB if the original is absent)
+// over SNMPv2c. The community is DriverParam.SNMPCommunities.
 func (driver *CiscoSMBDriver) GetNeighbors() ([]*Neighbor, error) {
-	outputs, err := driver.runCLIBatch(
-		sshCmd{Cmd: "show running-config"},
-		sshCmd{Cmd: "show lldp neighbors"},
-	)
-	if err != nil {
-		return nil, err
-	}
-	n := len(outputs)
-	return smbParseNeighbors(outputs[n-1], smbLiteralIfNames(outputs[n-2])), nil
-}
-
-// smbParseNeighbors parses "show lldp neighbors": columns Port, Device ID,
-// Port ID, System Name. Device ID is used as SystemID; an empty System Name
-// is allowed (C1300 neighbors that only advertise a chassis ID).
-func smbParseNeighbors(output string, literals map[string]string) []*Neighbor {
-	var neighbors []*Neighbor
-	for _, table := range smbParseDashTables(output) {
-		for _, row := range table {
-			local := smbResolveIfName(smbRowAt(row, 0), literals)
-			if local == "" {
-				continue
-			}
-			n := &Neighbor{
-				LocalInterface:  local,
-				SystemID:        smbRowAt(row, 1),
-				RemoteInterface: smbRowAt(row, 2),
-				RemoteName:      smbRowAt(row, 3),
-			}
-			if n.RemoteInterface == "" && n.SystemID == "" {
-				continue
-			}
-			neighbors = append(neighbors, n)
-		}
-	}
-	return neighbors
+	return lldpNeighbors(driver.p.Name, driver.p.SNMPCommunities)
 }

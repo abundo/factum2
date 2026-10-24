@@ -14,8 +14,9 @@ import (
 // REST-facing shape of models.DeviceSyncAuth (minus Name, which is the map
 // key instead).
 type DeviceSyncAuthEntry struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	SNMPCommunity string `json:"snmp_community"`
 }
 
 // DeviceSyncConfigResponse is what internal/device-sync's FetchRemoteConfig
@@ -84,7 +85,11 @@ func (ctrl *Controller) ApiDeviceSyncConfig(c *echo.Context) error {
 	}
 	auth := make(map[string]DeviceSyncAuthEntry, len(authRows))
 	for _, row := range authRows {
-		auth[row.Name] = DeviceSyncAuthEntry{Username: row.Username, Password: row.Password}
+		auth[row.Name] = DeviceSyncAuthEntry{
+			Username:      row.Username,
+			Password:      row.Password,
+			SNMPCommunity: row.SNMPCommunity,
+		}
 	}
 
 	types, err := cfgmgmt.ListServiceTypes(ctrl.DB)
@@ -118,9 +123,10 @@ func (ctrl *Controller) ApiDeviceSyncAuthCreate(c *echo.Context) error {
 	}
 
 	auth := models.DeviceSyncAuth{
-		Name:     dto.Name,
-		Username: dto.Username,
-		Password: dto.Password,
+		Name:          dto.Name,
+		Username:      dto.Username,
+		Password:      dto.Password,
+		SNMPCommunity: dto.SNMPCommunity,
 	}
 	if err := ctrl.DB.Create(&auth).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -145,6 +151,7 @@ func (ctrl *Controller) ApiDeviceSyncAuthUpdate(c *echo.Context) error {
 
 	auth.Name = dto.Name
 	auth.Username = dto.Username
+	auth.SNMPCommunity = dto.SNMPCommunity
 	// An empty password means "unchanged" (see DeviceSyncAuthDTO.Password's
 	// doc comment) - the frontend leaves the field blank unless the operator
 	// is actually changing it.

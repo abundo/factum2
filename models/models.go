@@ -148,6 +148,11 @@ type DeviceSyncAuth struct {
 	Name     string `gorm:"uniqueIndex;not null" json:"name"`
 	Username string `json:"username"`
 	Password string `json:"-"`
+	// SNMPCommunity is the SNMPv2c community device-sync uses to read LLDP
+	// neighbors (IEEE LLDP-MIB) for devices that log in with this row.
+	// Empty means neighbor sync fails for those devices. EOS ignores it
+	// and keeps using eAPI.
+	SNMPCommunity string `gorm:"column:snmp_community" json:"snmp_community"`
 }
 
 type DeviceSyncAuthDTO struct {
@@ -157,6 +162,9 @@ type DeviceSyncAuthDTO struct {
 	// Password is omitempty so the frontend can leave it blank on Update to
 	// keep the existing value - same pattern as WorkerNodeDTO.Token.
 	Password string `json:"password,omitempty"`
+	// SNMPCommunity is stored in the clear and returned on GetAll. An empty
+	// value on update clears it.
+	SNMPCommunity string `json:"snmp_community"`
 }
 
 // Link is one admin-managed shortcut shown on the dashboard (Admin ->
