@@ -273,7 +273,11 @@ func (c *Client) Index(objs []Object) {
 		obj.ChildrenOID = nil
 		c.objects[obj.OID] = &obj
 	}
-	for _, obj := range c.objects {
+	// Walk the slice, not the map. Map iteration would shuffle children,
+	// and the first resource-inet on an interface is the one BECS listed
+	// first.
+	for i := range objs {
+		obj := c.objects[objs[i].OID]
 		if parent, ok := c.objects[obj.ParentOID]; ok {
 			parent.ChildrenOID = append(parent.ChildrenOID, obj.OID)
 		}

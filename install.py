@@ -3468,7 +3468,7 @@ Examples:
   ./install.py --source --skip-build --primary-only
   ./install.py --compose
   ./install.py --compose --worker
-  ./install.py --compose --server 172.25.32.34
+  ./install.py --compose --server 172.25.33.12
   ./install.py --source --compose --skip-build
 """,
     )

@@ -3,7 +3,7 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
-## Unreleased
+## v1.4.1
 
 ### New
 
@@ -19,6 +19,35 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   them in. Those columns are read as empty strings.
 - The Software page **+** / **−** control expands and collapses a folder
   even when the pointer moves slightly between press and release.
+- The SOA template dialog stacks its fields so the form fits the window.
+- Cisco SMB sync keeps the interface names from the running config,
+  stores an SVI as `vlanN`, and matches device states without caring
+  about case. SSH to older SMB switches can use aes128-cbc and 3des-cbc
+  after the modern ciphers.
+- VRP sync keeps every IPv6 address on an interface. A config capture
+  waits for the lone `return` (up to 150s), writes
+  `/var/lib/factum2/retrieved-config/<host>.cfg`, and fails the fetch
+  when `return` is missing.
+- LLDP short names are expanded before they are matched (`Gi` / `Te` /
+  `Fa` on IOS and IOS-XE, and the same prefixes on Cisco SMB). The match
+  ignores case and the name stored is the one on the device.
+- Device sync reads LLDP neighbors from the IEEE LLDP-MIB over SNMPv2c
+  on VRP, IOS-XR, SR OS, and Cisco SMB. EOS still uses eAPI.
+- Device sync refuses to delete an interface or address that is the
+  device primary IPv4 or IPv6, including in an unattended run. Clear or
+  move the primary before that row can be removed.
+- Operators can open the live log window. Viewers still cannot.
+- Connection columns show the full hostname and the full interface name.
+- BECS keeps the addresses on an interface in the order BECS returned
+  them. The first address stays the first address.
+
+### Upgrading
+
+- Install applies goose migration `00038`. It adds
+  `device_sync_auths.snmp_community` (empty). Set that community on the
+  device-sync credential so VRP, IOS-XR, SR OS, and Cisco SMB neighbor
+  sync can read LLDP-MIB. An empty community skips neighbor sync for
+  devices that use the row. EOS does not use it.
 
 ## v1.4.0
 

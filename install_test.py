@@ -1066,7 +1066,7 @@ class ArchiveInstallTests(unittest.TestCase):
             archive = base / "factum2_0.6.1-rc1_linux_amd64.tar.gz"
             payload = (
                 "#!/usr/bin/env python3\n"
-                f"INSTALLER_VERSION = {install.ARCHIVE_INSTALLER_VERSION}\n"
+                f"INSTALLER_VERSION = {install.INSTALLER_VERSION}\n"
                 "def main():\n"
                 "    return 'factum2'\n"
                 f"open({str(marker)!r}, 'w').write('ran')\n"
@@ -1105,7 +1105,7 @@ class ComposeLabTests(unittest.TestCase):
 
     def test_server_requires_compose(self) -> None:
         with self.assertRaises(install.InstallError) as ctx:
-            install.main(["--server", "172.25.32.34"])
+            install.main(["--server", "172.25.33.12"])
         self.assertIn("--server requires --compose", str(ctx.exception))
 
     def test_compose_server_rejects_remote_source(self) -> None:
@@ -1127,7 +1127,7 @@ class ComposeLabTests(unittest.TestCase):
             with patch.object(install, "run", fake_run):
                 rc = install.install_compose_on_server(
                     repo,
-                    host="172.25.32.34",
+                    host="172.25.33.12",
                     ssh_user="factum",
                     server_dir="",
                     skip_build=False,
@@ -1139,7 +1139,7 @@ class ComposeLabTests(unittest.TestCase):
             self.assertIn(["make", "frontend"], calls)
             flat = " ".join(" ".join(c) for c in calls)
             self.assertIn("rsync", flat)
-            self.assertIn("172.25.32.34", flat)
+            self.assertIn("172.25.33.12", flat)
             self.assertIn("code/factum2/build", flat)
             self.assertNotIn("sudo -n rsync", flat)
 
