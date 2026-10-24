@@ -5,6 +5,13 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ## Unreleased
 
+### New
+
+- `install.py --compose --server HOST` builds the binaries and the Vue
+  app on the machine running the installer, rsyncs `build/` and
+  `web/static` to `HOST:~/code/factum2`, and restarts that host's compose
+  lab. The server does not compile.
+
 ### Fixed
 
 - LibreNMS sync no longer fails when a port has no interface alias.

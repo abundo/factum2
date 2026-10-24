@@ -39,6 +39,10 @@ from this release, the installer shows a diff and asks before overwriting
   ./install.py --compose --worker
                                Same, and also restart dest workers (dns, icinga,
                                librenms, oxidized, prometheus).
+  ./install.py --compose --server HOST
+                               Build on this machine, rsync build/ and web/static
+                               to HOST:~/code/factum2, and restart that host's
+                               compose lab. The server does not compile.
 """
 
 from __future__ import annotations
@@ -99,7 +103,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 20
+INSTALLER_VERSION = 21
 # First installer that accepts --archive. Older copies inside a tarball
 # are not re-executed: they would ignore the local file and use GitHub.
 ARCHIVE_INSTALLER_VERSION = 20
@@ -115,6 +119,9 @@ RELEASE_WORK_ENV = "FACTUM2_RELEASE_WORK"
 # Known binaries shipped in the GoReleaser tar.gz. Discovery also accepts
 # any other top-level `factum2*` file so a newly added cmd/ still installs.
 COMPOSE_DIR_DEFAULT = REPO_DIR / "dev"
+# Checkout on --server. Relative paths are under that login's home.
+COMPOSE_SERVER_DIR_DEFAULT = "code/factum2"
+COMPOSE_LAB_HTTP_PORT = 18091
 COMPOSE_PRIMARY_SERVICES = (
     "factum-web",
     "factum-worker",
@@ -3440,6 +3447,8 @@ Modes:
   --compose   Local compose lab. make build + make frontend, then restart
               bind-mounted primary services (factum-web, factum-worker,
               factum-storage).
+  --server    With --compose, build here and update the lab on HOST.
+              Syncs build/ and web/static. The server does not compile.
   --worker    With --compose, also restart dest workers.
 
 Environment:
@@ -3459,6 +3468,7 @@ Examples:
   ./install.py --source --skip-build --primary-only
   ./install.py --compose
   ./install.py --compose --worker
+  ./install.py --compose --server 172.25.32.34
   ./install.py --source --compose --skip-build
 """,
     )
@@ -3532,7 +3542,22 @@ Examples:
         help="local compose lab (default: dev/): bind-mount build/, migrate, "
         "restart factum-web and factum-worker instead of installing to "
         "/opt/factum2. Implies --source localhost. Pass --worker to also "
-        "restart dest workers.",
+        "restart dest workers. Pass --server HOST to build here and "
+        "restart the lab on HOST.",
+    )
+    p.add_argument(
+        "--server",
+        metavar="HOST",
+        help="with --compose, build on this machine and update the compose "
+        "lab on HOST over SSH. Syncs build/ and web/static. The server "
+        "does not run make. Default checkout is ~/code/factum2.",
+    )
+    p.add_argument(
+        "--server-dir",
+        metavar="DIR",
+        default="",
+        help="checkout on --server (default: ~/code/factum2). A relative "
+        "path is under that login's home.",
     )
     p.add_argument(
         "--worker",
@@ -3773,7 +3798,180 @@ def install_compose_lab(
         dry_run=False,
     )
     log("==> Done")
-    log(f"    GUI at http://127.0.0.1:8091  (binaries from {build_dir})")
+    log(f"    GUI at http://127.0.0.1:{COMPOSE_LAB_HTTP_PORT}  (binaries from {build_dir})")
+    return 0
+
+
+def rsync_tree(src: Path, user: str, host: str, dest: str) -> list[str]:
+    """Copy a directory onto host as the SSH login, without sudo.
+
+    The compose lab checkout is owned by that login. rsync_argv is for
+    /opt/factum2 and runs remote rsync through sudo -n.
+    """
+    if not dest.endswith("/"):
+        dest += "/"
+    return [
+        "rsync",
+        "-a",
+        "--delete",
+        "-e",
+        "ssh -o BatchMode=yes -o ConnectTimeout=10",
+        "--",
+        str(src).rstrip("/") + "/",
+        scp_url(user, host, dest),
+    ]
+
+
+def remote_home(user: str, host: str) -> str:
+    proc = subprocess.run(
+        ssh_cmd(user, host, 'printf %s "$HOME"'),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    home = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not home.startswith("/"):
+        err = (proc.stderr or "").strip()
+        raise InstallError(f"{host}: cannot read $HOME{(': ' + err) if err else ''}")
+    return home
+
+
+def resolve_server_dir(user: str, host: str, server_dir: str, *, dry_run: bool) -> str:
+    path = server_dir.strip() or COMPOSE_SERVER_DIR_DEFAULT
+    if path == "~":
+        path = ""
+    elif path.startswith("~/"):
+        path = path[2:]
+    if path.startswith("/"):
+        return path
+    if dry_run:
+        return "~/" + path if path else "~"
+    home = remote_home(user, host)
+    return home if not path else f"{home}/{path}"
+
+
+def remote_compose_output(user: str, host: str, remote_repo: str) -> str:
+    proc = subprocess.run(
+        ssh_cmd(
+            user,
+            host,
+            f"cd {_shell_quote(remote_repo)}/dev && ./compose.sh ps",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0 and not (proc.stdout or "").strip():
+        err = (proc.stderr or "").strip()
+        raise InstallError(
+            f"{host}: compose ps failed{(': ' + err) if err else ''}"
+        )
+    return proc.stdout or ""
+
+
+def install_compose_on_server(
+    repo_dir: Path,
+    *,
+    host: str,
+    ssh_user: str,
+    server_dir: str,
+    skip_build: bool,
+    dry_run: bool,
+    update_workers: bool,
+) -> int:
+    """Build on this machine, then restart the compose lab on host.
+
+    The server needs the factum2 tree (compose files, dev/) but not Go or
+    Node. build/ and web/static are rsynced. A stopped lab is started with
+    prepare.py and up.sh, which do not compile.
+    """
+    build_dir = repo_dir / "build"
+    static_dir = repo_dir / "web" / "static"
+    version = git_describe(repo_dir)
+    remote_repo = resolve_server_dir(ssh_user, host, server_dir, dry_run=dry_run)
+    log(f"==> factum2  compose-lab install  version={version}")
+    log(f"    BUILD_DIR   = {build_dir}")
+    log(f"    SERVER      = {ssh_user_host(ssh_user, host)}")
+    log(f"    SERVER_DIR  = {remote_repo}")
+
+    if skip_build:
+        if not build_dir.is_dir() and not dry_run:
+            raise InstallError(f"--skip-build given but {build_dir} does not exist")
+        log(f"==> Skipping build, using {build_dir}")
+    else:
+        log("==> Building binaries (make) on this machine")
+        run(["make", "build"], dry_run=dry_run, cwd=repo_dir)
+        log("==> Building frontend on this machine")
+        run(["make", "frontend"], dry_run=dry_run, cwd=repo_dir)
+
+    if not dry_run:
+        missing = [name for name in KNOWN_BINARIES if not (build_dir / name).is_file()]
+        if missing:
+            raise InstallError(f"{build_dir} is missing {', '.join(missing)}")
+        if not (static_dir / "vue" / "index.html").is_file():
+            raise InstallError(f"{static_dir}/vue/index.html is missing (make frontend)")
+        remote = remote_arch(host, ssh_user)
+        built = local_arch()
+        if remote != built:
+            raise InstallError(
+                f"{host} is {ARCHIVE_OS}/{remote}; this machine builds "
+                f"{ARCHIVE_OS}/{built}"
+            )
+        probe = subprocess.run(
+            ssh_cmd(
+                ssh_user,
+                host,
+                f"test -x {_shell_quote(remote_repo)}/dev/compose.sh",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if probe.returncode != 0:
+            raise InstallError(
+                f"{host}: compose lab not found at {remote_repo}. "
+                "Copy the factum2 tree there first. --server syncs "
+                "build/ and web/static only."
+            )
+
+    log(f"==> Syncing build/ and web/static to {ssh_user_host(ssh_user, host)}:{remote_repo}")
+    run(
+        rsync_tree(build_dir, ssh_user, host, f"{remote_repo}/build"),
+        dry_run=dry_run,
+    )
+    run(
+        rsync_tree(static_dir, ssh_user, host, f"{remote_repo}/web/static"),
+        dry_run=dry_run,
+    )
+
+    worker_flag = " --worker" if update_workers else ""
+    refresh = (
+        f"cd {_shell_quote(remote_repo)} && ./install.py --compose --skip-build{worker_flag}"
+    )
+    boot = (
+        f"cd {_shell_quote(remote_repo)} && ./dev/prepare.py && ./dev/up.sh"
+    )
+    if dry_run:
+        shown = remote_repo
+        log(f"==> Would rsync, then on {host} restart the lab or start it if it is down")
+        log(
+            f"    [dry-run] cd {shown} && ./install.py --compose --skip-build{worker_flag}"
+        )
+        log(f"    [dry-run] (if postgres is down) cd {shown} && ./dev/prepare.py && ./dev/up.sh")
+        log(f"    GUI at http://{host}:{COMPOSE_LAB_HTTP_PORT}")
+        return 0
+
+    if compose_ps_has_service(remote_compose_output(ssh_user, host, remote_repo), "postgres"):
+        log(f"==> Restarting compose lab on {host}")
+        run(ssh_cmd(ssh_user, host, refresh), dry_run=False)
+    else:
+        log(f"==> Compose lab is down on {host}; starting it without compiling there")
+        run(ssh_cmd(ssh_user, host, boot), dry_run=False)
+    log("==> Done")
+    log(f"    GUI at http://{host}:{COMPOSE_LAB_HTTP_PORT}")
     return 0
 
 
@@ -3782,6 +3980,21 @@ def main_source(args: argparse.Namespace) -> int:
         compose_dir = Path(args.compose).expanduser()
         if not compose_dir.is_absolute():
             compose_dir = Path.cwd() / compose_dir
+        if getattr(args, "server", None):
+            if not is_local_host(args.source):
+                raise InstallError(
+                    "--compose --server builds on this machine "
+                    "(do not pass a remote --source host)"
+                )
+            return install_compose_on_server(
+                REPO_DIR,
+                host=args.server,
+                ssh_user=args.ssh_user,
+                server_dir=args.server_dir,
+                skip_build=args.skip_build,
+                dry_run=args.dry_run,
+                update_workers=args.worker,
+            )
         if not is_local_host(args.source):
             raise InstallError("--compose is local only (do not pass a remote --source host)")
         return install_compose_lab(
@@ -3948,6 +4161,8 @@ def main(argv: list[str] | None = None) -> int:
         args.source = "localhost"
     if args.worker and args.compose is None:
         raise InstallError("--worker requires --compose")
+    if args.server and args.compose is None:
+        raise InstallError("--server requires --compose")
     if args.worker and args.primary_only:
         raise InstallError("--worker cannot be combined with --primary-only")
     if args.archive is not None:

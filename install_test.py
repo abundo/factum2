@@ -1103,6 +1103,46 @@ class ComposeLabTests(unittest.TestCase):
             install.main(["--worker"])
         self.assertIn("--worker requires --compose", str(ctx.exception))
 
+    def test_server_requires_compose(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(["--server", "172.25.32.34"])
+        self.assertIn("--server requires --compose", str(ctx.exception))
+
+    def test_compose_server_rejects_remote_source(self) -> None:
+        with self.assertRaises(install.InstallError) as ctx:
+            install.main(
+                ["--source", "other-host", "--compose", "--server", "lab"]
+            )
+        self.assertIn("builds on this machine", str(ctx.exception))
+
+    def test_compose_server_dry_run_syncs_without_ssh(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw)
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with patch.object(install, "run", fake_run):
+                rc = install.install_compose_on_server(
+                    repo,
+                    host="172.25.32.34",
+                    ssh_user="factum",
+                    server_dir="",
+                    skip_build=False,
+                    dry_run=True,
+                    update_workers=False,
+                )
+            self.assertEqual(rc, 0)
+            self.assertIn(["make", "build"], calls)
+            self.assertIn(["make", "frontend"], calls)
+            flat = " ".join(" ".join(c) for c in calls)
+            self.assertIn("rsync", flat)
+            self.assertIn("172.25.32.34", flat)
+            self.assertIn("code/factum2/build", flat)
+            self.assertNotIn("sudo -n rsync", flat)
+
     def test_worker_rejects_primary_only(self) -> None:
         with self.assertRaises(install.InstallError) as ctx:
             install.main(["--compose", "--worker", "--primary-only"])

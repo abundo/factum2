@@ -9,7 +9,10 @@ if [ -n "${FACTUM_COMPOSE:-}" ]; then
 	exec $FACTUM_COMPOSE -f compose.yml "$@"
 fi
 
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+# `docker compose version` succeeds when the CLI is installed but the daemon
+# is stopped or this user cannot reach its socket. Only prefer Docker when
+# it actually answers; otherwise Podman (the laptop lab) is the engine.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 	exec docker compose -f compose.yml "$@"
 fi
 

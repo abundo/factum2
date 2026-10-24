@@ -80,7 +80,15 @@ Prometheus via snmp-exporter.
 ./install.py --compose              # make + migrate + restart factum-web / factum-worker / factum-storage
 ./install.py --compose --worker     # also restart dest workers
 ./install.py --compose --skip-build # restart primary only, no rebuild
+./install.py --compose --server HOST
 ```
+
+`--server` compiles on the machine where you run `install.py` and updates
+the lab on `HOST` over SSH (`--ssh-user`, default `factum`). It rsyncs
+`build/` and `web/static` into `~/code/factum2` (`--server-dir` overrides
+that). The server needs the factum2 tree and podman. It does not need Go
+or Node. If that lab is stopped, the same command starts it with
+`dev/prepare.py` and `dev/up.sh`.
 
 ```sh
 make dev-down          # keep volumes
