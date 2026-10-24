@@ -8,10 +8,10 @@ defineProps({
 
 <template>
   <div
-    class="min-w-40 rounded border bg-default px-2 py-1 shadow-sm"
+    class="w-max min-w-40 rounded border bg-default px-2 py-1 shadow-sm"
     :class="data.external ? 'border-dashed border-warning' : 'border-default'"
   >
-    <div class="text-sm font-medium truncate">{{ data.label }}</div>
+    <div class="whitespace-nowrap text-sm font-medium">{{ data.label }}</div>
     <div v-if="data.external" class="text-xs text-warning">Outside this view</div>
     <div class="mt-1 flex flex-col">
       <div
@@ -29,7 +29,7 @@ defineProps({
           type="target"
           :position="Position.Left"
         />
-        <span class="min-w-0 truncate">{{ iface.name }}</span>
+        <span class="whitespace-nowrap">{{ iface.name }}</span>
       </div>
     </div>
   </div>

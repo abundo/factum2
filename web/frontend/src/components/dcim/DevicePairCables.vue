@@ -599,7 +599,7 @@ watch(drawnCables, () => nextTick(measure))
         <div
           v-for="(deviceId, index) in columns"
           :key="index"
-          class="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-default bg-default p-1.5"
+          class="flex w-max min-w-44 shrink-0 flex-col gap-1 rounded-lg border border-default bg-default p-1.5"
           :class="columnClass(index)"
           :data-device-col="index"
         >
@@ -621,7 +621,13 @@ watch(drawnCables, () => nextTick(measure))
               label-key="name"
               placeholder="Device…"
               size="sm"
-              class="min-w-0 flex-1"
+              class="min-w-max flex-1"
+              :ui="{
+                value: 'overflow-visible text-clip whitespace-nowrap',
+                placeholder: 'overflow-visible text-clip whitespace-nowrap',
+                itemLabel: 'whitespace-normal',
+                content: 'w-max max-w-lg min-w-(--reka-combobox-trigger-width)',
+              }"
               @update:model-value="(v) => setDevice(index, deviceIdFromPicker(v))"
             />
             <UButton
@@ -641,7 +647,7 @@ watch(drawnCables, () => nextTick(measure))
             <div
               v-for="iface in portsAt(index)"
               :key="iface.id"
-              class="grid grid-cols-[1.25rem_minmax(0,1fr)_1.25rem] items-center gap-1 rounded px-0.5 py-0.5 hover:bg-elevated/60"
+              class="grid w-full grid-cols-[1.25rem_minmax(max-content,1fr)_1.25rem] items-center gap-1 rounded px-0.5 py-0.5 hover:bg-elevated/60"
             >
               <button
                 v-if="showHandle(iface, index, 'left')"
@@ -658,9 +664,13 @@ watch(drawnCables, () => nextTick(measure))
                 @click="follow(index, iface)"
               />
               <span v-else class="size-5" />
-              <div class="min-w-0 leading-tight text-center">
-                <div class="truncate font-mono text-xs">{{ iface.name }}</div>
-                <div v-if="iface.description" class="truncate text-[10px] text-muted">
+              <div class="leading-tight text-center">
+                <div class="whitespace-nowrap font-mono text-xs">{{ iface.name }}</div>
+                <div
+                  v-if="iface.description"
+                  class="w-0 min-w-full wrap-break-word text-[10px] text-muted"
+                  :title="iface.description"
+                >
                   {{ iface.description }}
                 </div>
               </div>
