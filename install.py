@@ -103,7 +103,7 @@ ARCHIVE_OS = "linux"
 USER_AGENT = "factum2-install.py"
 # Bump when the installer itself changes so production copies can detect
 # a newer GitHub *release*. Missing/unparseable counts as 0.
-INSTALLER_VERSION = 21
+INSTALLER_VERSION = 22
 # First installer that accepts --archive. Older copies inside a tarball
 # are not re-executed: they would ignore the local file and use GitHub.
 ARCHIVE_INSTALLER_VERSION = 20
@@ -1183,6 +1183,47 @@ def refuse_install_without_workers(
     )
 
 
+def _remote_version_text(
+    ssh_user: str, host: str, quoted_binary: str, *, privileged: bool
+) -> tuple[int, str]:
+    proc = subprocess.run(
+        ssh_cmd(
+            ssh_user,
+            host,
+            f"{quoted_binary} --version",
+            privileged=privileged,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def _remote_stamped_version(
+    ssh_user: str, host: str, binary: Path
+) -> tuple[str | None, str]:
+    """Read buildinfo.Version from a remote binary.
+
+    The worker unit runs as root. /opt/factum2 is often mode 0700 after
+    sudo mkdir (umask 077), so the factum login gets "Permission denied"
+    and no version token. That is not a failed upgrade: retry with sudo -n,
+    which is the same privilege the service uses. A stamp from the login
+    user is kept even when it mismatches, so sudo cannot hide an older binary
+    the login user can still execute.
+    """
+    quoted = _shell_quote(str(binary))
+    code, text = _remote_version_text(ssh_user, host, quoted, privileged=False)
+    got = extract_stamped_version(text)
+    if not got and ssh_user != "root":
+        code, text = _remote_version_text(ssh_user, host, quoted, privileged=True)
+        got = extract_stamped_version(text)
+    if code != 0 and not text.strip():
+        raise InstallError(f"{host}: {binary.name} --version failed ({code})")
+    return got, text
+
+
 def verify_host_version(
     expected: str,
     *,
@@ -1200,26 +1241,17 @@ def verify_host_version(
     expected = expected.strip()
     binary = install_dir / binary_name
     where = "this host" if is_local_host(target_host) else target_host
+    raw = ""
     if is_local_host(target_host):
         got = _version_from_binary(binary)
     else:
-        quoted = _shell_quote(str(binary))
-        proc = subprocess.run(
-            ssh_cmd(ssh_user, target_host, f"{quoted} --version"),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        text = (proc.stdout or "") + (proc.stderr or "")
-        if proc.returncode != 0 and not text.strip():
-            raise InstallError(
-                f"{where}: {binary_name} --version failed ({proc.returncode})"
-            )
-        got = extract_stamped_version(text)
+        got, raw = _remote_stamped_version(ssh_user, target_host, binary)
     if not got or not same_stamp(got, expected):
+        detail = ""
+        if not got and raw.strip():
+            detail = ": " + " ".join(raw.split())[:300]
         raise InstallError(
-            f"{where}: {binary_name} version {got or 'unknown'!r} != {expected!r} "
+            f"{where}: {binary_name} version {got or 'unknown'!r} != {expected!r}{detail} "
             "(hub handshake requires matching versions)"
         )
     log(f"    verified {where}: {binary_name} {got}")

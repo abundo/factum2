@@ -431,6 +431,77 @@ class VerifyHostVersionTests(unittest.TestCase):
                 install_dir=Path("/opt/factum2"),
             )
 
+    def test_permission_denied_retries_with_sudo(self) -> None:
+        calls: list[str] = []
+
+        def fake_run(cmd, **kwargs):
+            remote = cmd[-1]
+            calls.append(remote)
+            if "sudo -n" in remote:
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="factum2-worker version 1.4.1\n", stderr=""
+                )
+            return subprocess.CompletedProcess(
+                cmd,
+                126,
+                stdout="",
+                stderr="bash: /opt/factum2/factum2-worker: Permission denied\n",
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            install.verify_host_version(
+                "v1.4.1",
+                target_host="icinga.example.com",
+                ssh_user="factum",
+                install_dir=Path("/opt/factum2"),
+            )
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("sudo", calls[0])
+        self.assertIn("sudo -n", calls[1])
+        self.assertIn("/opt/factum2/factum2-worker --version", calls[1])
+
+    def test_parsed_mismatch_does_not_sudo(self) -> None:
+        calls: list[str] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd[-1])
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="factum2-worker version v0.9.0\n", stderr=""
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            with self.assertRaises(install.InstallError):
+                install.verify_host_version(
+                    "v1.4.1",
+                    target_host="icinga.example.com",
+                    ssh_user="factum",
+                    install_dir=Path("/opt/factum2"),
+                )
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("sudo", calls[0])
+
+    def test_unreadable_error_includes_command_output(self) -> None:
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd,
+                126,
+                stdout="",
+                stderr="bash: /opt/factum2/factum2-worker: Permission denied\n",
+            )
+
+        with patch.object(install.subprocess, "run", fake_run):
+            with self.assertRaises(install.InstallError) as ctx:
+                install.verify_host_version(
+                    "v1.4.1",
+                    target_host="oxidized.example.com",
+                    ssh_user="factum",
+                    install_dir=Path("/opt/factum2"),
+                )
+        message = str(ctx.exception)
+        self.assertIn("unknown", message)
+        self.assertIn("Permission denied", message)
+        self.assertIn("v1.4.1", message)
+
 
 class SanEntryTests(unittest.TestCase):
     def test_dns_and_ip(self) -> None:
@@ -1032,7 +1103,7 @@ class ArchiveInstallTests(unittest.TestCase):
         self.assertFalse(install.should_run_archive_installer(payload))
 
     def test_newer_archive_installer_is_used(self) -> None:
-        payload = _installer_script(install.ARCHIVE_INSTALLER_VERSION + 1)
+        payload = _installer_script(install.INSTALLER_VERSION + 1)
         self.assertTrue(install.should_run_archive_installer(payload))
 
     def test_dry_run_reads_prerelease_stamp(self) -> None:
