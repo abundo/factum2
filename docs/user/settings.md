@@ -114,15 +114,12 @@ unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
 
 - **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
   device roles. See [RADIUS](radius.md)
-
-## AAA
-
 - **Directory** — the internal LDAP tree (people, roles, and folders) and
   each OpenLDAP or Active Directory server. Workers with an `ldap` command
   serve the internal directory. Server connection settings are edited on
   the selected server. Login tries enabled servers in order and denies the
   client when none accepts. OpenLDAP entries can be added and changed when
   `ldap_writeback` is set in the config file. Active Directory is
-  browse-only. `admin` cannot be deleted. See [Directory](directory.md)
-- **Authorization** — map LDAP group DNs to Factum roles, plus a default
-  role for users who match no group
+  browse-only. `admin` cannot be deleted. The **Authorization** tab maps
+  LDAP group DNs to Factum roles, and sets a default role for users who
+  match no group. See [Directory](directory.md)

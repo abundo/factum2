@@ -403,9 +403,7 @@ const router = createRouter({
         },
         {
           path: '/admin/authorization',
-          name: 'admin-authorization',
-          meta: { requiresAdmin: true },
-          component: () => import('@/views/admin/AuthorizationSettings.vue'),
+          redirect: { path: '/admin/directory', query: { tab: 'authorization' } },
         },
         {
           path: '/admin/radius',

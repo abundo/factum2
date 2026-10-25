@@ -28,7 +28,7 @@ worker:
             cmd: /opt/factum2/factum2-storage
             args: []
             allow_args: ["copy", "-n=*", "--path=*", "--protocol=*", "--job", "--destination=*"]
-        # Internal directory (Admin → AAA → Directory). The name starts
+        # Internal directory (Admin → Services → Directory). The name starts
         # the in-process listener; cmd is not executed. Lab publishes
         # container :389 as host :10389.
         ldap:

@@ -1,6 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Wunderbaum } from 'wunderbaum'
 import {
   browseLdap,
@@ -30,6 +31,7 @@ import {
 import { createRole, getRoles, updateRole } from '@/api/roles'
 import { createUser, deleteUser, getUsers, updateUser } from '@/api/users'
 import PageFormBar from '@/components/PageFormBar.vue'
+import AuthorizationSettings from './AuthorizationSettings.vue'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
@@ -49,7 +51,22 @@ import '@/assets/wunderbaum-theme.css'
 
 defineOptions({ name: 'DirectoryPage' })
 
+const route = useRoute()
+const router = useRouter()
 const toast = useToast()
+
+// Authorization is a tab on this page. The query keeps a direct link working.
+const directoryTabs = [
+  { label: 'Directory', value: 'directory', slot: 'directory', icon: 'i-lucide-folder-tree' },
+  { label: 'Authorization', value: 'authorization', slot: 'authorization', icon: 'i-lucide-lock' },
+]
+const tab = computed({
+  get: () => (route.query.tab === 'authorization' ? 'authorization' : 'directory'),
+  set: (value) =>
+    router.replace({
+      query: { ...route.query, tab: value === 'directory' ? undefined : value },
+    }),
+})
 const { confirmDelete, ask } = useConfirm()
 
 const el = ref(null)
@@ -446,7 +463,8 @@ function internalRegions(source, target) {
   const sourceParent = parentFolderId(source)
   if (sourceParent == null) return false
   const targetKind = nodeKind(target)
-  const overId = targetKind === 'ou' ? target.data?.ou_id || 0 : targetKind === 'internal' ? 0 : null
+  const overId =
+    targetKind === 'ou' ? target.data?.ou_id || 0 : targetKind === 'internal' ? 0 : null
   const dest = overId != null ? overId : parentFolderId(target)
   const intoSelf =
     nodeKind(source) === 'ou' && dest != null && ouDescendsFrom(dest, source.data?.ou_id || 0)
@@ -1598,6 +1616,17 @@ function load() {
 
 watch(search, applySearch)
 
+// The tree is built once. Opening this page on Authorization leaves the host
+// at zero size, so lay it out again when Directory is shown.
+watch(tab, (value) => {
+  if (value !== 'directory' || forbidden.value || loading.value) return
+  nextTick(() => {
+    if (!el.value) return
+    if (!tree) buildTree()
+    else tree.update('resize', { immediate: true })
+  })
+})
+
 onMounted(() => {
   document.addEventListener('click', onDocClick)
   load()
@@ -1616,643 +1645,664 @@ onBeforeUnmount(() => {
       title="You need administrator permissions to view the directory."
     />
   </div>
-  <div v-else class="card flex min-h-0 flex-1 flex-col">
-    <PageFormBar page>
-      <template #title>
-        <div>
-          <div>Directory</div>
-          <small class="font-normal text-muted-color">{{ intro }}</small>
-        </div>
-      </template>
-      <UButton
-        label="New folder"
-        icon="i-lucide-folder-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewFolder(selected?.kind === 'ou' ? selected : null)"
-      />
-      <UButton
-        label="New user"
-        icon="i-lucide-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewUser"
-      />
-      <UButton
-        label="New role"
-        icon="i-lucide-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewRole"
-      />
-      <UButton
-        label="OpenLDAP"
-        icon="i-lucide-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewServer('generic')"
-      />
-      <UButton
-        label="Active Directory"
-        icon="i-lucide-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewServer('ad')"
-      />
-      <UButton
-        v-if="nodeWritable(selected)"
-        label="New group"
-        icon="i-lucide-plus"
-        color="neutral"
-        size="sm"
-        @click="openNewGroup()"
-      />
-      <UButton
-        v-if="directoryCanSave"
-        label="Save"
-        icon="i-lucide-check"
-        type="submit"
-        :form="directoryFormId"
-        :loading="directorySaveLoading"
-      />
-    </PageFormBar>
-    <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
-    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row">
-      <div class="flex min-h-0 w-full min-w-0 flex-1 flex-col lg:w-96 lg:flex-none">
-        <SearchInput v-model="search" class="mb-3 shrink-0" />
-        <div class="directory-tree-host">
-          <div ref="el" class="ipam-tree" />
-        </div>
-        <p v-if="loading" class="mt-2 shrink-0 text-sm text-muted-color">Loading…</p>
-      </div>
-      <div class="min-h-0 min-w-0 flex-1 overflow-auto">
-        <p v-if="!panel" class="text-sm text-muted-color">
-          Select an entry. Drag a user, role, or folder onto a folder. Drag an LDAP or Active
-          Directory server to change the login order. The local directory stays first. Right-click
-          a row to add, change, or remove it.
-        </p>
-        <form
-          v-else-if="panel === 'server'"
-          id="directory-server-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveServer"
-        >
-          <h5 class="m-0">{{ serverForm.id ? serverTitle(serverForm) : 'New LDAP server' }}</h5>
-          <p class="text-sm text-muted-color">
-            Login tries enabled servers from lowest order to highest. A server that is down or
-            rejects the password is skipped. If none accepts the client, access is denied.
-          </p>
-          <UCheckbox v-model="serverForm.enabled" label="Enabled" />
-          <UFormField label="Name">
-            <UInput v-model="serverForm.name" placeholder="dc1" class="w-full" />
-            <small class="text-muted-color"
-              >Shown in the tree. The host is used when this is empty.</small
-            >
-          </UFormField>
-          <UFormField label="Order">
-            <UInputNumber
-              v-model="serverForm.position"
-              :min="1"
-              :format-options="{ useGrouping: false }"
-              class="w-full"
-            />
-            <small class="text-muted-color"
-              >Lower numbers are tried first. Drag the server in the tree to change this. The local
-              directory stays first. Empty puts a new server last.</small
-            >
-          </UFormField>
-          <UFormField label="Server type">
-            <URadioGroup v-model="serverForm.server_type" :items="serverTypeOptions" />
-          </UFormField>
-          <UFormField label="Host">
-            <UInput
-              v-model="serverForm.host"
-              placeholder="dc1.example.com"
-              :color="submitted && !serverForm.host?.trim() ? 'error' : undefined"
-              :highlight="submitted && !serverForm.host?.trim()"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Port">
-            <UInputNumber
-              v-model="serverForm.port"
-              :format-options="{ useGrouping: false }"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="TLS">
-            <USelect v-model="serverForm.tls_mode" :items="tlsModeOptions" class="w-full" />
-          </UFormField>
-          <UCheckbox
-            v-model="serverForm.skip_tls_verify"
-            label="Skip TLS certificate verification"
-          />
-          <UFormField label="Bind">
-            <URadioGroup v-model="serverForm.bind_mode" :items="bindModeOptions" />
-            <small v-if="serverForm.bind_mode === 'anonymous'" class="text-muted-color">
-              The directory must allow anonymous search. Active Directory usually does not.
-            </small>
-          </UFormField>
-          <UFormField label="Bind DN">
-            <UInput
-              v-model="serverForm.bind_dn"
-              :disabled="serverForm.bind_mode === 'anonymous'"
-              placeholder="cn=svc-factum,dc=example,dc=com"
-              class="w-full font-mono"
-            />
-          </UFormField>
-          <UFormField label="Bind password">
-            <PasswordInput
-              v-model="serverForm.bind_password"
-              :disabled="serverForm.bind_mode === 'anonymous'"
-            />
-            <small class="text-muted-color">
-              {{
-                serverForm.bind_password_set
-                  ? 'Leave blank to keep the current password.'
-                  : 'Used to search for the user before the password bind.'
-              }}
-            </small>
-          </UFormField>
-          <UFormField label="Base DN">
-            <UInput
-              v-model="serverForm.base_dn"
-              placeholder="dc=example,dc=com"
-              class="w-full font-mono"
-            />
-          </UFormField>
-          <UFormField label="User filter">
-            <UInput
-              v-model="serverForm.user_filter"
-              :placeholder="serverForm.server_type === 'ad' ? '(sAMAccountName=%s)' : '(uid=%s)'"
-              class="w-full font-mono"
-            />
-            <small class="text-muted-color">One %s for the escaped username.</small>
-          </UFormField>
-          <UFormField label="Username attribute">
-            <UInput
-              v-model="serverForm.attr_username"
-              :placeholder="serverForm.server_type === 'ad' ? 'sAMAccountName' : 'uid'"
-              class="w-full"
-            />
-            <small class="text-muted-color"
-              >Used when a password reset looks the account up by email.</small
-            >
-          </UFormField>
-          <UFormField label="Email attribute">
-            <UInput v-model="serverForm.attr_email" placeholder="mail" class="w-full" />
-          </UFormField>
-          <UFormField label="Display name attribute">
-            <UInput
-              v-model="serverForm.attr_display_name"
-              placeholder="displayName"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Mobile attribute">
-            <UInput v-model="serverForm.attr_mobile" placeholder="mobile" class="w-full" />
-          </UFormField>
-          <UFormField label="Groups attribute">
-            <UInput v-model="serverForm.attr_groups" placeholder="memberOf" class="w-full" />
-          </UFormField>
-          <UCheckbox
-            v-model="serverForm.allow_password_change"
-            label="Allow password changes to be written back"
-          />
-          <p class="text-sm text-muted-color">
-            The account that writes the password is ldap_writeback in the config file. The same
-            account adds and changes OpenLDAP entries. Active Directory stays browse-only.
-          </p>
-          <div class="flex gap-2">
-            <UButton
-              label="Test connection"
-              icon="i-lucide-zap"
-              color="neutral"
-              type="button"
-              :loading="serverTesting"
-              @click="testServer"
-            />
-            <UButton
-              v-if="serverForm.id"
-              label="Delete"
-              icon="i-lucide-trash"
-              color="error"
-              variant="ghost"
-              type="button"
-              :loading="serverDeleting"
-              @click="performDeleteServer()"
-            />
-          </div>
-        </form>
-
-        <form
-          v-else-if="panel === 'internal'"
-          id="directory-internal-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveInternal"
-        >
-          <h5 class="m-0">Internal directory</h5>
-          <p class="text-sm text-muted-color">
-            Workers with an <span class="font-mono">ldap</span> command serve this directory. Put
-            people and roles in folders. A role can contain other roles; membership is expanded the
-            way Active Directory expands nested groups.
-          </p>
-          <UCheckbox v-model="internalForm.enabled" label="Enable" />
-          <UFormField label="Listen">
-            <UInput v-model="internalForm.listen" placeholder=":389" class="w-full" />
-            <small class="text-muted-color">Empty uses :389. host:port.</small>
-          </UFormField>
-          <UFormField label="LDAPS listen">
-            <UInput v-model="internalForm.tls_listen" placeholder=":636" class="w-full" />
-            <small class="text-muted-color">Optional. host:port. Empty leaves LDAPS off.</small>
-          </UFormField>
-          <UFormField label="LDAPS certificate">
-            <USelectMenu
-              v-model="internalForm.tls_certificate_id"
-              :items="ldapsCertItems"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-            <small class="text-muted-color">
-              A certificate from Services → Certificates. The worker reads it from lego storage.
-              Worker hub certificate uses the hub TLS pair.
-            </small>
-          </UFormField>
-          <UFormField label="Base DN">
-            <UInput
-              v-model="internalForm.base_dn"
-              placeholder="dc=factum,dc=local"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Search bind DN">
-            <UInput :model-value="internal.bind_dn" readonly class="w-full font-mono" />
-          </UFormField>
-          <UFormField label="Search password">
-            <PasswordInput v-model="internalForm.bind_password" />
-            <small class="text-muted-color">
-              {{
-                internal.bind_password_set
-                  ? 'Leave blank to keep the current password.'
-                  : 'NetBox, LibreNMS, and Icinga bind with this password before they search.'
-              }}
-            </small>
-          </UFormField>
-          <UFormField label="User filter">
-            <UInput
-              :model-value="internal.user_filter || '(uid=%s)'"
-              readonly
-              class="w-full font-mono"
-            />
-          </UFormField>
-          <UCheckbox
-            v-model="internalForm.radius_use_internal"
-            label="RADIUS on the same worker uses this directory"
-          />
-          <p class="text-sm text-muted-color">
-            RADIUS binds to 127.0.0.1 on the plain listen port. That worker needs both
-            <span class="font-mono">radius</span> and <span class="font-mono">ldap</span>. MikroTik
-            MS-CHAPv2 still needs Active Directory.
-          </p>
-        </form>
-
-        <form
-          v-else-if="panel === 'ou'"
-          id="directory-ou-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveOU"
-        >
-          <h5 class="m-0">{{ ouForm.id ? 'Folder' : 'New folder' }}</h5>
-          <UFormField label="Name">
-            <UInput
-              v-model.trim="ouForm.name"
-              :color="submitted && !ouForm.name?.trim() ? 'error' : undefined"
-              :highlight="submitted && !ouForm.name?.trim()"
-              autofocus
-              class="w-full"
-            />
-            <small v-if="submitted && !ouForm.name?.trim()" class="text-red-500"
-              >Name is required.</small
-            >
-          </UFormField>
-          <UFormField label="Inside">
-            <USelectMenu
-              v-model="ouForm.parent_id"
-              :items="ouParentItems"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-          </UFormField>
-          <p v-if="ouForm.id && selected?.dn" class="font-mono text-sm break-all">
-            {{ selected.dn }}
-          </p>
-          <div class="flex gap-2">
-            <UButton
-              v-if="ouForm.id"
-              label="Delete"
-              icon="i-lucide-trash"
-              color="error"
-              variant="ghost"
-              @click="performDeleteOU(selected)"
-            />
-          </div>
-        </form>
-
-        <div v-else-if="panel === 'node'" class="flex flex-col gap-2">
-          <h5 class="m-0">{{ selected?.title }}</h5>
-          <p class="text-sm text-muted-color">{{ ldapKindLabel(selected?.kind) }}</p>
-          <p v-if="selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
-        </div>
-        <form
-          v-else-if="panel === 'user'"
-          id="directory-user-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveUser"
-        >
-          <h5 class="m-0">{{ user.id ? 'User' : 'New user' }}</h5>
-          <UFormField label="Username">
-            <UInput
-              v-model.trim="user.username"
-              :color="submitted && !user.username?.trim() ? 'error' : undefined"
-              :highlight="submitted && !user.username?.trim()"
-              autofocus
-              class="w-full"
-            />
-            <small v-if="submitted && !user.username?.trim()" class="text-red-500"
-              >Username is required.</small
-            >
-          </UFormField>
-          <UFormField label="Name">
-            <UInput v-model="user.name" class="w-full" />
-          </UFormField>
-          <UFormField label="Email">
-            <UInput v-model="user.email" class="w-full" />
-          </UFormField>
-          <UFormField label="Mobile">
-            <UInput v-model="user.mobile" class="w-full" />
-          </UFormField>
-          <UFormField label="Roles">
-            <USelectMenu
-              v-model="user.role_ids"
-              :items="roles"
-              value-key="id"
-              label-key="name"
-              placeholder="Select Roles"
-              multiple
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Folder">
-            <USelectMenu
-              v-model="user.ou_id"
-              :items="userFolderItems"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-            <small v-if="!user.ou_id" class="text-muted-color">
-              Default publishes this person under ou=People.
-            </small>
-          </UFormField>
-          <UFormField label="Password">
-            <PasswordInput
-              v-model="user.password"
-              :color="submitted && !user.id && !user.password ? 'error' : undefined"
-              :highlight="submitted && !user.id && !user.password"
-            />
-            <small v-if="submitted && !user.id && !user.password" class="text-red-500"
-              >Password is required.</small
-            >
-            <small v-else-if="user.id" class="text-muted-color"
-              >Leave blank to keep the current password.</small
-            >
-          </UFormField>
-          <div class="flex gap-2">
-            <UButton
-              v-if="user.id && !isAdmin(user)"
-              label="Delete"
-              icon="i-lucide-trash"
-              color="error"
-              variant="ghost"
-              :loading="userDeleting"
-              @click="performDeleteUser()"
-            />
-          </div>
-        </form>
-
-        <form
-          v-else-if="panel === 'role'"
-          id="directory-role-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveRole"
-        >
-          <h5 class="m-0">{{ role.id ? 'Role' : 'New role' }}</h5>
-          <UFormField label="Name">
-            <UInput
-              v-model.trim="role.name"
-              :color="submitted && !role.name?.trim() ? 'error' : undefined"
-              :highlight="submitted && !role.name?.trim()"
-              autofocus
-              class="w-full"
-            />
-            <small v-if="submitted && !role.name?.trim()" class="text-red-500"
-              >Name is required.</small
-            >
-          </UFormField>
-          <UFormField label="Description">
-            <UTextarea v-model="role.description" :rows="3" class="w-full" />
-          </UFormField>
-          <UFormField label="Folder">
-            <USelectMenu
-              v-model="role.ou_id"
-              :items="roleFolderItems"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
-            <small v-if="!role.ou_id" class="text-muted-color">
-              Default publishes this role under ou=Roles.
-            </small>
-          </UFormField>
-          <UFormField label="Contains roles">
-            <USelectMenu
-              v-model="role.member_role_ids"
-              :items="nestRoleItems"
-              value-key="id"
-              label-key="name"
-              placeholder="Nested roles"
-              multiple
-              class="w-full"
-            />
-            <small class="text-muted-color">
-              People in a contained role are also in this role, including through further levels.
-            </small>
-          </UFormField>
-        </form>
-
-        <form
-          v-else-if="panel === 'person'"
-          id="directory-person-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="savePerson"
-        >
-          <h5 class="m-0">{{ person.dn ? 'Directory user' : 'New directory user' }}</h5>
-          <p v-if="personLoading" class="text-sm text-muted-color">Loading…</p>
-          <UFormField label="Container">
-            <UInput :model-value="personParent()" readonly class="w-full" />
-          </UFormField>
-          <UFormField label="Username">
-            <UInput
-              v-model.trim="person.uid"
-              :disabled="!person.editable"
-              :color="submitted && !person.uid?.trim() ? 'error' : undefined"
-              :highlight="submitted && !person.uid?.trim()"
-              autofocus
-              class="w-full"
-            />
-            <small v-if="submitted && !person.uid?.trim()" class="text-red-500"
-              >Username is required.</small
-            >
-          </UFormField>
-          <UFormField label="Name">
-            <UInput v-model="person.cn" :disabled="!person.editable" class="w-full" />
-            <small v-if="submitted && !person.cn?.trim()" class="text-red-500"
-              >Name is required.</small
-            >
-          </UFormField>
-          <UFormField label="Surname">
-            <UInput v-model="person.sn" :disabled="!person.editable" class="w-full" />
-            <small class="text-muted-color">OpenLDAP requires a surname (sn).</small>
-            <small v-if="submitted && !person.sn?.trim()" class="text-red-500"
-              >Surname is required.</small
-            >
-          </UFormField>
-          <UFormField label="Email">
-            <UInput v-model="person.mail" :disabled="!person.editable" class="w-full" />
-          </UFormField>
-          <UFormField label="Display name">
-            <UInput v-model="person.display_name" :disabled="!person.editable" class="w-full" />
-          </UFormField>
-          <UFormField label="Mobile">
-            <UInput v-model="person.mobile" :disabled="!person.editable" class="w-full" />
-          </UFormField>
-          <UFormField v-if="person.editable" label="Password">
-            <PasswordInput
-              v-model="person.password"
-              :color="submitted && !person.dn && !person.password ? 'error' : undefined"
-              :highlight="submitted && !person.dn && !person.password"
-            />
-            <small v-if="submitted && !person.dn && !person.password" class="text-red-500"
-              >Password is required.</small
-            >
-            <small v-else-if="person.dn" class="text-muted-color"
-              >Leave blank to keep the current password.</small
-            >
-          </UFormField>
-          <div class="flex gap-2">
-            <UButton
-              v-if="person.dn && person.editable"
-              label="Delete"
-              icon="i-lucide-trash"
-              color="error"
-              variant="ghost"
-              :loading="personDeleting"
-              @click="performDeletePerson()"
-            />
-          </div>
-        </form>
-
-        <form
-          v-else-if="panel === 'group'"
-          id="directory-group-form"
-          class="flex flex-col gap-4"
-          @submit.prevent="saveGroup"
-        >
-          <h5 class="m-0">{{ group.dn ? 'Directory group' : 'New directory group' }}</h5>
-          <p v-if="groupLoading" class="text-sm text-muted-color">Loading…</p>
-          <UAlert
-            v-if="group.dn && !group.editable"
+  <UTabs
+    v-else
+    v-model="tab"
+    :items="directoryTabs"
+    :unmount-on-hide="false"
+    class="min-h-0 flex-1"
+    :ui="{
+      root: 'min-h-0 flex-1 items-stretch',
+      list: 'shrink-0',
+      content: 'flex min-h-0 flex-1 flex-col overflow-auto focus-visible:outline-none',
+    }"
+  >
+    <template #directory>
+      <div class="card flex min-h-0 flex-1 flex-col">
+        <PageFormBar>
+          <template #title>
+            <div>
+              <div>Directory</div>
+              <small class="font-normal text-muted-color">{{ intro }}</small>
+            </div>
+          </template>
+          <UButton
+            label="New folder"
+            icon="i-lucide-folder-plus"
             color="neutral"
-            variant="subtle"
-            title="This group is shown read-only. Factum edits groupOfNames and groupOfUniqueNames entries on an OpenLDAP-compatible server."
+            size="sm"
+            @click="openNewFolder(selected?.kind === 'ou' ? selected : null)"
           />
-          <UFormField label="Container">
-            <UInput
-              :model-value="group.dn ? parentOfDN(group.dn) : group.parent_dn"
-              readonly
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Name">
-            <UInput
-              v-model.trim="group.cn"
-              :disabled="!group.editable"
-              :color="submitted && !group.cn?.trim() ? 'error' : undefined"
-              :highlight="submitted && !group.cn?.trim()"
-              autofocus
-              class="w-full"
-            />
-            <small v-if="submitted && !group.cn?.trim()" class="text-red-500"
-              >Name is required.</small
+          <UButton
+            label="New user"
+            icon="i-lucide-plus"
+            color="neutral"
+            size="sm"
+            @click="openNewUser"
+          />
+          <UButton
+            label="New role"
+            icon="i-lucide-plus"
+            color="neutral"
+            size="sm"
+            @click="openNewRole"
+          />
+          <UButton
+            label="OpenLDAP"
+            icon="i-lucide-plus"
+            color="neutral"
+            size="sm"
+            @click="openNewServer('generic')"
+          />
+          <UButton
+            label="Active Directory"
+            icon="i-lucide-plus"
+            color="neutral"
+            size="sm"
+            @click="openNewServer('ad')"
+          />
+          <UButton
+            v-if="nodeWritable(selected)"
+            label="New group"
+            icon="i-lucide-plus"
+            color="neutral"
+            size="sm"
+            @click="openNewGroup()"
+          />
+          <UButton
+            v-if="directoryCanSave"
+            label="Save"
+            icon="i-lucide-check"
+            type="submit"
+            :form="directoryFormId"
+            :loading="directorySaveLoading"
+          />
+        </PageFormBar>
+        <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
+        <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row">
+          <div class="flex min-h-0 w-full min-w-0 flex-1 flex-col lg:w-96 lg:flex-none">
+            <SearchInput v-model="search" class="mb-3 shrink-0" />
+            <div class="directory-tree-host">
+              <div ref="el" class="ipam-tree" />
+            </div>
+            <p v-if="loading" class="mt-2 shrink-0 text-sm text-muted-color">Loading…</p>
+          </div>
+          <div class="min-h-0 min-w-0 flex-1 overflow-auto">
+            <p v-if="!panel" class="text-sm text-muted-color">
+              Select an entry. Drag a user, role, or folder onto a folder. Drag an LDAP or Active
+              Directory server to change the login order. The local directory stays first.
+              Right-click a row to add, change, or remove it.
+            </p>
+            <form
+              v-else-if="panel === 'server'"
+              id="directory-server-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveServer"
             >
-          </UFormField>
-          <UFormField label="Description">
-            <UTextarea
-              v-model="group.description"
-              :disabled="!group.editable"
-              :rows="3"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Members">
-            <div class="flex flex-col gap-2">
-              <div
-                v-for="member in group.members ?? []"
-                :key="member"
-                class="flex items-center gap-2"
-              >
-                <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ member }}</span>
+              <h5 class="m-0">{{ serverForm.id ? serverTitle(serverForm) : 'New LDAP server' }}</h5>
+              <p class="text-sm text-muted-color">
+                Login tries enabled servers from lowest order to highest. A server that is down or
+                rejects the password is skipped. If none accepts the client, access is denied.
+              </p>
+              <UCheckbox v-model="serverForm.enabled" label="Enabled" />
+              <UFormField label="Name">
+                <UInput v-model="serverForm.name" placeholder="dc1" class="w-full" />
+                <small class="text-muted-color"
+                  >Shown in the tree. The host is used when this is empty.</small
+                >
+              </UFormField>
+              <UFormField label="Order">
+                <UInputNumber
+                  v-model="serverForm.position"
+                  :min="1"
+                  :format-options="{ useGrouping: false }"
+                  class="w-full"
+                />
+                <small class="text-muted-color"
+                  >Lower numbers are tried first. Drag the server in the tree to change this. The
+                  local directory stays first. Empty puts a new server last.</small
+                >
+              </UFormField>
+              <UFormField label="Server type">
+                <URadioGroup v-model="serverForm.server_type" :items="serverTypeOptions" />
+              </UFormField>
+              <UFormField label="Host">
+                <UInput
+                  v-model="serverForm.host"
+                  placeholder="dc1.example.com"
+                  :color="submitted && !serverForm.host?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !serverForm.host?.trim()"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Port">
+                <UInputNumber
+                  v-model="serverForm.port"
+                  :format-options="{ useGrouping: false }"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="TLS">
+                <USelect v-model="serverForm.tls_mode" :items="tlsModeOptions" class="w-full" />
+              </UFormField>
+              <UCheckbox
+                v-model="serverForm.skip_tls_verify"
+                label="Skip TLS certificate verification"
+              />
+              <UFormField label="Bind">
+                <URadioGroup v-model="serverForm.bind_mode" :items="bindModeOptions" />
+                <small v-if="serverForm.bind_mode === 'anonymous'" class="text-muted-color">
+                  The directory must allow anonymous search. Active Directory usually does not.
+                </small>
+              </UFormField>
+              <UFormField label="Bind DN">
+                <UInput
+                  v-model="serverForm.bind_dn"
+                  :disabled="serverForm.bind_mode === 'anonymous'"
+                  placeholder="cn=svc-factum,dc=example,dc=com"
+                  class="w-full font-mono"
+                />
+              </UFormField>
+              <UFormField label="Bind password">
+                <PasswordInput
+                  v-model="serverForm.bind_password"
+                  :disabled="serverForm.bind_mode === 'anonymous'"
+                />
+                <small class="text-muted-color">
+                  {{
+                    serverForm.bind_password_set
+                      ? 'Leave blank to keep the current password.'
+                      : 'Used to search for the user before the password bind.'
+                  }}
+                </small>
+              </UFormField>
+              <UFormField label="Base DN">
+                <UInput
+                  v-model="serverForm.base_dn"
+                  placeholder="dc=example,dc=com"
+                  class="w-full font-mono"
+                />
+              </UFormField>
+              <UFormField label="User filter">
+                <UInput
+                  v-model="serverForm.user_filter"
+                  :placeholder="
+                    serverForm.server_type === 'ad' ? '(sAMAccountName=%s)' : '(uid=%s)'
+                  "
+                  class="w-full font-mono"
+                />
+                <small class="text-muted-color">One %s for the escaped username.</small>
+              </UFormField>
+              <UFormField label="Username attribute">
+                <UInput
+                  v-model="serverForm.attr_username"
+                  :placeholder="serverForm.server_type === 'ad' ? 'sAMAccountName' : 'uid'"
+                  class="w-full"
+                />
+                <small class="text-muted-color"
+                  >Used when a password reset looks the account up by email.</small
+                >
+              </UFormField>
+              <UFormField label="Email attribute">
+                <UInput v-model="serverForm.attr_email" placeholder="mail" class="w-full" />
+              </UFormField>
+              <UFormField label="Display name attribute">
+                <UInput
+                  v-model="serverForm.attr_display_name"
+                  placeholder="displayName"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Mobile attribute">
+                <UInput v-model="serverForm.attr_mobile" placeholder="mobile" class="w-full" />
+              </UFormField>
+              <UFormField label="Groups attribute">
+                <UInput v-model="serverForm.attr_groups" placeholder="memberOf" class="w-full" />
+              </UFormField>
+              <UCheckbox
+                v-model="serverForm.allow_password_change"
+                label="Allow password changes to be written back"
+              />
+              <p class="text-sm text-muted-color">
+                The account that writes the password is ldap_writeback in the config file. The same
+                account adds and changes OpenLDAP entries. Active Directory stays browse-only.
+              </p>
+              <div class="flex gap-2">
                 <UButton
-                  v-if="group.editable"
-                  icon="i-lucide-x"
+                  label="Test connection"
+                  icon="i-lucide-zap"
                   color="neutral"
+                  type="button"
+                  :loading="serverTesting"
+                  @click="testServer"
+                />
+                <UButton
+                  v-if="serverForm.id"
+                  label="Delete"
+                  icon="i-lucide-trash"
+                  color="error"
                   variant="ghost"
-                  size="sm"
-                  aria-label="Remove member"
-                  @click="removeMember(member)"
+                  type="button"
+                  :loading="serverDeleting"
+                  @click="performDeleteServer()"
                 />
               </div>
-              <UButton
-                v-if="group.editable"
-                label="Add member"
-                icon="i-lucide-plus"
-                color="neutral"
-                size="sm"
-                class="self-start"
-                @click="memberBrowser = true"
+            </form>
+
+            <form
+              v-else-if="panel === 'internal'"
+              id="directory-internal-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveInternal"
+            >
+              <h5 class="m-0">Internal directory</h5>
+              <p class="text-sm text-muted-color">
+                Workers with an <span class="font-mono">ldap</span> command serve this directory.
+                Put people and roles in folders. A role can contain other roles; membership is
+                expanded the way Active Directory expands nested groups.
+              </p>
+              <UCheckbox v-model="internalForm.enabled" label="Enable" />
+              <UFormField label="Listen">
+                <UInput v-model="internalForm.listen" placeholder=":389" class="w-full" />
+                <small class="text-muted-color">Empty uses :389. host:port.</small>
+              </UFormField>
+              <UFormField label="LDAPS listen">
+                <UInput v-model="internalForm.tls_listen" placeholder=":636" class="w-full" />
+                <small class="text-muted-color">Optional. host:port. Empty leaves LDAPS off.</small>
+              </UFormField>
+              <UFormField label="LDAPS certificate">
+                <USelectMenu
+                  v-model="internalForm.tls_certificate_id"
+                  :items="ldapsCertItems"
+                  value-key="value"
+                  label-key="label"
+                  class="w-full"
+                />
+                <small class="text-muted-color">
+                  A certificate from Services → Certificates. The worker reads it from lego storage.
+                  Worker hub certificate uses the hub TLS pair.
+                </small>
+              </UFormField>
+              <UFormField label="Base DN">
+                <UInput
+                  v-model="internalForm.base_dn"
+                  placeholder="dc=factum,dc=local"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Search bind DN">
+                <UInput :model-value="internal.bind_dn" readonly class="w-full font-mono" />
+              </UFormField>
+              <UFormField label="Search password">
+                <PasswordInput v-model="internalForm.bind_password" />
+                <small class="text-muted-color">
+                  {{
+                    internal.bind_password_set
+                      ? 'Leave blank to keep the current password.'
+                      : 'NetBox, LibreNMS, and Icinga bind with this password before they search.'
+                  }}
+                </small>
+              </UFormField>
+              <UFormField label="User filter">
+                <UInput
+                  :model-value="internal.user_filter || '(uid=%s)'"
+                  readonly
+                  class="w-full font-mono"
+                />
+              </UFormField>
+              <UCheckbox
+                v-model="internalForm.radius_use_internal"
+                label="RADIUS on the same worker uses this directory"
               />
-              <small v-if="submitted && !(group.members ?? []).length" class="text-red-500">
-                A group needs at least one member.
-              </small>
+              <p class="text-sm text-muted-color">
+                RADIUS binds to 127.0.0.1 on the plain listen port. That worker needs both
+                <span class="font-mono">radius</span> and <span class="font-mono">ldap</span>.
+                MikroTik MS-CHAPv2 still needs Active Directory.
+              </p>
+            </form>
+
+            <form
+              v-else-if="panel === 'ou'"
+              id="directory-ou-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveOU"
+            >
+              <h5 class="m-0">{{ ouForm.id ? 'Folder' : 'New folder' }}</h5>
+              <UFormField label="Name">
+                <UInput
+                  v-model.trim="ouForm.name"
+                  :color="submitted && !ouForm.name?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !ouForm.name?.trim()"
+                  autofocus
+                  class="w-full"
+                />
+                <small v-if="submitted && !ouForm.name?.trim()" class="text-red-500"
+                  >Name is required.</small
+                >
+              </UFormField>
+              <UFormField label="Inside">
+                <USelectMenu
+                  v-model="ouForm.parent_id"
+                  :items="ouParentItems"
+                  value-key="value"
+                  label-key="label"
+                  class="w-full"
+                />
+              </UFormField>
+              <p v-if="ouForm.id && selected?.dn" class="font-mono text-sm break-all">
+                {{ selected.dn }}
+              </p>
+              <div class="flex gap-2">
+                <UButton
+                  v-if="ouForm.id"
+                  label="Delete"
+                  icon="i-lucide-trash"
+                  color="error"
+                  variant="ghost"
+                  @click="performDeleteOU(selected)"
+                />
+              </div>
+            </form>
+
+            <div v-else-if="panel === 'node'" class="flex flex-col gap-2">
+              <h5 class="m-0">{{ selected?.title }}</h5>
+              <p class="text-sm text-muted-color">{{ ldapKindLabel(selected?.kind) }}</p>
+              <p v-if="selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
             </div>
-          </UFormField>
-          <div class="flex gap-2">
-            <UButton
-              v-if="group.dn && group.editable"
-              label="Delete"
-              icon="i-lucide-trash"
-              color="error"
-              variant="ghost"
-              :loading="groupDeleting"
-              @click="performDeleteGroup()"
-            />
+            <form
+              v-else-if="panel === 'user'"
+              id="directory-user-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveUser"
+            >
+              <h5 class="m-0">{{ user.id ? 'User' : 'New user' }}</h5>
+              <UFormField label="Username">
+                <UInput
+                  v-model.trim="user.username"
+                  :color="submitted && !user.username?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !user.username?.trim()"
+                  autofocus
+                  class="w-full"
+                />
+                <small v-if="submitted && !user.username?.trim()" class="text-red-500"
+                  >Username is required.</small
+                >
+              </UFormField>
+              <UFormField label="Name">
+                <UInput v-model="user.name" class="w-full" />
+              </UFormField>
+              <UFormField label="Email">
+                <UInput v-model="user.email" class="w-full" />
+              </UFormField>
+              <UFormField label="Mobile">
+                <UInput v-model="user.mobile" class="w-full" />
+              </UFormField>
+              <UFormField label="Roles">
+                <USelectMenu
+                  v-model="user.role_ids"
+                  :items="roles"
+                  value-key="id"
+                  label-key="name"
+                  placeholder="Select Roles"
+                  multiple
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Folder">
+                <USelectMenu
+                  v-model="user.ou_id"
+                  :items="userFolderItems"
+                  value-key="value"
+                  label-key="label"
+                  class="w-full"
+                />
+                <small v-if="!user.ou_id" class="text-muted-color">
+                  Default publishes this person under ou=People.
+                </small>
+              </UFormField>
+              <UFormField label="Password">
+                <PasswordInput
+                  v-model="user.password"
+                  :color="submitted && !user.id && !user.password ? 'error' : undefined"
+                  :highlight="submitted && !user.id && !user.password"
+                />
+                <small v-if="submitted && !user.id && !user.password" class="text-red-500"
+                  >Password is required.</small
+                >
+                <small v-else-if="user.id" class="text-muted-color"
+                  >Leave blank to keep the current password.</small
+                >
+              </UFormField>
+              <div class="flex gap-2">
+                <UButton
+                  v-if="user.id && !isAdmin(user)"
+                  label="Delete"
+                  icon="i-lucide-trash"
+                  color="error"
+                  variant="ghost"
+                  :loading="userDeleting"
+                  @click="performDeleteUser()"
+                />
+              </div>
+            </form>
+
+            <form
+              v-else-if="panel === 'role'"
+              id="directory-role-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveRole"
+            >
+              <h5 class="m-0">{{ role.id ? 'Role' : 'New role' }}</h5>
+              <UFormField label="Name">
+                <UInput
+                  v-model.trim="role.name"
+                  :color="submitted && !role.name?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !role.name?.trim()"
+                  autofocus
+                  class="w-full"
+                />
+                <small v-if="submitted && !role.name?.trim()" class="text-red-500"
+                  >Name is required.</small
+                >
+              </UFormField>
+              <UFormField label="Description">
+                <UTextarea v-model="role.description" :rows="3" class="w-full" />
+              </UFormField>
+              <UFormField label="Folder">
+                <USelectMenu
+                  v-model="role.ou_id"
+                  :items="roleFolderItems"
+                  value-key="value"
+                  label-key="label"
+                  class="w-full"
+                />
+                <small v-if="!role.ou_id" class="text-muted-color">
+                  Default publishes this role under ou=Roles.
+                </small>
+              </UFormField>
+              <UFormField label="Contains roles">
+                <USelectMenu
+                  v-model="role.member_role_ids"
+                  :items="nestRoleItems"
+                  value-key="id"
+                  label-key="name"
+                  placeholder="Nested roles"
+                  multiple
+                  class="w-full"
+                />
+                <small class="text-muted-color">
+                  People in a contained role are also in this role, including through further
+                  levels.
+                </small>
+              </UFormField>
+            </form>
+
+            <form
+              v-else-if="panel === 'person'"
+              id="directory-person-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="savePerson"
+            >
+              <h5 class="m-0">{{ person.dn ? 'Directory user' : 'New directory user' }}</h5>
+              <p v-if="personLoading" class="text-sm text-muted-color">Loading…</p>
+              <UFormField label="Container">
+                <UInput :model-value="personParent()" readonly class="w-full" />
+              </UFormField>
+              <UFormField label="Username">
+                <UInput
+                  v-model.trim="person.uid"
+                  :disabled="!person.editable"
+                  :color="submitted && !person.uid?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !person.uid?.trim()"
+                  autofocus
+                  class="w-full"
+                />
+                <small v-if="submitted && !person.uid?.trim()" class="text-red-500"
+                  >Username is required.</small
+                >
+              </UFormField>
+              <UFormField label="Name">
+                <UInput v-model="person.cn" :disabled="!person.editable" class="w-full" />
+                <small v-if="submitted && !person.cn?.trim()" class="text-red-500"
+                  >Name is required.</small
+                >
+              </UFormField>
+              <UFormField label="Surname">
+                <UInput v-model="person.sn" :disabled="!person.editable" class="w-full" />
+                <small class="text-muted-color">OpenLDAP requires a surname (sn).</small>
+                <small v-if="submitted && !person.sn?.trim()" class="text-red-500"
+                  >Surname is required.</small
+                >
+              </UFormField>
+              <UFormField label="Email">
+                <UInput v-model="person.mail" :disabled="!person.editable" class="w-full" />
+              </UFormField>
+              <UFormField label="Display name">
+                <UInput v-model="person.display_name" :disabled="!person.editable" class="w-full" />
+              </UFormField>
+              <UFormField label="Mobile">
+                <UInput v-model="person.mobile" :disabled="!person.editable" class="w-full" />
+              </UFormField>
+              <UFormField v-if="person.editable" label="Password">
+                <PasswordInput
+                  v-model="person.password"
+                  :color="submitted && !person.dn && !person.password ? 'error' : undefined"
+                  :highlight="submitted && !person.dn && !person.password"
+                />
+                <small v-if="submitted && !person.dn && !person.password" class="text-red-500"
+                  >Password is required.</small
+                >
+                <small v-else-if="person.dn" class="text-muted-color"
+                  >Leave blank to keep the current password.</small
+                >
+              </UFormField>
+              <div class="flex gap-2">
+                <UButton
+                  v-if="person.dn && person.editable"
+                  label="Delete"
+                  icon="i-lucide-trash"
+                  color="error"
+                  variant="ghost"
+                  :loading="personDeleting"
+                  @click="performDeletePerson()"
+                />
+              </div>
+            </form>
+
+            <form
+              v-else-if="panel === 'group'"
+              id="directory-group-form"
+              class="flex flex-col gap-4"
+              @submit.prevent="saveGroup"
+            >
+              <h5 class="m-0">{{ group.dn ? 'Directory group' : 'New directory group' }}</h5>
+              <p v-if="groupLoading" class="text-sm text-muted-color">Loading…</p>
+              <UAlert
+                v-if="group.dn && !group.editable"
+                color="neutral"
+                variant="subtle"
+                title="This group is shown read-only. Factum edits groupOfNames and groupOfUniqueNames entries on an OpenLDAP-compatible server."
+              />
+              <UFormField label="Container">
+                <UInput
+                  :model-value="group.dn ? parentOfDN(group.dn) : group.parent_dn"
+                  readonly
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Name">
+                <UInput
+                  v-model.trim="group.cn"
+                  :disabled="!group.editable"
+                  :color="submitted && !group.cn?.trim() ? 'error' : undefined"
+                  :highlight="submitted && !group.cn?.trim()"
+                  autofocus
+                  class="w-full"
+                />
+                <small v-if="submitted && !group.cn?.trim()" class="text-red-500"
+                  >Name is required.</small
+                >
+              </UFormField>
+              <UFormField label="Description">
+                <UTextarea
+                  v-model="group.description"
+                  :disabled="!group.editable"
+                  :rows="3"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Members">
+                <div class="flex flex-col gap-2">
+                  <div
+                    v-for="member in group.members ?? []"
+                    :key="member"
+                    class="flex items-center gap-2"
+                  >
+                    <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ member }}</span>
+                    <UButton
+                      v-if="group.editable"
+                      icon="i-lucide-x"
+                      color="neutral"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove member"
+                      @click="removeMember(member)"
+                    />
+                  </div>
+                  <UButton
+                    v-if="group.editable"
+                    label="Add member"
+                    icon="i-lucide-plus"
+                    color="neutral"
+                    size="sm"
+                    class="self-start"
+                    @click="memberBrowser = true"
+                  />
+                  <small v-if="submitted && !(group.members ?? []).length" class="text-red-500">
+                    A group needs at least one member.
+                  </small>
+                </div>
+              </UFormField>
+              <div class="flex gap-2">
+                <UButton
+                  v-if="group.dn && group.editable"
+                  label="Delete"
+                  icon="i-lucide-trash"
+                  color="error"
+                  variant="ghost"
+                  :loading="groupDeleting"
+                  @click="performDeleteGroup()"
+                />
+              </div>
+            </form>
           </div>
-        </form>
+        </div>
       </div>
-    </div>
-  </div>
+    </template>
+    <template #authorization>
+      <AuthorizationSettings />
+    </template>
+  </UTabs>
 
   <LdapTreeBrowser v-model:visible="memberBrowser" selectable="person" @select="addMember" />
 

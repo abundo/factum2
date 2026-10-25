@@ -205,7 +205,7 @@ onMounted(() => {
     />
   </div>
   <template v-else>
-    <PageFormBar page title="Authorization">
+    <PageFormBar title="Authorization">
       <UButton
         label="Save"
         icon="i-lucide-check"

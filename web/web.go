@@ -612,7 +612,7 @@ func GUI(p *GuiParams) error {
 	adminApi.DELETE("/ldap/servers/:id", ctrl.ApiLdapServerDelete)
 	adminApi.POST("/ldap/test", ctrl.ApiLdapTestConnection)
 
-	// ----- API: LDAP/AD tree browse (Admin -> Authorization page, group picker) -----
+	// ----- API: LDAP/AD tree browse (Directory Authorization tab, group picker) -----
 	adminApi.GET("/ldap/browse", ctrl.ApiLdapBrowse)
 
 	// Directory page: read the tree for AD and OpenLDAP. Writes (people and
@@ -635,7 +635,7 @@ func GUI(p *GuiParams) error {
 	adminApi.PUT("/ldap/place", ctrl.ApiLdapPlace)
 	adminApi.PUT("/ldap/roles/:id/members", ctrl.ApiRoleMembersUpdate)
 
-	// ----- API: LDAP group -> role mappings (Admin -> Authorization page) -----
+	// ----- API: LDAP group -> role mappings (Directory Authorization tab) -----
 	ldapRoleMappings_ := NewSecureCRUDHandler[models.LdapRoleMapping, models.LdapRoleMappingDTO](DB)
 	adminApi.GET("/ldap-role-mappings", ldapRoleMappings_.GetAll)
 	adminApi.GET("/ldap-role-mappings/:id", ldapRoleMappings_.GetOne)

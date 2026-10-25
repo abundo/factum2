@@ -704,9 +704,9 @@ type Settings struct {
 	DeviceSyncWorkers int `gorm:"column:device_sync_workers" form:"device_sync_workers" json:"device_sync_workers"`
 
 	// LDAP / Active Directory authentication + authorization. Connection
-	// fields are edited from the admin "Authentication" page,
-	// LdapDefaultRoleID from the "Authorization" page - both just load/save
-	// this same Settings singleton, like every other integration here.
+	// fields are edited on Directory server nodes. LdapDefaultRoleID is the
+	// Authorization tab on that page. Both just load/save this same Settings
+	// singleton, like every other integration here.
 	LdapEnabled *bool `gorm:"column:ldap_enabled" form:"ldap_enabled" json:"ldap_enabled"`
 	// LdapServerType is "ad" | "generic" (OpenLDAP-compatible). Drives
 	// server-specific behavior that differs between the two (e.g. how a

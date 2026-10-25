@@ -141,7 +141,7 @@ A worker that should answer LDAP for NetBox, LibreNMS, Icinga, or RADIUS
 needs an `ldap` entry in `worker.commands`. The command line is not
 executed. The name starts a listener (default `:389`, plus an optional
 LDAPS address from the GUI). The directory is the local users, roles, and
-folders edited under Admin → AAA → Directory. The worker keeps the last
+folders edited under Admin → Services → Directory. The worker keeps the last
 copy at `worker.ldap_state` (default `/var/lib/factum2/ldap/cache.json`),
 so binds continue while the primary is down. That file holds password
 hashes. When RADIUS is set to use this directory, the same worker needs

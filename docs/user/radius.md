@@ -8,7 +8,7 @@ order: 57
 **Admin → Services → RADIUS** lets routers and switches log in with a username
 and password. The password check and the group check happen on the RADIUS
 worker. By default that worker tries each enabled OpenLDAP or Active
-Directory server under **Admin → AAA → Directory**, in order. A server
+Directory server under **Admin → Services → Directory**, in order. A server
 that fails is skipped. If none accepts the password, the client is
 denied. **Directory** can instead publish local users and
 roles as an internal directory and have RADIUS on the same worker use it.
@@ -73,7 +73,7 @@ internal directory cannot check MS-CHAPv2, so those attempts are rejected.
 
 ## Internal directory
 
-On **Admin → AAA → Directory**, enable the internal directory and turn on
+On **Admin → Services → Directory**, enable the internal directory and turn on
 **RADIUS on the same worker uses this directory**. Add an `ldap` command
 next to `radius` on that worker. RADIUS then binds to `127.0.0.1` on the
 directory's plain listen port and reads `memberOf`, including roles nested

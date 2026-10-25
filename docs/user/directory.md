@@ -5,7 +5,7 @@ order: 56
 
 # Directory
 
-**Admin → AAA → Directory** is the internal LDAP directory: people, roles,
+**Admin → Services → Directory** is the internal LDAP directory: people, roles,
 and folders. OpenLDAP and Active Directory servers are further roots in
 the same tree. Add, change, and remove them there. The form on the right
 is the server's connection settings.
@@ -64,7 +64,8 @@ password hashes, so keep the directory mode restricted to the factum user.
 RADIUS server bind to `127.0.0.1` on the plain listen port. The worker
 needs both `radius` and `ldap`. Renaming a role or moving it between
 folders updates the group DN stored on RADIUS policies and on
-Authorization mappings. MikroTik MS-CHAPv2 still needs Active Directory.
+the Authorization tab (LDAP group to Factum role). MikroTik MS-CHAPv2
+still needs Active Directory.
 
 ## External directory
 
