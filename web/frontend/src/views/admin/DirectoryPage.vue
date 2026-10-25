@@ -30,7 +30,7 @@ import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { confirmDiscard, usePageForm } from '@/composables/useFormGuard'
-import { ldapKindLabel, toLdapNode } from '@/utils/ldapTree'
+import { ldapKindLabel, sortDirectoryNodes, toLdapNode } from '@/utils/ldapTree'
 import { searchWords } from '@/utils/search'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
@@ -228,7 +228,7 @@ function folderItems(excludeId) {
     const rows = (internal.value.ous || [])
       .filter((ou) => (ou.parent_id || 0) === parent && !hidden.has(ou.id))
       .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
     for (const ou of rows) {
       items.push({ label: `${depth ? '· '.repeat(depth) : ''}${ou.name}`, value: ou.id })
       walk(ou.id, depth + 1)
@@ -287,7 +287,7 @@ function ouNodes(parentId) {
   return (internal.value.ous || [])
     .filter((ou) => (ou.parent_id || 0) === parentId)
     .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
     .map((ou) => ({
       key: `ou-${ou.id}`,
       title: ou.name,
@@ -298,12 +298,16 @@ function ouNodes(parentId) {
       parent_id: ou.parent_id || 0,
       dn: ou.dn || '',
       expanded: true,
-      children: [
-        ...ouNodes(ou.id),
-        ...users.value.filter((u) => ouOf('user', u.id) === ou.id).map(dirUserNode),
-        ...roles.value.filter((r) => ouOf('role', r.id) === ou.id).map(dirRoleNode),
-      ],
+      children: folderChildren(ou.id),
     }))
+}
+
+function folderChildren(parentId) {
+  return sortDirectoryNodes([
+    ...ouNodes(parentId),
+    ...users.value.filter((u) => (ouOf('user', u.id) || 0) === parentId).map(dirUserNode),
+    ...roles.value.filter((r) => (ouOf('role', r.id) || 0) === parentId).map(dirRoleNode),
+  ])
 }
 
 function internalBranch() {
@@ -315,11 +319,7 @@ function internalBranch() {
     kind: 'internal',
     dn: internal.value.base_dn || '',
     expanded: true,
-    children: [
-      ...ouNodes(0),
-      ...users.value.filter((u) => !ouOf('user', u.id)).map(dirUserNode),
-      ...roles.value.filter((r) => !ouOf('role', r.id)).map(dirRoleNode),
-    ],
+    children: folderChildren(0),
   }
 }
 

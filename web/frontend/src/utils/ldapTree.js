@@ -21,6 +21,20 @@ export function toLdapNode(entry) {
   }
 }
 
+// Folders stay above people and roles. Each group is alphabetical, ignoring case.
+export function compareDirectoryNodes(a, b) {
+  const aFolder = (a?.kind || a?.type) === 'ou'
+  const bFolder = (b?.kind || b?.type) === 'ou'
+  if (aFolder !== bFolder) return aFolder ? -1 : 1
+  const aTitle = a?.title || a?.name || ''
+  const bTitle = b?.title || b?.name || ''
+  return aTitle.localeCompare(bTitle, undefined, { sensitivity: 'base' })
+}
+
+export function sortDirectoryNodes(nodes) {
+  return (nodes ?? []).slice().sort(compareDirectoryNodes)
+}
+
 export function ldapKindLabel(kind) {
   switch (kind) {
     case 'local':
