@@ -1153,7 +1153,7 @@ onBeforeUnmount(() => {
       title="You need administrator permissions to view the directory."
     />
   </div>
-  <div v-else class="card">
+  <div v-else class="card flex min-h-0 flex-1 flex-col">
     <PageFormBar page>
       <template #title>
         <div>
@@ -1200,15 +1200,15 @@ onBeforeUnmount(() => {
       />
     </PageFormBar>
     <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
-      <div class="w-full shrink-0 lg:w-96">
-        <SearchInput v-model="search" class="mb-3" />
+    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row">
+      <div class="flex min-h-0 w-full min-w-0 flex-1 flex-col lg:w-96 lg:flex-none">
+        <SearchInput v-model="search" class="mb-3 shrink-0" />
         <div class="directory-tree-host">
           <div ref="el" class="ipam-tree" />
         </div>
-        <p v-if="loading" class="mt-2 text-sm text-muted-color">Loading…</p>
+        <p v-if="loading" class="mt-2 shrink-0 text-sm text-muted-color">Loading…</p>
       </div>
-      <div class="min-w-0 flex-1 lg:max-h-[min(70vh,36rem)] lg:overflow-auto">
+      <div class="min-h-0 min-w-0 flex-1 overflow-auto">
         <p v-if="!panel" class="text-sm text-muted-color">
           Select an entry. Click + or − to open a folder. Right-click a row to add, change, or
           remove it.
@@ -1643,16 +1643,27 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* .ipam-tree is height:100%. This host gives that percentage a real box, so
-   the row list scrolls instead of growing with every loaded entry. */
+/* The page fills the viewport, so this host is the leftover height under
+   Search. A fixed 70vh host was taller than that leftover space: the page
+   scrolled, and Wunderbaum's sticky header plus overflow:unset on the row
+   list painted rows over the Directory title and under the toolbar.
+   Clip and isolate so a row cannot leave this box. */
 .directory-tree-host {
-  height: min(70vh, 36rem);
-  min-height: 16rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: clip;
+  isolation: isolate;
+  position: relative;
+  z-index: 0;
 }
 
 .directory-tree-host :deep(.ipam-tree) {
   height: 100%;
+  max-height: 100%;
+  min-height: 0;
   flex: none;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 :deep(.ipam-tree span.wb-node i.wb-expander:not(.wb-indent)) {
