@@ -35,6 +35,48 @@ export function sortDirectoryNodes(nodes) {
   return (nodes ?? []).slice().sort(compareDirectoryNodes)
 }
 
+// internalDropRegions is where a user, role, or folder may land.
+// overId is the folder under the pointer (0 is the internal root).
+// aroundParent is that row's parent folder, or null when the row is not
+// inside the internal directory. intoSelf is true when the destination is
+// the dragged folder or a folder inside it. A drop in the same folder is
+// refused: siblings stay in name order.
+export function internalDropRegions({ sourceParent, targetKind, overId, aroundParent, intoSelf }) {
+  const regions = []
+  if ((targetKind === 'ou' || targetKind === 'internal') && overId !== sourceParent && !intoSelf) {
+    regions.push('over')
+  }
+  if (
+    aroundParent != null &&
+    aroundParent !== sourceParent &&
+    !intoSelf &&
+    (targetKind === 'user' || targetKind === 'role' || targetKind === 'ou' || targetKind === 'internal')
+  ) {
+    regions.push('before', 'after')
+  }
+  return regions.length ? regions : false
+}
+
+// serverDropRegions reorders external servers among themselves. The local
+// directory is not a target, so a server cannot be placed ahead of it.
+export function serverDropRegions(targetKind) {
+  if (targetKind === 'server') return ['before', 'after']
+  return false
+}
+
+// serverOrderAfterDrop returns server ids with sourceId inserted beside
+// targetId. mode is before or after. A target that is not a server is refused.
+export function serverOrderAfterDrop(serverIds, sourceId, targetKind, targetId, mode) {
+  if (targetKind !== 'server') return null
+  if (mode !== 'before' && mode !== 'after') return null
+  const ids = (serverIds ?? []).filter((id) => id !== sourceId)
+  let index = ids.indexOf(targetId)
+  if (index < 0) return null
+  if (mode === 'after') index += 1
+  ids.splice(index, 0, sourceId)
+  return ids
+}
+
 export function ldapKindLabel(kind) {
   switch (kind) {
     case 'local':

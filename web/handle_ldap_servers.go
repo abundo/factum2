@@ -212,6 +212,48 @@ func (ctrl *Controller) ApiLdapServerDelete(c *echo.Context) error {
 
 func ldapBool(v bool) *bool { return &v }
 
+// ApiLdapServersReorder sets login order from the directory tree. ids is
+// every external server, first to last. The local directory is not a row
+// here, so it stays ahead of this list.
+func (ctrl *Controller) ApiLdapServersReorder(c *echo.Context) error {
+	var req struct {
+		IDs []uint `json:"ids"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	var rows []models.LdapServer
+	if err := ctrl.DB.Find(&rows).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if len(req.IDs) != len(rows) {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "list every LDAP server"})
+	}
+	known := make(map[uint]bool, len(rows))
+	for i := range rows {
+		known[rows[i].ID] = true
+	}
+	seen := make(map[uint]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		if id == 0 || !known[id] || seen[id] {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "list every LDAP server"})
+		}
+		seen[id] = true
+	}
+	err := ctrl.DB.Transaction(func(tx *gorm.DB) error {
+		for i, id := range req.IDs {
+			if err := tx.Model(&models.LdapServer{}).Where("id = ?", id).Update("position", i+1).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 func writeLDAPServerError(c *echo.Context, err error) error {
 	if se, ok := err.(echoStatusError); ok {
 		return c.JSON(se.code, map[string]any{"error": se.msg})

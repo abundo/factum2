@@ -12,6 +12,7 @@ import {
   deleteLdapServer,
   getLdapEntry,
   getLdapServers,
+  reorderLdapServers,
   testLdapConnection,
   updateLdapGroup,
   updateLdapPerson,
@@ -34,7 +35,14 @@ import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { confirmDiscard, usePageForm } from '@/composables/useFormGuard'
-import { ldapKindLabel, sortDirectoryNodes, toLdapNode } from '@/utils/ldapTree'
+import {
+  internalDropRegions,
+  ldapKindLabel,
+  serverDropRegions,
+  serverOrderAfterDrop,
+  sortDirectoryNodes,
+  toLdapNode,
+} from '@/utils/ldapTree'
 import { searchWords } from '@/utils/search'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
@@ -401,8 +409,208 @@ function expanderFromEvent(ev) {
 
 function isBranch(node) {
   if (!node) return false
-  const kind = node.data?.kind || node.type
+  const kind = nodeKind(node)
   return !['user', 'role', 'person', 'group'].includes(kind)
+}
+
+function nodeKind(node) {
+  return node?.data?.kind || node?.type || ''
+}
+
+// parentFolderId is the internal folder that holds node. 0 is the local
+// root. null means the node is not a user, role, or folder.
+function parentFolderId(node) {
+  const parent = node?.parent
+  if (!parent || parent === tree?.root) return null
+  const kind = nodeKind(parent)
+  if (kind === 'internal') return 0
+  if (kind === 'ou') return parent.data?.ou_id || 0
+  return null
+}
+
+function ouDescendsFrom(destId, ancestorId) {
+  if (!destId || !ancestorId) return false
+  let id = destId
+  const seen = new Set()
+  while (id) {
+    if (id === ancestorId) return true
+    if (seen.has(id)) return false
+    seen.add(id)
+    const ou = (internal.value.ous || []).find((row) => row.id === id)
+    id = ou?.parent_id || 0
+  }
+  return false
+}
+
+function internalRegions(source, target) {
+  const sourceParent = parentFolderId(source)
+  if (sourceParent == null) return false
+  const targetKind = nodeKind(target)
+  const overId = targetKind === 'ou' ? target.data?.ou_id || 0 : targetKind === 'internal' ? 0 : null
+  const dest = overId != null ? overId : parentFolderId(target)
+  const intoSelf =
+    nodeKind(source) === 'ou' && dest != null && ouDescendsFrom(dest, source.data?.ou_id || 0)
+  return internalDropRegions({
+    sourceParent,
+    targetKind,
+    overId,
+    aroundParent: parentFolderId(target),
+    intoSelf,
+  })
+}
+
+function dropFolderId(target, mode) {
+  if (mode === 'appendChild') {
+    const kind = nodeKind(target)
+    if (kind === 'internal') return 0
+    if (kind === 'ou') return target.data?.ou_id || 0
+    return null
+  }
+  return parentFolderId(target)
+}
+
+function setPlacement(kind, id, ouId) {
+  const list = (internal.value.placements || []).filter((p) => !(p.kind === kind && p.id === id))
+  if (ouId) list.push({ kind, id, ou_id: ouId })
+  internal.value = { ...internal.value, placements: list }
+}
+
+function setOuParent(id, parentId) {
+  const ous = (internal.value.ous || []).map((ou) =>
+    ou.id === id ? { ...ou, parent_id: parentId || null } : ou,
+  )
+  internal.value = { ...internal.value, ous }
+}
+
+// patchOpenFolder keeps an open form on the saved folder without marking a
+// clean form dirty. Other unsaved fields stay unsaved.
+async function patchOpenFolder(kind, id, dest) {
+  const folder = dest || 0
+  let touched = false
+  if (kind === 'user' && panel.value === 'user' && user.value.id === id) {
+    touched = true
+    user.value.ou_id = folder
+  } else if (kind === 'role' && panel.value === 'role' && role.value.id === id) {
+    touched = true
+    role.value.ou_id = folder
+  } else if (kind === 'ou' && panel.value === 'ou' && ouForm.value.id === id) {
+    touched = true
+    ouForm.value.parent_id = folder
+  }
+  if (!touched) return
+  if (selected.value?.key === (kind === 'ou' ? `ou-${id}` : `dir-${kind}-${id}`)) {
+    selected.value = {
+      ...selected.value,
+      ou_id: kind === 'ou' ? selected.value.ou_id : folder,
+      parent_id: kind === 'ou' ? folder : selected.value.parent_id,
+    }
+  }
+  await nextTick()
+  mark()
+}
+
+function rootServerIds() {
+  return (tree?.root?.children ?? [])
+    .filter((node) => nodeKind(node) === 'server')
+    .map((node) => node.data?.server_id)
+    .filter(Boolean)
+}
+
+let treeDrop = null
+
+function onTreeDrop(e) {
+  if (treeDrop) return
+  const source = e.sourceNode
+  const target = e.node
+  const mode = e.suggestedDropMode
+  if (!source || !target || !mode) return
+  const kind = nodeKind(source)
+  treeDrop = (
+    kind === 'server' ? dropServer(source, target, mode) : dropInternal(source, target, mode)
+  ).finally(() => {
+    treeDrop = null
+  })
+}
+
+async function dropInternal(source, target, mode) {
+  const kind = nodeKind(source)
+  if (kind !== 'user' && kind !== 'role' && kind !== 'ou') return
+  const dest = dropFolderId(target, mode)
+  const current = parentFolderId(source)
+  if (dest == null || dest === current) return
+  if (kind === 'ou' && ouDescendsFrom(dest, source.data?.ou_id || 0)) return
+  const key = source.key
+  const activeKey = tree.getActiveNode?.()?.key || null
+  try {
+    if (kind === 'user' || kind === 'role') {
+      const id = kind === 'user' ? source.data.user_id : source.data.role_id
+      await placeLdap({ kind, id, ou_id: dest || null })
+      setPlacement(kind, id, dest)
+      if (!formDirty()) await patchOpenFolder(kind, id, dest)
+      else if (
+        (kind === 'user' && panel.value === 'user' && user.value.id === id) ||
+        (kind === 'role' && panel.value === 'role' && role.value.id === id)
+      ) {
+        if (kind === 'user') user.value.ou_id = dest || 0
+        else role.value.ou_id = dest || 0
+      }
+    } else {
+      const id = source.data.ou_id
+      const ou = (internal.value.ous || []).find((row) => row.id === id)
+      if (!ou) return
+      await updateLdapOU(id, { name: ou.name, parent_id: dest || null })
+      setOuParent(id, dest)
+      if (!formDirty()) await patchOpenFolder('ou', id, dest)
+      else if (panel.value === 'ou' && ouForm.value.id === id) ouForm.value.parent_id = dest || 0
+    }
+    syncInternal()
+    if (activeKey) await tree.findKey(activeKey)?.setActive(true, { noEvents: true })
+    else await tree.findKey(key)?.makeVisible?.()
+  } catch (err) {
+    toastError(err, 'Could not move that entry.')
+    await reloadLocal()
+  }
+}
+
+async function dropServer(source, target, mode) {
+  const ids = serverOrderAfterDrop(
+    rootServerIds(),
+    source.data?.server_id,
+    nodeKind(target),
+    target.data?.server_id,
+    mode,
+  )
+  if (!ids) return
+  const previous = rootServerIds()
+  if (ids.join(',') === previous.join(',')) return
+  const region = mode === 'appendChild' ? 'after' : mode
+  const activeKey = tree.getActiveNode?.()?.key || null
+  try {
+    source.moveTo(target, region)
+    await reorderLdapServers(ids)
+    const byId = new Map(servers.value.map((row) => [row.id, { ...row }]))
+    servers.value = ids
+      .map((id, index) => {
+        const row = byId.get(id)
+        if (row) row.position = index + 1
+        return row
+      })
+      .filter(Boolean)
+    const moved = source.data?.server_id
+    const position = ids.indexOf(moved) + 1
+    if (panel.value === 'server' && serverForm.value.id === moved && position > 0) {
+      const dirty = formDirty()
+      serverForm.value.position = position
+      if (!dirty) {
+        await nextTick()
+        mark()
+      }
+    }
+    if (activeKey) await tree.findKey(activeKey)?.setActive(true, { noEvents: true })
+  } catch (err) {
+    toastError(err, 'Could not reorder the LDAP servers.')
+    await reloadServers()
+  }
 }
 
 function destroyTree() {
@@ -535,6 +743,28 @@ function buildTree() {
       creating.value = false
       selected.value = payload(e.node)
       showSelection(selected.value)
+    },
+    dnd: {
+      effectAllowed: 'move',
+      dropEffectDefault: 'move',
+      guessDropEffect: false,
+      // Server rows stay lazy until they are opened. Reordering still has
+      // to land on a server that has not been loaded.
+      preventLazyParents: false,
+      preventForeignNodes: true,
+      preventNonNodes: true,
+      dragStart: (e) => {
+        const kind = nodeKind(e.node)
+        return kind === 'user' || kind === 'role' || kind === 'ou' || kind === 'server'
+      },
+      dragEnter: (e) => {
+        const source = e.sourceNode
+        const target = e.node
+        if (!source || !target) return false
+        if (nodeKind(source) === 'server') return serverDropRegions(nodeKind(target))
+        return internalRegions(source, target)
+      },
+      drop: (e) => onTreeDrop(e),
     },
   })
   bindContextMenu()
@@ -1457,8 +1687,9 @@ onBeforeUnmount(() => {
       </div>
       <div class="min-h-0 min-w-0 flex-1 overflow-auto">
         <p v-if="!panel" class="text-sm text-muted-color">
-          Select an entry. Click + or − to open a folder. Right-click a row to add, change, or
-          remove it.
+          Select an entry. Drag a user, role, or folder onto a folder. Drag an LDAP or Active
+          Directory server to change the login order. The local directory stays first. Right-click
+          a row to add, change, or remove it.
         </p>
         <form
           v-else-if="panel === 'server'"
@@ -1486,7 +1717,8 @@ onBeforeUnmount(() => {
               class="w-full"
             />
             <small class="text-muted-color"
-              >Lower numbers are tried first. Empty puts the server last.</small
+              >Lower numbers are tried first. Drag the server in the tree to change this. The local
+              directory stays first. Empty puts a new server last.</small
             >
           </UFormField>
           <UFormField label="Server type">

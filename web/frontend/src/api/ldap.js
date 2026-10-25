@@ -16,6 +16,10 @@ export function updateLdapServer(id, payload) {
   return http.put(`/admin/ldap/servers/${id}`, payload).then((res) => res.data)
 }
 
+export function reorderLdapServers(ids) {
+  return http.put('/admin/ldap/servers/reorder', { ids })
+}
+
 export function deleteLdapServer(id) {
   return http.delete(`/admin/ldap/servers/${id}`).then((res) => res.data)
 }

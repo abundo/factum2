@@ -18,8 +18,10 @@ The bind DN is `cn=svc-factum,<base DN>`. NetBox, LibreNMS, Icinga, and
 other applications bind with that account, then search with `(uid=%s)`.
 
 **New folder** creates an organizational unit. Folders nest. A person or
-role can sit in a folder. **Default** publishes a person under `ou=People`
-and a role under `ou=Roles`.
+role can sit in a folder. Drag a person, a role, or a folder onto another
+folder to move it. The rows inside a folder stay in name order, with
+folders first. **Default** publishes a person under `ou=People` and a
+role under `ou=Roles`.
 
 A role can contain other roles (**Contains roles**). `member` lists the
 people and roles placed directly in that role. `memberOf` on a person
@@ -68,9 +70,10 @@ Authorization mappings. MikroTik MS-CHAPv2 still needs Active Directory.
 
 **OpenLDAP** and **Active Directory** add a server to the tree. Select it
 to edit the host, port, TLS, bind account, base DN, and search filter.
-**Order** is the sequence login uses. Each enabled server is tried in that
-order. A server that is down or rejects the password is skipped. If none
-accepts the client, access is denied.
+**Order** is the sequence login uses. Drag a server up or down to change
+it. The local directory stays first and cannot be moved. Each enabled
+server is tried in that order. A server that is down or rejects the
+password is skipped. If none accepts the client, access is denied.
 
 Active Directory is shown for browsing. OpenLDAP entries can be added and
 changed when `ldap_writeback.bind_dn` and `ldap_writeback.bind_password`

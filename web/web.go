@@ -607,6 +607,7 @@ func GUI(p *GuiParams) error {
 	// ----- API: external OpenLDAP / AD servers (Admin -> Directory) -----
 	adminApi.GET("/ldap/servers", ctrl.ApiLdapServers)
 	adminApi.POST("/ldap/servers", ctrl.ApiLdapServerCreate)
+	adminApi.PUT("/ldap/servers/reorder", ctrl.ApiLdapServersReorder)
 	adminApi.PUT("/ldap/servers/:id", ctrl.ApiLdapServerUpdate)
 	adminApi.DELETE("/ldap/servers/:id", ctrl.ApiLdapServerDelete)
 	adminApi.POST("/ldap/test", ctrl.ApiLdapTestConnection)

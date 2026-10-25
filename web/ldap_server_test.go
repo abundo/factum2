@@ -67,3 +67,57 @@ func TestLdapServerCRUDHidesPassword(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 }
+
+func TestLdapServersReorder(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	first := createLdapServer(t, ctrl, "One")
+	second := createLdapServer(t, ctrl, "Two")
+	third := createLdapServer(t, ctrl, "Three")
+
+	c, rec := jsonRequest(t, http.MethodPut, "/api/admin/ldap/servers/reorder", map[string]any{
+		"ids": []uint{third, first, second},
+	}, nil, nil)
+	if err := ctrl.ApiLdapServersReorder(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("reorder %d %s", rec.Code, rec.Body.String())
+	}
+	var rows []models.LdapServer
+	if err := db.Order("position, id").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].ID != third || rows[0].Position != 1 || rows[1].ID != first || rows[2].ID != second || rows[2].Position != 3 {
+		t.Fatalf("order = %+v", rows)
+	}
+
+	c, rec = jsonRequest(t, http.MethodPut, "/api/admin/ldap/servers/reorder", map[string]any{
+		"ids": []uint{third, first},
+	}, nil, nil)
+	if err := ctrl.ApiLdapServersReorder(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("partial %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func createLdapServer(t *testing.T, ctrl *Controller, name string) uint {
+	t.Helper()
+	c, rec := jsonRequest(t, http.MethodPost, "/api/admin/ldap/servers", map[string]any{
+		"name": name, "server_type": "generic", "host": name + ".example.com", "port": 389,
+		"enabled": true, "base_dn": "dc=example,dc=com",
+	}, nil, nil)
+	if err := ctrl.ApiLdapServerCreate(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create %s %d %s", name, rec.Code, rec.Body.String())
+	}
+	var created LdapServerDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	return created.ID
+}
