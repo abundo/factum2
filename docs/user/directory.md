@@ -31,7 +31,14 @@ The directory is read-only on the wire. Clients can bind and search.
 `userPassword` is never returned; a bind checks the local password.
 Accounts that sign in through an external directory, and any account
 whose password is not a local hash, are left out. Anonymous bind returns
-only the root DSE.
+the root DSE and the subschema.
+
+The root DSE points `subschemaSubentry` at `cn=subschema`. That entry
+lists the object classes and attribute types the directory publishes
+(`inetOrgPerson`, `groupOfNames`, `organizationalUnit`, and the base DN's
+domain classes), in the same description format OpenLDAP uses. `group`
+is a second name of `groupOfNames`. Apache Directory Studio loads this
+entry when the connection opens.
 
 An optional LDAPS listen address serves LDAPS. **LDAPS certificate**
 chooses a row from Services → Certificates. The worker reads

@@ -550,8 +550,8 @@ func doSearch(d *Directory, st *bindState, id int, op ber) [][]byte {
 	for _, a := range op.kids[7].kids {
 		attrs = append(attrs, a.text())
 	}
-	if st.anon && !(strings.TrimSpace(base) == "" && scope == 0) {
-		return fail(codeInsufficientAccess, "anonymous search is limited to the root DSE")
+	if st.anon && !anonReadBase(base, scope) {
+		return fail(codeInsufficientAccess, "anonymous search is limited to the root DSE and the subschema")
 	}
 	if scope < 0 || scope > 2 {
 		return fail(codeProtocolError, "bad scope")

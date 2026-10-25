@@ -14,6 +14,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- The internal LDAP server publishes `cn=subschema`. Apache Directory
+  Studio can load that OpenLDAP-style schema instead of reporting that
+  the directory has none. Anonymous reads of the subschema are allowed,
+  the same as the root DSE.
 - `install.py --compose --server` starts a stopped lab with `make dev-up`.
   `podman compose ps` lists exited containers, so a lab left by
   `make dev-down` was treated as running and was not started.

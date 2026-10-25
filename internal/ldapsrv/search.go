@@ -264,6 +264,12 @@ func (d *Directory) inChain(e *Entry, attr, value string) bool {
 
 // scope: 0 base, 1 one level, 2 subtree.
 func (d *Directory) candidates(base string, scope int) []*Entry {
+	if normalizeDN(base) == normalizeDN(subschemaDN) {
+		if scope == 1 {
+			return nil
+		}
+		return []*Entry{subschemaEntry()}
+	}
 	if normalizeDN(base) == "" && scope == 0 {
 		return []*Entry{rootDSE(d)}
 	}
@@ -291,8 +297,25 @@ func (d *Directory) hasBase(base string) bool {
 	if strings.TrimSpace(base) == "" {
 		return true
 	}
+	if normalizeDN(base) == normalizeDN(subschemaDN) {
+		return true
+	}
 	_, ok := d.byDN[normalizeDN(base)]
 	return ok
+}
+
+// anonReadBase is the root DSE or the subschema. Both are directory
+// metadata. Anonymous clients get nothing under a naming context.
+func anonReadBase(base string, scope int) bool {
+	if scope != 0 {
+		return false
+	}
+	switch normalizeDN(base) {
+	case "", normalizeDN(subschemaDN):
+		return true
+	default:
+		return false
+	}
 }
 
 func rootDSE(d *Directory) *Entry {
