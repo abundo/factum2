@@ -9,6 +9,7 @@ import {
   getLdapRoleMappings,
   updateLdapRoleMapping,
 } from '@/api/ldapRoleMappings'
+import PageFormBar from '@/components/PageFormBar.vue'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
@@ -204,26 +205,26 @@ onMounted(() => {
     />
   </div>
   <template v-else>
+    <PageFormBar page title="Authorization">
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="savingDefaultRole"
+        @click="saveDefaultRole"
+      />
+    </PageFormBar>
     <div class="card mb-6">
       <div class="font-semibold text-lg mb-3">Default role</div>
       <p class="text-muted-color mb-4">
         Role granted to an LDAP/AD-authenticated user whose group memberships don't match any
         mapping below.
       </p>
-      <div class="flex items-end gap-4">
-        <div class="w-64">
-          <USelect
-            id="ldap_default_role_id"
-            v-model="settings.ldap_default_role_id"
-            :items="defaultRoleOptions"
-            class="w-full"
-          />
-        </div>
-        <UButton
-          label="Save"
-          icon="i-lucide-check"
-          :loading="savingDefaultRole"
-          @click="saveDefaultRole"
+      <div class="w-64">
+        <USelect
+          id="ldap_default_role_id"
+          v-model="settings.ldap_default_role_id"
+          :items="defaultRoleOptions"
+          class="w-full"
         />
       </div>
     </div>
@@ -241,7 +242,10 @@ onMounted(() => {
         :data="filtered"
         :columns="columns"
         :loading="loading"
-        :empty="error || (search && mappings.length ? 'Nothing matches the search.' : 'No mappings found.')"
+        :empty="
+          error ||
+          (search && mappings.length ? 'Nothing matches the search.' : 'No mappings found.')
+        "
         class="max-h-[calc(100vh-480px)]"
       >
         <template #group_dn-header="{ column }">

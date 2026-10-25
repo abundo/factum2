@@ -41,6 +41,7 @@ declare module 'vue' {
     OxidizedNodePanel: typeof import('./src/components/OxidizedNodePanel.vue')['default']
     PacketList: typeof import('./src/components/capture/PacketList.vue')['default']
     PacketTree: typeof import('./src/components/capture/PacketTree.vue')['default']
+    PageFormBar: typeof import('./src/components/PageFormBar.vue')['default']
     PasswordInput: typeof import('./src/components/PasswordInput.vue')['default']
     RackDevice: typeof import('./src/components/dcim/RackDevice.vue')['default']
     RackElevation: typeof import('./src/components/dcim/RackElevation.vue')['default']

@@ -1,4 +1,5 @@
 <script setup>
+import PageFormBar from '@/components/PageFormBar.vue'
 import { useToast } from '@nuxt/ui/composables'
 import { onMounted, ref } from 'vue'
 import {
@@ -91,7 +92,8 @@ function setServiceEnabled(id, on) {
     enabled.delete(id)
   }
   const ids = serviceSources.filter((s) => enabled.has(s.id)).map((s) => s.id)
-  settings.device_sync_service_sources = ids.length === serviceSources.length ? null : ids.join('\n')
+  settings.device_sync_service_sources =
+    ids.length === serviceSources.length ? null : ids.join('\n')
 }
 
 const columns = [
@@ -226,18 +228,16 @@ onMounted(loadDeviceSyncAuths)
     />
   </div>
   <template v-else>
+    <PageFormBar page title="Device sync">
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="settingsSaving"
+        :disabled="settingsLoading"
+        @click="saveDeviceSyncSettings"
+      />
+    </PageFormBar>
     <div class="card mb-6">
-      <div class="flex items-center justify-between mb-4">
-        <div class="font-semibold text-xl">Device sync</div>
-        <UButton
-          label="Save"
-          icon="i-lucide-check"
-          :loading="settingsSaving"
-          :disabled="settingsLoading"
-          @click="saveDeviceSyncSettings"
-        />
-      </div>
-
       <div v-if="settingsLoading" class="flex justify-center p-4">
         <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
       </div>
@@ -261,12 +261,7 @@ onMounted(loadDeviceSyncAuths)
             class="w-32"
           />
         </UFormField>
-        <UFormField
-          v-for="svc in serviceSources"
-          :key="svc.id"
-          :label="svc.label"
-          :help="svc.help"
-        >
+        <UFormField v-for="svc in serviceSources" :key="svc.id" :label="svc.label" :help="svc.help">
           <USwitch
             :model-value="serviceEnabled(svc.id)"
             @update:model-value="setServiceEnabled(svc.id, $event)"
@@ -335,7 +330,9 @@ onMounted(loadDeviceSyncAuths)
         :loading="loading"
         :empty="
           error ||
-          (search && auths.length ? 'Nothing matches the search.' : 'No device sync credentials found.')
+          (search && auths.length
+            ? 'Nothing matches the search.'
+            : 'No device sync credentials found.')
         "
         :virtualize="{ estimateSize: 46 }"
         class="max-h-[calc(100vh-380px)]"
@@ -372,14 +369,18 @@ onMounted(loadDeviceSyncAuths)
             autofocus
             class="w-full"
           />
-          <small v-if="submitted && !auth.name?.trim()" class="text-red-500">Name is required.</small>
+          <small v-if="submitted && !auth.name?.trim()" class="text-red-500"
+            >Name is required.</small
+          >
         </UFormField>
         <UFormField label="Username">
           <UInput v-model="auth.username" class="w-full" />
         </UFormField>
         <UFormField label="Password">
           <PasswordInput v-model="auth.password" class="w-full" />
-          <small v-if="auth.id" class="text-muted-color">Leave blank to keep the current password.</small>
+          <small v-if="auth.id" class="text-muted-color"
+            >Leave blank to keep the current password.</small
+          >
         </UFormField>
         <UFormField
           label="SNMP community"

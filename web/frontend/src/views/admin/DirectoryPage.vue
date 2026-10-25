@@ -24,6 +24,7 @@ import {
 } from '@/api/ldapInternal'
 import { createRole, getRoles, updateRole } from '@/api/roles'
 import { createUser, deleteUser, getUsers, updateUser } from '@/api/users'
+import PageFormBar from '@/components/PageFormBar.vue'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SearchInput from '@/components/SearchInput.vue'
@@ -66,6 +67,22 @@ const forbidden = ref(false)
 const selected = ref(null)
 const search = ref('')
 const panel = ref('')
+const directoryFormId = computed(() =>
+  panel.value && panel.value !== 'node' ? `directory-${panel.value}-form` : '',
+)
+const directoryCanSave = computed(() => {
+  if (!directoryFormId.value) return false
+  if (panel.value === 'person') return !!person.value?.editable
+  if (panel.value === 'group') return !!group.value?.editable
+  return true
+})
+const directorySaveLoading = computed(() => {
+  if (panel.value === 'user') return userSaving.value
+  if (panel.value === 'role') return roleSaving.value
+  if (panel.value === 'person') return personSaving.value
+  if (panel.value === 'group') return groupSaving.value
+  return false
+})
 const submitted = ref(false)
 const creating = ref(false)
 let tree
@@ -143,7 +160,13 @@ const menuItems = computed(() => {
     items.push({ id: 'new-user', label: 'New user' })
     items.push({ id: 'new-role', label: 'New role' })
   }
-  if (kind === 'user' || kind === 'role' || kind === 'person' || kind === 'group' || kind === 'ou') {
+  if (
+    kind === 'user' ||
+    kind === 'role' ||
+    kind === 'person' ||
+    kind === 'group' ||
+    kind === 'ou'
+  ) {
     items.push({ id: 'edit', label: 'Edit' })
   }
   if (kind === 'ou') items.push({ id: 'delete', label: 'Delete', danger: true })
@@ -182,7 +205,9 @@ function ouOf(kind, id) {
 }
 
 function memberRoleIDs(roleId) {
-  return (internal.value.nests || []).filter((n) => n.role_id === roleId).map((n) => n.member_role_id)
+  return (internal.value.nests || [])
+    .filter((n) => n.role_id === roleId)
+    .map((n) => n.member_role_id)
 }
 
 function folderItems(excludeId) {
@@ -1064,12 +1089,14 @@ function onDocClick() {
 }
 
 function reloadLocal() {
-  return Promise.all([getUsers(), getRoles(), getLdapInternal()]).then(([userRows, roleRows, dir]) => {
-    users.value = userRows ?? []
-    roles.value = roleRows ?? []
-    internal.value = dir ?? internal.value
-    syncInternal()
-  })
+  return Promise.all([getUsers(), getRoles(), getLdapInternal()]).then(
+    ([userRows, roleRows, dir]) => {
+      users.value = userRows ?? []
+      roles.value = roleRows ?? []
+      internal.value = dir ?? internal.value
+      syncInternal()
+    },
+  )
 }
 
 function reloadInternal() {
@@ -1126,43 +1153,51 @@ onBeforeUnmount(() => {
     />
   </div>
   <div v-else class="card">
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h4 class="m-0">Directory</h4>
-        <small class="text-muted-color">{{ intro }}</small>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <UButton
-          label="New folder"
-          icon="i-lucide-folder-plus"
-          color="neutral"
-          size="sm"
-          @click="openNewFolder(selected?.kind === 'ou' ? selected : null)"
-        />
-        <UButton
-          label="New user"
-          icon="i-lucide-plus"
-          color="neutral"
-          size="sm"
-          @click="openNewUser"
-        />
-        <UButton
-          label="New role"
-          icon="i-lucide-plus"
-          color="neutral"
-          size="sm"
-          @click="openNewRole"
-        />
-        <UButton
-          v-if="writable"
-          label="New group"
-          icon="i-lucide-plus"
-          color="neutral"
-          size="sm"
-          @click="openNewGroup()"
-        />
-      </div>
-    </div>
+    <PageFormBar page>
+      <template #title>
+        <div>
+          <div>Directory</div>
+          <small class="font-normal text-muted-color">{{ intro }}</small>
+        </div>
+      </template>
+      <UButton
+        label="New folder"
+        icon="i-lucide-folder-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewFolder(selected?.kind === 'ou' ? selected : null)"
+      />
+      <UButton
+        label="New user"
+        icon="i-lucide-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewUser"
+      />
+      <UButton
+        label="New role"
+        icon="i-lucide-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewRole"
+      />
+      <UButton
+        v-if="writable"
+        label="New group"
+        icon="i-lucide-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewGroup()"
+      />
+      <UButton
+        v-if="directoryCanSave"
+        label="Save"
+        icon="i-lucide-check"
+        type="submit"
+        :form="directoryFormId"
+        :loading="directorySaveLoading"
+      />
+    </PageFormBar>
     <UAlert v-if="error" color="error" variant="subtle" :title="error" class="mb-3" />
     <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
       <div class="w-full shrink-0 lg:w-96">
@@ -1179,14 +1214,15 @@ onBeforeUnmount(() => {
         </p>
         <form
           v-else-if="panel === 'internal'"
+          id="directory-internal-form"
           class="flex flex-col gap-4"
           @submit.prevent="saveInternal"
         >
           <h5 class="m-0">Internal directory</h5>
           <p class="text-sm text-muted-color">
-            Workers with an <span class="font-mono">ldap</span> command serve this directory.
-            Put people and roles in folders. A role can contain other roles; membership is
-            expanded the way Active Directory expands nested groups.
+            Workers with an <span class="font-mono">ldap</span> command serve this directory. Put
+            people and roles in folders. A role can contain other roles; membership is expanded the
+            way Active Directory expands nested groups.
           </p>
           <UCheckbox v-model="internalForm.enabled" label="Enable" />
           <UFormField label="Listen">
@@ -1206,12 +1242,16 @@ onBeforeUnmount(() => {
               class="w-full"
             />
             <small class="text-muted-color">
-              A certificate from Services → Certificates. The worker reads it from lego
-              storage. Worker hub certificate uses the hub TLS pair.
+              A certificate from Services → Certificates. The worker reads it from lego storage.
+              Worker hub certificate uses the hub TLS pair.
             </small>
           </UFormField>
           <UFormField label="Base DN">
-            <UInput v-model="internalForm.base_dn" placeholder="dc=factum,dc=local" class="w-full" />
+            <UInput
+              v-model="internalForm.base_dn"
+              placeholder="dc=factum,dc=local"
+              class="w-full"
+            />
           </UFormField>
           <UFormField label="Search bind DN">
             <UInput :model-value="internal.bind_dn" readonly class="w-full font-mono" />
@@ -1227,7 +1267,11 @@ onBeforeUnmount(() => {
             </small>
           </UFormField>
           <UFormField label="User filter">
-            <UInput :model-value="internal.user_filter || '(uid=%s)'" readonly class="w-full font-mono" />
+            <UInput
+              :model-value="internal.user_filter || '(uid=%s)'"
+              readonly
+              class="w-full font-mono"
+            />
           </UFormField>
           <UCheckbox
             v-model="internalForm.radius_use_internal"
@@ -1235,15 +1279,17 @@ onBeforeUnmount(() => {
           />
           <p class="text-sm text-muted-color">
             RADIUS binds to 127.0.0.1 on the plain listen port. That worker needs both
-            <span class="font-mono">radius</span> and <span class="font-mono">ldap</span>.
-            MikroTik MS-CHAPv2 still needs Active Directory.
+            <span class="font-mono">radius</span> and <span class="font-mono">ldap</span>. MikroTik
+            MS-CHAPv2 still needs Active Directory.
           </p>
-          <div class="flex gap-2">
-            <UButton class="ms-auto" label="Save" icon="i-lucide-check" type="submit" />
-          </div>
         </form>
 
-        <form v-else-if="panel === 'ou'" class="flex flex-col gap-4" @submit.prevent="saveOU">
+        <form
+          v-else-if="panel === 'ou'"
+          id="directory-ou-form"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveOU"
+        >
           <h5 class="m-0">{{ ouForm.id ? 'Folder' : 'New folder' }}</h5>
           <UFormField label="Name">
             <UInput
@@ -1253,7 +1299,9 @@ onBeforeUnmount(() => {
               autofocus
               class="w-full"
             />
-            <small v-if="submitted && !ouForm.name?.trim()" class="text-red-500">Name is required.</small>
+            <small v-if="submitted && !ouForm.name?.trim()" class="text-red-500"
+              >Name is required.</small
+            >
           </UFormField>
           <UFormField label="Inside">
             <USelectMenu
@@ -1264,7 +1312,9 @@ onBeforeUnmount(() => {
               class="w-full"
             />
           </UFormField>
-          <p v-if="ouForm.id && selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
+          <p v-if="ouForm.id && selected?.dn" class="font-mono text-sm break-all">
+            {{ selected.dn }}
+          </p>
           <div class="flex gap-2">
             <UButton
               v-if="ouForm.id"
@@ -1274,7 +1324,6 @@ onBeforeUnmount(() => {
               variant="ghost"
               @click="performDeleteOU(selected)"
             />
-            <UButton class="ms-auto" label="Save" icon="i-lucide-check" type="submit" />
           </div>
         </form>
 
@@ -1283,7 +1332,12 @@ onBeforeUnmount(() => {
           <p class="text-sm text-muted-color">{{ ldapKindLabel(selected?.kind) }}</p>
           <p v-if="selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
         </div>
-        <form v-else-if="panel === 'user'" class="flex flex-col gap-4" @submit.prevent="saveUser">
+        <form
+          v-else-if="panel === 'user'"
+          id="directory-user-form"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveUser"
+        >
           <h5 class="m-0">{{ user.id ? 'User' : 'New user' }}</h5>
           <UFormField label="Username">
             <UInput
@@ -1352,17 +1406,15 @@ onBeforeUnmount(() => {
               :loading="userDeleting"
               @click="performDeleteUser()"
             />
-            <UButton
-              class="ms-auto"
-              label="Save"
-              icon="i-lucide-check"
-              type="submit"
-              :loading="userSaving"
-            />
           </div>
         </form>
 
-        <form v-else-if="panel === 'role'" class="flex flex-col gap-4" @submit.prevent="saveRole">
+        <form
+          v-else-if="panel === 'role'"
+          id="directory-role-form"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveRole"
+        >
           <h5 class="m-0">{{ role.id ? 'Role' : 'New role' }}</h5>
           <UFormField label="Name">
             <UInput
@@ -1405,19 +1457,11 @@ onBeforeUnmount(() => {
               People in a contained role are also in this role, including through further levels.
             </small>
           </UFormField>
-          <div class="flex gap-2">
-            <UButton
-              class="ms-auto"
-              label="Save"
-              icon="i-lucide-check"
-              type="submit"
-              :loading="roleSaving"
-            />
-          </div>
         </form>
 
         <form
           v-else-if="panel === 'person'"
+          id="directory-person-form"
           class="flex flex-col gap-4"
           @submit.prevent="savePerson"
         >
@@ -1484,18 +1528,15 @@ onBeforeUnmount(() => {
               :loading="personDeleting"
               @click="performDeletePerson()"
             />
-            <UButton
-              v-if="person.editable"
-              class="ms-auto"
-              label="Save"
-              icon="i-lucide-check"
-              type="submit"
-              :loading="personSaving"
-            />
           </div>
         </form>
 
-        <form v-else-if="panel === 'group'" class="flex flex-col gap-4" @submit.prevent="saveGroup">
+        <form
+          v-else-if="panel === 'group'"
+          id="directory-group-form"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveGroup"
+        >
           <h5 class="m-0">{{ group.dn ? 'Directory group' : 'New directory group' }}</h5>
           <p v-if="groupLoading" class="text-sm text-muted-color">Loading…</p>
           <UAlert
@@ -1573,14 +1614,6 @@ onBeforeUnmount(() => {
               variant="ghost"
               :loading="groupDeleting"
               @click="performDeleteGroup()"
-            />
-            <UButton
-              v-if="group.editable"
-              class="ms-auto"
-              label="Save"
-              icon="i-lucide-check"
-              type="submit"
-              :loading="groupSaving"
             />
           </div>
         </form>

@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
 import { getForest, updateNamespace, updatePrefix, updateVrf } from '@/api/ipam'
 import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
+import PageFormBar from '@/components/PageFormBar.vue'
 import { confirmDiscard, usePageForm } from '@/composables/useFormGuard'
 import { useAuthStore } from '@/stores/auth'
 import 'wunderbaum/dist/wunderbaum.css'
@@ -526,10 +527,10 @@ function filter(q) {
     return
   }
   // Keep the folders and prefixes above a match, and unfold them.
-  tree.filterNodes(
-    (node) => words.every((w) => (node.title ?? '').toLowerCase().includes(w)),
-    { mode: 'hide', autoExpand: true },
-  )
+  tree.filterNodes((node) => words.every((w) => (node.title ?? '').toLowerCase().includes(w)), {
+    mode: 'hide',
+    autoExpand: true,
+  })
 }
 
 function expandAll() {
@@ -628,9 +629,16 @@ defineExpose({
       <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto max-w-lg">
         <div v-if="!selected" class="text-muted-color text-sm">Select a row to see details.</div>
         <template v-else>
+          <PageFormBar>
+            <template #title>
+              <div class="truncate">
+                {{ isNamedRow ? form.name || selected.title : selected.title }}
+              </div>
+            </template>
+            <UButton v-if="canSaveSelected" label="Save" :loading="saving" @click="saveSelected" />
+          </PageFormBar>
           <div>
-            <h5 class="m-0">{{ isNamedRow ? form.name || selected.title : selected.title }}</h5>
-            <div class="text-sm text-muted-color mt-1">{{ kindLabel(selectedKind) }}</div>
+            <div class="text-sm text-muted-color">{{ kindLabel(selectedKind) }}</div>
             <div v-if="isVrf && selected.source" class="mt-1">
               <UBadge
                 :label="sourceLabel(selected.source)"
@@ -681,7 +689,7 @@ defineExpose({
               <UInput :model-value="selected.description || ''" disabled class="w-full" />
             </div>
           </template>
-          <div v-if="allowDelete || canSaveSelected" class="flex w-full gap-2">
+          <div v-if="allowDelete">
             <UButton
               v-if="allowDelete"
               label="Delete"
@@ -689,13 +697,6 @@ defineExpose({
               color="error"
               variant="ghost"
               @click="emit('delete')"
-            />
-            <UButton
-              v-if="canSaveSelected"
-              class="ms-auto"
-              label="Save"
-              :loading="saving"
-              @click="saveSelected"
             />
           </div>
         </template>

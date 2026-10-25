@@ -1,4 +1,5 @@
 <script setup>
+import PageFormBar from '@/components/PageFormBar.vue'
 import { useSettings } from '@/composables/useSettings'
 
 defineProps({
@@ -20,7 +21,7 @@ const { settings, loading, saving, forbidden, loadError, save } = useSettings()
     <UAlert color="error" variant="subtle" title="Failed to load settings." />
   </div>
   <div v-else class="card">
-    <div class="flex justify-end mb-6">
+    <PageFormBar page :title="title">
       <UButton
         label="Save"
         icon="i-lucide-check"
@@ -28,17 +29,14 @@ const { settings, loading, saving, forbidden, loadError, save } = useSettings()
         :disabled="loading"
         @click="save"
       />
-    </div>
+    </PageFormBar>
 
     <div v-if="loading" class="flex justify-center p-4">
       <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
     </div>
 
-    <template v-else>
-      <div class="font-semibold text-lg mb-3">{{ title }}</div>
-      <div class="flex flex-col gap-6">
-        <slot :settings="settings" />
-      </div>
-    </template>
+    <div v-else class="flex flex-col gap-6">
+      <slot :settings="settings" />
+    </div>
   </div>
 </template>

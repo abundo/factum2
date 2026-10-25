@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useFormGuard } from '@/composables/useFormGuard'
+import PageFormBar from '@/components/PageFormBar.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { useSearch, valuesText } from '@/utils/search'
 import {
@@ -614,12 +615,29 @@ function toggleFeature(id) {
   <div class="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-auto">
     <div v-if="!selected" class="text-muted-color text-sm">Select a scope node.</div>
     <template v-else>
-      <h5 class="m-0">{{ selected.title }}</h5>
-      <div class="text-sm text-muted-color">
-        Kind: {{ selected.kind }}
-        <span v-if="selected.device_id"> · device #{{ selected.device_id }}</span>
-        <span v-if="selected.interface_id"> · interface #{{ selected.interface_id }}</span>
-      </div>
+      <PageFormBar>
+        <template #title>
+          <div class="min-w-0">
+            <div class="truncate">{{ selected.title }}</div>
+            <div class="text-sm font-normal text-muted-color">
+              Kind: {{ selected.kind }}
+              <span v-if="selected.device_id"> · device #{{ selected.device_id }}</span>
+              <span v-if="selected.interface_id"> · interface #{{ selected.interface_id }}</span>
+            </div>
+          </div>
+        </template>
+        <template v-if="canWrite && isServiceNode && serviceRow">
+          <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
+          <UButton label="Save endpoints" :loading="genericSaving" @click="saveServiceEndpoints" />
+        </template>
+        <UButton v-else-if="canWrite && isCLI" label="Save" :loading="saving" @click="saveCLI" />
+        <UButton
+          v-else-if="canWrite && isResource"
+          label="Save"
+          :loading="saving"
+          @click="saveResource"
+        />
+      </PageFormBar>
 
       <template v-if="isServiceNode">
         <div v-if="serviceLoading" class="text-muted-color text-sm">Loading service…</div>
@@ -667,12 +685,6 @@ function toggleFeature(id) {
               label="Delete service"
               color="error"
               @click="requestDeleteService"
-            />
-            <UButton label="Save type" :loading="saving" @click="saveServiceTypeFields" />
-            <UButton
-              label="Save endpoints"
-              :loading="genericSaving"
-              @click="saveServiceEndpoints"
             />
           </div>
         </template>
@@ -740,10 +752,6 @@ function toggleFeature(id) {
           <label class="mb-1 block font-bold">Exit</label>
           <UInput v-model="cliForm.exit" placeholder="exit" class="w-full" />
         </div>
-        <div v-if="canWrite" class="flex justify-end">
-          <UButton label="Save CLI object" :loading="saving" @click="saveCLI" />
-        </div>
-
         <div class="flex items-center justify-between">
           <h6 class="m-0">Features</h6>
           <UButton
@@ -815,14 +823,6 @@ function toggleFeature(id) {
               :schema="cliSchema"
               placeholder="Jet template. Idempotent teardown."
             />
-            <div v-if="canWrite" class="flex justify-end">
-              <UButton
-                label="Save commands"
-                :loading="saving"
-                type="button"
-                @click="saveFeature(feat.id)"
-              />
-            </div>
           </template>
         </div>
         <div v-if="!features.length" class="text-muted-color text-sm">No features.</div>
@@ -871,9 +871,6 @@ function toggleFeature(id) {
               @click="removeResourceCIDR(i)"
             />
           </div>
-        </div>
-        <div v-if="canWrite" class="flex justify-end">
-          <UButton label="Save" :loading="saving" @click="saveResource" />
         </div>
       </template>
 

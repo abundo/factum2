@@ -5,6 +5,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePageForm } from '@/composables/useFormGuard'
+import PageFormBar from '@/components/PageFormBar.vue'
 import ZoneRecordsTable from '@/components/ZoneRecordsTable.vue'
 import {
   deleteDnsZone,
@@ -257,17 +258,25 @@ async function remove() {
 
 <template>
   <div v-if="loaded">
-    <div class="flex items-center gap-2 mb-4">
-      <UButton to="/dns" color="neutral" variant="ghost" icon="i-lucide-arrow-left" />
-      <div class="font-semibold text-lg">{{ form.name }}</div>
-      <UBadge color="neutral" variant="subtle">{{ typeLabel }}</UBadge>
-    </div>
+    <PageFormBar page>
+      <template #title>
+        <div class="flex min-w-0 items-center gap-2">
+          <UButton to="/dns" color="neutral" variant="ghost" icon="i-lucide-arrow-left" />
+          <span class="truncate">{{ form.name }}</span>
+          <UBadge color="neutral" variant="subtle">{{ typeLabel }}</UBadge>
+        </div>
+      </template>
+      <UButton v-if="canWrite" type="submit" form="dns-zone-form" :loading="saving">Save</UButton>
+      <UButton v-if="canWrite" type="button" :loading="saving" @click="saveAndSync"
+        >Save+sync</UButton
+      >
+    </PageFormBar>
     <UCard class="w-full min-w-0">
-      <form @submit.prevent="save">
+      <form id="dns-zone-form" @submit.prevent="save">
         <UTabs v-model="activeTab" :items="tabItems">
           <template #info>
             <div class="space-y-4 pt-4">
-              <div v-if="canWrite" class="flex flex-wrap gap-2">
+              <div v-if="canWrite">
                 <UButton
                   type="button"
                   color="error"
@@ -277,8 +286,6 @@ async function remove() {
                   :loading="deleting"
                   @click="remove"
                 />
-                <UButton class="ms-auto" type="submit" :loading="saving">Save</UButton>
-                <UButton type="button" :loading="saving" @click="saveAndSync">Save+sync</UButton>
               </div>
               <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                 <UFormField label="Name">
@@ -347,23 +354,18 @@ async function remove() {
                   <p v-else class="text-muted-color text-sm">—</p>
                 </div>
               </template>
-              <p v-else class="text-muted-color text-sm">Select a DNS template to see SOA values.</p>
+              <p v-else class="text-muted-color text-sm">
+                Select a DNS template to see SOA values.
+              </p>
             </div>
           </template>
           <template #records>
             <div class="pt-4">
               <p class="text-muted-color text-sm mb-3">
-                Leave TTL empty to use the template default. SOA, apex NS, and in-zone
-                nameserver addresses come from the DNS template. SOA and apex NS are skipped
-                on import.
+                Leave TTL empty to use the template default. SOA, apex NS, and in-zone nameserver
+                addresses come from the DNS template. SOA and apex NS are skipped on import.
               </p>
               <ZoneRecordsTable v-model="form.records" :disabled="!canWrite">
-                <template #leading-actions>
-                  <UButton v-if="canWrite" type="submit" :loading="saving">Save</UButton>
-                  <UButton v-if="canWrite" type="button" :loading="saving" @click="saveAndSync"
-                    >Save+sync</UButton
-                  >
-                </template>
                 <template #actions>
                   <UButton
                     type="button"

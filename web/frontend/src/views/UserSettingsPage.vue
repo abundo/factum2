@@ -1,6 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, reactive, ref } from 'vue'
+import PageFormBar from '@/components/PageFormBar.vue'
 import { getMe, updateMe } from '@/api/me'
 import { usePageForm } from '@/composables/useFormGuard'
 
@@ -138,122 +139,129 @@ onMounted(loadProfile)
 </script>
 
 <template>
-  <div class="grid grid-cols-12 gap-8">
-    <div class="col-span-12 lg:col-span-6">
-      <div class="card">
-        <div class="font-semibold text-xl mb-4">Profile</div>
-        <div v-if="loading" class="flex justify-center p-4">
-          <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
-        </div>
-        <div v-else class="flex flex-col gap-6">
-          <UFormField label="Username">
-            <UInput id="username" v-model="profile.username" disabled class="w-full" />
-          </UFormField>
-          <UFormField label="Name">
-            <UInput id="name" v-model="profile.name" class="w-full" />
-          </UFormField>
-          <UFormField label="Email">
-            <UInput id="email" v-model="profile.email" class="w-full" />
-          </UFormField>
-          <UFormField label="Mobile">
-            <UInput id="mobile" v-model="profile.mobile" class="w-full" />
-          </UFormField>
-          <UFormField label="Current password" hint="Required when you change the email address.">
-            <UInput
-              id="profile_current_password"
-              v-model="profilePassword"
-              type="password"
-              class="w-full"
-              autocomplete="current-password"
-            />
-          </UFormField>
-          <div>
-            <UButton label="Save" icon="i-lucide-check" :loading="savingProfile" @click="saveProfile" />
+  <div>
+    <PageFormBar page title="Profile">
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="savingProfile"
+        :disabled="loading"
+        @click="saveProfile"
+      />
+    </PageFormBar>
+    <div class="grid grid-cols-12 gap-8">
+      <div class="col-span-12 lg:col-span-6">
+        <div class="card">
+          <div v-if="loading" class="flex justify-center p-4">
+            <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
+          </div>
+          <div v-else class="flex flex-col gap-6">
+            <UFormField label="Username">
+              <UInput id="username" v-model="profile.username" disabled class="w-full" />
+            </UFormField>
+            <UFormField label="Name">
+              <UInput id="name" v-model="profile.name" class="w-full" />
+            </UFormField>
+            <UFormField label="Email">
+              <UInput id="email" v-model="profile.email" class="w-full" />
+            </UFormField>
+            <UFormField label="Mobile">
+              <UInput id="mobile" v-model="profile.mobile" class="w-full" />
+            </UFormField>
+            <UFormField label="Current password" hint="Required when you change the email address.">
+              <UInput
+                id="profile_current_password"
+                v-model="profilePassword"
+                type="password"
+                class="w-full"
+                autocomplete="current-password"
+              />
+            </UFormField>
           </div>
         </div>
       </div>
-    </div>
 
-    <div class="col-span-12 lg:col-span-6">
-      <div class="card">
-        <div class="font-semibold text-xl mb-4">Change password</div>
-        <div class="flex flex-col gap-6">
-          <UFormField label="Current password">
-            <UInput
-              id="current_password"
-              v-model="passwordForm.current_password"
-              :type="showCurrentPassword ? 'text' : 'password'"
-              :color="passwordSubmitted && !passwordForm.current_password ? 'error' : undefined"
-              :highlight="passwordSubmitted && !passwordForm.current_password"
-              class="w-full"
-              :ui="{ trailing: 'pe-1' }"
-            >
-              <template #trailing>
-                <UButton
-                  color="neutral"
-                  variant="link"
-                  size="sm"
-                  :icon="showCurrentPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-                  @click="showCurrentPassword = !showCurrentPassword"
-                />
-              </template>
-            </UInput>
-          </UFormField>
-          <UFormField label="New password">
-            <UInput
-              id="new_password"
-              v-model="passwordForm.new_password"
-              :type="showNewPassword ? 'text' : 'password'"
-              :color="passwordSubmitted && !passwordForm.new_password ? 'error' : undefined"
-              :highlight="passwordSubmitted && !passwordForm.new_password"
-              class="w-full"
-              :ui="{ trailing: 'pe-1' }"
-            >
-              <template #trailing>
-                <UButton
-                  color="neutral"
-                  variant="link"
-                  size="sm"
-                  :icon="showNewPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-                  @click="showNewPassword = !showNewPassword"
-                />
-              </template>
-            </UInput>
-          </UFormField>
-          <UFormField label="Confirm new password">
-            <UInput
-              id="confirm_password"
-              v-model="passwordForm.confirm_password"
-              :type="showConfirmPassword ? 'text' : 'password'"
-              :color="
-                passwordSubmitted && passwordForm.new_password !== passwordForm.confirm_password
-                  ? 'error'
-                  : undefined
-              "
-              :highlight="
-                passwordSubmitted && passwordForm.new_password !== passwordForm.confirm_password
-              "
-              class="w-full"
-              :ui="{ trailing: 'pe-1' }"
-            >
-              <template #trailing>
-                <UButton
-                  color="neutral"
-                  variant="link"
-                  size="sm"
-                  :icon="showConfirmPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-                  @click="showConfirmPassword = !showConfirmPassword"
-                />
-              </template>
-            </UInput>
-          </UFormField>
-          <div>
-            <UButton
-              label="Change password"
-              icon="i-lucide-check"
-              :loading="savingPassword"
-              @click="changePassword"
-            />
+      <div class="col-span-12 lg:col-span-6">
+        <div class="card">
+          <div class="font-semibold text-xl mb-4">Change password</div>
+          <div class="flex flex-col gap-6">
+            <UFormField label="Current password">
+              <UInput
+                id="current_password"
+                v-model="passwordForm.current_password"
+                :type="showCurrentPassword ? 'text' : 'password'"
+                :color="passwordSubmitted && !passwordForm.current_password ? 'error' : undefined"
+                :highlight="passwordSubmitted && !passwordForm.current_password"
+                class="w-full"
+                :ui="{ trailing: 'pe-1' }"
+              >
+                <template #trailing>
+                  <UButton
+                    color="neutral"
+                    variant="link"
+                    size="sm"
+                    :icon="showCurrentPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    @click="showCurrentPassword = !showCurrentPassword"
+                  />
+                </template>
+              </UInput>
+            </UFormField>
+            <UFormField label="New password">
+              <UInput
+                id="new_password"
+                v-model="passwordForm.new_password"
+                :type="showNewPassword ? 'text' : 'password'"
+                :color="passwordSubmitted && !passwordForm.new_password ? 'error' : undefined"
+                :highlight="passwordSubmitted && !passwordForm.new_password"
+                class="w-full"
+                :ui="{ trailing: 'pe-1' }"
+              >
+                <template #trailing>
+                  <UButton
+                    color="neutral"
+                    variant="link"
+                    size="sm"
+                    :icon="showNewPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    @click="showNewPassword = !showNewPassword"
+                  />
+                </template>
+              </UInput>
+            </UFormField>
+            <UFormField label="Confirm new password">
+              <UInput
+                id="confirm_password"
+                v-model="passwordForm.confirm_password"
+                :type="showConfirmPassword ? 'text' : 'password'"
+                :color="
+                  passwordSubmitted && passwordForm.new_password !== passwordForm.confirm_password
+                    ? 'error'
+                    : undefined
+                "
+                :highlight="
+                  passwordSubmitted && passwordForm.new_password !== passwordForm.confirm_password
+                "
+                class="w-full"
+                :ui="{ trailing: 'pe-1' }"
+              >
+                <template #trailing>
+                  <UButton
+                    color="neutral"
+                    variant="link"
+                    size="sm"
+                    :icon="showConfirmPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    @click="showConfirmPassword = !showConfirmPassword"
+                  />
+                </template>
+              </UInput>
+            </UFormField>
+            <div>
+              <UButton
+                label="Change password"
+                icon="i-lucide-check"
+                :loading="savingPassword"
+                @click="changePassword"
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ import {
   updateRadiusClient,
   updateRadiusPolicy,
 } from '@/api/radius'
+import PageFormBar from '@/components/PageFormBar.vue'
 import FormModal from '@/components/FormModal.vue'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
@@ -549,7 +550,15 @@ onBeforeUnmount(() => {
     <UAlert color="error" variant="subtle" title="Failed to load settings." />
   </div>
   <div v-else class="card">
-    <h4 class="m-0 mb-4">RADIUS</h4>
+    <PageFormBar page title="RADIUS">
+      <UButton
+        label="Save"
+        icon="i-lucide-check"
+        :loading="saving"
+        :disabled="loading"
+        @click="save"
+      />
+    </PageFormBar>
     <UTabs v-model="tab" :items="tabs" @update:model-value="onTab">
       <template #service>
         <div class="flex flex-col gap-6 py-4">
@@ -752,7 +761,6 @@ onBeforeUnmount(() => {
               built-in list. Remove every row and save to send none.
             </small>
           </div>
-          <UButton label="Save" icon="i-lucide-check" :loading="saving" @click="save" />
           <div class="text-sm text-muted-color flex flex-col gap-2">
             <p>
               Switches must use PAP and send Message-Authenticator. A user is accepted only when the
@@ -845,7 +853,9 @@ onBeforeUnmount(() => {
             :data="filteredPolicies"
             :columns="policyColumns"
             :empty="
-              policySearch && policies.length ? 'Nothing matches the search.' : 'No group rules yet.'
+              policySearch && policies.length
+                ? 'Nothing matches the search.'
+                : 'No group rules yet.'
             "
           >
             <template #actions-cell="{ row }">
@@ -887,7 +897,9 @@ onBeforeUnmount(() => {
             :data="filteredEvents"
             :columns="eventColumns"
             :empty="
-              eventSearch && events.length ? 'Nothing matches the search.' : 'No login attempts yet.'
+              eventSearch && events.length
+                ? 'Nothing matches the search.'
+                : 'No login attempts yet.'
             "
           >
             <template #when-cell="{ row }">

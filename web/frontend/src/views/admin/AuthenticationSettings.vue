@@ -1,6 +1,7 @@
 <script setup>
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onMounted, reactive, ref } from 'vue'
+import PageFormBar from '@/components/PageFormBar.vue'
 import { getSettings, updateSettings } from '@/api/settings'
 import { testLdapConnection } from '@/api/ldap'
 
@@ -200,7 +201,7 @@ onMounted(loadSettings)
     <UAlert color="error" variant="subtle" title="Failed to load settings." />
   </div>
   <div v-else class="card">
-    <div class="flex items-center justify-between mb-6">
+    <PageFormBar page title="Authentication">
       <UButton
         label="Test Connection"
         icon="i-lucide-zap"
@@ -216,7 +217,7 @@ onMounted(loadSettings)
         :disabled="loading"
         @click="save"
       />
-    </div>
+    </PageFormBar>
 
     <div v-if="loading" class="flex justify-center p-4">
       <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />

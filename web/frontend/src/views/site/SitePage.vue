@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { createSite, deleteSite, getSites, updateSite } from '@/api/sites'
 import FormModal from '@/components/FormModal.vue'
+import PageFormBar from '@/components/PageFormBar.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SiteTree from '@/components/SiteTree.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -300,16 +301,21 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto max-w-lg">
           <div v-if="!selected" class="text-muted-color text-sm">Select a site to see details.</div>
           <template v-else>
-            <div>
-              <h5 class="m-0">{{ form.name || selected.title }}</h5>
-              <div class="mt-1">
-                <UBadge
-                  :label="sourceLabel(selected.source)"
-                  :color="sourceBadgeColor(selected.source)"
-                  variant="subtle"
-                />
-              </div>
-            </div>
+            <PageFormBar>
+              <template #title>
+                <div>
+                  <div class="truncate">{{ form.name || selected.title }}</div>
+                  <div class="mt-1">
+                    <UBadge
+                      :label="sourceLabel(selected.source)"
+                      :color="sourceBadgeColor(selected.source)"
+                      variant="subtle"
+                    />
+                  </div>
+                </div>
+              </template>
+              <UButton v-if="canSave" label="Save" :loading="saving" @click="saveSelected" />
+            </PageFormBar>
             <UFormField label="Name">
               <UInput v-model="form.name" :disabled="!canSave" class="w-full" />
             </UFormField>
@@ -350,7 +356,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 @click="router.push({ path: '/dcim/connections', query: { site_id: selected.id } })"
               />
             </div>
-            <div v-if="canSave" class="flex w-full gap-2">
+            <div v-if="canSave">
               <UButton
                 label="Delete"
                 icon="i-lucide-trash"
@@ -359,7 +365,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
                 :loading="saving"
                 @click="performDelete"
               />
-              <UButton class="ms-auto" label="Save" :loading="saving" @click="saveSelected" />
             </div>
           </template>
         </div>
