@@ -399,9 +399,7 @@ const router = createRouter({
         },
         {
           path: '/admin/authentication',
-          name: 'admin-authentication',
-          meta: { requiresAdmin: true },
-          component: () => import('@/views/admin/AuthenticationSettings.vue'),
+          redirect: '/admin/directory',
         },
         {
           path: '/admin/authorization',

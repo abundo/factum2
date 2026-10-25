@@ -351,7 +351,7 @@ func (s *Server) handle(pc net.PacketConn, addr net.Addr, raw []byte) {
 			return
 		}
 	} else {
-		groups, ldapOK, ldapErr = s.opt.Authenticate(idx.LDAP, in.username, in.password)
+		groups, ldapOK, ldapErr = s.authenticateAny(idx, in.username, in.password)
 	}
 	out := authorize(in.username, in.nas, source, idx, groups, ldapOK, ldapErr)
 	out.req = packetOf(raw)
@@ -360,25 +360,52 @@ func (s *Server) handle(pc net.PacketConn, addr net.Addr, raw []byte) {
 	s.finish(pc, addr, source, out)
 }
 
+// authenticateAny tries each directory. The first accept wins. A failure
+// or a rejection continues. When none succeeds the client is denied.
+func (s *Server) authenticateAny(idx *Index, username, password string) (groups []string, ok bool, err error) {
+	for _, cfg := range idx.directories() {
+		groups, ok, err = s.opt.Authenticate(cfg, username, password)
+		if err != nil {
+			slog.Debug("radius: directory failed", "host", cfg.Host, "error", err)
+			continue
+		}
+		if ok {
+			return groups, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 func (s *Server) mschap(idx *Index, in login) (groups []string, extra []byte, ok bool, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), authTimeout)
 	defer cancel()
 	chal := challengeHash(in.chap.peer, in.chap.auth, in.chap.user)
-	key, err := s.opt.VerifyMSCHAP(ctx, idx.LDAP, idx.machine, in.chap.user, chal, in.chap.nt)
-	if errors.Is(err, ErrBadCredentials) {
-		return nil, nil, false, nil
+	sawAD := false
+	sawNonAD := false
+	for _, cfg := range idx.directories() {
+		key, err := s.opt.VerifyMSCHAP(ctx, cfg, idx.machine, in.chap.user, chal, in.chap.nt)
+		if errors.Is(err, errMSCHAPNotAD) {
+			sawNonAD = true
+			continue
+		}
+		if errors.Is(err, errMSCHAPConfig) {
+			return nil, nil, false, err
+		}
+		sawAD = true
+		if err != nil {
+			slog.Debug("radius: mschap directory failed", "host", cfg.Host, "error", err)
+			continue
+		}
+		groups, found, err := s.opt.LookupGroups(cfg, in.chap.user)
+		if err != nil || !found {
+			continue
+		}
+		return groups, mschap2Success(*in.chap, key), true, nil
 	}
-	if err != nil {
-		return nil, nil, false, err
+	if !sawAD && sawNonAD {
+		return nil, nil, false, errMSCHAPNotAD
 	}
-	groups, found, err := s.opt.LookupGroups(idx.LDAP, in.chap.user)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	if !found {
-		return nil, nil, false, nil
-	}
-	return groups, mschap2Success(*in.chap, key), true, nil
+	return nil, nil, false, nil
 }
 
 func packetOf(raw []byte) Packet {

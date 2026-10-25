@@ -57,6 +57,8 @@ export function ldapKindLabel(kind) {
       return 'Directory'
     case 'internal':
       return 'Internal'
+    case 'server':
+      return 'Server'
     case 'ou':
       return 'Folder'
     case 'other':

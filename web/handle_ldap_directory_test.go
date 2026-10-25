@@ -9,19 +9,16 @@ import (
 
 func TestDirectoryWriteBlock(t *testing.T) {
 	wb := ldapauth.WritebackConfig{BindDN: "cn=admin,dc=example,dc=com", Password: "secret"}
-	disabled := &models.Settings{LdapServerType: "generic"}
-	if code, _ := directoryWriteBlock(disabled, wb); code != 400 {
+	if code, _ := directoryWriteBlock("generic", false, wb); code != 400 {
 		t.Fatalf("disabled code = %d", code)
 	}
-	ad := &models.Settings{LdapEnabled: boolPtr(true), LdapServerType: "ad"}
-	if code, _ := directoryWriteBlock(ad, wb); code != 403 {
+	if code, _ := directoryWriteBlock("ad", true, wb); code != 403 {
 		t.Fatalf("ad code = %d", code)
 	}
-	generic := &models.Settings{LdapEnabled: boolPtr(true), LdapServerType: "generic"}
-	if code, _ := directoryWriteBlock(generic, ldapauth.WritebackConfig{}); code != 400 {
+	if code, _ := directoryWriteBlock("generic", true, ldapauth.WritebackConfig{}); code != 400 {
 		t.Fatalf("missing writeback code = %d", code)
 	}
-	if code, msg := directoryWriteBlock(generic, wb); code != 0 || msg != "" {
+	if code, msg := directoryWriteBlock("generic", true, wb); code != 0 || msg != "" {
 		t.Fatalf("writable code = %d %q", code, msg)
 	}
 	blankType := &models.Settings{LdapEnabled: boolPtr(true)}

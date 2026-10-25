@@ -248,7 +248,6 @@ const groups = computed(() => {
           icon: 'i-lucide-shield-check',
           children: [
             { label: 'Directory', icon: 'i-lucide-folder-tree', to: '/admin/directory' },
-            { label: 'Authentication', icon: 'i-lucide-key', to: '/admin/authentication' },
             { label: 'Authorization', icon: 'i-lucide-lock', to: '/admin/authorization' },
           ],
         },

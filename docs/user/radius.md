@@ -7,9 +7,10 @@ order: 57
 
 **Admin → Services → RADIUS** lets routers and switches log in with a username
 and password. The password check and the group check happen on the RADIUS
-worker. By default that worker binds to the directory configured under
-**Authentication** (Active Directory or OpenLDAP, including the second
-host). **Admin → AAA → Directory** can instead publish local users and
+worker. By default that worker tries each enabled OpenLDAP or Active
+Directory server under **Admin → AAA → Directory**, in order. A server
+that fails is skipped. If none accepts the password, the client is
+denied. **Directory** can instead publish local users and
 roles as an internal directory and have RADIUS on the same worker use it.
 factum2 stores the policy and the login log. It is not in the path of a
 login, so a factum2 outage does not lock operators out of the network.

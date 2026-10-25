@@ -85,10 +85,9 @@ func generateResetCode() (string, error) {
 // util.Config.LdapWriteback (YAML config file), never in Settings/the DB,
 // so an admin turning the toggle on without an operator also setting the
 // config file still fails closed here rather than silently no-opping.
-func ldapWritebackAvailable(settings *models.Settings) bool {
-	return settings.LdapEnabled != nil && *settings.LdapEnabled &&
-		settings.LdapAllowPasswordChange != nil && *settings.LdapAllowPasswordChange &&
-		util.Config.LdapWriteback.BindDN != ""
+func ldapWritebackAvailable(db *gorm.DB) bool {
+	ok, err := ldapPasswordChangeAllowed(db)
+	return err == nil && ok
 }
 
 // provisionLDAPUserByEmail searches LDAP for an entry matching email and,
@@ -102,13 +101,16 @@ func ldapWritebackAvailable(settings *models.Settings) bool {
 // LDAP is disabled, no entry matches, or AttrUsername/AttrEmail aren't
 // configured - same "not an error, just nothing to do" contract as
 // ldapauth.LookupByEmail.
-func (ctrl *Controller) provisionLDAPUserByEmail(settings *models.Settings, email string) (*models.User, error) {
-	if settings.LdapEnabled == nil || !*settings.LdapEnabled {
+func (ctrl *Controller) provisionLDAPUserByEmail(email string) (*models.User, error) {
+	cfgs, err := ldapAuthConfigs(ctrl.DB)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfgs) == 0 {
 		return nil, nil
 	}
 
-	cfg := ldapauth.ConfigFromSettings(settings)
-	info, err := ldapauth.LookupByEmail(cfg, email)
+	info, err := lookupLDAPByEmail(ctrl.DB, email)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +139,10 @@ func (ctrl *Controller) provisionLDAPUserByEmail(settings *models.Settings, emai
 		Mobile:       info.Mobile,
 	}
 	if err := ctrl.DB.Create(&user).Error; err != nil {
+		return nil, err
+	}
+	settings, err := util.GetOrCreateSettings(ctrl.DB)
+	if err != nil {
 		return nil, err
 	}
 	if err := syncLDAPRoles(ctrl.DB, &user, settings, info.Groups); err != nil {
@@ -236,7 +242,7 @@ func (ctrl *Controller) sendPasswordResetEmailIfEligible(email string) {
 		// Search the directory by email and provision one now instead of
 		// silently giving up, so this flow isn't only reachable after a
 		// first login.
-		provisioned, err := ctrl.provisionLDAPUserByEmail(settings, email)
+		provisioned, err := ctrl.provisionLDAPUserByEmail(email)
 		if err != nil {
 			slog.Error("forgot-password: ldap email lookup failed", "error", err)
 			return
@@ -247,7 +253,7 @@ func (ctrl *Controller) sendPasswordResetEmailIfEligible(email string) {
 		user = *provisioned
 	}
 
-	if user.PasswordHash == ldapSentinelPassword && !ldapWritebackAvailable(settings) {
+	if user.PasswordHash == ldapSentinelPassword && !ldapWritebackAvailable(ctrl.DB) {
 		body, err := renderTemplate(ldapManagedEmailTmpl, nil)
 		if err != nil {
 			slog.Error("forgot-password: failed to render ldap-managed notice", "error", err)
@@ -358,13 +364,8 @@ func (ctrl *Controller) ApiResetPassword(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 
-	settings, err := util.GetOrCreateSettings(ctrl.DB)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	}
-
 	if user.PasswordHash == ldapSentinelPassword {
-		if !ldapWritebackAvailable(settings) {
+		if !ldapWritebackAvailable(ctrl.DB) {
 			ctrl.consumeResetToken(prt)
 			return c.JSON(http.StatusBadRequest, map[string]any{"error": "Your password is managed by your organization's directory service; contact your administrator."})
 		}
@@ -372,7 +373,7 @@ func (ctrl *Controller) ApiResetPassword(c *echo.Context) error {
 			BindDN:   util.Config.LdapWriteback.BindDN,
 			Password: util.Config.LdapWriteback.Password,
 		}
-		if err := ldapauth.ChangePassword(ldapauth.ConfigFromSettings(settings), wb, user.Username, req.NewPassword); err != nil {
+		if err := changeLDAPPassword(ctrl.DB, wb, user.Username, req.NewPassword); err != nil {
 			slog.Error("reset-password: ldap write-back failed", "error", err, "user", user.Username)
 			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed to update password in the directory"})
 		}

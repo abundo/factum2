@@ -6,12 +6,16 @@ import {
   browseLdap,
   createLdapGroup,
   createLdapPerson,
+  createLdapServer,
   deleteLdapGroup,
   deleteLdapPerson,
-  getLdapDirectory,
+  deleteLdapServer,
   getLdapEntry,
+  getLdapServers,
+  testLdapConnection,
   updateLdapGroup,
   updateLdapPerson,
+  updateLdapServer,
 } from '@/api/ldap'
 import {
   createLdapOU,
@@ -43,7 +47,7 @@ const { confirmDelete, ask } = useConfirm()
 const el = ref(null)
 const users = ref([])
 const roles = ref([])
-const directory = ref({ enabled: false, server_type: 'generic', base_dn: '', writable: false })
+const servers = ref([])
 const internal = ref({
   enabled: false,
   listen: '',
@@ -81,6 +85,7 @@ const directorySaveLoading = computed(() => {
   if (panel.value === 'role') return roleSaving.value
   if (panel.value === 'person') return personSaving.value
   if (panel.value === 'group') return groupSaving.value
+  if (panel.value === 'server') return serverSaving.value
   return false
 })
 const submitted = ref(false)
@@ -120,25 +125,43 @@ const activeForm = computed(() => {
   if (panel.value === 'group') return group.value
   if (panel.value === 'internal') return internalForm.value
   if (panel.value === 'ou') return ouForm.value
+  if (panel.value === 'server') return serverForm.value
   return null
 })
 const { mark, dirty: formDirty } = usePageForm(activeForm)
 
-const writable = computed(() => !!directory.value.writable)
-const ldapOn = computed(() => !!directory.value.enabled)
-const ad = computed(() => directory.value.server_type === 'ad')
+const serverForm = ref({})
+const serverSaving = ref(false)
+const serverDeleting = ref(false)
+const serverTesting = ref(false)
+
+const tlsModeOptions = [
+  { label: 'None', value: 'none' },
+  { label: 'StartTLS', value: 'starttls' },
+  { label: 'LDAPS', value: 'ldaps' },
+]
+const serverTypeOptions = [
+  { label: 'Active Directory', value: 'ad' },
+  { label: 'OpenLDAP', value: 'generic' },
+]
+const bindModeOptions = [
+  { label: 'Anonymous bind', value: 'anonymous' },
+  { label: 'Service account bind', value: 'service' },
+]
+
+function serverOf(id) {
+  return servers.value.find((s) => s.id === id)
+}
+
+function nodeWritable(node) {
+  return !!serverOf(node?.server_id)?.writable
+}
 
 const intro = computed(() => {
-  if (!ldapOn.value) {
-    return 'People and roles in this directory are served to RADIUS, NetBox, LibreNMS, and Icinga.'
+  if (!servers.value.length) {
+    return 'People and roles in this directory are served to RADIUS, NetBox, LibreNMS, and Icinga. Right-click to add an OpenLDAP or Active Directory server.'
   }
-  if (ad.value) {
-    return 'Active Directory is shown for browsing. Accounts there are managed in Active Directory. Factum accounts are in this directory.'
-  }
-  if (!writable.value) {
-    return 'OpenLDAP is shown read-only. Set ldap_writeback.bind_dn and ldap_writeback.bind_password in the config file to add and change entries. Factum accounts are in this directory.'
-  }
-  return 'Factum accounts are in this directory. OpenLDAP users and groups can be added under a directory container.'
+  return 'Login tries each enabled server in order. If none accepts the password, the client is denied. OpenLDAP entries can be changed when ldap_writeback is set. Active Directory is browse-only.'
 })
 
 const menuItems = computed(() => {
@@ -150,10 +173,15 @@ const menuItems = computed(() => {
     items.push({ id: 'new-user', label: 'New user' })
     items.push({ id: 'new-role', label: 'New role' })
   }
-  const ldapHere = kind === 'directory' || kind === 'container' || kind === 'other'
-  if (writable.value && (!node || ldapHere)) {
+  const ldapHere =
+    kind === 'server' || kind === 'directory' || kind === 'container' || kind === 'other'
+  if (nodeWritable(node) && ldapHere) {
     items.push({ id: 'new-person', label: 'New directory user' })
     items.push({ id: 'new-group', label: 'New group' })
+  }
+  if (!node || kind === 'server' || kind === 'internal') {
+    items.push({ id: 'new-openldap', label: 'New OpenLDAP server' })
+    items.push({ id: 'new-ad', label: 'New Active Directory' })
   }
   if (kind === 'internal' || kind === 'ou') {
     items.push({ id: 'new-folder', label: 'New folder' })
@@ -165,22 +193,21 @@ const menuItems = computed(() => {
     kind === 'role' ||
     kind === 'person' ||
     kind === 'group' ||
-    kind === 'ou'
+    kind === 'ou' ||
+    kind === 'server'
   ) {
     items.push({ id: 'edit', label: 'Edit' })
   }
+  if (kind === 'server') items.push({ id: 'delete', label: 'Delete', danger: true })
   if (kind === 'ou') items.push({ id: 'delete', label: 'Delete', danger: true })
   if (kind === 'user' && !isAdmin(node)) items.push({ id: 'delete', label: 'Delete', danger: true })
-  if ((kind === 'person' || kind === 'group') && writable.value) {
+  if ((kind === 'person' || kind === 'group') && nodeWritable(node)) {
     items.push({ id: 'delete', label: 'Delete', danger: true })
   }
   return items
 })
 
 const selectedKind = computed(() => selected.value?.kind || '')
-const ldapSelection = computed(() =>
-  ['directory', 'container', 'other', 'person', 'group'].includes(selectedKind.value),
-)
 
 function errMsg(err, fallback) {
   return err.response?.data?.error ?? err.message ?? fallback
@@ -323,17 +350,34 @@ function internalBranch() {
   }
 }
 
-function directoryBranch() {
-  if (!ldapOn.value) return null
-  const base = directory.value.base_dn || ''
+function serverTitle(s) {
+  return s?.name || s?.host || 'LDAP server'
+}
+
+function serverBranch(s) {
   return {
-    key: base || 'directory',
-    title: base || 'Directory',
-    lazy: true,
-    type: 'directory',
-    kind: 'directory',
-    dn: base,
+    key: `ldap-server-${s.id}`,
+    title: serverTitle(s),
+    type: 'server',
+    kind: 'server',
+    server_id: s.id,
+    dn: s.base_dn || '',
+    lazy: !!(s.host && s.base_dn),
   }
+}
+
+function toServerNode(entry, serverId) {
+  const node = toLdapNode(entry)
+  node.server_id = serverId
+  node.key = `s${serverId}:${entry.dn}`
+  return node
+}
+
+function ldapNodeKey(serverId, dn) {
+  const server = serverOf(serverId)
+  const base = (server?.base_dn || '').toLowerCase()
+  if (!dn || (base && dn.toLowerCase() === base)) return `ldap-server-${serverId}`
+  return `s${serverId}:${dn}`
 }
 
 function renderCell(e) {
@@ -429,9 +473,7 @@ function bindExpander() {
 function buildTree() {
   if (!el.value) return
   destroyTree()
-  const source = [internalBranch()]
-  const dir = directoryBranch()
-  if (dir) source.push(dir)
+  const source = [internalBranch(), ...servers.value.map(serverBranch)]
   tree = new Wunderbaum({
     element: el.value,
     id: 'directory-tree',
@@ -455,6 +497,7 @@ function buildTree() {
       role: { icon: false },
       internal: { icon: false },
       ou: { icon: false },
+      server: { icon: false },
       directory: { icon: false },
       container: { icon: false },
       person: { icon: false },
@@ -462,8 +505,12 @@ function buildTree() {
       other: { icon: false },
     },
     lazyLoad: (e) => {
-      const dn = e.node.data?.dn ?? ''
-      return browseLdap(dn).then((rows) => (rows ?? []).map(toLdapNode))
+      const data = e.node.data ?? {}
+      const serverId = data.server_id
+      const dn = data.kind === 'server' ? data.dn || '' : (data.dn ?? '')
+      return browseLdap(dn, serverId).then((rows) =>
+        (rows ?? []).map((row) => toServerNode(row, serverId)),
+      )
     },
     render: renderCell,
     // mouseup already toggled. Returning false keeps the grid click from
@@ -516,12 +563,34 @@ function syncInternal() {
   applySearch()
 }
 
-async function refreshLdap(parentDN) {
-  if (!tree || !parentDN) return
-  const node = tree.findKey(parentDN)
+async function refreshLdap(serverId, parentDN) {
+  if (!tree || !serverId) return
+  const node = tree.findKey(ldapNodeKey(serverId, parentDN))
   if (!node) return
   node.resetLazy()
   await node.setExpanded(true)
+  applySearch()
+}
+
+function syncServerRoots() {
+  if (!tree?.root) {
+    buildTree()
+    return
+  }
+  const open = new Map()
+  for (const child of tree.root.children ?? []) {
+    if (child.data?.kind === 'server' && child.data.server_id) {
+      open.set(child.data.server_id, !!child.expanded)
+    }
+  }
+  for (const child of [...(tree.root.children ?? [])]) {
+    if (child.data?.kind === 'server') child.remove()
+  }
+  if (servers.value.length) tree.root.addChildren(servers.value.map(serverBranch))
+  for (const s of servers.value) {
+    const node = tree.findKey(`ldap-server-${s.id}`)
+    if (node && open.get(s.id)) node.setExpanded(true)
+  }
   applySearch()
 }
 
@@ -573,15 +642,19 @@ function parentOfDN(dn) {
 }
 
 function ldapParentDN(node) {
-  const base = directory.value.base_dn || ''
-  if (!node) return base
-  if (node.kind === 'directory' || node.kind === 'container' || node.kind === 'other') {
-    return node.dn || node.key || base
+  if (!node) return ''
+  if (
+    node.kind === 'server' ||
+    node.kind === 'directory' ||
+    node.kind === 'container' ||
+    node.kind === 'other'
+  ) {
+    return node.dn || ''
   }
   if (node.kind === 'person' || node.kind === 'group') {
-    return parentOfDN(node.dn || node.key || '') || base
+    return parentOfDN(node.dn || '') || serverOf(node.server_id)?.base_dn || ''
   }
-  return base
+  return ''
 }
 
 function roleNames(row) {
@@ -628,6 +701,14 @@ async function showSelection(n) {
     if (seq === fillSeq) mark()
     return
   }
+  if (n?.kind === 'server') {
+    panel.value = 'server'
+    const row = serverOf(n.server_id) || {}
+    serverForm.value = serverFormFrom(row)
+    await nextTick()
+    if (seq === fillSeq) mark()
+    return
+  }
   if (!n || !['user', 'role', 'person', 'group'].includes(n.kind)) {
     panel.value = n ? 'node' : ''
     await nextTick()
@@ -660,9 +741,9 @@ async function showSelection(n) {
     personLoading.value = true
     person.value = { dn: n.dn || n.key, editable: false, password: '' }
     try {
-      const entry = await getLdapEntry(n.dn || n.key)
+      const entry = await getLdapEntry(n.dn || n.key, n.server_id)
       if (seq !== fillSeq) return
-      person.value = { ...entry, password: '' }
+      person.value = { ...entry, server_id: n.server_id, password: '' }
     } catch (err) {
       if (seq !== fillSeq) return
       panel.value = ''
@@ -675,9 +756,9 @@ async function showSelection(n) {
     groupLoading.value = true
     group.value = { dn: n.dn || n.key, members: [], editable: false }
     try {
-      const entry = await getLdapEntry(n.dn || n.key)
+      const entry = await getLdapEntry(n.dn || n.key, n.server_id)
       if (seq !== fillSeq) return
-      group.value = { ...entry, members: entry.members ?? [] }
+      group.value = { ...entry, server_id: n.server_id, members: entry.members ?? [] }
     } catch (err) {
       if (seq !== fillSeq) return
       panel.value = ''
@@ -756,13 +837,14 @@ async function openNewFolder(node) {
   mark()
 }
 
-async function openNewPerson(parent) {
+async function openNewPerson(node) {
   if (!(await guardEdits())) return
   creating.value = true
   submitted.value = false
   panel.value = 'person'
   person.value = {
-    parent_dn: parent,
+    server_id: node?.server_id,
+    parent_dn: ldapParentDN(node),
     uid: '',
     cn: '',
     sn: '',
@@ -778,18 +860,29 @@ async function openNewPerson(parent) {
 
 async function openNewGroup(node) {
   if (!(await guardEdits())) return
-  const parent = node ? ldapParentDN(node) : ldapParentDN(selected.value)
+  const target = node || selected.value
+  const parent = ldapParentDN(target)
   creating.value = true
   submitted.value = false
   panel.value = 'group'
-  group.value = { parent_dn: parent, cn: '', description: '', members: [], editable: true }
+  group.value = {
+    server_id: target?.server_id,
+    parent_dn: parent,
+    cn: '',
+    description: '',
+    members: [],
+    editable: true,
+  }
   await nextTick()
   mark()
 }
 
 function openNewUser() {
-  if (writable.value && ldapSelection.value) {
-    return openNewPerson(ldapParentDN(selected.value))
+  if (
+    nodeWritable(selected.value) &&
+    ['server', 'directory', 'container', 'other', 'person', 'group'].includes(selectedKind.value)
+  ) {
+    return openNewPerson(selected.value)
   }
   return openLocalUser()
 }
@@ -871,6 +964,7 @@ function savePerson() {
   if (!person.value.dn && !person.value.password) return
   personSaving.value = true
   const body = {
+    server_id: person.value.server_id,
     dn: person.value.dn,
     parent_dn: person.value.parent_dn,
     uid: person.value.uid,
@@ -889,8 +983,8 @@ function savePerson() {
       toastOk(body.dn ? 'Directory user updated' : 'Directory user created')
       creating.value = false
       mark()
-      await refreshLdap(parent)
-      await activateKey(saved?.dn || body.dn)
+      await refreshLdap(body.server_id, parent)
+      await activateKey(ldapNodeKey(body.server_id, saved?.dn || body.dn))
     })
     .catch((err) => toastError(err, 'Failed to save the directory user.'))
     .finally(() => {
@@ -913,11 +1007,12 @@ async function performDeletePerson(target) {
   }
   personDeleting.value = true
   const parent = parentOfDN(row.dn)
-  deleteLdapPerson(row.dn)
+  const serverId = row.server_id || person.value.server_id
+  deleteLdapPerson(row.dn, serverId)
     .then(async (res) => {
       mark()
       if (person.value.dn === row.dn) panel.value = ''
-      await refreshLdap(parent)
+      await refreshLdap(serverId, parent)
       if (res?.local_user_id) {
         const also = await ask({
           title: 'Local account',
@@ -953,6 +1048,7 @@ function saveGroup() {
   if (!group.value.cn?.trim() || !(group.value.members ?? []).length) return
   groupSaving.value = true
   const body = {
+    server_id: group.value.server_id,
     dn: group.value.dn,
     parent_dn: group.value.parent_dn,
     cn: group.value.cn,
@@ -966,8 +1062,8 @@ function saveGroup() {
       toastOk(body.dn ? 'Directory group updated' : 'Directory group created')
       creating.value = false
       mark()
-      await refreshLdap(parent)
-      await activateKey(saved?.dn || body.dn)
+      await refreshLdap(body.server_id, parent)
+      await activateKey(ldapNodeKey(body.server_id, saved?.dn || body.dn))
     })
     .catch((err) => toastError(err, 'Failed to save the directory group.'))
     .finally(() => {
@@ -989,12 +1085,13 @@ async function performDeleteGroup(target) {
   }
   groupDeleting.value = true
   const parent = parentOfDN(row.dn)
-  deleteLdapGroup(row.dn)
+  const serverId = row.server_id || group.value.server_id
+  deleteLdapGroup(row.dn, serverId)
     .then(async () => {
       toastOk('Directory group deleted')
       mark()
       if (group.value.dn === row.dn) panel.value = ''
-      await refreshLdap(parent)
+      await refreshLdap(serverId, parent)
     })
     .catch((err) => toastError(err, 'Failed to delete the directory group.'))
     .finally(() => {
@@ -1004,6 +1101,7 @@ async function performDeleteGroup(target) {
 
 function deleteNode(node) {
   if (!node) return
+  if (node.kind === 'server') return performDeleteServer(node)
   if (node.kind === 'user') return performDeleteUser(node)
   if (node.kind === 'person') return performDeletePerson(node)
   if (node.kind === 'group') return performDeleteGroup(node)
@@ -1067,9 +1165,144 @@ function saveInternal() {
     .catch((err) => toastError(err, 'Failed to save the directory.'))
 }
 
+function serverFormFrom(row) {
+  const ad = (row.server_type || 'generic') === 'ad'
+  return {
+    id: row.id,
+    enabled: row.enabled !== false,
+    name: row.name || '',
+    server_type: row.server_type || 'generic',
+    host: row.host || '',
+    port: row.port || 389,
+    tls_mode: row.tls_mode || 'starttls',
+    skip_tls_verify: !!row.skip_tls_verify,
+    bind_mode: (row.bind_dn || '').trim() ? 'service' : row.id ? 'anonymous' : 'service',
+    bind_dn: row.bind_dn || '',
+    bind_password: '',
+    bind_password_set: !!row.bind_password_set,
+    base_dn: row.base_dn || '',
+    user_filter: row.user_filter || (ad ? '(sAMAccountName=%s)' : '(uid=%s)'),
+    attr_username: row.attr_username || '',
+    attr_email: row.attr_email || '',
+    attr_display_name: row.attr_display_name || '',
+    attr_mobile: row.attr_mobile || '',
+    attr_groups: row.attr_groups || '',
+    allow_password_change: !!row.allow_password_change,
+    position: row.position > 0 ? row.position : null,
+  }
+}
+
+async function openNewServer(serverType) {
+  if (!(await guardEdits())) return
+  creating.value = true
+  submitted.value = false
+  panel.value = 'server'
+  serverForm.value = serverFormFrom({
+    server_type: serverType,
+    enabled: true,
+    tls_mode: 'starttls',
+  })
+  await nextTick()
+  mark()
+}
+
+function saveServer() {
+  submitted.value = true
+  if (!serverForm.value.host?.trim()) return
+  const body = { ...serverForm.value }
+  if (body.bind_mode === 'anonymous') {
+    body.bind_dn = ''
+    body.bind_password = ''
+  }
+  delete body.bind_mode
+  delete body.bind_password_set
+  delete body.writable
+  if (!body.bind_password) delete body.bind_password
+  if (!(Number(body.position) > 0)) delete body.position
+  serverSaving.value = true
+  const request = body.id ? updateLdapServer(body.id, body) : createLdapServer(body)
+  request
+    .then(async (saved) => {
+      toastOk(body.id ? 'LDAP server updated' : 'LDAP server created')
+      creating.value = false
+      mark()
+      await reloadServers()
+      await activateKey(`ldap-server-${saved?.id || body.id}`)
+    })
+    .catch((err) => toastError(err, 'Failed to save the LDAP server.'))
+    .finally(() => {
+      serverSaving.value = false
+    })
+}
+
+async function performDeleteServer(node) {
+  const id = node?.server_id || serverForm.value.id
+  const row = serverOf(id) || serverForm.value
+  const label = serverTitle(row) || 'LDAP server'
+  if (!id) return
+  if (!(await confirmDelete(`LDAP server ${label}`))) return
+  serverDeleting.value = true
+  deleteLdapServer(id)
+    .then(async () => {
+      toastOk('LDAP server deleted')
+      const closed = serverForm.value.id === id
+      if (closed) panel.value = ''
+      await reloadServers()
+      await nextTick()
+      // Mark after the panel is gone. Marking the open form first makes
+      // the empty panel look like an unsaved edit and blocks the next click.
+      if (closed) mark()
+    })
+    .catch((err) => toastError(err, 'Failed to delete the LDAP server.'))
+    .finally(() => {
+      serverDeleting.value = false
+    })
+}
+
+function testServer() {
+  const form = serverForm.value
+  serverTesting.value = true
+  const payload = {
+    id: form.id,
+    ldap_host: form.host,
+    ldap_port: form.port,
+    ldap_tls_mode: form.tls_mode,
+    ldap_skip_tls_verify: !!form.skip_tls_verify,
+    ldap_bind_dn: form.bind_mode === 'anonymous' ? '' : form.bind_dn,
+    ldap_bind_password: form.bind_mode === 'anonymous' ? '' : form.bind_password,
+    ldap_base_dn: form.base_dn,
+  }
+  testLdapConnection(payload)
+    .then((data) => {
+      if (data.ok) {
+        toastOk('Bound to the LDAP server.')
+        return
+      }
+      toast.add({
+        color: 'error',
+        title: 'Connection failed',
+        description: data.error || 'The server did not accept the bind.',
+        duration: 6000,
+      })
+    })
+    .catch((err) => toastError(err, 'Failed to test the connection.'))
+    .finally(() => {
+      serverTesting.value = false
+    })
+}
+
+function reloadServers() {
+  return getLdapServers().then((rows) => {
+    servers.value = rows ?? []
+    syncServerRoots()
+  })
+}
+
 function runMenu(id) {
   const node = menu.value.node
   closeMenu()
+  if (id === 'new-openldap') return openNewServer('generic')
+  if (id === 'new-ad') return openNewServer('ad')
   if (id === 'new-folder') return openNewFolder(node)
   if (id === 'new-user' && (node?.kind === 'ou' || node?.kind === 'internal')) {
     return openUserIn(node.kind === 'ou' ? node.ou_id : 0)
@@ -1079,7 +1312,7 @@ function runMenu(id) {
   }
   if (id === 'new-user') return openLocalUser()
   if (id === 'new-role') return openNewRole()
-  if (id === 'new-person') return openNewPerson(ldapParentDN(node))
+  if (id === 'new-person') return openNewPerson(node)
   if (id === 'new-group') return openNewGroup(node)
   if (id === 'edit') return showSelection(node)
   if (id === 'delete') return deleteNode(node)
@@ -1111,11 +1344,11 @@ function load() {
   loading.value = true
   error.value = null
   forbidden.value = false
-  Promise.all([getUsers(), getRoles(), getLdapDirectory(), getLdapInternal()])
-    .then(([userRows, roleRows, status, dir]) => {
+  Promise.all([getUsers(), getRoles(), getLdapServers(), getLdapInternal()])
+    .then(([userRows, roleRows, serverRows, dir]) => {
       users.value = userRows ?? []
       roles.value = roleRows ?? []
-      directory.value = status ?? directory.value
+      servers.value = serverRows ?? []
       internal.value = dir ?? internal.value
     })
     .catch((err) => {
@@ -1183,7 +1416,21 @@ onBeforeUnmount(() => {
         @click="openNewRole"
       />
       <UButton
-        v-if="writable"
+        label="OpenLDAP"
+        icon="i-lucide-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewServer('generic')"
+      />
+      <UButton
+        label="Active Directory"
+        icon="i-lucide-plus"
+        color="neutral"
+        size="sm"
+        @click="openNewServer('ad')"
+      />
+      <UButton
+        v-if="nodeWritable(selected)"
         label="New group"
         icon="i-lucide-plus"
         color="neutral"
@@ -1213,6 +1460,159 @@ onBeforeUnmount(() => {
           Select an entry. Click + or − to open a folder. Right-click a row to add, change, or
           remove it.
         </p>
+        <form
+          v-else-if="panel === 'server'"
+          id="directory-server-form"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveServer"
+        >
+          <h5 class="m-0">{{ serverForm.id ? serverTitle(serverForm) : 'New LDAP server' }}</h5>
+          <p class="text-sm text-muted-color">
+            Login tries enabled servers from lowest order to highest. A server that is down or
+            rejects the password is skipped. If none accepts the client, access is denied.
+          </p>
+          <UCheckbox v-model="serverForm.enabled" label="Enabled" />
+          <UFormField label="Name">
+            <UInput v-model="serverForm.name" placeholder="dc1" class="w-full" />
+            <small class="text-muted-color"
+              >Shown in the tree. The host is used when this is empty.</small
+            >
+          </UFormField>
+          <UFormField label="Order">
+            <UInputNumber
+              v-model="serverForm.position"
+              :min="1"
+              :format-options="{ useGrouping: false }"
+              class="w-full"
+            />
+            <small class="text-muted-color"
+              >Lower numbers are tried first. Empty puts the server last.</small
+            >
+          </UFormField>
+          <UFormField label="Server type">
+            <URadioGroup v-model="serverForm.server_type" :items="serverTypeOptions" />
+          </UFormField>
+          <UFormField label="Host">
+            <UInput
+              v-model="serverForm.host"
+              placeholder="dc1.example.com"
+              :color="submitted && !serverForm.host?.trim() ? 'error' : undefined"
+              :highlight="submitted && !serverForm.host?.trim()"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="Port">
+            <UInputNumber
+              v-model="serverForm.port"
+              :format-options="{ useGrouping: false }"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="TLS">
+            <USelect v-model="serverForm.tls_mode" :items="tlsModeOptions" class="w-full" />
+          </UFormField>
+          <UCheckbox
+            v-model="serverForm.skip_tls_verify"
+            label="Skip TLS certificate verification"
+          />
+          <UFormField label="Bind">
+            <URadioGroup v-model="serverForm.bind_mode" :items="bindModeOptions" />
+            <small v-if="serverForm.bind_mode === 'anonymous'" class="text-muted-color">
+              The directory must allow anonymous search. Active Directory usually does not.
+            </small>
+          </UFormField>
+          <UFormField label="Bind DN">
+            <UInput
+              v-model="serverForm.bind_dn"
+              :disabled="serverForm.bind_mode === 'anonymous'"
+              placeholder="cn=svc-factum,dc=example,dc=com"
+              class="w-full font-mono"
+            />
+          </UFormField>
+          <UFormField label="Bind password">
+            <PasswordInput
+              v-model="serverForm.bind_password"
+              :disabled="serverForm.bind_mode === 'anonymous'"
+            />
+            <small class="text-muted-color">
+              {{
+                serverForm.bind_password_set
+                  ? 'Leave blank to keep the current password.'
+                  : 'Used to search for the user before the password bind.'
+              }}
+            </small>
+          </UFormField>
+          <UFormField label="Base DN">
+            <UInput
+              v-model="serverForm.base_dn"
+              placeholder="dc=example,dc=com"
+              class="w-full font-mono"
+            />
+          </UFormField>
+          <UFormField label="User filter">
+            <UInput
+              v-model="serverForm.user_filter"
+              :placeholder="serverForm.server_type === 'ad' ? '(sAMAccountName=%s)' : '(uid=%s)'"
+              class="w-full font-mono"
+            />
+            <small class="text-muted-color">One %s for the escaped username.</small>
+          </UFormField>
+          <UFormField label="Username attribute">
+            <UInput
+              v-model="serverForm.attr_username"
+              :placeholder="serverForm.server_type === 'ad' ? 'sAMAccountName' : 'uid'"
+              class="w-full"
+            />
+            <small class="text-muted-color"
+              >Used when a password reset looks the account up by email.</small
+            >
+          </UFormField>
+          <UFormField label="Email attribute">
+            <UInput v-model="serverForm.attr_email" placeholder="mail" class="w-full" />
+          </UFormField>
+          <UFormField label="Display name attribute">
+            <UInput
+              v-model="serverForm.attr_display_name"
+              placeholder="displayName"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="Mobile attribute">
+            <UInput v-model="serverForm.attr_mobile" placeholder="mobile" class="w-full" />
+          </UFormField>
+          <UFormField label="Groups attribute">
+            <UInput v-model="serverForm.attr_groups" placeholder="memberOf" class="w-full" />
+          </UFormField>
+          <UCheckbox
+            v-model="serverForm.allow_password_change"
+            label="Allow password changes to be written back"
+          />
+          <p class="text-sm text-muted-color">
+            The account that writes the password is ldap_writeback in the config file. The same
+            account adds and changes OpenLDAP entries. Active Directory stays browse-only.
+          </p>
+          <div class="flex gap-2">
+            <UButton
+              label="Test connection"
+              icon="i-lucide-zap"
+              color="neutral"
+              type="button"
+              :loading="serverTesting"
+              @click="testServer"
+            />
+            <UButton
+              v-if="serverForm.id"
+              label="Delete"
+              icon="i-lucide-trash"
+              color="error"
+              variant="ghost"
+              type="button"
+              :loading="serverDeleting"
+              @click="performDeleteServer()"
+            />
+          </div>
+        </form>
+
         <form
           v-else-if="panel === 'internal'"
           id="directory-internal-form"

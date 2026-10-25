@@ -10,6 +10,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&User{},
 		&Role{},
 		&LdapRoleMapping{},
+		&LdapServer{},
 		&PasswordResetToken{},
 
 		&Device{},

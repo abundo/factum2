@@ -130,8 +130,8 @@ including `APP_ENV=development`. It signs the API auth cookie
 (`web/auth.go`); anyone who knows it can forge a login for any user.
 
 `ldap_writeback.bind_dn` / `ldap_writeback.bind_password` are optional.
-They are required for two things: the Authentication page's "Allow password
-changes to be written back to LDAP/AD" switch, and Admin → Directory edits
+They are required for two things: a Directory server's "Allow password
+changes to be written back" switch, and Admin → Directory edits
 of users and groups when the server type is OpenLDAP-compatible (generic).
 Active Directory stays browse-only on that page. Unlike every other LDAP
 setting, these live only here, never in the DB or the Settings API — same

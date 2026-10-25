@@ -293,15 +293,19 @@ func AuthenticateUser(db *gorm.DB, username string, password string) (*models.Us
 	return nil, nil // Invalid password
 }
 
-// ldapSettingsIfEnabled loads Settings and reports whether LDAP auth is
-// turned on - a DB error here is real (propagated), an unconfigured/disabled
-// LDAP is not (callers treat it like "no such backend", not an error).
+// ldapSettingsIfEnabled loads Settings and reports whether any LDAP server
+// will be tried. A database error is propagated. No enabled server is not
+// an error: callers treat it as "no such backend".
 func ldapSettingsIfEnabled(db *gorm.DB) (*models.Settings, bool, error) {
 	settings, err := util.GetOrCreateSettings(db)
 	if err != nil {
 		return nil, false, err
 	}
-	return settings, settings.LdapEnabled != nil && *settings.LdapEnabled, nil
+	cfgs, err := ldapAuthConfigs(db)
+	if err != nil {
+		return nil, false, err
+	}
+	return settings, len(cfgs) > 0, nil
 }
 
 // authenticateNewLDAPUser handles AuthenticateUser's "no local user found"
@@ -319,7 +323,7 @@ func authenticateNewLDAPUser(db *gorm.DB, username, password string) (*models.Us
 		return nil, nil
 	}
 
-	ok, info, err := ldapAuthenticate(ldapauth.ConfigFromSettings(settings), username, password)
+	ok, info, err := authenticateLDAP(db, username, password)
 	if err != nil {
 		log.Printf("LDAP error while authenticating unknown user '%s': %v", username, err)
 		return nil, err
@@ -365,7 +369,7 @@ func authenticateExistingLDAPUser(db *gorm.DB, user *models.User, password strin
 		return nil, nil
 	}
 
-	ok, info, err := ldapAuthenticate(ldapauth.ConfigFromSettings(settings), user.Username, password)
+	ok, info, err := authenticateLDAP(db, user.Username, password)
 	if err != nil {
 		log.Printf("LDAP error while authenticating '%s': %v", user.Username, err)
 		return nil, err

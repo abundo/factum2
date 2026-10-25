@@ -91,6 +91,43 @@ func ConfigFromSettings(s *models.Settings) Config {
 	}
 }
 
+// ConfigFromServer builds a Config for one ldap_servers row. Host2 is
+// unused: failover is the ordered list of rows, not a second host on the
+// same config.
+func ConfigFromServer(s *models.LdapServer) Config {
+	if s == nil {
+		return Config{}
+	}
+	serverType := orDefault(s.ServerType, "generic")
+	port := s.Port
+	if port == 0 {
+		port = 389
+	}
+	return Config{
+		Host:            s.Host,
+		Port:            port,
+		TLSMode:         orDefault(s.TLSMode, "none"),
+		SkipTLSVerify:   s.SkipTLSVerify != nil && *s.SkipTLSVerify,
+		ServerType:      serverType,
+		BindDN:          s.BindDN,
+		BindPassword:    s.BindPassword,
+		BaseDN:          s.BaseDN,
+		UserFilter:      orDefault(s.UserFilter, defaultUserFilter(serverType)),
+		AttrUsername:    orDefault(s.AttrUsername, defaultUsernameAttr(serverType)),
+		AttrEmail:       orDefault(s.AttrEmail, "mail"),
+		AttrDisplayName: orDefault(s.AttrDisplayName, "displayName"),
+		AttrMobile:      orDefault(s.AttrMobile, "mobile"),
+		AttrGroups:      orDefault(s.AttrGroups, "memberOf"),
+	}
+}
+
+func defaultUserFilter(serverType string) string {
+	if serverType == "ad" {
+		return "(sAMAccountName=%s)"
+	}
+	return "(uid=%s)"
+}
+
 func orDefault(value, def string) string {
 	if value == "" {
 		return def

@@ -604,7 +604,11 @@ func GUI(p *GuiParams) error {
 	adminApi.PUT("/settings", ctrl.ApiSettingsUpdate)
 	adminApi.POST("/settings/test-email", ctrl.ApiSettingsTestEmail)
 
-	// ----- API: LDAP/AD test connection (Admin -> Authentication page) -----
+	// ----- API: external OpenLDAP / AD servers (Admin -> Directory) -----
+	adminApi.GET("/ldap/servers", ctrl.ApiLdapServers)
+	adminApi.POST("/ldap/servers", ctrl.ApiLdapServerCreate)
+	adminApi.PUT("/ldap/servers/:id", ctrl.ApiLdapServerUpdate)
+	adminApi.DELETE("/ldap/servers/:id", ctrl.ApiLdapServerDelete)
 	adminApi.POST("/ldap/test", ctrl.ApiLdapTestConnection)
 
 	// ----- API: LDAP/AD tree browse (Admin -> Authorization page, group picker) -----

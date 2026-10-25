@@ -6,8 +6,9 @@ order: 56
 # Directory
 
 **Admin → AAA → Directory** is the internal LDAP directory: people, roles,
-and folders. When Authentication points at an external directory, that
-Active Directory or OpenLDAP tree is a second root.
+and folders. OpenLDAP and Active Directory servers are further roots in
+the same tree. Add, change, and remove them there. The form on the right
+is the server's connection settings.
 
 ## Internal directory
 
@@ -65,8 +66,13 @@ Authorization mappings. MikroTik MS-CHAPv2 still needs Active Directory.
 
 ## External directory
 
-When LDAP is enabled under Authentication, the configured base DN is a
-second tree. Active Directory is shown for browsing. OpenLDAP entries can
-be added and changed when `ldap_writeback.bind_dn` and
-`ldap_writeback.bind_password` are set in the config file. People need a
+**OpenLDAP** and **Active Directory** add a server to the tree. Select it
+to edit the host, port, TLS, bind account, base DN, and search filter.
+**Order** is the sequence login uses. Each enabled server is tried in that
+order. A server that is down or rejects the password is skipped. If none
+accepts the client, access is denied.
+
+Active Directory is shown for browsing. OpenLDAP entries can be added and
+changed when `ldap_writeback.bind_dn` and `ldap_writeback.bind_password`
+are set in the config file and the server is enabled. People need a
 username, a name, and a surname. A new group needs at least one member.

@@ -144,11 +144,63 @@ func TestAuthenticateUser_LDAPSentinel_ServerError(t *testing.T) {
 	})
 
 	got, err := AuthenticateUser(db, "carol", "whatever")
-	if err == nil {
-		t.Fatal("expected an error to propagate, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != nil {
-		t.Errorf("got %+v, want nil on infra error", got)
+		t.Errorf("got %+v, want nil when every LDAP server fails", got)
+	}
+}
+
+func TestAuthenticateUser_LDAPFailover(t *testing.T) {
+	db := newTestDB(t)
+	on := true
+	off := false
+	rows := []models.LdapServer{
+		{Position: 1, Enabled: &on, Name: "down", ServerType: "generic", Host: "dc1.example.com", Port: 389},
+		{Position: 2, Enabled: &off, Name: "skipped", ServerType: "generic", Host: "dc-off.example.com", Port: 389},
+		{Position: 3, Enabled: &on, Name: "up", ServerType: "ad", Host: "dc2.example.com", Port: 389},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	var hosts []string
+	stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+		hosts = append(hosts, cfg.Host)
+		if cfg.Host == "dc1.example.com" {
+			return false, nil, errors.New("dial: connection refused")
+		}
+		if username != "dave" || password != "s3cret" {
+			return false, nil, nil
+		}
+		return true, &ldapauth.UserInfo{DisplayName: "Dave", Email: "dave@example.com"}, nil
+	})
+
+	got, err := AuthenticateUser(db, "dave", "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Name != "Dave" {
+		t.Fatalf("got %+v, want Dave from the second server", got)
+	}
+	if len(hosts) != 2 || hosts[0] != "dc1.example.com" || hosts[1] != "dc2.example.com" {
+		t.Fatalf("hosts tried = %v, want dc1 then dc2 (disabled server skipped)", hosts)
+	}
+
+	hosts = nil
+	stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+		hosts = append(hosts, cfg.Host)
+		return false, nil, nil
+	})
+	got, err = AuthenticateUser(db, "dave", "wrong")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("got %+v, want denial when every server rejects", got)
+	}
+	if len(hosts) != 2 {
+		t.Fatalf("hosts tried = %v, want both enabled servers", hosts)
 	}
 }
 

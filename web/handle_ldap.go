@@ -6,6 +6,7 @@ import (
 
 	"github.com/abundo/factum2/internal/ldapauth"
 	"github.com/abundo/factum2/internal/util"
+	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
 )
 
@@ -17,6 +18,7 @@ import (
 // existing value" pattern as WorkerNodeDTO.Token/UserDTO.Password. An empty
 // BindDN is an anonymous bind: do not fill in a leftover saved password.
 type LdapTestRequest struct {
+	ID            uint   `json:"id"`
 	Host          string `json:"ldap_host"`
 	Port          uint16 `json:"ldap_port"`
 	Host2         string `json:"ldap_host2"`
@@ -66,7 +68,14 @@ func (ctrl *Controller) ApiLdapTestConnection(c *echo.Context) error {
 		BaseDN:        req.BaseDN,
 	}
 	if cfg.BindPassword == "" && strings.TrimSpace(cfg.BindDN) != "" {
-		cfg.BindPassword = settings.LdapBindPassword
+		if req.ID != 0 {
+			var row models.LdapServer
+			if err := ctrl.DB.First(&row, req.ID).Error; err == nil {
+				cfg.BindPassword = row.BindPassword
+			}
+		} else {
+			cfg.BindPassword = settings.LdapBindPassword
+		}
 	}
 
 	results := ldapauth.TestServers(cfg)
@@ -115,13 +124,11 @@ type LdapBrowseEntryDTO struct {
 // unsaved form values) since browsing only makes sense once LDAP is actually
 // configured.
 func (ctrl *Controller) ApiLdapBrowse(c *echo.Context) error {
-	settings, err := util.GetOrCreateSettings(ctrl.DB)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	target, ok := ctrl.loadDirectoryRead(c, serverIDParam(c))
+	if !ok {
+		return nil
 	}
-
-	cfg := ldapauth.ConfigFromSettings(settings)
-	entries, err := ldapauth.Browse(cfg, c.QueryParam("dn"))
+	entries, err := ldapauth.Browse(target.cfg, c.QueryParam("dn"))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}

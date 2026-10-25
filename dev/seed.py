@@ -543,6 +543,38 @@ UPDATE settings SET
   ldap_internal_bind_password = 'lab'
 WHERE id = 1;
 
+INSERT INTO ldap_servers (
+  created_at, updated_at, position, enabled, name, server_type, host, port,
+  tls_mode, skip_tls_verify, bind_dn, bind_password, base_dn, user_filter,
+  attr_username, attr_email, attr_display_name, attr_mobile, attr_groups,
+  allow_password_change
+)
+SELECT now(), now(), 1, true, 'openldap', 'generic', 'openldap', 389,
+  'none', false, {_sql_lit(LDAP_BIND_DN)}, {_sql_lit(LDAP_BIND_PASSWORD)},
+  {_sql_lit(LDAP_BASE_DN)}, {_sql_lit("(uid=%s)")},
+  'uid', 'mail', 'displayName', 'mobile', 'memberOf', true
+WHERE NOT EXISTS (SELECT 1 FROM ldap_servers WHERE host = 'openldap');
+
+UPDATE ldap_servers SET
+  updated_at = now(),
+  enabled = true,
+  name = 'openldap',
+  server_type = 'generic',
+  port = 389,
+  tls_mode = 'none',
+  skip_tls_verify = false,
+  bind_dn = {_sql_lit(LDAP_BIND_DN)},
+  bind_password = {_sql_lit(LDAP_BIND_PASSWORD)},
+  base_dn = {_sql_lit(LDAP_BASE_DN)},
+  user_filter = {_sql_lit("(uid=%s)")},
+  attr_username = 'uid',
+  attr_email = 'mail',
+  attr_display_name = 'displayName',
+  attr_mobile = 'mobile',
+  attr_groups = 'memberOf',
+  allow_password_change = true
+WHERE host = 'openldap';
+
 {_ldap_mapping_sql()}
 """
 

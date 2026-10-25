@@ -58,14 +58,16 @@ type Device struct {
 }
 
 // Config is the snapshot a worker persists and serves from. LDAP is the
-// directory the worker binds to; it is not read at request time from factum2.
+// first directory (kept for a worker that has not been upgraded). LDAPs
+// is every external server, in the order a login should try them.
 type Config struct {
-	Enabled  bool            `json:"enabled"`
-	Listen   string          `json:"listen"`
-	LDAP     ldapauth.Config `json:"ldap"`
-	Clients  []Client        `json:"clients"`
-	Policies []Policy        `json:"policies"`
-	Devices  []Device        `json:"devices"`
+	Enabled  bool              `json:"enabled"`
+	Listen   string            `json:"listen"`
+	LDAP     ldapauth.Config   `json:"ldap"`
+	LDAPs    []ldapauth.Config `json:"ldaps,omitempty"`
+	Clients  []Client          `json:"clients"`
+	Policies []Policy          `json:"policies"`
+	Devices  []Device          `json:"devices"`
 	// Reply is the Access-Accept attribute text. Empty sends none.
 	Reply string `json:"reply"`
 	// Machine is the AD computer account used to check MS-CHAPv2.
@@ -90,6 +92,7 @@ type Index struct {
 	Enabled  bool
 	Listen   string
 	LDAP     ldapauth.Config
+	LDAPs    []ldapauth.Config
 	clients  map[string]Client
 	devices  map[string]Device
 	policies []Policy
@@ -103,6 +106,7 @@ func BuildIndex(cfg Config) *Index {
 		Enabled:  cfg.Enabled,
 		Listen:   cfg.Listen,
 		LDAP:     cfg.LDAP,
+		LDAPs:    cfg.LDAPs,
 		clients:  map[string]Client{},
 		devices:  map[string]Device{},
 		policies: cfg.Policies,
@@ -154,6 +158,17 @@ func BuildIndex(cfg Config) *Index {
 		}
 	}
 	return idx
+}
+
+// directories is the failover list. An older snapshot has only LDAP.
+func (idx *Index) directories() []ldapauth.Config {
+	if idx == nil {
+		return nil
+	}
+	if len(idx.LDAPs) > 0 {
+		return idx.LDAPs
+	}
+	return []ldapauth.Config{idx.LDAP}
 }
 
 func canonIP(s string) string {

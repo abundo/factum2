@@ -104,6 +104,33 @@ type LdapRoleMappingDTO struct {
 	RoleID  uint   `json:"role_id"`
 }
 
+// LdapServer is one external OpenLDAP or Active Directory server. Login
+// and RADIUS try enabled rows in Position order. A failure on one server
+// continues to the next. When none accepts the client, access is denied.
+// The Directory page edits these rows; the Settings LDAP columns remain
+// only as a fallback for a database that has not been given any rows yet.
+type LdapServer struct {
+	FactumModel
+	Position            int    `gorm:"not null;default:0" json:"position"`
+	Enabled             *bool  `json:"enabled"`
+	Name                string `json:"name"`
+	ServerType          string `gorm:"column:server_type" json:"server_type"`
+	Host                string `json:"host"`
+	Port                uint16 `json:"port"`
+	TLSMode             string `gorm:"column:tls_mode" json:"tls_mode"`
+	SkipTLSVerify       *bool  `gorm:"column:skip_tls_verify" json:"skip_tls_verify"`
+	BindDN              string `gorm:"column:bind_dn" json:"-"`
+	BindPassword        string `gorm:"column:bind_password" json:"-"`
+	BaseDN              string `gorm:"column:base_dn" json:"base_dn"`
+	UserFilter          string `gorm:"column:user_filter" json:"user_filter"`
+	AttrUsername        string `gorm:"column:attr_username" json:"attr_username"`
+	AttrEmail           string `gorm:"column:attr_email" json:"attr_email"`
+	AttrDisplayName     string `gorm:"column:attr_display_name" json:"attr_display_name"`
+	AttrMobile          string `gorm:"column:attr_mobile" json:"attr_mobile"`
+	AttrGroups          string `gorm:"column:attr_groups" json:"attr_groups"`
+	AllowPasswordChange *bool  `gorm:"column:allow_password_change" json:"allow_password_change"`
+}
+
 // WorkerNode is a remote factum2-worker host the primary dials out to over a
 // WSS connection (internal/worker.RemoteManager) - the reverse of a
 // worker dialing in, so the firewall hole is a single narrow rule on the

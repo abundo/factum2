@@ -46,13 +46,30 @@ func (ctrl *Controller) ApiRadiusConfig(c *echo.Context) error {
 	return c.JSON(http.StatusOK, cfg)
 }
 
-// ldapForRadius is the directory RADIUS binds to. When the internal
-// directory is selected, that is the LDAP listener on this same worker.
-func ldapForRadius(settings *models.Settings) ldapauth.Config {
+// radiusDirectories is every directory a RADIUS login tries, in order.
+// The internal directory replaces the external list. An empty ldap_servers
+// table keeps the Settings directory, including when LDAP login is off.
+// Rows in that table replace it, so a disabled-only list does not fall
+// back to the old host.
+func (ctrl *Controller) radiusDirectories(settings *models.Settings) []ldapauth.Config {
 	if settings.RadiusUseInternalLDAP != nil && *settings.RadiusUseInternalLDAP {
-		return internalLDAPAuth(settings)
+		return []ldapauth.Config{internalLDAPAuth(settings)}
 	}
-	return ldapauth.ConfigFromSettings(settings)
+	rows, using, err := ldapServerRows(ctrl.DB, true)
+	if err != nil {
+		return []ldapauth.Config{ldapauth.ConfigFromSettings(settings)}
+	}
+	if using {
+		out := make([]ldapauth.Config, 0, len(rows))
+		for i := range rows {
+			if rows[i].Host == "" {
+				continue
+			}
+			out = append(out, ldapauth.ConfigFromServer(&rows[i]))
+		}
+		return out
+	}
+	return []ldapauth.Config{ldapauth.ConfigFromSettings(settings)}
 }
 
 func (ctrl *Controller) buildRadiusConfig() (radius.Config, error) {
@@ -60,16 +77,20 @@ func (ctrl *Controller) buildRadiusConfig() (radius.Config, error) {
 	if err != nil {
 		return radius.Config{}, err
 	}
+	dirs := ctrl.radiusDirectories(settings)
 	cfg := radius.Config{
 		Enabled: settings.RadiusEnabled != nil && *settings.RadiusEnabled,
 		Listen:  strings.TrimSpace(settings.RadiusListen),
-		LDAP:    ldapForRadius(settings),
+		LDAPs:   dirs,
 		Reply:   radius.ReplyText(settings.RadiusReply),
 		Machine: radius.Machine{
 			Account:  strings.TrimSpace(settings.RadiusMachineAccount),
 			Password: settings.RadiusMachinePassword,
 			Domain:   strings.TrimSpace(settings.RadiusMachineDomain),
 		},
+	}
+	if len(dirs) > 0 {
+		cfg.LDAP = dirs[0]
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = radius.DefaultListen

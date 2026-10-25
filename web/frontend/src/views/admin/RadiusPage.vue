@@ -573,9 +573,9 @@ onBeforeUnmount(() => {
             </div>
             <small class="text-muted-color -mt-4">
               Workers with a <code>radius</code> command listen for switch and router logins and
-              bind to the directory configured under Authentication. factum2 is not on that path:
-              each worker keeps the last policy on disk and keeps answering while this server is
-              down.
+              bind to the OpenLDAP or Active Directory servers under Directory. factum2 is not on
+              that path: each worker keeps the last policy on disk and keeps answering while this
+              server is down.
             </small>
             <div>
               <label for="radius_listen" class="block font-bold mb-3">Listen address</label>

@@ -309,14 +309,14 @@ func (ctrl *Controller) verifyCurrentPassword(user *models.User, current string)
 		return fmt.Errorf("current password is required")
 	}
 	if user.PasswordHash == ldapSentinelPassword {
-		settings, err := util.GetOrCreateSettings(ctrl.DB)
+		cfgs, err := ldapAuthConfigs(ctrl.DB)
 		if err != nil {
 			return err
 		}
-		if settings.LdapEnabled == nil || !*settings.LdapEnabled {
+		if len(cfgs) == 0 {
 			return fmt.Errorf("LDAP authentication is disabled; contact your administrator")
 		}
-		ok, _, err := ldapAuthenticate(ldapauth.ConfigFromSettings(settings), user.Username, current)
+		ok, _, err := authenticateLDAP(ctrl.DB, user.Username, current)
 		if err != nil {
 			return fmt.Errorf("failed to verify current password: %w", err)
 		}
@@ -341,16 +341,15 @@ func (ctrl *Controller) verifyCurrentPassword(user *models.User, current string)
 // Otherwise this is where the change is still cleanly refused, same as
 // before this feature existed, just with a clearer reason.
 func (ctrl *Controller) changeLDAPUserPassword(user *models.User, currentPassword, newPassword string) error {
-	settings, err := util.GetOrCreateSettings(ctrl.DB)
+	cfgs, err := ldapAuthConfigs(ctrl.DB)
 	if err != nil {
 		return err
 	}
-	if settings.LdapEnabled == nil || !*settings.LdapEnabled {
+	if len(cfgs) == 0 {
 		return fmt.Errorf("LDAP authentication is disabled; contact your administrator")
 	}
 
-	cfg := ldapauth.ConfigFromSettings(settings)
-	ok, _, err := ldapAuthenticate(cfg, user.Username, currentPassword)
+	ok, _, err := authenticateLDAP(ctrl.DB, user.Username, currentPassword)
 	if err != nil {
 		return fmt.Errorf("failed to verify current password: %w", err)
 	}
@@ -358,15 +357,11 @@ func (ctrl *Controller) changeLDAPUserPassword(user *models.User, currentPasswor
 		return fmt.Errorf("current password is incorrect")
 	}
 
-	if !ldapWritebackAvailable(settings) {
-		return fmt.Errorf("your password is managed by your organization's directory service; contact your administrator to change it")
-	}
-
 	wb := ldapauth.WritebackConfig{
 		BindDN:   util.Config.LdapWriteback.BindDN,
 		Password: util.Config.LdapWriteback.Password,
 	}
-	if err := ldapauth.ChangePassword(cfg, wb, user.Username, newPassword); err != nil {
+	if err := changeLDAPPassword(ctrl.DB, wb, user.Username, newPassword); err != nil {
 		return fmt.Errorf("failed to update password in the directory: %w", err)
 	}
 	return nil

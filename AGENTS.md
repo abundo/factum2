@@ -435,8 +435,9 @@ is a separate systemd unit (`examples/factum2-storage.service`), not a
 `worker.commands` entry. Feature flag `Settings.StorageEnabled`.
 
 **RADIUS (`internal/radius`):** a worker with `worker.commands` key
-`radius` listens for Access-Request and binds to LDAP itself, using the
-Authentication settings and the second directory host for dial failover.
+`radius` listens for Access-Request and binds to LDAP itself, trying each
+enabled Directory server in order. A failure moves to the next server.
+If none accepts, the client is denied.
 It does not proxy the login through factum2. PAP checks the password with
 a directory bind. MikroTik sends MS-CHAPv2; that check needs Active
 Directory and the computer account on the Service tab, and OpenLDAP
