@@ -64,6 +64,12 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	if err := radius.ValidateListen(settings.RadiusListen); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	if err := validateInternalLDAP(settings); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if err := ctrl.assignInternalTLSCertificate(settings, settings.LdapInternalTLSCertificateID); err != nil {
+		return ldapErrStatus(c, err)
+	}
 	if settings.RadiusReply != nil {
 		if err := radius.ValidateReply(*settings.RadiusReply); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -78,7 +84,7 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	settings.RadiusMachineDomain = domain
 	settings.DeviceSyncWorkers = models.DeviceSyncWorkerCount(settings.DeviceSyncWorkers)
 
-	if err := ctrl.DB.Save(settings).Error; err != nil {
+	if err := saveSettings(ctrl.DB, settings); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, settings)

@@ -282,6 +282,7 @@ func GUI(p *GuiParams) error {
 	api.GET("/common-config", ctrl.ApiCommonConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/storage-config", ctrl.ApiStorageConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.GET("/radius-config", ctrl.ApiRadiusConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
+	api.GET("/ldap-config", ctrl.ApiLdapConfig, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 	api.POST("/radius-events", ctrl.ApiRadiusEvents, ctrl.RequireAPIAuth, ctrl.RequireAdminOrServiceToken)
 
 	softg := api.Group("/software", ctrl.RequireAPIAuth, ctrl.RequireStorageEnabled)
@@ -555,7 +556,7 @@ func GUI(p *GuiParams) error {
 	roles_ := NewSecureCRUDHandler[models.Role, models.RoleDTO](DB)
 	adminApi.GET("/roles", roles_.GetAll)
 	adminApi.GET("/roles/:id", roles_.GetOne)
-	adminApi.PUT("/roles/:id", roles_.Update)
+	adminApi.PUT("/roles/:id", ctrl.ApiRoleUpdate)
 	adminApi.POST("/roles", roles_.Create)
 
 	// ----- API worker nodes -----
@@ -620,6 +621,14 @@ func GUI(p *GuiParams) error {
 	adminApi.POST("/ldap/groups", ctrl.ApiLdapGroupCreate)
 	adminApi.PUT("/ldap/groups", ctrl.ApiLdapGroupUpdate)
 	adminApi.DELETE("/ldap/groups", ctrl.ApiLdapGroupDelete)
+
+	adminApi.GET("/ldap/internal", ctrl.ApiLdapInternalGet)
+	adminApi.PUT("/ldap/internal", ctrl.ApiLdapInternalUpdate)
+	adminApi.POST("/ldap/ous", ctrl.ApiLdapOUCreate)
+	adminApi.PUT("/ldap/ous/:id", ctrl.ApiLdapOUUpdate)
+	adminApi.DELETE("/ldap/ous/:id", ctrl.ApiLdapOUDelete)
+	adminApi.PUT("/ldap/place", ctrl.ApiLdapPlace)
+	adminApi.PUT("/ldap/roles/:id/members", ctrl.ApiRoleMembersUpdate)
 
 	// ----- API: LDAP group -> role mappings (Admin -> Authorization page) -----
 	ldapRoleMappings_ := NewSecureCRUDHandler[models.LdapRoleMapping, models.LdapRoleMappingDTO](DB)

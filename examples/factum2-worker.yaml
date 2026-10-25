@@ -66,6 +66,12 @@ worker:
     # radius:
     #   cmd: /bin/true
     #
+    # Internal LDAP directory (Admin → AAA → Directory). The name starts an
+    # in-process listener; cmd is not executed. Pair with radius on this
+    # host when RADIUS is set to use the internal directory.
+    # ldap:
+    #   cmd: /bin/true
+    #
     # Software repository (factum2-storage start is a separate unit).
     # copy's argv arrives from the primary; list every token it may append.
     # storage:
@@ -99,6 +105,9 @@ worker:
   #   prometheus_dest_file: /etc/prometheus/targets.json
   #
   #   storage_root: /var/lib/factum2/storage
+  #
+  #   # radius_state: /var/lib/factum2/radius/cache.json
+  #   # ldap_state: /var/lib/factum2/ldap/cache.json
 
 # Optional unix API for factum2-storage start (default
 # /run/factum2-storage/api.sock). Device HTTP/TFTP/SFTP binds are in the

@@ -41,6 +41,10 @@ export function ldapKindLabel(kind) {
       return 'Container'
     case 'directory':
       return 'Directory'
+    case 'internal':
+      return 'Internal'
+    case 'ou':
+      return 'Folder'
     case 'other':
       return 'Entry'
     default:

@@ -134,3 +134,17 @@ to that device's NetBox role. Policy is edited under Admin → Services → RADI
 The worker keeps the last copy on disk, so logins continue while the
 primary is down. Open UDP 1812 from the management network to this host.
 The primary still dials out to `/hub`; the switches dial in to 1812.
+
+## Internal LDAP
+
+A worker that should answer LDAP for NetBox, LibreNMS, Icinga, or RADIUS
+needs an `ldap` entry in `worker.commands`. The command line is not
+executed. The name starts a listener (default `:389`, plus an optional
+LDAPS address from the GUI). The directory is the local users, roles, and
+folders edited under Admin → AAA → Directory. The worker keeps the last
+copy at `worker.ldap_state` (default `/var/lib/factum2/ldap/cache.json`),
+so binds continue while the primary is down. That file holds password
+hashes. When RADIUS is set to use this directory, the same worker needs
+both `radius` and `ldap`, and RADIUS binds to `127.0.0.1`. Open the listen
+port from the applications that search the directory. The primary still
+dials out to `/hub`.

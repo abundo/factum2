@@ -51,5 +51,6 @@ change settings, users, and workers.
 - [Certificates](certs.md)
 - [Software](software.md)
 - [Admin settings](settings.md)
+- [Directory](directory.md)
 - [RADIUS](radius.md)
 - [Software bill of materials](sbom.md)

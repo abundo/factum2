@@ -24,6 +24,9 @@ type User struct {
 	// increment it so a previously issued cookie stops working.
 	TokenVersion int     `gorm:"not null;default:1" json:"-"`
 	Roles        []*Role `gorm:"many2many:user_roles;;constraint:OnDelete:CASCADE;" json:"-"`
+	// LdapOUID is the internal-directory folder this person is published
+	// under. Nil publishes them in ou=People under the base DN.
+	LdapOUID *uint `gorm:"column:ldap_ou_id;index" json:"-"`
 }
 
 func (u *User) BeforeCreate(_ *gorm.DB) error {
@@ -74,6 +77,9 @@ type Role struct {
 	Name        string  `gorm:"uniqueIndex;not null" json:"name"`
 	Description string  `json:"description"`
 	Users       []*User `gorm:"many2many:user_roles;"  json:"-"`
+	// LdapOUID is the internal-directory folder this role is published
+	// under. Nil publishes it in ou=Roles under the base DN.
+	LdapOUID *uint `gorm:"column:ldap_ou_id;index" json:"-"`
 }
 
 type RoleDTO struct {
@@ -744,6 +750,22 @@ type Settings struct {
 	RadiusMachineAccount  string `gorm:"column:radius_machine_account;type:varchar(64)" form:"radius_machine_account" json:"radius_machine_account"`
 	RadiusMachinePassword string `gorm:"column:radius_machine_password;type:text" form:"radius_machine_password" json:"radius_machine_password"`
 	RadiusMachineDomain   string `gorm:"column:radius_machine_domain;type:varchar(64)" form:"radius_machine_domain" json:"radius_machine_domain"`
+
+	// Internal LDAP directory. Workers with a ldap command serve this
+	// directory from a snapshot. Apps and the RADIUS worker bind to it.
+	LdapInternalEnabled   *bool  `gorm:"column:ldap_internal_enabled" form:"ldap_internal_enabled" json:"ldap_internal_enabled"`
+	LdapInternalListen    string `gorm:"column:ldap_internal_listen;type:varchar(64)" form:"ldap_internal_listen" json:"ldap_internal_listen"`
+	LdapInternalTLSListen string `gorm:"column:ldap_internal_tls_listen;type:varchar(64)" form:"ldap_internal_tls_listen" json:"ldap_internal_tls_listen"`
+	// LdapInternalTLSCertificateID is the Services → Certificates row
+	// LDAPS presents. Nil uses the worker hub certificate.
+	LdapInternalTLSCertificateID *uint  `gorm:"column:ldap_internal_tls_certificate_id" form:"ldap_internal_tls_certificate_id" json:"ldap_internal_tls_certificate_id"`
+	LdapInternalBaseDN           string `gorm:"column:ldap_internal_base_dn" form:"ldap_internal_base_dn" json:"ldap_internal_base_dn"`
+	LdapInternalBindPassword     string `gorm:"column:ldap_internal_bind_password;type:text" form:"ldap_internal_bind_password" json:"ldap_internal_bind_password"`
+	// RadiusUseInternalLDAP makes RADIUS workers bind to the internal
+	// directory on 127.0.0.1 instead of the Authentication directory.
+	// The same worker must also run the ldap command. MS-CHAPv2 still
+	// needs Active Directory.
+	RadiusUseInternalLDAP *bool `gorm:"column:radius_use_internal_ldap" form:"radius_use_internal_ldap" json:"radius_use_internal_ldap"`
 }
 
 // DefaultDeviceSyncWorkers is the parallel-device limit used when

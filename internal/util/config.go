@@ -337,6 +337,9 @@ type ConfigWorker struct {
 	// directory and NAS secrets. Empty uses /var/lib/factum2/radius/cache.json.
 	// The worker keeps answering from this file while factum2 is down.
 	RadiusState string `boa:"configonly" yaml:"radius_state" optional:"true"`
+	// LdapState is the on-disk copy of the internal directory, including
+	// password hashes. Empty uses /var/lib/factum2/ldap/cache.json.
+	LdapState string `boa:"configonly" yaml:"ldap_state" optional:"true"`
 }
 
 type ConfigWeb struct {

@@ -46,6 +46,15 @@ func (ctrl *Controller) ApiRadiusConfig(c *echo.Context) error {
 	return c.JSON(http.StatusOK, cfg)
 }
 
+// ldapForRadius is the directory RADIUS binds to. When the internal
+// directory is selected, that is the LDAP listener on this same worker.
+func ldapForRadius(settings *models.Settings) ldapauth.Config {
+	if settings.RadiusUseInternalLDAP != nil && *settings.RadiusUseInternalLDAP {
+		return internalLDAPAuth(settings)
+	}
+	return ldapauth.ConfigFromSettings(settings)
+}
+
 func (ctrl *Controller) buildRadiusConfig() (radius.Config, error) {
 	settings, err := util.GetOrCreateSettings(ctrl.DB)
 	if err != nil {
@@ -54,7 +63,7 @@ func (ctrl *Controller) buildRadiusConfig() (radius.Config, error) {
 	cfg := radius.Config{
 		Enabled: settings.RadiusEnabled != nil && *settings.RadiusEnabled,
 		Listen:  strings.TrimSpace(settings.RadiusListen),
-		LDAP:    ldapauth.ConfigFromSettings(settings),
+		LDAP:    ldapForRadius(settings),
 		Reply:   radius.ReplyText(settings.RadiusReply),
 		Machine: radius.Machine{
 			Account:  strings.TrimSpace(settings.RadiusMachineAccount),

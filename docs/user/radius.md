@@ -6,11 +6,13 @@ order: 57
 # RADIUS
 
 **Admin → Services → RADIUS** lets routers and switches log in with a username
-and password from Active Directory or OpenLDAP. The password check and the
-group check happen on the RADIUS worker, against the two directory servers
-configured under **Authentication**. factum2 stores the policy and the
-login log. It is not in the path of a login, so a factum2 outage does not
-lock operators out of the network.
+and password. The password check and the group check happen on the RADIUS
+worker. By default that worker binds to the directory configured under
+**Authentication** (Active Directory or OpenLDAP, including the second
+host). **Admin → AAA → Directory** can instead publish local users and
+roles as an internal directory and have RADIUS on the same worker use it.
+factum2 stores the policy and the login log. It is not in the path of a
+login, so a factum2 outage does not lock operators out of the network.
 
 ## What is allowed
 
@@ -65,8 +67,18 @@ account**, its password, and the NetBIOS domain on the Service tab. The
 worker asks a domain controller to verify the response, then still
 requires the LDAP group for the device role. The built-in accept
 attributes include `MikroTik-Group = write`; change `write` to the
-RouterOS group you want, such as `full` or `read`. OpenLDAP cannot check
-MS-CHAPv2, so those attempts are rejected.
+RouterOS group you want, such as `full` or `read`. OpenLDAP and the
+internal directory cannot check MS-CHAPv2, so those attempts are rejected.
+
+## Internal directory
+
+On **Admin → AAA → Directory**, enable the internal directory and turn on
+**RADIUS on the same worker uses this directory**. Add an `ldap` command
+next to `radius` on that worker. RADIUS then binds to `127.0.0.1` on the
+directory's plain listen port and reads `memberOf`, including roles nested
+inside other roles. The group DN in a policy is the role's DN, such as
+`cn=wdm,ou=Roles,dc=factum,dc=local`. Renaming the role or moving its
+folder updates policies that stored the old DN. See [Directory](directory.md).
 
 ## Privilege attributes
 

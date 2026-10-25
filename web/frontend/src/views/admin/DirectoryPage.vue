@@ -13,6 +13,15 @@ import {
   updateLdapGroup,
   updateLdapPerson,
 } from '@/api/ldap'
+import {
+  createLdapOU,
+  deleteLdapOU,
+  getLdapInternal,
+  placeLdap,
+  setRoleMembers,
+  updateLdapInternal,
+  updateLdapOU,
+} from '@/api/ldapInternal'
 import { createRole, getRoles, updateRole } from '@/api/roles'
 import { createUser, deleteUser, getUsers, updateUser } from '@/api/users'
 import LdapTreeBrowser from '@/components/LdapTreeBrowser.vue'
@@ -34,6 +43,23 @@ const el = ref(null)
 const users = ref([])
 const roles = ref([])
 const directory = ref({ enabled: false, server_type: 'generic', base_dn: '', writable: false })
+const internal = ref({
+  enabled: false,
+  listen: '',
+  tls_listen: '',
+  tls_certificate_id: null,
+  certificates: [],
+  base_dn: '',
+  bind_dn: '',
+  bind_password_set: false,
+  radius_use_internal: false,
+  user_filter: '(uid=%s)',
+  ous: [],
+  placements: [],
+  nests: [],
+})
+const internalForm = ref({})
+const ouForm = ref({})
 const loading = ref(true)
 const error = ref(null)
 const forbidden = ref(false)
@@ -75,6 +101,8 @@ const activeForm = computed(() => {
   if (panel.value === 'role') return role.value
   if (panel.value === 'person') return person.value
   if (panel.value === 'group') return group.value
+  if (panel.value === 'internal') return internalForm.value
+  if (panel.value === 'ou') return ouForm.value
   return null
 })
 const { mark, dirty: formDirty } = usePageForm(activeForm)
@@ -84,14 +112,16 @@ const ldapOn = computed(() => !!directory.value.enabled)
 const ad = computed(() => directory.value.server_type === 'ad')
 
 const intro = computed(() => {
-  if (!ldapOn.value) return 'Local users and roles.'
+  if (!ldapOn.value) {
+    return 'People and roles in this directory are served to RADIUS, NetBox, LibreNMS, and Icinga.'
+  }
   if (ad.value) {
-    return 'Active Directory is shown for browsing. Accounts are managed in Active Directory. Local users and roles are under Local.'
+    return 'Active Directory is shown for browsing. Accounts there are managed in Active Directory. Factum accounts are in this directory.'
   }
   if (!writable.value) {
-    return 'OpenLDAP is shown read-only. Set ldap_writeback.bind_dn and ldap_writeback.bind_password in the config file to add and change entries.'
+    return 'OpenLDAP is shown read-only. Set ldap_writeback.bind_dn and ldap_writeback.bind_password in the config file to add and change entries. Factum accounts are in this directory.'
   }
-  return 'Local accounts are under Local. OpenLDAP users and groups can be added under a directory container.'
+  return 'Factum accounts are in this directory. OpenLDAP users and groups can be added under a directory container.'
 })
 
 const menuItems = computed(() => {
@@ -99,10 +129,8 @@ const menuItems = computed(() => {
   const node = menu.value.node
   const kind = node?.kind || ''
   const items = []
-  if (!node || kind === 'local' || kind === 'users') {
+  if (!node) {
     items.push({ id: 'new-user', label: 'New user' })
-  }
-  if (!node || kind === 'local' || kind === 'roles') {
     items.push({ id: 'new-role', label: 'New role' })
   }
   const ldapHere = kind === 'directory' || kind === 'container' || kind === 'other'
@@ -110,9 +138,15 @@ const menuItems = computed(() => {
     items.push({ id: 'new-person', label: 'New directory user' })
     items.push({ id: 'new-group', label: 'New group' })
   }
-  if (kind === 'user' || kind === 'role' || kind === 'person' || kind === 'group') {
+  if (kind === 'internal' || kind === 'ou') {
+    items.push({ id: 'new-folder', label: 'New folder' })
+    items.push({ id: 'new-user', label: 'New user' })
+    items.push({ id: 'new-role', label: 'New role' })
+  }
+  if (kind === 'user' || kind === 'role' || kind === 'person' || kind === 'group' || kind === 'ou') {
     items.push({ id: 'edit', label: 'Edit' })
   }
+  if (kind === 'ou') items.push({ id: 'delete', label: 'Delete', danger: true })
   if (kind === 'user' && !isAdmin(node)) items.push({ id: 'delete', label: 'Delete', danger: true })
   if ((kind === 'person' || kind === 'group') && writable.value) {
     items.push({ id: 'delete', label: 'Delete', danger: true })
@@ -142,9 +176,62 @@ function payload(node) {
   return { key: node.key, title: node.title, type: node.type, ...(node.data ?? {}) }
 }
 
-function userNodes() {
-  return users.value.map((u) => ({
-    key: `local-user-${u.id}`,
+function ouOf(kind, id) {
+  const row = (internal.value.placements || []).find((p) => p.kind === kind && p.id === id)
+  return row?.ou_id || 0
+}
+
+function memberRoleIDs(roleId) {
+  return (internal.value.nests || []).filter((n) => n.role_id === roleId).map((n) => n.member_role_id)
+}
+
+function folderItems(excludeId) {
+  const hidden = new Set()
+  if (excludeId) {
+    const stack = [excludeId]
+    while (stack.length) {
+      const id = stack.pop()
+      if (hidden.has(id)) continue
+      hidden.add(id)
+      for (const ou of internal.value.ous || []) {
+        if (ou.parent_id === id) stack.push(ou.id)
+      }
+    }
+  }
+  const items = [{ label: 'Default', value: 0 }]
+  const walk = (parent, depth) => {
+    const rows = (internal.value.ous || [])
+      .filter((ou) => (ou.parent_id || 0) === parent && !hidden.has(ou.id))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+    for (const ou of rows) {
+      items.push({ label: `${depth ? '· '.repeat(depth) : ''}${ou.name}`, value: ou.id })
+      walk(ou.id, depth + 1)
+    }
+  }
+  walk(0, 0)
+  return items
+}
+
+const userFolderItems = computed(() => folderItems(0))
+const roleFolderItems = computed(() => folderItems(0))
+const ouParentItems = computed(() => folderItems(ouForm.value.id || 0))
+const ldapsCertItems = computed(() => {
+  const items = [{ label: 'Worker hub certificate', value: 0 }]
+  for (const cert of internal.value.certificates || []) {
+    const domains = (cert.domains || []).filter(Boolean).join(', ')
+    items.push({
+      label: domains ? `${cert.name} (${domains})` : cert.name,
+      value: cert.id,
+    })
+  }
+  return items
+})
+const nestRoleItems = computed(() => roles.value.filter((r) => r.id !== role.value.id))
+
+function dirUserNode(u) {
+  return {
+    key: `dir-user-${u.id}`,
     title: u.username,
     type: 'user',
     kind: 'user',
@@ -154,45 +241,59 @@ function userNodes() {
     email: u.email || '',
     mobile: u.mobile || '',
     role_ids: u.role_ids ?? [],
-  }))
+    ou_id: ouOf('user', u.id),
+  }
 }
 
-function roleNodes() {
-  return roles.value.map((r) => ({
-    key: `local-role-${r.id}`,
+function dirRoleNode(r) {
+  return {
+    key: `dir-role-${r.id}`,
     title: r.name,
     type: 'role',
     kind: 'role',
     role_id: r.id,
     name: r.name,
     description: r.description || '',
-  }))
+    ou_id: ouOf('role', r.id),
+  }
 }
 
-function localBranch() {
+function ouNodes(parentId) {
+  return (internal.value.ous || [])
+    .filter((ou) => (ou.parent_id || 0) === parentId)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((ou) => ({
+      key: `ou-${ou.id}`,
+      title: ou.name,
+      type: 'ou',
+      kind: 'ou',
+      ou_id: ou.id,
+      name: ou.name,
+      parent_id: ou.parent_id || 0,
+      dn: ou.dn || '',
+      expanded: true,
+      children: [
+        ...ouNodes(ou.id),
+        ...users.value.filter((u) => ouOf('user', u.id) === ou.id).map(dirUserNode),
+        ...roles.value.filter((r) => ouOf('role', r.id) === ou.id).map(dirRoleNode),
+      ],
+    }))
+}
+
+function internalBranch() {
+  const base = internal.value.base_dn || 'Internal'
   return {
-    key: 'local',
-    title: 'Local',
-    type: 'local',
-    kind: 'local',
+    key: 'internal',
+    title: base,
+    type: 'internal',
+    kind: 'internal',
+    dn: internal.value.base_dn || '',
     expanded: true,
     children: [
-      {
-        key: 'local-users',
-        title: 'Users',
-        type: 'users',
-        kind: 'users',
-        expanded: true,
-        children: userNodes(),
-      },
-      {
-        key: 'local-roles',
-        title: 'Roles',
-        type: 'roles',
-        kind: 'roles',
-        expanded: true,
-        children: roleNodes(),
-      },
+      ...ouNodes(0),
+      ...users.value.filter((u) => !ouOf('user', u.id)).map(dirUserNode),
+      ...roles.value.filter((r) => !ouOf('role', r.id)).map(dirRoleNode),
     ],
   }
 }
@@ -303,7 +404,7 @@ function bindExpander() {
 function buildTree() {
   if (!el.value) return
   destroyTree()
-  const source = [localBranch()]
+  const source = [internalBranch()]
   const dir = directoryBranch()
   if (dir) source.push(dir)
   tree = new Wunderbaum({
@@ -325,11 +426,10 @@ function buildTree() {
       { id: 'kind', title: 'Kind', width: '72px' },
     ],
     types: {
-      local: { icon: false },
-      users: { icon: false },
-      roles: { icon: false },
       user: { icon: false },
       role: { icon: false },
+      internal: { icon: false },
+      ou: { icon: false },
       directory: { icon: false },
       container: { icon: false },
       person: { icon: false },
@@ -370,27 +470,23 @@ function buildTree() {
   applySearch()
 }
 
-function syncLocal() {
+function syncInternal() {
   if (!tree) {
     buildTree()
     return
   }
-  const usersNode = tree.findKey('local-users')
-  const rolesNode = tree.findKey('local-roles')
-  if (!usersNode || !rolesNode) {
+  const node = tree.findKey('internal')
+  if (!node) {
     buildTree()
     return
   }
   // removeChildren collapses the folder. Put the rows back and reopen it
-  // when it was open, so a save does not hide the user that was just added.
-  const usersOpen = usersNode.expanded !== false
-  const rolesOpen = rolesNode.expanded !== false
-  usersNode.removeChildren()
-  usersNode.addChildren(userNodes())
-  rolesNode.removeChildren()
-  rolesNode.addChildren(roleNodes())
-  if (usersOpen) usersNode.setExpanded(true)
-  if (rolesOpen) rolesNode.setExpanded(true)
+  // when it was open, so a save does not hide the entry that was just added.
+  const open = node.expanded !== false
+  node.removeChildren()
+  node.addChildren(internalBranch().children)
+  node.title = internal.value.base_dn || 'Internal'
+  if (open) node.setExpanded(true)
   applySearch()
 }
 
@@ -484,6 +580,28 @@ async function showSelection(n) {
   const seq = ++fillSeq
   submitted.value = false
   creating.value = false
+  if (n?.kind === 'internal') {
+    panel.value = 'internal'
+    internalForm.value = {
+      enabled: !!internal.value.enabled,
+      listen: internal.value.listen || '',
+      tls_listen: internal.value.tls_listen || '',
+      tls_certificate_id: internal.value.tls_certificate_id || 0,
+      base_dn: internal.value.base_dn || '',
+      radius_use_internal: !!internal.value.radius_use_internal,
+      bind_password: '',
+    }
+    await nextTick()
+    if (seq === fillSeq) mark()
+    return
+  }
+  if (n?.kind === 'ou') {
+    panel.value = 'ou'
+    ouForm.value = { id: n.ou_id, name: n.name || n.title, parent_id: n.parent_id || 0 }
+    await nextTick()
+    if (seq === fillSeq) mark()
+    return
+  }
   if (!n || !['user', 'role', 'person', 'group'].includes(n.kind)) {
     panel.value = n ? 'node' : ''
     await nextTick()
@@ -499,11 +617,18 @@ async function showSelection(n) {
       email: n.email,
       mobile: n.mobile,
       role_ids: [...(n.role_ids ?? [])],
+      ou_id: ouOf('user', n.user_id),
       password: '',
     }
   } else if (n.kind === 'role') {
     panel.value = 'role'
-    role.value = { id: n.role_id, name: n.name, description: n.description || '' }
+    role.value = {
+      id: n.role_id,
+      name: n.name,
+      description: n.description || '',
+      ou_id: ouOf('role', n.role_id),
+      member_role_ids: memberRoleIDs(n.role_id),
+    }
   } else if (n.kind === 'person') {
     panel.value = 'person'
     personLoading.value = true
@@ -566,7 +691,14 @@ async function openLocalUser() {
   creating.value = true
   submitted.value = false
   panel.value = 'user'
-  user.value = { role_ids: [] }
+  user.value = { role_ids: [], ou_id: 0 }
+  await nextTick()
+  mark()
+}
+
+async function openUserIn(ouId) {
+  await openLocalUser()
+  user.value.ou_id = ouId || 0
   await nextTick()
   mark()
 }
@@ -576,7 +708,24 @@ async function openNewRole() {
   creating.value = true
   submitted.value = false
   panel.value = 'role'
-  role.value = {}
+  role.value = { ou_id: 0, member_role_ids: [] }
+  await nextTick()
+  mark()
+}
+
+async function openRoleIn(ouId) {
+  await openNewRole()
+  role.value.ou_id = ouId || 0
+  await nextTick()
+  mark()
+}
+
+async function openNewFolder(node) {
+  if (!(await guardEdits())) return
+  creating.value = true
+  submitted.value = false
+  panel.value = 'ou'
+  ouForm.value = { name: '', parent_id: node?.kind === 'ou' ? node.ou_id : 0 }
   await nextTick()
   mark()
 }
@@ -628,11 +777,13 @@ function saveUser() {
   const request = body.id ? updateUser(body.id, body) : createUser(body)
   request
     .then(async (saved) => {
+      const id = saved?.id || body.id
+      await placeLdap({ kind: 'user', id, ou_id: user.value.ou_id || null })
       toastOk(body.id ? 'User updated' : 'User created')
       creating.value = false
       mark()
       await reloadLocal()
-      await activateKey(`local-user-${saved?.id || body.id}`)
+      await activateKey(`dir-user-${id}`)
     })
     .catch((err) => toastError(err, 'Failed to save user.'))
     .finally(() => {
@@ -667,11 +818,14 @@ function saveRole() {
   const request = body.id ? updateRole(body.id, body) : createRole(body)
   request
     .then(async (saved) => {
+      const id = saved?.id || body.id
+      await placeLdap({ kind: 'role', id, ou_id: role.value.ou_id || null })
+      await setRoleMembers(id, role.value.member_role_ids || [])
       toastOk(body.id ? 'Role updated' : 'Role created')
       creating.value = false
       mark()
       await reloadLocal()
-      await activateKey(`local-role-${saved?.id || body.id}`)
+      await activateKey(`dir-role-${id}`)
     })
     .catch((err) => toastError(err, 'Failed to save role.'))
     .finally(() => {
@@ -827,11 +981,76 @@ function deleteNode(node) {
   if (node.kind === 'user') return performDeleteUser(node)
   if (node.kind === 'person') return performDeletePerson(node)
   if (node.kind === 'group') return performDeleteGroup(node)
+  if (node.kind === 'ou') return performDeleteOU(node)
+}
+
+async function performDeleteOU(node) {
+  const id = node?.ou_id || ouForm.value.id
+  const name = node?.name || node?.title || ouForm.value.name
+  if (!id) return
+  if (!(await confirmDelete(`folder ${name}`))) return
+  deleteLdapOU(id)
+    .then(async () => {
+      toastOk('Folder deleted')
+      mark()
+      if (ouForm.value.id === id) panel.value = ''
+      await reloadInternal()
+    })
+    .catch((err) => toastError(err, 'Failed to delete the folder.'))
+}
+
+function saveOU() {
+  submitted.value = true
+  if (!ouForm.value.name?.trim()) return
+  const body = {
+    name: ouForm.value.name.trim(),
+    parent_id: ouForm.value.parent_id || null,
+  }
+  const request = ouForm.value.id ? updateLdapOU(ouForm.value.id, body) : createLdapOU(body)
+  request
+    .then(async (saved) => {
+      toastOk(ouForm.value.id ? 'Folder updated' : 'Folder created')
+      creating.value = false
+      mark()
+      await reloadInternal()
+      await activateKey(`ou-${saved?.id || ouForm.value.id}`)
+    })
+    .catch((err) => toastError(err, 'Failed to save the folder.'))
+}
+
+function saveInternal() {
+  const body = {
+    enabled: !!internalForm.value.enabled,
+    listen: internalForm.value.listen || '',
+    tls_listen: internalForm.value.tls_listen || '',
+    tls_certificate_id: internalForm.value.tls_certificate_id || null,
+    base_dn: internalForm.value.base_dn || '',
+    radius_use_internal: !!internalForm.value.radius_use_internal,
+  }
+  if (internalForm.value.bind_password) body.bind_password = internalForm.value.bind_password
+  updateLdapInternal(body)
+    .then(async (saved) => {
+      internal.value = saved
+      internalForm.value.bind_password = ''
+      toastOk('Directory saved')
+      mark()
+      await nextTick()
+      buildTree()
+      await activateKey('internal')
+    })
+    .catch((err) => toastError(err, 'Failed to save the directory.'))
 }
 
 function runMenu(id) {
   const node = menu.value.node
   closeMenu()
+  if (id === 'new-folder') return openNewFolder(node)
+  if (id === 'new-user' && (node?.kind === 'ou' || node?.kind === 'internal')) {
+    return openUserIn(node.kind === 'ou' ? node.ou_id : 0)
+  }
+  if (id === 'new-role' && (node?.kind === 'ou' || node?.kind === 'internal')) {
+    return openRoleIn(node.kind === 'ou' ? node.ou_id : 0)
+  }
   if (id === 'new-user') return openLocalUser()
   if (id === 'new-role') return openNewRole()
   if (id === 'new-person') return openNewPerson(ldapParentDN(node))
@@ -845,10 +1064,18 @@ function onDocClick() {
 }
 
 function reloadLocal() {
-  return Promise.all([getUsers(), getRoles()]).then(([userRows, roleRows]) => {
+  return Promise.all([getUsers(), getRoles(), getLdapInternal()]).then(([userRows, roleRows, dir]) => {
     users.value = userRows ?? []
     roles.value = roleRows ?? []
-    syncLocal()
+    internal.value = dir ?? internal.value
+    syncInternal()
+  })
+}
+
+function reloadInternal() {
+  return getLdapInternal().then((dir) => {
+    internal.value = dir ?? internal.value
+    syncInternal()
   })
 }
 
@@ -856,11 +1083,12 @@ function load() {
   loading.value = true
   error.value = null
   forbidden.value = false
-  Promise.all([getUsers(), getRoles(), getLdapDirectory()])
-    .then(([userRows, roleRows, status]) => {
+  Promise.all([getUsers(), getRoles(), getLdapDirectory(), getLdapInternal()])
+    .then(([userRows, roleRows, status, dir]) => {
       users.value = userRows ?? []
       roles.value = roleRows ?? []
       directory.value = status ?? directory.value
+      internal.value = dir ?? internal.value
     })
     .catch((err) => {
       if (err.response?.status === 403 || err.response?.status === 401) {
@@ -905,6 +1133,13 @@ onBeforeUnmount(() => {
       </div>
       <div class="flex flex-wrap gap-2">
         <UButton
+          label="New folder"
+          icon="i-lucide-folder-plus"
+          color="neutral"
+          size="sm"
+          @click="openNewFolder(selected?.kind === 'ou' ? selected : null)"
+        />
+        <UButton
           label="New user"
           icon="i-lucide-plus"
           color="neutral"
@@ -942,6 +1177,107 @@ onBeforeUnmount(() => {
           Select an entry. Click + or − to open a folder. Right-click a row to add, change, or
           remove it.
         </p>
+        <form
+          v-else-if="panel === 'internal'"
+          class="flex flex-col gap-4"
+          @submit.prevent="saveInternal"
+        >
+          <h5 class="m-0">Internal directory</h5>
+          <p class="text-sm text-muted-color">
+            Workers with an <span class="font-mono">ldap</span> command serve this directory.
+            Put people and roles in folders. A role can contain other roles; membership is
+            expanded the way Active Directory expands nested groups.
+          </p>
+          <UCheckbox v-model="internalForm.enabled" label="Enable" />
+          <UFormField label="Listen">
+            <UInput v-model="internalForm.listen" placeholder=":389" class="w-full" />
+            <small class="text-muted-color">Empty uses :389. host:port.</small>
+          </UFormField>
+          <UFormField label="LDAPS listen">
+            <UInput v-model="internalForm.tls_listen" placeholder=":636" class="w-full" />
+            <small class="text-muted-color">Optional. host:port. Empty leaves LDAPS off.</small>
+          </UFormField>
+          <UFormField label="LDAPS certificate">
+            <USelectMenu
+              v-model="internalForm.tls_certificate_id"
+              :items="ldapsCertItems"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+            <small class="text-muted-color">
+              A certificate from Services → Certificates. The worker reads it from lego
+              storage. Worker hub certificate uses the hub TLS pair.
+            </small>
+          </UFormField>
+          <UFormField label="Base DN">
+            <UInput v-model="internalForm.base_dn" placeholder="dc=factum,dc=local" class="w-full" />
+          </UFormField>
+          <UFormField label="Search bind DN">
+            <UInput :model-value="internal.bind_dn" readonly class="w-full font-mono" />
+          </UFormField>
+          <UFormField label="Search password">
+            <PasswordInput v-model="internalForm.bind_password" />
+            <small class="text-muted-color">
+              {{
+                internal.bind_password_set
+                  ? 'Leave blank to keep the current password.'
+                  : 'NetBox, LibreNMS, and Icinga bind with this password before they search.'
+              }}
+            </small>
+          </UFormField>
+          <UFormField label="User filter">
+            <UInput :model-value="internal.user_filter || '(uid=%s)'" readonly class="w-full font-mono" />
+          </UFormField>
+          <UCheckbox
+            v-model="internalForm.radius_use_internal"
+            label="RADIUS on the same worker uses this directory"
+          />
+          <p class="text-sm text-muted-color">
+            RADIUS binds to 127.0.0.1 on the plain listen port. That worker needs both
+            <span class="font-mono">radius</span> and <span class="font-mono">ldap</span>.
+            MikroTik MS-CHAPv2 still needs Active Directory.
+          </p>
+          <div class="flex gap-2">
+            <UButton class="ms-auto" label="Save" icon="i-lucide-check" type="submit" />
+          </div>
+        </form>
+
+        <form v-else-if="panel === 'ou'" class="flex flex-col gap-4" @submit.prevent="saveOU">
+          <h5 class="m-0">{{ ouForm.id ? 'Folder' : 'New folder' }}</h5>
+          <UFormField label="Name">
+            <UInput
+              v-model.trim="ouForm.name"
+              :color="submitted && !ouForm.name?.trim() ? 'error' : undefined"
+              :highlight="submitted && !ouForm.name?.trim()"
+              autofocus
+              class="w-full"
+            />
+            <small v-if="submitted && !ouForm.name?.trim()" class="text-red-500">Name is required.</small>
+          </UFormField>
+          <UFormField label="Inside">
+            <USelectMenu
+              v-model="ouForm.parent_id"
+              :items="ouParentItems"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+          </UFormField>
+          <p v-if="ouForm.id && selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
+          <div class="flex gap-2">
+            <UButton
+              v-if="ouForm.id"
+              label="Delete"
+              icon="i-lucide-trash"
+              color="error"
+              variant="ghost"
+              @click="performDeleteOU(selected)"
+            />
+            <UButton class="ms-auto" label="Save" icon="i-lucide-check" type="submit" />
+          </div>
+        </form>
+
         <div v-else-if="panel === 'node'" class="flex flex-col gap-2">
           <h5 class="m-0">{{ selected?.title }}</h5>
           <p class="text-sm text-muted-color">{{ ldapKindLabel(selected?.kind) }}</p>
@@ -980,6 +1316,18 @@ onBeforeUnmount(() => {
               multiple
               class="w-full"
             />
+          </UFormField>
+          <UFormField label="Folder">
+            <USelectMenu
+              v-model="user.ou_id"
+              :items="userFolderItems"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+            <small v-if="!user.ou_id" class="text-muted-color">
+              Default publishes this person under ou=People.
+            </small>
           </UFormField>
           <UFormField label="Password">
             <PasswordInput
@@ -1030,6 +1378,32 @@ onBeforeUnmount(() => {
           </UFormField>
           <UFormField label="Description">
             <UTextarea v-model="role.description" :rows="3" class="w-full" />
+          </UFormField>
+          <UFormField label="Folder">
+            <USelectMenu
+              v-model="role.ou_id"
+              :items="roleFolderItems"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+            <small v-if="!role.ou_id" class="text-muted-color">
+              Default publishes this role under ou=Roles.
+            </small>
+          </UFormField>
+          <UFormField label="Contains roles">
+            <USelectMenu
+              v-model="role.member_role_ids"
+              :items="nestRoleItems"
+              value-key="id"
+              label-key="name"
+              placeholder="Nested roles"
+              multiple
+              class="w-full"
+            />
+            <small class="text-muted-color">
+              People in a contained role are also in this role, including through further levels.
+            </small>
           </UFormField>
           <div class="flex gap-2">
             <UButton

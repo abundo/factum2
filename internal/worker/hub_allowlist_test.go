@@ -139,6 +139,12 @@ func TestAllowHubAPIForRoles(t *testing.T) {
 	if !AllowHubAPIForRoles(http.MethodPost, "/api/radius-events", []string{"radius"}) {
 		t.Fatal("radius workers ship the login log")
 	}
+	if !AllowHubAPIForRoles(http.MethodGet, "/api/ldap-config", []string{"ldap"}) {
+		t.Fatal("ldap workers fetch ldap-config")
+	}
+	if AllowHubAPIForRoles(http.MethodGet, "/api/ldap-config", []string{"radius"}) {
+		t.Fatal("radius must not read directory password hashes")
+	}
 }
 
 func TestHubAPISyncAllRegisteredBeforeTarget(t *testing.T) {

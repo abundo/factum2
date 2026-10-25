@@ -107,6 +107,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	g.Go(func() error { return w.runHubListener(ctx) })
 	g.Go(func() error { return w.runLocalAPI(ctx) })
 	g.Go(func() error { return w.runRadius(ctx) })
+	g.Go(func() error { return w.runLDAP(ctx) })
 	return g.Wait()
 }
 

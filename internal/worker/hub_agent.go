@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/abundo/factum2/internal/buildinfo"
+	"github.com/abundo/factum2/internal/ldapsrv"
 	"github.com/abundo/factum2/internal/radius"
 	"github.com/abundo/factum2/internal/util"
 	"github.com/gorilla/websocket"
@@ -227,8 +228,8 @@ func (w *Worker) runCommand(ctx context.Context, cmdMsg CommandMsg, outbox chan<
 		return
 	}
 
-	if cmdMsg.Command == radius.Role {
-		logger.Info("radius listens in-process")
+	if cmdMsg.Command == radius.Role || cmdMsg.Command == ldapsrv.Command {
+		logger.Info("listener runs in-process", "command", cmdMsg.Command)
 		sendLog(outbox, LogMsg{ID: cmdMsg.ID, Command: name, Stream: StreamExit, ExitCode: 0})
 		return
 	}

@@ -70,6 +70,8 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&RadiusClient{},
 		&RadiusPolicy{},
 		&RadiusEvent{},
+		&LdapOU{},
+		&RoleMember{},
 		&Link{},
 		&Job{},
 		&JobTask{},

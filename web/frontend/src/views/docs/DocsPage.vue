@@ -31,7 +31,7 @@ const TOPICS = [
   { label: 'Services', children: ['dns', 'certs'] },
   { label: 'Jobs', children: ['jobs'] },
   { label: 'Tools', children: ['software'] },
-  { label: 'Admin', children: ['settings', 'radius'] },
+  { label: 'Admin', children: ['settings', 'directory', 'radius'] },
   { label: 'Help', children: ['sbom'] },
 ]
 

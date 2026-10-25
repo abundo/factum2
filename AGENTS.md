@@ -450,6 +450,25 @@ rejected. An accept also returns the Service tab's accept attributes.
 accept/reject lines POST to `/api/radius-events` and spool locally if the
 hub is down. GUI: Admin → Services → RADIUS.
 
+**Internal LDAP (`internal/ldapsrv`):** a worker with `worker.commands` key
+`ldap` serves local users and roles (bind and search only). The command
+line is not executed. Folders are `ldap_ous`; a role can contain other
+roles (`role_members`). `member` is direct. `memberOf` is the transitive
+closure, and the AD in-chain rule `1.2.840.113556.1.4.1941` walks the
+direct edges. `GET /api/ldap-config` (ldap role only) is cached at
+`worker.ldap_state` (default `/var/lib/factum2/ldap/cache.json`, mode
+0600) and holds bcrypt hashes plus the service bind password. LDAPS
+uses `settings.ldap_internal_tls_certificate_id` when set: the worker
+loads that certificate's first domain from `worker.paths.lego_storage`
+(`certificates/<stem>.crt` and `.key`, `*` as `_`). An empty choice
+uses `worker.tls_cert` / `worker.tls_key`. The private key is not
+copied into the snapshot. When
+`radius_use_internal_ldap` is set, the RADIUS snapshot points LDAP at
+`127.0.0.1` on that listen port, so the same worker must run both
+commands. MS-CHAPv2 still needs Active Directory. GUI: Admin → AAA →
+Directory. Renaming a role or moving its folder rewrites
+`radius_policies.group_dn` and `ldap_role_mappings.group_dn`.
+
 ### Web backend (`web/`)
 
 Echo (`labstack/echo/v4`) HTTP server, one big router built in `web/web.go`.
@@ -471,9 +490,11 @@ Key things that live outside the obvious per-resource `handle_*.go` files:
   via a DB model type + a request DTO type, round-tripped through
   `json.Marshal`/`Unmarshal` — the DTO indirection is what prevents mass
   assignment (a client can't set fields absent from the DTO). Used directly
-  for `Contact`, `Role`, and `Service`'s Update/Delete (each wrapped by a
+  for `Contact` and `Service`'s Update/Delete (each wrapped by a
   thin hand-written handler that adds a Lime-source guard before
-  delegating); `User`, `Customer`, and `Service`'s Create have fully
+  delegating). `Role` create and get stay generic; `PUT /roles/:id` is
+  `ApiRoleUpdate`, which keeps `LdapOUID` and rewrites stored group DNs
+  when the name changes. `User`, `Customer`, and `Service`'s Create have fully
   hand-written handlers instead because they need extra logic (password
   hashing, role-association flattening, `Service`'s service-ID
   auto-assignment in `ApiServiceCreate`/`web/handler_service.go` — the

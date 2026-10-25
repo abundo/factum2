@@ -117,8 +117,14 @@ unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
 
 ## AAA
 
-- **Directory** — local users and roles, and the LDAP tree when a directory is configured. OpenLDAP (generic) entries can be added and changed when `ldap_writeback` is set in the config file. Active Directory is browse-only. `admin` cannot be deleted
+- **Directory** — the internal LDAP tree (people, roles, and folders), and
+  the external LDAP tree when one is configured. Workers
+  with an `ldap` command serve the internal directory. OpenLDAP (generic)
+  entries can be added and changed when `ldap_writeback` is set in the
+  config file. Active Directory is browse-only. `admin` cannot be deleted.
+  See [Directory](directory.md)
 - **Authentication** — local and LDAP (AD or generic), bind mode, TLS.
-  RADIUS network login uses this same directory
+  RADIUS network login uses this directory unless the internal directory
+  is selected for RADIUS
 - **Authorization** — map LDAP group DNs to Factum roles, plus a default
   role for users who match no group

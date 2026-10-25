@@ -32,6 +32,7 @@ var hubAPIPatterns = []struct {
 	{http.MethodGet, `/api/device-sync-config`, []string{"device-sync", "storage"}},
 	{http.MethodGet, `/api/storage-config`, []string{"storage"}},
 	{http.MethodGet, `/api/radius-config`, []string{"radius"}},
+	{http.MethodGet, `/api/ldap-config`, []string{"ldap"}},
 	{http.MethodPost, `/api/radius-events`, []string{"radius"}},
 	{http.MethodGet, `/api/device`, nil},
 	{http.MethodGet, `/api/device/name/[^/]+`, nil},
