@@ -98,8 +98,11 @@ Prometheus via snmp-exporter.
 the lab on `HOST` over SSH (`--ssh-user`, default `factum`). It rsyncs
 `build/` and `web/static` into `~/code/factum2` (`--server-dir` overrides
 that). The server needs the factum2 tree and podman. It does not need Go
-or Node. If that lab is stopped, the same command starts it with
-`dev/prepare.py` and `dev/up.sh`.
+or Node. If that lab is stopped, including after `make dev-down` (containers
+still exist but are exited), the same command starts it with `make dev-up`
+there. `FACTUM_DEV_PREBUILT=1` skips compile on the server and uses the
+synced build and frontend. A lab whose Postgres is already up is migrated
+and the primary services are restarted instead.
 
 ```sh
 make dev-down          # keep volumes

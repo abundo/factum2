@@ -42,7 +42,9 @@ from this release, the installer shows a diff and asks before overwriting
   ./install.py --compose --server HOST
                                Build on this machine, rsync build/ and web/static
                                to HOST:~/code/factum2, and restart that host's
-                               compose lab. The server does not compile.
+                               compose lab. A stopped lab (including exited
+                               containers left by dev-down) is started with
+                               `make dev-up` there. The server does not compile.
 """
 
 from __future__ import annotations
@@ -3480,7 +3482,8 @@ Modes:
               bind-mounted primary services (factum-web, factum-worker,
               factum-storage).
   --server    With --compose, build here and update the lab on HOST.
-              Syncs build/ and web/static. The server does not compile.
+              Syncs build/ and web/static. A stopped lab is started with
+              make dev-up on the server. The server does not compile.
   --worker    With --compose, also restart dest workers.
 
 Environment:
@@ -3581,8 +3584,9 @@ Examples:
         "--server",
         metavar="HOST",
         help="with --compose, build on this machine and update the compose "
-        "lab on HOST over SSH. Syncs build/ and web/static. The server "
-        "does not run make. Default checkout is ~/code/factum2.",
+        "lab on HOST over SSH. Syncs build/ and web/static. A stopped lab "
+        "is started with make dev-up on the server, which does not compile. "
+        "Default checkout is ~/code/factum2.",
     )
     p.add_argument(
         "--server-dir",
@@ -3690,16 +3694,20 @@ def compose_argv(compose_dir: Path) -> list[str]:
 
 
 def compose_ps_has_service(ps_text: str, service: str) -> bool:
-    """True if `compose ps` table output includes a container for service.
+    """True if `compose ps` shows a running container for service.
 
     Docker Compose v2 names `{project}-{service}-{n}`; podman-compose /
     Compose v1 names `{project}_{service}_{n}`. The replica suffix keeps
     `icinga` from matching `icingadb` / `icingaweb`.
+
+    podman compose ps is `podman ps -a`, so a `make dev-down` lab still
+    lists every container as Exited. Only a status of Up counts.
     """
     pat = re.compile(
         rf"(?:^|[\s/])(?:[^\s/]*[_\-])?{re.escape(service)}[_\-]\d+(?:\s|$)"
     )
-    return any(pat.search(line) for line in ps_text.splitlines())
+    up = re.compile(r"(?:^|\s)Up(?:\s|\()")
+    return any(pat.search(line) and up.search(line) for line in ps_text.splitlines())
 
 
 def compose_service_running(compose_dir: Path, service: str) -> bool:
@@ -3903,6 +3911,17 @@ def remote_compose_output(user: str, host: str, remote_repo: str) -> str:
     return proc.stdout or ""
 
 
+def remote_dev_up_command(remote_repo: str) -> str:
+    """Start the lab on the server without compiling there.
+
+    FACTUM_DEV_PREBUILT skips `make build` and `make frontend` inside
+    `make dev-up`. The caller has already rsynced build/ and web/static.
+    """
+    return (
+        f"cd {_shell_quote(remote_repo)} && FACTUM_DEV_PREBUILT=1 make dev-up"
+    )
+
+
 def install_compose_on_server(
     repo_dir: Path,
     *,
@@ -3913,11 +3932,12 @@ def install_compose_on_server(
     dry_run: bool,
     update_workers: bool,
 ) -> int:
-    """Build on this machine, then restart the compose lab on host.
+    """Build on this machine, then restart or start the compose lab on host.
 
     The server needs the factum2 tree (compose files, dev/) but not Go or
-    Node. build/ and web/static are rsynced. A stopped lab is started with
-    prepare.py and up.sh, which do not compile.
+    Node. build/ and web/static are rsynced. A stopped lab, including one
+    whose containers are still listed as Exited, is started with
+    `make dev-up` (FACTUM_DEV_PREBUILT=1, so the server does not compile).
     """
     build_dir = repo_dir / "build"
     static_dir = repo_dir / "web" / "static"
@@ -3983,16 +4003,14 @@ def install_compose_on_server(
     refresh = (
         f"cd {_shell_quote(remote_repo)} && ./install.py --compose --skip-build{worker_flag}"
     )
-    boot = (
-        f"cd {_shell_quote(remote_repo)} && ./dev/prepare.py && ./dev/up.sh"
-    )
+    boot = remote_dev_up_command(remote_repo)
     if dry_run:
         shown = remote_repo
         log(f"==> Would rsync, then on {host} restart the lab or start it if it is down")
         log(
             f"    [dry-run] cd {shown} && ./install.py --compose --skip-build{worker_flag}"
         )
-        log(f"    [dry-run] (if postgres is down) cd {shown} && ./dev/prepare.py && ./dev/up.sh")
+        log(f"    [dry-run] (if postgres is down) {remote_dev_up_command(shown)}")
         log(f"    GUI at http://{host}:{COMPOSE_LAB_HTTP_PORT}")
         return 0
 
@@ -4000,7 +4018,7 @@ def install_compose_on_server(
         log(f"==> Restarting compose lab on {host}")
         run(ssh_cmd(ssh_user, host, refresh), dry_run=False)
     else:
-        log(f"==> Compose lab is down on {host}; starting it without compiling there")
+        log(f"==> Compose lab is down on {host}; starting it with make dev-up")
         run(ssh_cmd(ssh_user, host, boot), dry_run=False)
     log("==> Done")
     log(f"    GUI at http://{host}:{COMPOSE_LAB_HTTP_PORT}")

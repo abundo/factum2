@@ -14,6 +14,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- `install.py --compose --server` starts a stopped lab with `make dev-up`.
+  `podman compose ps` lists exited containers, so a lab left by
+  `make dev-down` was treated as running and was not started.
 - LibreNMS sync no longer fails when a port has no interface alias.
   `ports.ifAlias` (and `ifName` / `ifDescr`) may be NULL until SNMP fills
   them in. Those columns are read as empty strings.

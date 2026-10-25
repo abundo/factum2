@@ -112,13 +112,19 @@ export LAB_DBS LAB_APPS LAB_SIDECARS LAB_ICINGA_WEB LAB_CORE
 # Optional: make dev-up SEED_ARGS=--demo  (netbox-community SQL dump)
 SEED_ARGS ?=
 
+# FACTUM_DEV_PREBUILT=1: install.py --compose --server already built and
+# rsynced build/ and web/static. Skip compile on the lab host.
 dev-up:
 	@echo "==> prepare"
 	$(DEV_DIR)/prepare.py $(SEED_ARGS)
-	@echo "==> binaries"
-	@test -x $(BUILD_DIR)/factum2-web && test -x $(BUILD_DIR)/factum2-netbox && test -x $(BUILD_DIR)/factum2-dns && test -x $(BUILD_DIR)/factum2-worker || $(MAKE) -j$(NPROC) build
-	@echo "==> frontend"
-	$(MAKE) frontend
+	@if [ -n "$${FACTUM_DEV_PREBUILT:-}" ]; then \
+		echo "==> binaries and frontend already built"; \
+	else \
+		echo "==> binaries"; \
+		test -x $(BUILD_DIR)/factum2-web && test -x $(BUILD_DIR)/factum2-netbox && test -x $(BUILD_DIR)/factum2-dns && test -x $(BUILD_DIR)/factum2-worker || $(MAKE) -j$(NPROC) build; \
+		echo "==> frontend"; \
+		$(MAKE) frontend; \
+	fi
 	FACTUM_DEV_UP_START=$$(date +%s) $(DEV_DIR)/up.sh $(SEED_ARGS)
 
 dev-down:

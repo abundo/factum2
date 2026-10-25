@@ -1509,6 +1509,17 @@ factum-dev-factum-web-1        factum-dev:local                    "/opt/factum2
 factum-dev-factum-worker-1     factum-dev:local                    "/opt/factum2/factum…"   factum-worker       2 hours ago    Up 2 hours (healthy)    0.0.0.0:18443->8443/tcp
 """
 
+    def test_compose_ps_has_service_ignores_exited(self) -> None:
+        exited = self._PODMAN_PS.replace("Up ", "Exited ")
+        self.assertFalse(install.compose_ps_has_service(exited, "postgres"))
+        self.assertFalse(install.compose_ps_has_service(exited, "factum-web"))
+        self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "postgres"))
+
+    def test_remote_dev_up_command_skips_compile(self) -> None:
+        cmd = install.remote_dev_up_command("/home/factum/code/factum2")
+        self.assertIn("FACTUM_DEV_PREBUILT=1 make dev-up", cmd)
+        self.assertIn("cd /home/factum/code/factum2", cmd)
+
     def test_compose_ps_has_service_podman_names(self) -> None:
         self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "postgres"))
         self.assertTrue(install.compose_ps_has_service(self._PODMAN_PS, "factum-web"))
