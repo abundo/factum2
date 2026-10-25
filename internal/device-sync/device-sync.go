@@ -48,6 +48,9 @@ type FactumAPI interface {
 	GetDeviceByName(name string) (*models.Device, error)
 	// ApplyOpticalInventory persists a driver's optical dump on the device.
 	ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error)
+	// ForgetNetboxCable drops a connection device-sync has already deleted
+	// in NetBox, so the Factum snapshot does not keep the cable id.
+	ForgetNetboxCable(netboxID uint) error
 }
 
 // devicePair is a factum device (already synced from Netbox) paired with
@@ -1053,21 +1056,36 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 		return
 	}
 
-	var cable *netboxtool.NBCable
-	var err error
-	switch {
-	case localIf.CableID != 0:
-		cable, err = ds.nb.api.GetCable(localIf.CableID)
-		if err != nil {
-			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d to %s %s: %v", device.Name, localIf.Name, localIf.CableID, remoteDevice.Name, remoteIf.Name, err)
-			return
-		}
-	case remoteIf.CableID != 0:
-		cable, err = ds.nb.api.GetCable(remoteIf.CableID)
-		if err != nil {
-			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d on %s %s: %v", device.Name, localIf.Name, remoteIf.CableID, remoteDevice.Name, remoteIf.Name, err)
-			return
-		}
+	// Factum's interface cable_id lags NetBox: a cable delete does not
+	// change-log the interface, so the next run can still name a cable
+	// that this process (or an operator) already removed. A 404 is that
+	// stale id, not a failed sync.
+	localID := localIf.CableID
+	localCable, err := ds.readCable(localID)
+	if err != nil {
+		ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d to %s %s: %v", device.Name, localIf.Name, localID, remoteDevice.Name, remoteIf.Name, err)
+		return
+	}
+	if localID != 0 && localCable == nil {
+		ds.reporter.Emit(jobevent.Info, "%s: interface %s: connection %d is no longer in netbox", device.Name, localIf.Name, localID)
+		localIf.CableID = 0
+	}
+	remoteID := remoteIf.CableID
+	remoteCable, err := ds.readCable(remoteID)
+	if err != nil {
+		ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d on %s %s: %v", device.Name, localIf.Name, remoteID, remoteDevice.Name, remoteIf.Name, err)
+		return
+	}
+	if remoteID != 0 && remoteCable == nil {
+		ds.reporter.Emit(jobevent.Info, "%s: interface %s: connection %d on %s %s is no longer in netbox", device.Name, localIf.Name, remoteID, remoteDevice.Name, remoteIf.Name)
+		remoteIf.CableID = 0
+	}
+
+	// Keep the local port's cable when both sides have one. The remote
+	// port's cable is the one that gets dropped if the two disagree.
+	cable := localCable
+	if cable == nil {
+		cable = remoteCable
 	}
 
 	if cable != nil && !netbox.IsLLDPCable(cable) {
@@ -1079,17 +1097,31 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 		return
 	}
 
-	if cable != nil && remoteIf.CableID != 0 && remoteIf.CableID != localIf.CableID {
-		remoteCable, err := ds.nb.api.GetCable(remoteIf.CableID)
-		if err != nil {
-			ds.reporter.Emit(jobevent.Error, "%s: interface %s: read connection %d on %s %s: %v", device.Name, localIf.Name, remoteIf.CableID, remoteDevice.Name, remoteIf.Name, err)
-		} else if remoteCable != nil && netbox.IsLLDPCable(remoteCable) {
-			ds.nb.DeleteCable(device, remoteDevice, localIf, remoteIf, remoteCable)
+	other := remoteCable
+	if cable == remoteCable {
+		other = localCable
+	}
+	if cable != nil && other != nil && other.NetboxID != cable.NetboxID && netbox.IsLLDPCable(other) {
+		if err := ds.nb.DeleteCable(device, remoteDevice, localIf, remoteIf, other); err == nil {
+			if ferr := ds.factum.ForgetNetboxCable(other.NetboxID); ferr != nil {
+				ds.reporter.Emit(jobevent.Warning, "%s: interface %s: connection %d removed in netbox but not in factum: %v", device.Name, localIf.Name, other.NetboxID, ferr)
+			}
+			ds.clearCachedCableID(other.NetboxID)
+			localIf.CableID = 0
+			remoteIf.CableID = 0
+			if localCable != nil && localCable.NetboxID == cable.NetboxID {
+				localIf.CableID = cable.NetboxID
+			}
+			if remoteCable != nil && remoteCable.NetboxID == cable.NetboxID {
+				remoteIf.CableID = cable.NetboxID
+			}
 		}
 	}
 
 	if cable == nil {
-		ds.nb.CreateCable(device, remoteDevice, localIf, remoteIf)
+		if id, err := ds.nb.CreateCable(device, remoteDevice, localIf, remoteIf); err == nil && id != 0 {
+			ds.noteCable(id, localIf, remoteIf)
+		}
 		return
 	}
 
@@ -1109,12 +1141,82 @@ func (ds *DeviceSync) syncConnection(device, remoteDevice *models.Device, localI
 
 	switch {
 	case local != 0 && remote != 0:
-		// both sides already correct
+		ds.noteCable(cable.NetboxID, localIf, remoteIf)
 	case local != 0:
-		ds.nb.SetConnectionTermination(remoteDevice, cable, 3-local, remoteIf)
+		if ds.nb.SetConnectionTermination(remoteDevice, cable, 3-local, remoteIf) == nil {
+			ds.noteCable(cable.NetboxID, localIf, remoteIf)
+		}
 	case remote != 0:
-		ds.nb.SetConnectionTermination(device, cable, 3-remote, localIf)
+		if ds.nb.SetConnectionTermination(device, cable, 3-remote, localIf) == nil {
+			ds.noteCable(cable.NetboxID, localIf, remoteIf)
+		}
 	}
+}
+
+// readCable loads one NetBox cable. A 404 clears that id on every cached
+// interface and returns (nil, nil): the factum snapshot is behind NetBox.
+func (ds *DeviceSync) readCable(id uint) (*netboxtool.NBCable, error) {
+	if id == 0 {
+		return nil, nil
+	}
+	cable, err := ds.nb.api.GetCable(id)
+	if err != nil && strings.Contains(err.Error(), "404 Not Found") {
+		ds.clearCachedCableID(id)
+		return nil, nil
+	}
+	return cable, err
+}
+
+// clearCachedCableID drops a deleted NetBox cable id from the in-memory
+// inventory so a later device in this run does not GET it again.
+func (ds *DeviceSync) clearCachedCableID(cableID uint) {
+	if cableID == 0 {
+		return
+	}
+	ds.deviceCacheMu.Lock()
+	defer ds.deviceCacheMu.Unlock()
+	for _, d := range ds.deviceCache {
+		for i := range d.Interfaces {
+			if d.Interfaces[i].CableID == cableID {
+				d.Interfaces[i].CableID = 0
+			}
+		}
+	}
+}
+
+// noteCable records that a and b now terminate cableID, and clears that
+// id from every other cached interface (the end the cable just left).
+func (ds *DeviceSync) noteCable(cableID uint, a, b *models.Interface) {
+	if cableID == 0 {
+		return
+	}
+	if a != nil {
+		a.CableID = cableID
+	}
+	if b != nil {
+		b.CableID = cableID
+	}
+	ds.deviceCacheMu.Lock()
+	defer ds.deviceCacheMu.Unlock()
+	for _, d := range ds.deviceCache {
+		for i := range d.Interfaces {
+			iface := &d.Interfaces[i]
+			if iface.CableID != cableID || sameInterface(iface, a) || sameInterface(iface, b) {
+				continue
+			}
+			iface.CableID = 0
+		}
+	}
+}
+
+func sameInterface(a, b *models.Interface) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	return a.NetboxID != 0 && a.NetboxID == b.NetboxID
 }
 
 func cableJoins(cable *netboxtool.NBCable, a, b uint) bool {

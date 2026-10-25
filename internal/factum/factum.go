@@ -95,6 +95,17 @@ func (factum *FactumClient) getDevices(path string) ([]*models.Device, error) {
 	return tmp, nil
 }
 
+// ForgetNetboxCable removes the Factum connection for a NetBox cable that
+// the caller has already deleted. DELETE /api/dcim/connections/netbox/:id.
+// Also clears interfaces.cable_id that still name that cable.
+func (factum *FactumClient) ForgetNetboxCable(netboxID uint) error {
+	if netboxID == 0 {
+		return nil
+	}
+	path := fmt.Sprintf("/api/dcim/connections/netbox/%d", netboxID)
+	return factum.doJSON(http.MethodDelete, path, nil, nil)
+}
+
 // ApplyOpticalInventory is PUT /api/optical/device/:id/inventory — persists
 // a driver's optical dump onto OpticalKind / OpticalPort / OpticalXConnect.
 func (factum *FactumClient) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {

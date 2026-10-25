@@ -63,6 +63,8 @@ type fakeNetboxAPI struct {
 	updatedAddresses  []map[string]any
 
 	cablesByID         map[uint]*netboxtool.NBCable
+	goneCableIDs       map[uint]bool
+	cableErr           error
 	createdCables      [][2]uint
 	deletedCableIDs    []uint
 	terminationUpdates []cableTerminationUpdate
@@ -197,6 +199,12 @@ func (f *fakeNetboxAPI) AddressDelete(addressID int) error {
 func (f *fakeNetboxAPI) GetCable(cableID uint) (*netboxtool.NBCable, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.cableErr != nil {
+		return nil, f.cableErr
+	}
+	if f.goneCableIDs[cableID] {
+		return nil, fmt.Errorf("netbox GET /api/dcim/cables/%d/ failed: 404 Not Found", cableID)
+	}
 	return f.cablesByID[cableID], nil
 }
 
@@ -407,6 +415,7 @@ type fakeFactumAPI struct {
 	getDevicesCalls      int
 	getDeviceByNameCalls []string
 	appliedInventory     []optical.Inventory
+	forgottenCables      []uint
 }
 
 func newFakeFactumAPI() *fakeFactumAPI {
@@ -437,6 +446,13 @@ func (f *fakeFactumAPI) GetDeviceByName(name string) (*models.Device, error) {
 		return nil, fmt.Errorf("unknown device %q", name)
 	}
 	return d, nil
+}
+
+func (f *fakeFactumAPI) ForgetNetboxCable(netboxID uint) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgottenCables = append(f.forgottenCables, netboxID)
+	return nil
 }
 
 func (f *fakeFactumAPI) ApplyOpticalInventory(deviceID uint, inv optical.Inventory) (*optical.ApplyResult, error) {
@@ -1464,6 +1480,97 @@ func TestSyncConnectionRepairsWrongTermination(t *testing.T) {
 	got := fake.terminationUpdates[0]
 	if got.cableID != 5 || got.side != 2 || got.ifaceID != 200 {
 		t.Errorf("termination update = %+v, want {cableID:5 side:2 ifaceID:200}", got)
+	}
+}
+
+func TestSyncConnectionDropsDisagreeingLLDPCable(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	factumAPI := newFakeFactumAPI()
+	ds, _ := newTestDeviceSync(fake, factumAPI, nil)
+
+	localIf := &models.Interface{NetboxID: 100, Name: "Ethernet53/1", CableID: 244}
+	remoteIf := &models.Interface{NetboxID: 200, Name: "Ethernet53/1", CableID: 380}
+	fake.cablesByID[244] = &netboxtool.NBCable{NetboxID: 244, AInterface: 100, BInterface: 999, Label: netbox.CableLabelLLDP}
+	fake.cablesByID[380] = &netboxtool.NBCable{NetboxID: 380, AInterface: 200, BInterface: 300, Label: netbox.CableLabelLLDP}
+
+	device := &models.Device{NetboxID: 1, Name: "pi1-r4"}
+	remote := &models.Device{NetboxID: 2, Name: "lu1-r3"}
+	ds.syncConnection(device, remote, localIf, remoteIf)
+
+	if len(fake.deletedCableIDs) != 1 || fake.deletedCableIDs[0] != 380 {
+		t.Fatalf("deleted = %v, want [380]", fake.deletedCableIDs)
+	}
+	if len(fake.terminationUpdates) != 1 {
+		t.Fatalf("updates = %+v, want one retarget of 244", fake.terminationUpdates)
+	}
+	got := fake.terminationUpdates[0]
+	if got.cableID != 244 || got.side != 2 || got.ifaceID != 200 {
+		t.Errorf("termination update = %+v, want cable 244 side 2 iface 200", got)
+	}
+	if localIf.CableID != 244 || remoteIf.CableID != 244 {
+		t.Errorf("cable ids = %d/%d, want 244/244", localIf.CableID, remoteIf.CableID)
+	}
+	if len(factumAPI.forgottenCables) != 1 || factumAPI.forgottenCables[0] != 380 {
+		t.Errorf("forgotten cables = %v, want [380]", factumAPI.forgottenCables)
+	}
+}
+
+func TestSyncConnectionStaleRemoteCableIsNotAnError(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fake.goneCableIDs = map[uint]bool{380: true}
+	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	// Cable 244 already joins the LLDP pair. Factum still says the far
+	// end is cable 380, which this process deleted on the previous run.
+	localIf := &models.Interface{NetboxID: 100, Name: "Ethernet53/1", CableID: 244}
+	remoteIf := &models.Interface{NetboxID: 200, Name: "Ethernet53/1", CableID: 380}
+	stale := &models.Interface{NetboxID: 300, Name: "Ethernet1", CableID: 380}
+	fake.cablesByID[244] = &netboxtool.NBCable{NetboxID: 244, AInterface: 100, BInterface: 200, Label: netbox.CableLabelLLDP}
+	remote := &models.Device{NetboxID: 2, Name: "lu1-r3", Interfaces: []models.Interface{*remoteIf, *stale}}
+	ds.deviceCache["lu1-r3"] = remote
+
+	device := &models.Device{NetboxID: 1, Name: "pi1-r4"}
+	ds.syncConnection(device, remote, localIf, &remote.Interfaces[0])
+
+	if len(fake.createdCables) != 0 || len(fake.terminationUpdates) != 0 || len(fake.deletedCableIDs) != 0 {
+		t.Fatalf("stale cable id must not write, got created=%v updates=%v deleted=%v",
+			fake.createdCables, fake.terminationUpdates, fake.deletedCableIDs)
+	}
+	for _, line := range reporter.lines {
+		if strings.HasPrefix(line, "error:") {
+			t.Errorf("unexpected error: %s", line)
+		}
+	}
+	if remote.Interfaces[0].CableID != 244 {
+		t.Errorf("far end cable id = %d, want 244", remote.Interfaces[0].CableID)
+	}
+	if remote.Interfaces[1].CableID != 0 {
+		t.Errorf("other end of deleted cable still has id %d", remote.Interfaces[1].CableID)
+	}
+}
+
+func TestSyncConnectionCableReadErrorStillStops(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fake.cableErr = fmt.Errorf("netbox GET /api/dcim/cables/244/ failed: 500 Internal Server Error")
+	ds, reporter := newTestDeviceSync(fake, newFakeFactumAPI(), nil)
+
+	localIf := &models.Interface{NetboxID: 100, Name: "Ethernet53/1", CableID: 244}
+	remoteIf := &models.Interface{NetboxID: 200, Name: "Ethernet53/1"}
+	device := &models.Device{NetboxID: 1, Name: "pi1-r4"}
+	remote := &models.Device{NetboxID: 2, Name: "lu1-r3"}
+	ds.syncConnection(device, remote, localIf, remoteIf)
+
+	if len(fake.createdCables) != 0 {
+		t.Fatalf("created a cable after a read failure: %v", fake.createdCables)
+	}
+	var saw bool
+	for _, line := range reporter.lines {
+		if strings.HasPrefix(line, "error:") && strings.Contains(line, "500") {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("lines = %v, want a 500 error", reporter.lines)
 	}
 }
 

@@ -243,13 +243,17 @@ func (m *NetboxMgr) DeleteAddress(device *models.Device, iface *models.Interface
 
 // ----- Cable -----
 
-func (m *NetboxMgr) CreateCable(device, remoteDevice *models.Device, localIface, remoteIface *models.Interface) error {
-	if _, err := netbox.CreateLLDPCable(m.api, localIface.NetboxID, remoteIface.NetboxID); err != nil {
+func (m *NetboxMgr) CreateCable(device, remoteDevice *models.Device, localIface, remoteIface *models.Interface) (uint, error) {
+	created, err := netbox.CreateLLDPCable(m.api, localIface.NetboxID, remoteIface.NetboxID)
+	if err != nil {
 		m.reporter.Emit(jobevent.Error, "%s: interface %s: create connection to %s %s: %v", device.Name, localIface.Name, remoteDevice.Name, remoteIface.Name, err)
-		return err
+		return 0, err
 	}
 	m.reporter.Emit(jobevent.Info, "%s: interface %s: connected to %s %s", device.Name, localIface.Name, remoteDevice.Name, remoteIface.Name)
-	return nil
+	if created == nil {
+		return 0, nil
+	}
+	return created.NetboxID, nil
 }
 
 func (m *NetboxMgr) DeleteCable(device, remoteDevice *models.Device, localIface, remoteIface *models.Interface, cable *netboxtool.NBCable) error {

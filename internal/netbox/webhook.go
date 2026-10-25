@@ -109,6 +109,26 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 	if err := deleteLocalCablesOnInterfaces(db, aIntf.ID, bIntf.ID); err != nil {
 		return 0, 0, 0, 0, err
 	}
+	// NetBox allows one cable per interface. A cable that moved onto these
+	// ports replaced whatever used to be there; drop that Connection and
+	// its interface cable_id. NetBox does not change-log the interface
+	// when a cable is deleted (the cable column is cleared with a queryset
+	// update), so a device refetch never runs and device-sync would keep
+	// reading the deleted id.
+	n, err := deleteOtherCablesOnInterfaces(db, cable.NetboxID, aIntf.ID, bIntf.ID)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	deleted += n
+	if err := releaseCableID(db, cable.NetboxID); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err := assignCableID(db, aIntf.ID, cable.NetboxID); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err := assignCableID(db, bIntf.ID, cable.NetboxID); err != nil {
+		return 0, 0, 0, 0, err
+	}
 	if isNew {
 		if err := db.Create(&conn).Error; err != nil {
 			if !isUniqueViolation(err) {
@@ -121,7 +141,7 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 			}
 			existing = winner
 		} else {
-			return 1, 0, 0, 0, nil
+			return 1, 0, deleted, 0, nil
 		}
 	}
 	if err := db.Model(&models.Connection{}).Where("id = ?", existing.ID).Updates(map[string]any{
@@ -133,7 +153,7 @@ func ApplyCable(db *gorm.DB, netboxID uint, cable *netboxtool.NBCable) (created,
 	}).Error; err != nil {
 		return 0, 0, 0, 0, err
 	}
-	return 0, 1, 0, 0, nil
+	return 0, 1, deleted, 0, nil
 }
 
 // deleteLocalCablesOnInterfaces drops Factum-only cables on these ports so a
@@ -158,8 +178,15 @@ func deleteLocalCablesOnInterfaces(db *gorm.DB, ifaceIDs ...uint) error {
 }
 
 // DeleteConnectionByNetboxID removes one Connection by its Netbox cable id
-// and marks optical paths that used it stale. No-op if none matches.
+// and marks optical paths that used it stale. Interface cable_id values
+// that still name it are cleared even when the Connection row is already
+// gone, so a webhook that won the race does not leave device-sync pointing
+// at a deleted cable. The returned count is still 1 only when a row was
+// removed.
 func DeleteConnectionByNetboxID(db *gorm.DB, netboxID uint) (int, error) {
+	if err := releaseCableID(db, netboxID); err != nil {
+		return 0, err
+	}
 	var conn models.Connection
 	err := db.Where("netbox_id = ?", netboxID).First(&conn).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -173,6 +200,46 @@ func DeleteConnectionByNetboxID(db *gorm.DB, netboxID uint) (int, error) {
 		return 0, err
 	}
 	return 1, nil
+}
+
+// releaseCableID clears interface.cable_id for one NetBox cable. A missing
+// id is a no-op. UpdateColumn writes the zero.
+func releaseCableID(db *gorm.DB, cableNetboxID uint) error {
+	if cableNetboxID == 0 {
+		return nil
+	}
+	return db.Model(&models.Interface{}).Where("cable_id = ?", cableNetboxID).UpdateColumn("cable_id", 0).Error
+}
+
+func assignCableID(db *gorm.DB, interfaceID, cableNetboxID uint) error {
+	if interfaceID == 0 {
+		return nil
+	}
+	return db.Model(&models.Interface{}).Where("id = ?", interfaceID).UpdateColumn("cable_id", cableNetboxID).Error
+}
+
+// deleteOtherCablesOnInterfaces removes NetBox-backed connections that
+// still occupy these ports under a different cable id, and clears that
+// id on every interface that carried it (both ends, not only this port).
+func deleteOtherCablesOnInterfaces(db *gorm.DB, keepNetboxID uint, ifaceIDs ...uint) (int, error) {
+	if len(ifaceIDs) == 0 {
+		return 0, nil
+	}
+	var others []models.Connection
+	err := db.Where("netbox_id <> 0 AND netbox_id <> ? AND (interface_a_id IN ? OR interface_b_id IN ?)", keepNetboxID, ifaceIDs, ifaceIDs).
+		Find(&others).Error
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, other := range others {
+		n, err := DeleteConnectionByNetboxID(db, other.NetboxID)
+		if err != nil {
+			return deleted, err
+		}
+		deleted += n
+	}
+	return deleted, nil
 }
 
 // ApplySite upserts or removes one dcim.site row. site == nil means gone or

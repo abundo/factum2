@@ -96,6 +96,58 @@ func TestApiDCIMConnectionPairCRUD(t *testing.T) {
 	}
 }
 
+func TestApiDCIMConnectionForgetNetboxDropsRowAndCableID(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+
+	a := models.Device{Name: "pi1-r4", NetboxID: 1, CfSource: "netbox"}
+	b := models.Device{Name: "lu1-r3", NetboxID: 2, CfSource: "netbox"}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	ia := models.Interface{DeviceID: a.ID, NetboxID: 11, Name: "Ethernet53/1", CableID: 380}
+	ib := models.Interface{DeviceID: b.ID, NetboxID: 22, Name: "Ethernet53/1", CableID: 380}
+	if err := db.Create(&ia).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ib).Error; err != nil {
+		t.Fatal(err)
+	}
+	conn := models.Connection{NetboxID: 380, DeviceAID: a.ID, InterfaceAID: ia.ID, DeviceBID: b.ID, InterfaceBID: ib.ID, Label: "lldp"}
+	if err := db.Create(&conn).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := jsonRequest(t, http.MethodDelete, "/api/dcim/connections/netbox/380", nil, []string{"netbox_id"}, []string{"380"})
+	if err := ctrl.ApiDCIMConnectionForgetNetbox(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := db.Where("netbox_id = ?", 380).First(&models.Connection{}).Error; err == nil {
+		t.Fatal("connection 380 still present")
+	}
+	var iface models.Interface
+	if err := db.First(&iface, ia.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if iface.CableID != 0 {
+		t.Errorf("cable_id = %d, want 0", iface.CableID)
+	}
+
+	c, rec = jsonRequest(t, http.MethodDelete, "/api/dcim/connections/netbox/380", nil, []string{"netbox_id"}, []string{"380"})
+	if err := ctrl.ApiDCIMConnectionForgetNetbox(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("missing cable status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiDCIMConnectionCreatePushesToNetbox(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}

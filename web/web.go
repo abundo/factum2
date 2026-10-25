@@ -382,6 +382,10 @@ func GUI(p *GuiParams) error {
 	api.GET("/dcim/connections/pair", ctrl.ApiDCIMConnectionPair, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.POST("/dcim/connections", ctrl.ApiDCIMConnectionCreate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.PUT("/dcim/connections/:id", ctrl.ApiDCIMConnectionUpdate, ctrl.RequireAPIAuth, ctrl.RequireWrite)
+	// NetBox id, not the Factum connection id. device-sync calls this after
+	// it has already deleted the cable in NetBox. Registered before :id so
+	// the static segment is not parsed as a connection id.
+	api.DELETE("/dcim/connections/netbox/:netbox_id", ctrl.ApiDCIMConnectionForgetNetbox, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.DELETE("/dcim/connections/:id", ctrl.ApiDCIMConnectionDelete, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 	api.GET("/dcim/connection-view-layouts/:scope", ctrl.ApiDCIMConnectionLayoutGet, ctrl.RequireAPIAuth, ctrl.RequireRead)
 	api.PUT("/dcim/connection-view-layouts/:scope", ctrl.ApiDCIMConnectionLayoutPut, ctrl.RequireAPIAuth, ctrl.RequireWrite)

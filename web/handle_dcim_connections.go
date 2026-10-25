@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/abundo/factum2/internal/dcim"
+	"github.com/abundo/factum2/internal/netbox"
 	"github.com/abundo/factum2/internal/netboxtool"
 	"github.com/abundo/factum2/internal/optical"
 	"github.com/abundo/factum2/internal/util"
@@ -187,6 +188,23 @@ func (ctrl *Controller) ApiDCIMConnectionUpdate(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, row)
+}
+
+// ApiDCIMConnectionForgetNetbox drops the Factum connection for a NetBox
+// cable that has already been deleted. It does not call NetBox. A missing
+// row is success: the delta sync may have removed it first.
+func (ctrl *Controller) ApiDCIMConnectionForgetNetbox(c *echo.Context) error {
+	netboxID, err := echo.PathParam[uint](c, "netbox_id")
+	if err != nil || netboxID == 0 {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "Record not found"})
+	}
+	if _, err := netbox.DeleteConnectionByNetboxID(ctrl.DB, netboxID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	if err := optical.RebuildStale(ctrl.DB); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (ctrl *Controller) ApiDCIMConnectionDelete(c *echo.Context) error {
