@@ -15,3 +15,11 @@ web:
     enabled: true
     bind: 0.0.0.0:8091
     jwtsecret: lab-jwt-secret-not-for-production-use-only
+
+# Directory writes against the compose OpenLDAP (service name openldap).
+# The search bind lives in Settings; this identity is config-file only.
+# Lab-only: same account as cn=admin. Loaded by the in-container web, so
+# it applies on the laptop and on a remote lab host.
+ldap_writeback:
+    bind_dn: cn=admin,dc=lab,dc=example
+    bind_password: admin

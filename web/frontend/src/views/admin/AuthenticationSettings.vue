@@ -448,8 +448,9 @@ onMounted(loadSettings)
             <strong>not</strong> configured here - it must be set as
             <code>ldap_writeback.bind_dn</code> / <code>ldap_writeback.bind_password</code> in the
             server's own config file by someone with filesystem access, since it needs far more
-            privilege than the read-only service account above. Enabling this switch without also
-            setting those has no effect.
+            privilege than the read-only service account above. The same account is what Admin →
+            Directory uses to add and change OpenLDAP users and groups. This switch only controls
+            self-service password changes. Enabling it without also setting those has no effect.
           </small>
         </div>
       </div>

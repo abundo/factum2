@@ -23,6 +23,7 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | BIND (`lab.example`) + Kea DHCPv4 + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker (netbox, device-sync, storage copy) | `127.0.0.1:18443` |
 | Software | factum-storage (HTTP + SFTP) | http://127.0.0.1:18088, SFTP `127.0.0.1:12222` (`factum` / `lab`) |
+| Directory | OpenLDAP | `ldap://127.0.0.1:10389` (`cn=admin` / `admin`, base `dc=lab,dc=example`) |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
 | Shared Redis | netbox db0/db1, librenms db2 | `127.0.0.1:16379` |
@@ -69,9 +70,19 @@ edit; `seed.py` applies it via the NetBox API when that file exists, or run
 `./dev/netbox-seed.sh` later.
 
 Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
-`admin` / `admin`. NetBox (`:18000`), Icinga Web (`:18002`), and Grafana
-(`:18003`) use the same user/pass; LibreNMS (`:18001`) is `admin` /
-`Admin-lab1!` (password policy requires 8+ characters and a symbol).
+`admin` / `admin` (local account). NetBox (`:18000`), Icinga Web (`:18002`),
+and Grafana (`:18003`) use the same user/pass; LibreNMS (`:18001`) is
+`admin` / `Admin-lab1!` (password policy requires 8+ characters and a symbol).
+OpenLDAP is `openldap:389` inside compose and `ldap://<host>:10389` from
+outside. `seed.py` points Authentication at the compose DNS name, so the
+same Settings row works on the laptop and on a remote lab host. Directory
+admin is `cn=admin,dc=lab,dc=example` / `admin`. Users `ada`, `ops`,
+`guest`, and `nora` use password `lab`. Directory roles `admins`,
+`operators`, and `viewers` (under `ou=roles`) map to those Factum roles;
+`nora` has no directory role and gets viewer.
+`ldap_writeback` in `container/factum2.yaml` is the same admin, so
+Directory edits and password write-back work. `dev/ldap/*.ldif` loads on
+the first boot of the OpenLDAP volume. `make dev-reset` wipes it.
 Grafana's home dashboard lists devices and virtual machines the way
 LibreNMS does (status, hostname, location, uptime, ports), fed by
 Prometheus via snmp-exporter.

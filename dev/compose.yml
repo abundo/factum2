@@ -585,6 +585,44 @@ services:
       retries: 20
     mem_limit: 256m
 
+  # OpenLDAP for Admin → Authentication. factum-web uses the compose
+  # DNS name openldap (seeded into Settings), so the same database row
+  # works on the laptop and on a remote lab host. :10389 is the host port.
+  # Custom LDIF runs only on the first boot of an empty data volume.
+  # --copy-service lets the image edit its copy of the LDIF; the bind
+  # mount stays untouched. memberOf is retargeted at groupOfNames.
+  openldap:
+    <<: *lab-restart
+    image: docker.io/osixia/openldap:1.5.0
+    hostname: openldap
+    command: ["--copy-service"]
+    environment:
+      LDAP_ORGANISATION: "Factum Lab"
+      LDAP_DOMAIN: "lab.example"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_TLS: "false"
+      LDAP_REMOVE_CONFIG_AFTER_SETUP: "false"
+    volumes:
+      - ./ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:z,ro
+      - openldap-data:/var/lib/ldap
+      - openldap-config:/etc/ldap/slapd.d
+    ports:
+      - "10389:389"
+    healthcheck:
+      # Require memberOf, not just a successful bind. ldapsearch exits 0
+      # even when the attribute is missing.
+      test:
+        [
+          "CMD-SHELL",
+          "ldapsearch -x -H ldap://127.0.0.1 -b dc=lab,dc=example -D cn=admin,dc=lab,dc=example -w admin '(uid=ada)' memberOf | grep -q 'cn=admins'",
+        ]
+      start_period: 60s
+      start_interval: 3s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 128m
+
   factum-web:
     <<: *factum
     command:
@@ -598,6 +636,8 @@ services:
       - "18091:8091"
     depends_on:
       postgres:
+        condition: service_healthy
+      openldap:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/version"]
@@ -681,3 +721,5 @@ volumes:
   alertmanager-data:
   grafana-data:
   storage-run:
+  openldap-data:
+  openldap-config:

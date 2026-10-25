@@ -278,16 +278,18 @@ const router = createRouter({
           component: () => import('@/views/UserSettingsPage.vue'),
         },
         {
+          path: '/admin/directory',
+          name: 'admin-directory',
+          meta: { title: 'Directory', requiresAdmin: true },
+          component: () => import('@/views/admin/DirectoryPage.vue'),
+        },
+        {
           path: '/admin/users',
-          name: 'admin-users',
-          meta: { requiresAdmin: true },
-          component: () => import('@/views/admin/UserList.vue'),
+          redirect: '/admin/directory',
         },
         {
           path: '/admin/roles',
-          name: 'admin-roles',
-          meta: { requiresAdmin: true },
-          component: () => import('@/views/admin/RoleList.vue'),
+          redirect: '/admin/directory',
         },
         {
           path: '/admin/worker-nodes',

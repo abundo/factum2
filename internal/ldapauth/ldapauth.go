@@ -677,6 +677,9 @@ type Entry struct {
 	RDN           string // display label - the value of the DN's leftmost attribute, e.g. "Admins"
 	ObjectClasses []string
 	IsGroup       bool
+	// Kind is "person", "group", "container", or "other". The directory
+	// tree uses it to decide which entries are leaves and which can be edited.
+	Kind string
 }
 
 // groupObjectClasses are the objectClass values (AD and the common OpenLDAP
@@ -698,6 +701,47 @@ func isGroupEntry(objectClasses []string) bool {
 		}
 	}
 	return false
+}
+
+// personObjectClasses mark a directory user (OpenLDAP inetOrgPerson /
+// posixAccount, or an Active Directory user). "person" alone is included
+// because inetOrgPerson and AD user both carry it, and an OU does not.
+var personObjectClasses = map[string]bool{
+	"inetorgperson": true,
+	"posixaccount":  true,
+	"user":          true, // Active Directory
+	"person":        true,
+}
+
+// containerObjectClasses are entries the tree can expand. A person or
+// group match wins over these when an entry carries both.
+var containerObjectClasses = map[string]bool{
+	"organizationalunit": true,
+	"container":          true,
+	"organization":       true,
+	"domain":             true,
+	"dcobject":           true,
+	"country":            true,
+	"locality":           true,
+}
+
+// EntryKind classifies objectClass values for the directory tree.
+// Group wins over person, and person wins over container.
+func EntryKind(objectClasses []string) string {
+	if isGroupEntry(objectClasses) {
+		return "group"
+	}
+	for _, oc := range objectClasses {
+		if personObjectClasses[strings.ToLower(oc)] {
+			return "person"
+		}
+	}
+	for _, oc := range objectClasses {
+		if containerObjectClasses[strings.ToLower(oc)] {
+			return "container"
+		}
+	}
+	return "other"
 }
 
 // rdnValue extracts the value of dn's leftmost RDN attribute for display,
@@ -745,11 +789,13 @@ func Browse(cfg Config, dn string) ([]Entry, error) {
 	entries := make([]Entry, 0, len(res.Entries))
 	for _, e := range res.Entries {
 		classes := e.GetEqualFoldAttributeValues("objectClass")
+		kind := EntryKind(classes)
 		entries = append(entries, Entry{
 			DN:            e.DN,
 			RDN:           rdnValue(e.DN),
 			ObjectClasses: classes,
-			IsGroup:       isGroupEntry(classes),
+			IsGroup:       kind == "group",
+			Kind:          kind,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {

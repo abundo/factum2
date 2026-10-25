@@ -1,0 +1,13 @@
+# Point the image's memberOf overlay at groupOfNames/member. Factum reads
+# memberOf on the user entry, and the directory editor creates groupOfNames.
+# The image default watches groupOfUniqueNames/uniqueMember, which would
+# leave memberOf empty for those groups.
+# Applied only on the first boot of an empty data volume (osixia bootstrap).
+
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+changetype: modify
+replace: olcMemberOfGroupOC
+olcMemberOfGroupOC: groupOfNames
+-
+replace: olcMemberOfMemberAD
+olcMemberOfMemberAD: member

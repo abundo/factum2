@@ -25,6 +25,23 @@ LIBRENMS_TOKEN = "0123456789abcdef0123456789abcdef"
 # LibreNMS 25.11+ Password::defaults(): min 8 chars and a symbol (not "admin").
 LIBRENMS_ADMIN_USER = "admin"
 LIBRENMS_ADMIN_PASS = "Admin-lab1!"
+# Compose DNS name, not a published host port, so the same Settings row
+# works wherever the lab runs. Directory data is dev/ldap/*.ldif.
+LDAP_BASE_DN = "dc=lab,dc=example"
+LDAP_BIND_DN = f"cn=admin,{LDAP_BASE_DN}"
+LDAP_BIND_PASSWORD = "admin"
+# Directory role DN -> Factum role name. nora has no role and gets the default.
+LDAP_GROUP_ROLES = (
+    (f"cn=admins,ou=roles,{LDAP_BASE_DN}", "admin"),
+    (f"cn=operators,ou=roles,{LDAP_BASE_DN}", "operator"),
+    (f"cn=viewers,ou=roles,{LDAP_BASE_DN}", "viewer"),
+)
+# Earlier preseed kept these under ou=groups. Re-seed moves the mapping.
+LDAP_GROUP_ROLE_RENAMES = (
+    (f"cn=admins,ou=groups,{LDAP_BASE_DN}", f"cn=admins,ou=roles,{LDAP_BASE_DN}"),
+    (f"cn=operators,ou=groups,{LDAP_BASE_DN}", f"cn=operators,ou=roles,{LDAP_BASE_DN}"),
+    (f"cn=viewers,ou=groups,{LDAP_BASE_DN}", f"cn=viewers,ou=roles,{LDAP_BASE_DN}"),
+)
 
 NETBOX_TOKEN_PY = """\
 import os
@@ -109,6 +126,7 @@ READY = """
   Kea DHCPv4:     dns container            192.0.2.0/24 on br-lab-dhcp (lab clients)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Software:       http://127.0.0.1:18088  (SFTP 127.0.0.1:12222 factum / lab)
+  OpenLDAP:       ldap://127.0.0.1:10389   cn=admin / admin  (ada ops guest nora / lab)
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
 
@@ -396,6 +414,33 @@ def _ensure_librenms_admin() -> None:
     raise SystemExit(f"LibreNMS user:add failed: {last or 'no output'}")
 
 
+def _ldap_mapping_sql() -> str:
+    """Map lab directory roles to Factum roles. Skip a DN that is already mapped."""
+    parts = []
+    for old_dn, new_dn in LDAP_GROUP_ROLE_RENAMES:
+        parts.append(
+            f"""UPDATE ldap_role_mappings
+SET group_dn = {_sql_lit(new_dn)}, updated_at = NOW()
+WHERE lower(group_dn) = lower({_sql_lit(old_dn)})
+  AND NOT EXISTS (
+    SELECT 1 FROM ldap_role_mappings m WHERE lower(m.group_dn) = lower({_sql_lit(new_dn)})
+  );
+"""
+        )
+    for group_dn, role_name in LDAP_GROUP_ROLES:
+        parts.append(
+            f"""INSERT INTO ldap_role_mappings (group_dn, role_id, created_at, updated_at)
+SELECT {_sql_lit(group_dn)}, r.id, NOW(), NOW()
+FROM roles r
+WHERE r.name = {_sql_lit(role_name)}
+  AND NOT EXISTS (
+    SELECT 1 FROM ldap_role_mappings m WHERE m.group_dn = {_sql_lit(group_dn)}
+  );
+"""
+        )
+    return "\n".join(parts)
+
+
 def _settings_sql(
     *,
     netbox_token: str,
@@ -473,8 +518,27 @@ UPDATE settings SET
   storage_sftp_listen = ':2222',
   storage_sftp_host = 'factum-storage:2222',
   storage_sftp_user = 'factum',
-  storage_sftp_password = 'lab'
+  storage_sftp_password = 'lab',
+  ldap_enabled = true,
+  ldap_server_type = 'generic',
+  ldap_host = 'openldap',
+  ldap_port = 389,
+  ldap_tls_mode = 'none',
+  ldap_skip_tls_verify = false,
+  ldap_bind_dn = {_sql_lit(LDAP_BIND_DN)},
+  ldap_bind_password = {_sql_lit(LDAP_BIND_PASSWORD)},
+  ldap_base_dn = {_sql_lit(LDAP_BASE_DN)},
+  ldap_user_filter = {_sql_lit("(uid=%s)")},
+  ldap_attr_username = 'uid',
+  ldap_attr_email = 'mail',
+  ldap_attr_display_name = 'displayName',
+  ldap_attr_mobile = 'mobile',
+  ldap_attr_groups = 'memberOf',
+  ldap_allow_password_change = true,
+  ldap_default_role_id = (SELECT id FROM roles WHERE name = 'viewer')
 WHERE id = 1;
+
+{_ldap_mapping_sql()}
 """
 
 

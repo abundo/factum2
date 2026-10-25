@@ -1,0 +1,69 @@
+# Lab directory for dc=lab,dc=example. Passwords are lab (users) — the
+# directory admin is cn=admin,dc=lab,dc=example / admin, set by the image.
+# Roles are created after the users so the memberOf overlay can stamp
+# membership onto each person.
+
+dn: ou=people,dc=lab,dc=example
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=roles,dc=lab,dc=example
+objectClass: organizationalUnit
+ou: roles
+
+dn: uid=ada,ou=people,dc=lab,dc=example
+objectClass: inetOrgPerson
+uid: ada
+cn: Ada Lovelace
+sn: Lovelace
+displayName: Ada Lovelace
+mail: ada@lab.example
+mobile: +46701111111
+userPassword: lab
+
+dn: uid=ops,ou=people,dc=lab,dc=example
+objectClass: inetOrgPerson
+uid: ops
+cn: Ophelia Operator
+sn: Operator
+displayName: Ophelia Operator
+mail: ops@lab.example
+mobile: +46702222222
+userPassword: lab
+
+dn: uid=guest,ou=people,dc=lab,dc=example
+objectClass: inetOrgPerson
+uid: guest
+cn: Gus Guest
+sn: Guest
+displayName: Gus Guest
+mail: guest@lab.example
+mobile: +46703333333
+userPassword: lab
+
+dn: uid=nora,ou=people,dc=lab,dc=example
+objectClass: inetOrgPerson
+uid: nora
+cn: Nora None
+sn: None
+displayName: Nora None
+mail: nora@lab.example
+userPassword: lab
+
+dn: cn=admins,ou=roles,dc=lab,dc=example
+objectClass: groupOfNames
+cn: admins
+description: Factum administrators
+member: uid=ada,ou=people,dc=lab,dc=example
+
+dn: cn=operators,ou=roles,dc=lab,dc=example
+objectClass: groupOfNames
+cn: operators
+description: Factum operators
+member: uid=ops,ou=people,dc=lab,dc=example
+
+dn: cn=viewers,ou=roles,dc=lab,dc=example
+objectClass: groupOfNames
+cn: viewers
+description: Factum viewers
+member: uid=guest,ou=people,dc=lab,dc=example

@@ -605,6 +605,18 @@ func GUI(p *GuiParams) error {
 	// ----- API: LDAP/AD tree browse (Admin -> Authorization page, group picker) -----
 	adminApi.GET("/ldap/browse", ctrl.ApiLdapBrowse)
 
+	// Directory page: read the tree for AD and OpenLDAP. Writes (people and
+	// groups) are refused unless the server type is OpenLDAP-compatible and
+	// ldap_writeback is set in the config file.
+	adminApi.GET("/ldap/directory", ctrl.ApiLdapDirectoryStatus)
+	adminApi.GET("/ldap/entry", ctrl.ApiLdapEntry)
+	adminApi.POST("/ldap/people", ctrl.ApiLdapPersonCreate)
+	adminApi.PUT("/ldap/people", ctrl.ApiLdapPersonUpdate)
+	adminApi.DELETE("/ldap/people", ctrl.ApiLdapPersonDelete)
+	adminApi.POST("/ldap/groups", ctrl.ApiLdapGroupCreate)
+	adminApi.PUT("/ldap/groups", ctrl.ApiLdapGroupUpdate)
+	adminApi.DELETE("/ldap/groups", ctrl.ApiLdapGroupDelete)
+
 	// ----- API: LDAP group -> role mappings (Admin -> Authorization page) -----
 	ldapRoleMappings_ := NewSecureCRUDHandler[models.LdapRoleMapping, models.LdapRoleMappingDTO](DB)
 	adminApi.GET("/ldap-role-mappings", ldapRoleMappings_.GetAll)

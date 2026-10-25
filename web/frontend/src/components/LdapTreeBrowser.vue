@@ -2,16 +2,17 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
 import { browseLdap } from '@/api/ldap'
+import { ldapKindLabel, toLdapNode } from '@/utils/ldapTree'
 import 'wunderbaum/dist/wunderbaum.css'
 import '@/assets/wunderbaum-theme.css'
 
 // Dialog that lets an admin navigate the configured LDAP/AD directory tree
-// and pick a group DN, instead of having to know/type it exactly. Generic
-// over any dn-shaped field - callers just listen for @select and assign the
-// emitted DN wherever it belongs, so this can be reused anywhere else a DN
-// needs picking, not just the group -> role mapping dialog.
-defineProps({
+// and pick a DN. selectable is "group" (the default, for role mappings) or
+// "person" (for group membership). Callers listen for @select and assign
+// the emitted DN.
+const props = defineProps({
   visible: { type: Boolean, default: false },
+  selectable: { type: String, default: 'group' },
 })
 const emit = defineEmits(['update:visible', 'select'])
 
@@ -20,41 +21,27 @@ const error = ref(null)
 const selected = ref(null)
 let tree
 
-function toWbNode(entry) {
-  return {
-    key: entry.dn,
-    title: entry.name || entry.dn,
-    lazy: !entry.is_group,
-    type: entry.is_group ? 'group' : 'container',
-    is_group: !!entry.is_group,
-  }
-}
-
 function selectedPayload(node) {
   if (!node) return null
   return {
     key: node.key,
     title: node.title,
+    type: node.type,
     ...node.data,
   }
 }
 
-function kindLabel(kind) {
-  switch (kind) {
-    case 'group':
-      return 'Group'
-    case 'container':
-      return 'Container'
-    default:
-      return kind || ''
-  }
+function canSelect(node) {
+  if (!node) return false
+  if (props.selectable === 'person') return node.kind === 'person' || node.type === 'person'
+  return !!node.is_group
 }
 
 function renderCell(e) {
   for (const col of Object.values(e.renderColInfosById ?? {})) {
     const data = e.node.data ?? {}
     if (col.id === 'kind') {
-      col.elem.textContent = kindLabel(data.kind || e.node.type)
+      col.elem.textContent = ldapKindLabel(data.kind || e.node.type)
     }
   }
 }
@@ -92,14 +79,17 @@ function buildTree(source) {
     types: {
       group: { icon: false },
       container: { icon: false },
+      person: { icon: false },
+      other: { icon: false },
     },
-    lazyLoad: (e) => browseLdap(e.node.key).then((rows) => (rows ?? []).map(toWbNode)),
+    lazyLoad: (e) =>
+      browseLdap(e.node.data?.dn || e.node.key).then((rows) => (rows ?? []).map(toLdapNode)),
     render: renderCell,
     activate: (e) => {
       selected.value = selectedPayload(e.node)
     },
     dblclick: (e) => {
-      if (e.node.data?.is_group) {
+      if (canSelect(selectedPayload(e.node))) {
         selectAndClose(e.node)
         return false
       }
@@ -114,7 +104,7 @@ function loadRoot() {
   browseLdap('')
     .then((entries) => {
       if (el.value !== host) return
-      buildTree((entries ?? []).map(toWbNode))
+      buildTree((entries ?? []).map(toLdapNode))
     })
     .catch((err) => {
       if (el.value !== host) return
@@ -124,13 +114,14 @@ function loadRoot() {
 }
 
 function selectAndClose(node) {
-  if (!node?.data?.is_group) return
-  emit('select', node.key)
+  const picked = selectedPayload(node)
+  if (!canSelect(picked)) return
+  emit('select', picked.key)
   close()
 }
 
 function confirmSelect() {
-  if (!selected.value?.is_group) return
+  if (!canSelect(selected.value)) return
   emit('select', selected.value.key)
   close()
 }
@@ -178,7 +169,7 @@ onBeforeUnmount(destroyTree)
       <UButton
         label="Select"
         icon="i-lucide-check"
-        :disabled="!selected?.is_group"
+        :disabled="!canSelect(selected)"
         @click="confirmSelect"
       />
     </template>

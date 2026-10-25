@@ -95,6 +95,7 @@ DEV_DIR := dev
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 # Core lab apps. Schema is applied before factum-web starts. Each dest
 # (dns, icinga, librenms, oxidized, prometheus) runs its own factum2-worker.
+# openldap is the lab directory (Settings.ldap_host = openldap).
 # The dns worker also handles certs (lego) and Kea DHCPv4.
 # icingadb / icingaweb need the extra MariaDB DBs (existing mysql volumes
 # skip docker-entrypoint-initdb.d), so dev-up creates those then starts
@@ -103,7 +104,7 @@ LAB_DBS := postgres mysql redis icingadb-redis
 # Services compose --wait blocks on. Sidecars that cannot become healthy
 # until a parent is (netbox-worker, librenms-dispatcher) are started
 # without --wait so they don't serialize extra healthchecks.
-LAB_APPS := netbox librenms icinga oxidized prometheus snmp-exporter alertmanager grafana dns portal
+LAB_APPS := netbox librenms icinga oxidized prometheus snmp-exporter alertmanager grafana dns openldap portal
 LAB_SIDECARS := netbox-worker librenms-dispatcher
 LAB_ICINGA_WEB := icingadb icingaweb
 LAB_CORE := $(LAB_DBS) $(LAB_APPS) $(LAB_SIDECARS)

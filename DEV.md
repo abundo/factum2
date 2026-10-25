@@ -129,14 +129,16 @@ also enables source locations in log output.
 including `APP_ENV=development`. It signs the API auth cookie
 (`web/auth.go`); anyone who knows it can forge a login for any user.
 
-`ldap_writeback.bind_dn` / `ldap_writeback.bind_password` are optional and
-only needed if the admin UI's "Allow password changes to be written back to
-LDAP/AD" switch (Settings.LdapAllowPasswordChange, on the Authentication
-settings page) is turned on. Unlike every other LDAP setting, these live
-only here, never in the DB or the Settings API — same reasoning as
-`web.jwtsecret` — because they need much stronger directory permissions
-than the ordinary read-only `ldap_bind_dn`/`ldap_bind_password` search
-account, which any admin can already see via `GET /api/admin/settings`.
+`ldap_writeback.bind_dn` / `ldap_writeback.bind_password` are optional.
+They are required for two things: the Authentication page's "Allow password
+changes to be written back to LDAP/AD" switch, and Admin → Directory edits
+of users and groups when the server type is OpenLDAP-compatible (generic).
+Active Directory stays browse-only on that page. Unlike every other LDAP
+setting, these live only here, never in the DB or the Settings API — same
+reasoning as `web.jwtsecret` — because they need much stronger directory
+permissions than the ordinary read-only `ldap_bind_dn`/`ldap_bind_password`
+search account, which any admin can already see via `GET /api/admin/settings`.
+Directory writes dial the primary host only.
 
 ## Binaries (`cmd/...`, built to `build/`)
 
@@ -349,7 +351,7 @@ Postgres runs in this stack too (port 55432, throwaway).
 use `FACTUM2_TEST_PG_*` against a throwaway database — not the live
 `factum2` DB and not these sqlite fakes.
 
-### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus, Grafana)
+### Local development stack (NetBox, DNS, Icinga, LibreNMS, Oxidized, Prometheus, Grafana, OpenLDAP)
 
 A laptop compose project in `dev/` brings up the upstream/downstream apps
 factum talks to, with **one Postgres** (factum2 + netbox) and **one MariaDB**
@@ -365,8 +367,12 @@ make dev-reset         # stop everything, wipe volumes and dest files (does not 
 ```
 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
-(`admin` / `admin`); NetBox `:18000`, Icinga Web `:18002`, and Grafana
+(`admin` / `admin`, a local account); NetBox `:18000`, Icinga Web `:18002`, and Grafana
 `:18003` use the same user/pass; LibreNMS `:18001` is `admin` / `Admin-lab1!`.
+OpenLDAP is published on `:10389` (`cn=admin` / `admin`). Factum is seeded to
+use the compose name `openldap`, so the same Settings row works on the laptop
+and on a remote lab host. Directory users `ada`, `ops`, `guest`, and `nora`
+use password `lab` (admin, operator, viewer, and the default viewer role).
 Grafana sits with Prometheus, Alertmanager, and snmp-exporter and shows
 devices and VMs like LibreNMS. NetBox starts empty; `make dev-up
 SEED_ARGS=--demo` loads the

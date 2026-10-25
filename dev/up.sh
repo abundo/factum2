@@ -13,7 +13,7 @@ LAB_DBS="${LAB_DBS:-postgres mysql redis icingadb-redis}"
 # Sidecars (netbox-worker, librenms-dispatcher) start with LAB_CORE but are
 # not in the --wait set: they cannot become healthy until a parent is, so
 # waiting on them serializes extra healthchecks after NetBox/LibreNMS.
-LAB_APPS="${LAB_APPS:-netbox librenms icinga oxidized prometheus snmp-exporter alertmanager grafana dns portal}"
+LAB_APPS="${LAB_APPS:-netbox librenms icinga oxidized prometheus snmp-exporter alertmanager grafana dns openldap portal}"
 LAB_SIDECARS="${LAB_SIDECARS:-netbox-worker librenms-dispatcher}"
 LAB_ICINGA_WEB="${LAB_ICINGA_WEB:-icingadb icingaweb}"
 LAB_CORE="${LAB_CORE:-$LAB_DBS $LAB_APPS $LAB_SIDECARS}"
