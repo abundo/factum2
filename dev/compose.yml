@@ -587,7 +587,8 @@ services:
 
   # OpenLDAP for Admin → Authentication. factum-web uses the compose
   # DNS name openldap (seeded into Settings), so the same database row
-  # works on the laptop and on a remote lab host. :10389 is the host port.
+  # works on the laptop and on a remote lab host. :10390 is the host port.
+  # :10389 is factum-worker's internal directory.
   # Custom LDIF runs only on the first boot of an empty data volume.
   # --copy-service lets the image edit its copy of the LDIF; the bind
   # mount stays untouched. memberOf is retargeted at groupOfNames.
@@ -607,7 +608,7 @@ services:
       - openldap-data:/var/lib/ldap
       - openldap-config:/etc/ldap/slapd.d
     ports:
-      - "10389:389"
+      - "10390:389"
     healthcheck:
       # Require memberOf, not just a successful bind. ldapsearch exits 0
       # even when the attribute is missing.
@@ -657,6 +658,8 @@ services:
       - start
     ports:
       - "18443:8443"
+      # Internal LDAP (worker.commands ldap). Host 10389, container :389.
+      - "10389:389"
     depends_on:
       factum-web:
         condition: service_healthy

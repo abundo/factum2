@@ -369,7 +369,8 @@ make dev-reset         # stop everything, wipe volumes and dest files (does not 
 The lab index is http://127.0.0.1:18080. The GUI is http://127.0.0.1:18091
 (`admin` / `admin`, a local account); NetBox `:18000`, Icinga Web `:18002`, and Grafana
 `:18003` use the same user/pass; LibreNMS `:18001` is `admin` / `Admin-lab1!`.
-OpenLDAP is published on `:10389` (`cn=admin` / `admin`). Factum is seeded to
+OpenLDAP is published on `:10390` (`cn=admin` / `admin`). The internal
+directory is `:10389`. Factum is seeded to
 use the compose name `openldap`, so the same Settings row works on the laptop
 and on a remote lab host. Directory users `ada`, `ops`, `guest`, and `nora`
 use password `lab` (admin, operator, viewer, and the default viewer role).

@@ -501,16 +501,17 @@ function syncInternal() {
     return
   }
   const node = tree.findKey('internal')
-  if (!node) {
-    buildTree()
-    return
-  }
+  if (!node) return
   // removeChildren collapses the folder. Put the rows back and reopen it
   // when it was open, so a save does not hide the entry that was just added.
+  // Rebuild would construct a second Wunderbaum on this host. The first one
+  // already wrote the header, and that constructor then throws.
+  const branch = internalBranch()
   const open = node.expanded !== false
   node.removeChildren()
-  node.addChildren(internalBranch().children)
-  node.title = internal.value.base_dn || 'Internal'
+  node.addChildren(branch.children)
+  node.setTitle(branch.title)
+  if (node.data) node.data.dn = branch.dn || ''
   if (open) node.setExpanded(true)
   applySearch()
 }
@@ -1060,7 +1061,7 @@ function saveInternal() {
       toastOk('Directory saved')
       mark()
       await nextTick()
-      buildTree()
+      syncInternal()
       await activateKey('internal')
     })
     .catch((err) => toastError(err, 'Failed to save the directory.'))

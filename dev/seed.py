@@ -126,7 +126,8 @@ READY = """
   Kea DHCPv4:     dns container            192.0.2.0/24 on br-lab-dhcp (lab clients)
   Worker hubs:    18443 factum-worker · 18444 dns · 18445 icinga · 18446 librenms · 18447 oxidized · 18448 prometheus
   Software:       http://127.0.0.1:18088  (SFTP 127.0.0.1:12222 factum / lab)
-  OpenLDAP:       ldap://127.0.0.1:10389   cn=admin / admin  (ada ops guest nora / lab)
+  Internal LDAP:  ldap://127.0.0.1:10389   cn=svc-factum,<base DN>
+  OpenLDAP:       ldap://127.0.0.1:10390   cn=admin / admin  (ada ops guest nora / lab)
   Postgres:       127.0.0.1:15432          factum2 / factum2  (DBs: factum2, netbox)
   MariaDB:        127.0.0.1:13306          librenms / librenms
 
@@ -535,7 +536,11 @@ UPDATE settings SET
   ldap_attr_mobile = 'mobile',
   ldap_attr_groups = 'memberOf',
   ldap_allow_password_change = true,
-  ldap_default_role_id = (SELECT id FROM roles WHERE name = 'viewer')
+  ldap_default_role_id = (SELECT id FROM roles WHERE name = 'viewer'),
+  ldap_internal_enabled = true,
+  ldap_internal_listen = ':389',
+  ldap_internal_base_dn = 'dc=factum,dc=local',
+  ldap_internal_bind_password = 'lab'
 WHERE id = 1;
 
 {_ldap_mapping_sql()}

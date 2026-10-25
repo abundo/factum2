@@ -22,8 +22,9 @@ From another machine, use this host's address in place of `127.0.0.1`.
 | Dest | snmp-exporter | http://127.0.0.1:19116 |
 | Dest | BIND (`lab.example`) + Kea DHCPv4 + factum-dns worker (dns + certs) | `127.0.0.1:18053`, hub `127.0.0.1:18444` |
 | Worker hub | factum-worker (netbox, device-sync, storage copy) | `127.0.0.1:18443` |
+| Internal LDAP | factum-worker | `ldap://127.0.0.1:10389` (`cn=svc-factum,<base DN>`) |
 | Software | factum-storage (HTTP + SFTP) | http://127.0.0.1:18088, SFTP `127.0.0.1:12222` (`factum` / `lab`) |
-| Directory | OpenLDAP | `ldap://127.0.0.1:10389` (`cn=admin` / `admin`, base `dc=lab,dc=example`) |
+| Directory | OpenLDAP | `ldap://127.0.0.1:10390` (`cn=admin` / `admin`, base `dc=lab,dc=example`) |
 | Shared Postgres | factum2 + netbox DBs | `127.0.0.1:15432` |
 | Shared MariaDB | librenms | `127.0.0.1:13306` |
 | Shared Redis | netbox db0/db1, librenms db2 | `127.0.0.1:16379` |
@@ -73,7 +74,7 @@ Index of lab links: http://127.0.0.1:18080. Login: http://127.0.0.1:18091 —
 `admin` / `admin` (local account). NetBox (`:18000`), Icinga Web (`:18002`),
 and Grafana (`:18003`) use the same user/pass; LibreNMS (`:18001`) is
 `admin` / `Admin-lab1!` (password policy requires 8+ characters and a symbol).
-OpenLDAP is `openldap:389` inside compose and `ldap://<host>:10389` from
+OpenLDAP is `openldap:389` inside compose and `ldap://<host>:10390` from
 outside. `seed.py` points Authentication at the compose DNS name, so the
 same Settings row works on the laptop and on a remote lab host. Directory
 admin is `cn=admin,dc=lab,dc=example` / `admin`. Users `ada`, `ops`,
@@ -83,6 +84,11 @@ admin is `cn=admin,dc=lab,dc=example` / `admin`. Users `ada`, `ops`,
 `ldap_writeback` in `container/factum2.yaml` is the same admin, so
 Directory edits and password write-back work. `dev/ldap/*.ldif` loads on
 the first boot of the OpenLDAP volume. `make dev-reset` wipes it.
+factum-worker also serves the internal directory
+(`worker.commands` `ldap`). Seed turns it on at `dc=factum,dc=local`,
+listen `:389` inside the container, published as `ldap://<host>:10389`.
+The search bind is `cn=svc-factum,dc=factum,dc=local` / `lab`. Local
+accounts with a password (including `admin` / `admin`) are the people.
 Grafana's home dashboard lists devices and virtual machines the way
 LibreNMS does (status, hostname, location, uptime, ports), fed by
 Prometheus via snmp-exporter.
