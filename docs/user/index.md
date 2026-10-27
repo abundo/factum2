@@ -26,7 +26,7 @@ currently on GitHub.
 | Packet capture / Software | Tools | Port mirror and NOS images |
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
-| Certificates / Accounts / Challenges | Services → Certificates | Only if **Certificates** is enabled (Destinations) |
+| Certificates | Services | Certificates, accounts, and challenges, as tabs. Only if **Certificates** is enabled (Destinations) |
 | Job overview / status / scheduler | Jobs | Trigger and watch syncs |
 | Settings, users, workers | Admin | Administrators only |
 

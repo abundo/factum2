@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/abundo/factum2/internal/util"
@@ -121,6 +122,102 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid host status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCertsImportLegoYAML(t *testing.T) {
+	ctrl := setupCerts(t)
+	body := certImportBody{
+		YAML: `
+accounts:
+  letsencrypt:
+    email: ops@example.com
+    acceptsTermsOfService: true
+challenges:
+  ns:
+    dns:
+      provider: rfc2136
+      resolvers: ["192.0.2.53:53"]
+certificates:
+  web:
+    domains: ["example.com", "*.example.com"]
+`,
+		Env: "RFC2136_NAMESERVER=192.0.2.53:53\nRFC2136_TSIG_SECRET=c2VjcmV0\n",
+	}
+	c, rec := jsonRequest(t, http.MethodPost, "/api/certs/import", body, nil, nil)
+	if err := ctrl.ApiCertsImport(c); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var result certImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AccountsCreated != 1 || result.ChallengesCreated != 1 || result.CertificatesCreated != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	var ch models.CertChallenge
+	if err := ctrl.DB.Where("name = ?", "ns").First(&ch).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ch.RFC2136TSIGSecret != "c2VjcmV0" || ch.RFC2136TTL != 120 || ch.Resolvers != "192.0.2.53:53" {
+		t.Fatalf("challenge = %+v", ch)
+	}
+
+	body.Env = ""
+	body.YAML = strings.Replace(body.YAML, "ops@example.com", "new@example.com", 1)
+	c, rec = jsonRequest(t, http.MethodPost, "/api/certs/import", body, nil, nil)
+	if err := ctrl.ApiCertsImport(c); err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reimport status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AccountsUpdated != 1 || result.CertificatesUpdated != 1 || result.AccountsCreated != 0 {
+		t.Fatalf("reimport result = %+v", result)
+	}
+	if err := ctrl.DB.Where("name = ?", "ns").First(&ch).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ch.RFC2136TSIGSecret != "c2VjcmV0" {
+		t.Fatalf("secret wiped: %+v", ch)
+	}
+	var acc models.CertAccount
+	if err := ctrl.DB.Where("name = ?", "letsencrypt").First(&acc).Error; err != nil {
+		t.Fatal(err)
+	}
+	if acc.Email != "new@example.com" {
+		t.Fatalf("email = %s", acc.Email)
+	}
+
+	bad := certImportBody{YAML: `
+accounts:
+  other:
+    email: other@example.com
+certificates:
+  extra:
+    account: other
+    challenge: missing
+    domains: [example.com]
+`}
+	c, rec = jsonRequest(t, http.MethodPost, "/api/certs/import", bad, nil, nil)
+	if err := ctrl.ApiCertsImport(c); err != nil {
+		t.Fatalf("bad import: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var n int64
+	if err := ctrl.DB.Model(&models.CertAccount{}).Where("name = ?", "other").Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rolled back account count = %d", n)
 	}
 }
 

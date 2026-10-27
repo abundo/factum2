@@ -23,6 +23,8 @@ export const createCertChallenge = (payload) => create('/certs/challenges', payl
 export const updateCertChallenge = (id, payload) => update(`/certs/challenges/${id}`, payload)
 export const deleteCertChallenge = (id) => remove(`/certs/challenges/${id}`)
 
+export const importLegoFile = (payload) => create('/certs/import', payload)
+
 export const listCertificates = () => list('/certs/certificates')
 export const createCertificate = (payload) => create('/certs/certificates', payload)
 export const updateCertificate = (id, payload) => update(`/certs/certificates/${id}`, payload)

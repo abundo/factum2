@@ -9,7 +9,20 @@ Factum can request TLS certificates with [lego](https://github.com/go-acme/lego)
 using the **DNS-01** challenge and **RFC2136** dynamic updates.
 
 Enable **Certificates** under Admin → Destinations. That shows
-**Services → Certificates** and includes **certs** in [jobs](jobs.md).
+**Services → Certificates**. Certificates, accounts, and challenges are tabs
+on that page. The feature also includes **certs** in [jobs](jobs.md).
+
+## Import
+
+**Import .lego.yaml** reads an existing [lego](https://go-acme.github.io/lego/advanced/file-configuration/)
+configuration file. Accounts, RFC2136 DNS-01 challenges, and certificates are
+added or updated by name. Rows that are not in the file are left as they are.
+
+An optional `.env` next to the YAML fills RFC2136 credentials (nameserver,
+TSIG, TTL) on every imported challenge. Without that file, credentials already
+stored in Factum are kept. Challenges other than RFC2136 DNS-01 are skipped.
+HTTP-01, TLS-ALPN-01, and a certificate that uses a non-RFC2136 challenge are
+rejected.
 
 ## What is stored
 

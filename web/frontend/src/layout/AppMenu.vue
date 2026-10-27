@@ -23,21 +23,14 @@ function section(label, children) {
 
 // DNS and Certificates sit under Services. The heading is omitted when both features are off.
 // DNS zones, templates, SOA templates, and DNSSEC policies are tabs on /dns.
+// Certificates, accounts, and challenges are tabs on /certs.
 function servicesSection(authStore) {
   const children = []
   if (authStore.dnsZonesEnabled) {
     children.push({ label: 'DNS', icon: 'i-lucide-globe-2', to: '/dns' })
   }
   if (authStore.certsEnabled) {
-    children.push({
-      label: 'Certificates',
-      icon: 'i-lucide-file-key',
-      children: [
-        { label: 'Certificates', icon: 'i-lucide-file-key', to: '/certs' },
-        { label: 'Accounts', icon: 'i-lucide-user-cog', to: '/certs/accounts' },
-        { label: 'Challenges', icon: 'i-lucide-shield', to: '/certs/challenges' },
-      ],
-    })
+    children.push({ label: 'Certificates', icon: 'i-lucide-file-key', to: '/certs' })
   }
   if (!children.length) return []
   // section() is already one menu group. Wrap it so the spread in groups

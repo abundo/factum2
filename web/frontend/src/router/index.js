@@ -206,19 +206,15 @@ const router = createRouter({
           path: '/certs',
           name: 'certs',
           meta: { title: 'Certificates', requiresRead: true, requiresCerts: true },
-          component: () => import('@/views/certs/CertListPage.vue'),
+          component: () => import('@/views/certs/CertsPage.vue'),
         },
         {
           path: '/certs/accounts',
-          name: 'cert-accounts',
-          meta: { title: 'ACME accounts', requiresRead: true, requiresCerts: true },
-          component: () => import('@/views/certs/CertAccountsPage.vue'),
+          redirect: '/certs?tab=accounts',
         },
         {
           path: '/certs/challenges',
-          name: 'cert-challenges',
-          meta: { title: 'Challenges', requiresRead: true, requiresCerts: true },
-          component: () => import('@/views/certs/CertChallengesPage.vue'),
+          redirect: '/certs?tab=challenges',
         },
         {
           path: '/ipam/:id',

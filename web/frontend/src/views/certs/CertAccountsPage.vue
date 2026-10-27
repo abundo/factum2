@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
@@ -13,6 +13,11 @@ import {
 } from '@/api/certs'
 
 defineOptions({ name: 'CertAccountsPage' })
+
+const props = defineProps({
+  active: { type: Boolean, default: true },
+  refresh: { type: Number, default: 0 },
+})
 
 const toast = useToast()
 const authStore = useAuthStore()
@@ -120,7 +125,15 @@ async function remove() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  if (props.active) load()
+})
+watch(
+  () => [props.active, props.refresh],
+  ([active]) => {
+    if (active) load()
+  },
+)
 </script>
 
 <template>

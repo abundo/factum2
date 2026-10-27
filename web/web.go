@@ -401,6 +401,7 @@ func GUI(p *GuiParams) error {
 	api.POST("/topology/sites/:id/location", ctrl.ApiTopologySiteLocation, ctrl.RequireAPIAuth, ctrl.RequireWrite)
 
 	certg := api.Group("/certs", ctrl.RequireAPIAuth, ctrl.RequireCertsEnabled)
+	certg.POST("/import", ctrl.ApiCertsImport, ctrl.RequireWrite)
 	certg.GET("/accounts", ctrl.ApiCertAccountList, ctrl.RequireRead)
 	certg.POST("/accounts", ctrl.ApiCertAccountCreate, ctrl.RequireWrite)
 	certg.GET("/accounts/:id", ctrl.ApiCertAccountGet, ctrl.RequireRead)
