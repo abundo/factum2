@@ -439,12 +439,15 @@ func (librenms *LibrenmsClient) DeviceGet(deviceID int) (*LibrenmsDevice, error)
 
 // Create device, returns the librenms device_id of the created device.
 // https://docs.librenms.org/API/Devices/#add_device
+// display is the rendered name. add_device stores it as display_template
+// and LibreNMS fills the display column from that on insert. The field
+// named "display" is ignored.
 func (librenms *LibrenmsClient) DeviceCreate(name string, display string, force_add bool, version string, community string) (int, error) {
 	data := make(map[string]string)
 
 	data["hostname"] = name
 	if display != "" {
-		data["display"] = display
+		data["display_template"] = display
 	}
 	if force_add {
 		data["force_add"] = "1"

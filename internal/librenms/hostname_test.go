@@ -61,7 +61,7 @@ func TestCallAPIPostsJSONToAPIv0(t *testing.T) {
 	if err := json.Unmarshal(gotBody, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["hostname"] != "10.1.1.1" || payload["display"] != "rtr1" || payload["community"] != "public" || payload["force_add"] != "1" {
+	if payload["hostname"] != "10.1.1.1" || payload["display_template"] != "rtr1" || payload["display"] != "" || payload["community"] != "public" || payload["force_add"] != "1" {
 		t.Fatalf("body=%v", payload)
 	}
 }

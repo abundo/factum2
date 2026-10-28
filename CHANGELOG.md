@@ -15,6 +15,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
+- LibreNMS create sends the display name as `display_template`.
+  `add_device` ignores `display`, so a new device kept the IP as its
+  name until the following field update.
 - `factum2-netbox check --update` rewrites a boolean custom-field default
   stored as the string `"true"` or `"false"` to a JSON boolean. NetBox
   4.6 rejects any later save of that field until the default is a real
