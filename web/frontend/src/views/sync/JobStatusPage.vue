@@ -1,25 +1,26 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
-import { getJobs, getWorkerStatus } from '@/api/jobs'
+import { ref } from 'vue'
 import SearchInput from '@/components/SearchInput.vue'
 import SortableColumnHeader from '@/components/SortableColumnHeader.vue'
 import JobDetailModal from './JobDetailModal.vue'
+import { useJobStatusData } from './useJobStatusData'
 import { formatDateTime } from '@/utils/datetime'
 import { jobDuration, jobStatus, jobTasks } from '@/utils/job'
 import { useSearch, valuesText } from '@/utils/search'
 
-const REFRESH_INTERVAL_MS = 5000
-const AUTO_REFRESH_DURATION_MS = 60 * 60 * 1000
+defineProps({
+  // status: recent jobs. workers: the worker-node table.
+  section: {
+    type: String,
+    required: true,
+    validator: (value) => value === 'status' || value === 'workers',
+  },
+})
 
-const nodes = ref([])
-const loading = ref(true)
-const loadError = ref(false)
+const { nodes, loading, loadError, jobs, jobsLoading, jobsLoadError, autoRefresh, setAutoRefresh } =
+  useJobStatusData()
+
 const nodeSorting = ref([{ id: 'name', desc: false }])
-const autoRefresh = ref(false)
-
-let refreshTimer = null
-let stopTimer = null
-let refreshInFlight = false
 
 const nodeColumns = [
   { accessorKey: 'name', header: 'Name' },
@@ -32,27 +33,6 @@ const nodeColumns = [
   { id: 'last_seen', header: 'Last seen' },
   { accessorKey: 'last_error', header: 'Last error' },
 ]
-
-function loadStatus({ showLoading = false } = {}) {
-  if (showLoading) {
-    loading.value = true
-    loadError.value = false
-  }
-  return getWorkerStatus()
-    .then((data) => {
-      nodes.value = data ?? []
-    })
-    .catch(() => {
-      if (showLoading) {
-        loadError.value = true
-      }
-    })
-    .finally(() => {
-      if (showLoading) {
-        loading.value = false
-      }
-    })
-}
 
 function formatLastSeen(value) {
   if (!value || value.startsWith('0001-01-01')) {
@@ -75,9 +55,6 @@ const { search: nodeSearch, filtered: filteredNodes } = useSearch(nodes, (row) =
   ),
 )
 
-const jobs = ref([])
-const jobsLoading = ref(true)
-const jobsLoadError = ref(false)
 const jobSorting = ref([{ id: 'started', desc: true }])
 
 const jobColumns = [
@@ -90,73 +67,6 @@ const jobColumns = [
   { id: 'errors', header: 'Errors' },
   { id: 'warnings', header: 'Warnings' },
 ]
-
-function loadJobs({ showLoading = false } = {}) {
-  if (showLoading) {
-    jobsLoading.value = true
-    jobsLoadError.value = false
-  }
-  return getJobs()
-    .then((data) => {
-      jobs.value = data ?? []
-    })
-    .catch(() => {
-      if (showLoading) {
-        jobsLoadError.value = true
-      }
-    })
-    .finally(() => {
-      if (showLoading) {
-        jobsLoading.value = false
-      }
-    })
-}
-
-function loadAll({ showLoading = false } = {}) {
-  if (refreshInFlight) {
-    return Promise.resolve()
-  }
-  refreshInFlight = true
-  return Promise.all([loadStatus({ showLoading }), loadJobs({ showLoading })]).finally(() => {
-    refreshInFlight = false
-  })
-}
-
-function clearRefreshTimers() {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-  if (stopTimer) {
-    clearTimeout(stopTimer)
-    stopTimer = null
-  }
-}
-
-function stopAutoRefresh() {
-  autoRefresh.value = false
-  clearRefreshTimers()
-}
-
-function startAutoRefresh({ refreshNow = false } = {}) {
-  clearRefreshTimers()
-  autoRefresh.value = true
-  if (refreshNow) {
-    loadAll()
-  }
-  refreshTimer = setInterval(() => {
-    loadAll()
-  }, REFRESH_INTERVAL_MS)
-  stopTimer = setTimeout(stopAutoRefresh, AUTO_REFRESH_DURATION_MS)
-}
-
-function setAutoRefresh(on) {
-  if (on) {
-    startAutoRefresh({ refreshNow: true })
-  } else {
-    stopAutoRefresh()
-  }
-}
 
 function jobTargets(job) {
   return jobTasks(job)
@@ -191,19 +101,10 @@ function viewJob(job) {
   selectedJob.value = job
   detailDialog.value = true
 }
-
-onMounted(() => {
-  loadAll({ showLoading: true })
-  startAutoRefresh()
-})
-
-onUnmounted(() => {
-  stopAutoRefresh()
-})
 </script>
 
 <template>
-  <div class="card mb-6">
+  <div v-if="section === 'workers'" class="card">
     <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
       <div class="font-semibold text-xl">Job status</div>
       <div
@@ -275,7 +176,7 @@ onUnmounted(() => {
     </UTable>
   </div>
 
-  <div class="card">
+  <div v-else class="card">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <div class="font-semibold text-xl">Recent jobs</div>
       <SearchInput v-model="jobSearch" class="max-w-xs" />

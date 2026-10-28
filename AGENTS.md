@@ -306,9 +306,9 @@ firewall step, not something the process unbinds.
   handles the target - the `Job`/`JobTask` rows are still created and
   immediately marked failed either way, so they show up in job history
   rather than just vanishing.
-- **Which worker nodes are up**: the Job overview page's "Troubleshooting"
-  section links to `/sync/status` (`JobStatusPage.vue`), which reads
-  `GET /api/worker/status` (`web.ApiWorkerStatus`, `web/handle_worker.go`) -
+- **Which worker nodes are up**: Jobs → Overview, Workers tab
+  (`/sync/overview?tab=workers`, `JobStatusPage.vue` section `workers`),
+  reads `GET /api/worker/status` (`web.ApiWorkerStatus`, `web/handle_worker.go`) -
   a plain merge of the DB's configured `models.WorkerNode` rows with
   `RemoteManager.StatusAll()`'s live connection state. Unlike the old
   rabbitmq-based ping/pong (a fanout broadcast with a fixed timeout window,
@@ -318,8 +318,8 @@ firewall step, not something the process unbinds.
   configured node (see "Worker / hub transport" below), so there's no
   broadcast round trip and no "did we wait long enough" timeout to tune.
 - **Jobs and job tasks**: `models.Job`/`JobTask`/`JobTaskEvent` persist a
-  triggered sync's outcome for the "Recent jobs" table on `/sync/status`
-  (`JobStatusPage.vue`, via `GET /api/jobs`/`GET
+  triggered sync's outcome for the "Recent jobs" table on Jobs → Overview,
+  Status tab (`/sync/overview?tab=status`, `JobStatusPage.vue`, via `GET /api/jobs`/`GET
 /api/jobs/:id/tasks/:taskid/events`, `web/handle_sync.go`). A `Job` is
   one triggered unit of work (a single-target trigger, or one "sync all"),
   made up of one or more `JobTask`s - one per target - so there's no
@@ -582,7 +582,7 @@ RPC: method/path/body), `response` (primary -> agent: status/body, or
 `X-Factum-Version` / `X-Factum-Commit` on the WSS handshake (the agent
 rejects a mismatch with HTTP 409 before Upgrade); the agent repeats them
 in hello (the primary refuses to register the node, and the mismatch
-surfaces as `LastError` on `/sync/status`). Unstamped `go run`/`go test`
+surfaces as `LastError` on Jobs → Overview → Workers). Unstamped `go run`/`go test`
 builds report `dev`/`none` and skip the check on either side (a developer
 GUI can dial installed workers; matching is then the developer's problem).
 `RemoteManager` (primary side,

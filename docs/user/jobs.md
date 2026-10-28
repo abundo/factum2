@@ -13,7 +13,11 @@ target. Housekeeping runs in-process on the primary. NetBox changes
 in that command's `allow_args`). A `worker.commands` entry named
 `netbox-delta` is ignored.
 
-## Job overview
+## Overview
+
+**Jobs → Overview** has three tabs: Overview, Status, and Workers.
+
+### Overview
 
 Tiles are grouped:
 
@@ -31,12 +35,16 @@ included in Sync all; run it from its tile or a schedule.
 If no connected worker handles a target, the job is created and marked
 failed immediately — it still shows up in history.
 
-## Job status
+### Status
 
-**Job status** shows which worker nodes are configured vs actually
-connected, plus recent jobs. Open a job to see per-target tasks, exit
+**Status** lists recent jobs. Open a job to see per-target tasks, exit
 code, and (when the worker command was given `--job`) structured
 info/warning/error lines.
+
+### Workers
+
+**Workers** shows which worker nodes are configured vs actually
+connected, the roles each one handles, and the last error.
 
 ## Scheduler
 

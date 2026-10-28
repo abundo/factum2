@@ -235,14 +235,13 @@ const router = createRouter({
         {
           path: '/sync/overview',
           name: 'sync-overview',
-          meta: { title: 'Job overview', requiresRead: true },
-          component: () => import('@/views/sync/SyncOverviewPage.vue'),
+          meta: { title: 'Overview', requiresRead: true },
+          component: () => import('@/views/sync/JobsPage.vue'),
         },
         {
+          // Worker-node table from the old Job status page.
           path: '/sync/status',
-          name: 'sync-status',
-          meta: { title: 'Job status', requiresRead: true },
-          component: () => import('@/views/sync/JobStatusPage.vue'),
+          redirect: '/sync/overview?tab=workers',
         },
         {
           path: '/sync/schedules',

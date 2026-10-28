@@ -27,7 +27,7 @@ currently on GitHub.
 | Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
 | DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
 | Certificates | Services | Certificates, accounts, and challenges, as tabs. Only if **Certificates** is enabled (Destinations) |
-| Job overview / status / scheduler | Jobs | Trigger and watch syncs |
+| Overview / scheduler | Jobs | Trigger and watch syncs. Overview, Status, and Workers are tabs |
 | Settings, users, workers | Admin | Administrators only |
 
 Some entries appear only when the matching feature is on (Oxidized,

@@ -377,19 +377,6 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
-
-      <div class="font-semibold text-lg mb-3 mt-6">Troubleshooting</div>
-      <div class="border border-default rounded-lg p-4 flex items-center justify-between gap-4">
-        <div>
-          <div class="font-medium">Which worker nodes are up?</div>
-          <div class="text-muted text-sm">
-            See connected worker nodes, the roles each one handles, and recent job history.
-          </div>
-        </div>
-        <RouterLink to="/sync/status">
-          <UButton label="Job status" icon="i-lucide-list-checks" />
-        </RouterLink>
-      </div>
     </template>
   </div>
 </template>
