@@ -434,7 +434,20 @@ func (ds *DeviceSync) connectDevice(nbDevice *models.Device) *devicePair {
 		ds.reporter.Emit(jobevent.Error, "%s: connect/get config: %v", full.Name, err)
 		return nil
 	}
+	if _, ok := driver.(drivers.ExternalInventory); ok {
+		ds.reporter.Emit(jobevent.Info, "%s: inventory is managed elsewhere; syncing LLDP cables only", full.Name)
+	}
 	return &devicePair{nbDevice: full, config: config, driver: driver}
+}
+
+// externalInventory reports that another system owns this device's
+// interfaces, addresses, and services. LLDP cabling still runs.
+func externalInventory(driver drivers.DriverClient) bool {
+	if driver == nil {
+		return false
+	}
+	_, ok := driver.(drivers.ExternalInventory)
+	return ok
 }
 
 // snmpCommunities is the SNMPv2c community LLDP-MIB neighbor reads use.
@@ -456,6 +469,9 @@ func snmpCommunities(auth util.ConfigDeviceSyncAuth) []string {
 // name is patched to whichever casing the device uses. A second NetBox
 // row that already has the device's exact name is left for interfacesDelete.
 func (ds *DeviceSync) syncInterfaceNames(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	platform := pair.nbDevice.Platform
 	devByKey := deviceInterfacesByKey(platform, pair.config)
 	grouped := map[string][]int{}
@@ -503,6 +519,9 @@ func (ds *DeviceSync) syncInterfaceNames(pair *devicePair) {
 // second NetBox row for an interface that already has the device's exact
 // name is still deleted.
 func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	platform := pair.nbDevice.Platform
 	devByKey := deviceInterfacesByKey(platform, pair.config)
 	exactNB := map[string]bool{}
@@ -569,6 +588,9 @@ func (ds *DeviceSync) interfacesDelete(pair *devicePair) {
 // (admin/vendor-curated per-port data) is used instead of the driver's
 // guessed one - see NetboxMgr.TemplateInterfaceTypes.
 func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	platform := pair.nbDevice.Platform
 	nbKeys := map[string]bool{}
 	for _, iface := range pair.nbDevice.Interfaces {
@@ -638,6 +660,9 @@ func (ds *DeviceSync) interfacesCreate(pair *devicePair) {
 // see srosAddSapInterface) have no opinion on either and Netbox may
 // carry admin-set values there.
 func (ds *DeviceSync) syncInterfaceValues(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	templateTypes, err := ds.nb.TemplateInterfaceTypes(pair.nbDevice.Manufacturer, pair.nbDevice.ModelName)
 	if err != nil {
 		ds.reporter.Emit(jobevent.Warning, "%s: fetch device type interface templates: %v", pair.nbDevice.Name, err)
@@ -766,6 +791,9 @@ func (ds *DeviceSync) retargetAddressVRF(pair *devicePair, nbIface *models.Inter
 // in its config, but removing the NetBox row drops DNS and management
 // access. The operator has to clear or move the primary first.
 func (ds *DeviceSync) addressesDelete(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
 		deviceIface := pair.deviceInterface(nbIface.Name)
@@ -923,6 +951,9 @@ func (ds *DeviceSync) reportAddressDeleteReason(deviceName string, nbIface *mode
 // addressesCreate creates Netbox addresses that exist on the device but not
 // yet in Netbox
 func (ds *DeviceSync) addressesCreate(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	for _, deviceIface := range pair.config.Interfaces {
 		nbIface := findInterfaceByName(pair.nbDevice.Platform, pair.nbDevice.Interfaces, deviceIface.Name)
 		if nbIface == nil {
@@ -979,6 +1010,9 @@ func (ds *DeviceSync) addressesCreate(pair *devicePair) {
 // pair.nbDevice consistent with Netbox for any later phase - no re-fetch
 // needed.
 func (ds *DeviceSync) addressesUpdate(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	for i := range pair.nbDevice.Interfaces {
 		nbIface := &pair.nbDevice.Interfaces[i]
 		anycast := strings.Contains(strings.ToLower(nbIface.Description), "anycast")
@@ -1282,6 +1316,9 @@ func (ds *DeviceSync) cabledToOptical(iface *models.Interface) bool {
 // NetBox device/interfaces, and PUTs the dump to Factum so OpticalPort /
 // OpticalXConnect rows exist for the tracer.
 func (ds *DeviceSync) syncOpticalInventory(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	oc, ok := pair.driver.(drivers.OpticalClient)
 	if !ok {
 		return
@@ -1516,6 +1553,9 @@ func (ds *DeviceSync) syncInterfaceVlans(pair *devicePair) {
 // an address just synced from this device, skipping host-only prefixes
 // (/32, /128).
 func (ds *DeviceSync) syncPrefixes(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	seen := map[string]bool{}
 	for _, iface := range pair.config.Interfaces {
 		for _, addr := range iface.IPAddresses {
@@ -1680,6 +1720,9 @@ func elinePseudowire(conn any) *drivers.Pseudowire {
 }
 
 func (ds *DeviceSync) syncVRFs(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	if ds.netboxType(models.SyncSourceL3VPN) != models.NetboxTypeVRF {
 		return
 	}
@@ -1714,6 +1757,9 @@ func (ds *DeviceSync) syncVRFs(pair *devicePair) {
 }
 
 func (ds *DeviceSync) syncInventoryL2(pair *devicePair) {
+	if externalInventory(pair.driver) {
+		return
+	}
 	if t := ds.netboxType(models.SyncSourceELINE); t != "" {
 		ds.syncL2Attachments(pair, t, elineAttachments(pair.config))
 	}

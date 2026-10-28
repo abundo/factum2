@@ -72,9 +72,17 @@ type DriverClient interface {
 	GetDeviceConfig() (*DeviceConfig, error)
 	// GetNeighbors returns the device's LLDP-discovered neighbors.
 	// EOS uses eAPI. Open ROADM uses its YANG external-link list. The
-	// other platforms read IEEE LLDP-MIB over SNMPv2c
+	// other platforms, including iBOS, read IEEE LLDP-MIB over SNMPv2c
 	// (DriverParam.SNMPCommunities).
 	GetNeighbors() ([]*Neighbor, error)
+}
+
+// ExternalInventory marks a platform whose interfaces, addresses, VRFs,
+// and services belong to another system. device-sync still reads LLDP
+// and writes cables. It does not add, change, or delete that inventory.
+// iBOS implements this: BECS owns the element.
+type ExternalInventory interface {
+	ExternalInventory()
 }
 
 // RunningConfigCommitter writes commands inside a configuration

@@ -1750,6 +1750,73 @@ func TestSyncConnectionsCaseInsensitiveShortName(t *testing.T) {
 	}
 }
 
+func TestSyncConnectionsIbosShortName(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fakeFactum := newFakeFactumAPI()
+	ds, reporter := newTestDeviceSync(fake, fakeFactum, nil)
+
+	device := &models.Device{NetboxID: 1, Name: "asr1", Platform: "ibos", Interfaces: []models.Interface{
+		{NetboxID: 100, Name: "gigabitethernet3"},
+		{NetboxID: 101, Name: "gi3/vid511"},
+	}}
+	remote := &models.Device{NetboxID: 2, Name: "asr2", Platform: "ibos", Interfaces: []models.Interface{
+		{NetboxID: 200, Name: "tengigabitethernet1"},
+	}}
+	fakeFactum.devices["asr2"] = remote
+
+	pair := &devicePair{
+		nbDevice: device,
+		config:   drivers.NewDeviceConfig(),
+		driver: &fakeDriver{neighbors: []*drivers.Neighbor{
+			{LocalInterface: "gi3", RemoteName: "asr2", RemoteInterface: "te1"},
+		}},
+	}
+	ds.syncConnections(pair)
+
+	if len(fake.createdCables) != 1 || fake.createdCables[0] != [2]uint{100, 200} {
+		t.Fatalf("createdCables = %v, want [[100 200]]", fake.createdCables)
+	}
+	for _, line := range reporter.lines {
+		if strings.Contains(line, "does not exist") {
+			t.Errorf("unexpected warning: %s", line)
+		}
+	}
+}
+
+func TestIbosSyncLeavesInventory(t *testing.T) {
+	fake := newFakeNetboxAPI()
+	fakeFactum := newFakeFactumAPI()
+	fakeFactum.devices["asr1"] = &models.Device{
+		NetboxID: 1,
+		Name:     "asr1",
+		Platform: "ibos",
+		Status:   "active",
+		Interfaces: []models.Interface{{
+			NetboxID: 100,
+			Name:     "gigabitethernet3",
+			Addresses: []models.Address{{
+				NetboxID: 50,
+				Address:  "10.0.0.1/30",
+			}},
+		}},
+	}
+	ds, reporter := newTestDeviceSync(fake, fakeFactum, nil)
+	if err := ds.run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.deletedInterfaceIDs) != 0 || len(fake.deletedAddressIDs) != 0 ||
+		len(fake.createdInterfaces) != 0 || len(fake.updatedInterfaces) != 0 ||
+		len(fake.createdAddresses) != 0 || len(fake.updatedAddresses) != 0 {
+		t.Fatalf("inventory writes: delIf=%v delAddr=%v newIf=%v updIf=%v newAddr=%v updAddr=%v",
+			fake.deletedInterfaceIDs, fake.deletedAddressIDs, fake.createdInterfaces,
+			fake.updatedInterfaces, fake.createdAddresses, fake.updatedAddresses)
+	}
+	joined := strings.Join(reporter.lines, "\n")
+	if !strings.Contains(joined, "inventory is managed elsewhere") {
+		t.Fatalf("missing inventory notice:\n%s", joined)
+	}
+}
+
 // ----- prefixes -----
 
 func TestSyncPrefixesCreatesMissingSkipsHostRoutes(t *testing.T) {

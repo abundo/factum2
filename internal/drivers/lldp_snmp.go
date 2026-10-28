@@ -1,7 +1,7 @@
 package drivers
 
 // LLDP neighbors over SNMPv2c. IEEE 802.1AB LLDP-MIB (lldpRemTable,
-// 1.0.8802.1.1.2) is the table VRP, IOS-XR, SR OS, and Cisco SMB share.
+// 1.0.8802.1.1.2) is the table VRP, IOS-XR, SR OS, Cisco SMB, and iBOS share.
 // LLDP-V2-MIB is used only when the original MIB is absent. EOS stays on
 // eAPI; Open ROADM stays on its YANG external-link list.
 

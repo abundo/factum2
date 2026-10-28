@@ -390,7 +390,7 @@ NetboxApiToken` from the primary (`GET /api/netbox-config`,
   fetched stay local / on NetBox's URL; they are not tunneled.
 
 `internal/drivers` talks to network devices directly (Arista EOS, Cisco
-IOS-XR, Cisco SMB, Nokia SR OS, Huawei VRP, Open ROADM MSA): NETCONF against OpenConfig
+IOS-XR, Cisco SMB, Nokia SR OS, Huawei VRP, Waystream iBOS, Open ROADM MSA): NETCONF against OpenConfig
 models for interface state/config on EOS/IOS-XR/SR OS (shared plumbing in
 `internal/drivers/openconfig.go`), plus a per-platform CLI-shaped transport
 for what NETCONF can't express (arbitrary commands, `show running-config`,
@@ -399,7 +399,10 @@ config save). That second transport is Arista's eAPI JSON-RPC for EOS
 NETCONF agent isn't enabled - it's off by default) and SSH CLI screen-
 scraping (`sshRunCLI`) for IOS-XR, SR OS, VRP, and Cisco SMB (VRP and Cisco
 SMB have no NETCONF).
-Open ROADM is a read-only NETCONF driver against native
+Waystream iBOS (`driver_ibos.go`, platform `ibos`) only reads IEEE LLDP-MIB
+over SNMPv2c and lets device-sync create cables. BECS owns the element, so
+the driver implements `ExternalInventory` and device-sync does not add,
+change, or delete interfaces, addresses, or services. Open ROADM is a read-only NETCONF driver against native
 `org-openroadm-device` YANG (`driver_openroadm.go`), not OpenConfig; optical
 inventory is a separate `OpticalClient` interface (same split as
 `ELINEApplier`). `optical.ApplyInventory` / PUT `/api/optical/device/:id/inventory`

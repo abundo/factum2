@@ -15,6 +15,7 @@ platform is added. Netbox platform names currently registered:
 | `ciscosmb`        | Cisco SMB (SG300/SG350/C1200/C1300) |
 | `sros`, `sros-md` | Nokia SR OS (same factory) |
 | `vrp`             | Huawei VRP                 |
+| `ibos`            | Waystream iBOS (LLDP cables only) |
 | `openroadm`       | Open ROADM MSA (read-only) |
 
 This file is the single place that documents _how each driver works_ and
@@ -33,6 +34,7 @@ driver's comments just to keep a comparison table up to date.
 | Nokia SR OS  | NETCONF/OpenConfig read; native `nokia-conf` write (candidate+commit) | SSH CLI (MD-CLI)           | not supported (commit already persists)   |
 | Huawei VRP   | SSH CLI only                                                          | SSH CLI                    | SSH CLI `save` + `y` confirmation         |
 | Cisco SMB    | SSH CLI only                                                          | SSH CLI                    | SSH CLI `copy running-config startup-config` + `y` |
+| Waystream iBOS | not supported (BECS owns the element)                               | not supported              | not supported                             |
 | Open ROADM   | NETCONF `org-openroadm-device` (read-only)                            | NETCONF YANG XML           | not supported (read-only)                 |
 
 ## LLDP neighbors
@@ -43,9 +45,9 @@ driver's comments just to keep a comparison table up to date.
 | --- | --- |
 | Arista EOS | eAPI `show lldp neighbors` (JSON). No SNMP. |
 | Open ROADM | NETCONF `external-link` list. Not LLDP. |
-| IOS-XR, SR OS, VRP, Cisco SMB | SNMPv2c walk of IEEE 802.1AB **LLDP-MIB** `lldpRemTable` (`1.0.8802.1.1.2`). **LLDP-V2-MIB** (`1.3.111.2.802.1.1.13`) is used only when the original MIB is absent. |
+| IOS-XR, SR OS, VRP, Cisco SMB, iBOS | SNMPv2c walk of IEEE 802.1AB **LLDP-MIB** `lldpRemTable` (`1.0.8802.1.1.2`). **LLDP-V2-MIB** (`1.3.111.2.802.1.1.13`) is used only when the original MIB is absent. |
 
-The community is `DriverParam.SNMPCommunities`, filled from the device-sync credential's SNMP community (`device_sync_auths.snmp_community`, the per-device row or `default`). An empty community makes `GetNeighbors` fail; interface sync still runs. A port id whose subtype is a MAC, a network address, or an agent circuit id is dropped. `interfaceAlias`, `interfaceName`, and `local` are kept, still short names when the box advertises them (`gi9`), so `ExpandInterfaceName` still applies.
+The community is `DriverParam.SNMPCommunities`, filled from the device-sync credential's SNMP community (`device_sync_auths.snmp_community`, the per-device row or `default`). An empty community makes `GetNeighbors` fail; interface sync still runs on every platform except iBOS, which never syncs interfaces. A port id whose subtype is a MAC, a network address, or an agent circuit id is dropped. `interfaceAlias`, `interfaceName`, and `local` are kept, still short names when the box advertises them (`gi9`, `gi3`), so `ExpandInterfaceName` still applies.
 
 Three of the six platforms (EOS, IOS-XR, SR OS) expose the standard
 `openconfig-interfaces`/`openconfig-platform` YANG models over NETCONF, so
@@ -445,6 +447,29 @@ No `ApplyELINE`/`RemoveELINE` — these are L2 access switches, not PE
 routers. Service push still works when a CLI object exists, via
 `CLISessionApplier`. Coverage today is network-free unit tests of command
 construction and fixture parsing; there is no containerlab image.
+
+## Waystream iBOS (`driver_ibos.go`)
+
+iBOS access switches are managed by BECS. BECS writes the element,
+interfaces, and addresses into NetBox (`source` `becs:<oid>`). This
+driver does not read or write that inventory. `GetDeviceConfig` returns
+an empty config, and the driver implements `ExternalInventory`, so
+device-sync skips interface, address, VRF, prefix, and service writes
+for the platform. The only device read is `GetNeighbors`.
+
+`GetNeighbors` is the same SNMPv2c LLDP-MIB walk as VRP, IOS-XR, SR OS,
+and Cisco SMB. SSH credentials are not used. An empty SNMP community
+fails the neighbor read and creates no cables. Every other
+`DriverClient` method returns an error.
+
+LLDP port ids use the short show-command form (`gi3`, `te1`). NetBox
+stores the BECS name (`gigabitethernet3`, `tengigabitethernet1`).
+`ExpandInterfaceName` grows a physical port to that long form.
+`gi3/vid511` is already the stored subinterface name and is left as-is.
+Those prefixes match `ibosIfPrefixes` in `internal/becs`.
+
+The GUI interface-refresh list does not include `ibos`. Refresh would
+have nothing to read.
 
 ## Open ROADM (`driver_openroadm.go`, `driver_openroadm_xml.go`)
 

@@ -110,6 +110,11 @@ services into NetBox/Factum). GUI device I/O uses the same credentials
 (per-device override, or the `default` row): service push, delete-from-device,
 unrealize, Config-tree rebind, interface refresh/update, and VLAN push.
 
+Waystream iBOS (platform `ibos`) is the exception. BECS already manages
+those switches, so device sync only reads LLDP and creates the NetBox
+cables. Set the SNMP community on the credential those devices use.
+Interface refresh, VLAN push, and service push do not apply to them.
+
 ## Services
 
 - **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
