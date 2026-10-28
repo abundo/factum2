@@ -180,6 +180,8 @@ if the file changed. Oxidized's CSV source must map those columns
 for snmp_exporter (filtered by enabled/`CfMonitorGrafana`/
 `Settings.PrometheusIgnore*` plus a primary IPv4) and POSTs
 `Settings.PrometheusReloadURL` only if the file changed and a URL is set.
+`examples/prometheus/` is a compose stack and the getting-started notes for
+that scrape.
 
 ## Building
 

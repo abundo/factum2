@@ -1,0 +1,44 @@
+groups:
+  - name: snmp
+    rules:
+      - alert: DeviceDown
+        expr: up{job="snmp", vm!="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Device {{ $labels.device }} is down"
+          description: "SNMP scrape of {{ $labels.device }} ({{ $labels.instance }}) has been failing for more than 2 minutes."
+
+      - alert: VirtualMachineDown
+        expr: up{job="snmp", vm="true"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM {{ $labels.device }} is down"
+          description: "SNMP scrape of virtual machine {{ $labels.device }} ({{ $labels.instance }}) has been failing for more than 2 minutes."
+
+      # Admin-up and oper-down. Shutdown ports (ifAdminStatus=2) are not paged.
+      - alert: InterfaceDown
+        expr: ifOperStatus{job="snmp"} == 2 and on(instance, ifIndex) ifAdminStatus{job="snmp"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Interface {{ $labels.ifName }} down on {{ $labels.device }}"
+          description: "{{ $labels.device }} interface {{ $labels.ifName }} ({{ $labels.ifAlias }}) is operationally down while admin-up."
+
+      - alert: HighInterfaceErrors
+        expr: |
+          (
+            rate(ifInErrors{job="snmp"}[10m])
+            + rate(ifOutErrors{job="snmp"}[10m])
+          ) > 0.1
+          and on(instance, ifIndex) ifAdminStatus{job="snmp"} == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Errors on {{ $labels.device }} {{ $labels.ifName }}"
+          description: "{{ $labels.device }} interface {{ $labels.ifName }} is seeing more than 0.1 errors/s."

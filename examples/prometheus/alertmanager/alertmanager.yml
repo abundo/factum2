@@ -1,0 +1,25 @@
+# Receives Prometheus alerts. No outbound notifications until a receiver is filled in.
+route:
+  receiver: default
+  group_by: [alertname, device, ifName]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+inhibit_rules:
+  - source_matchers:
+      - alertname = DeviceDown
+    target_matchers:
+      - alertname = InterfaceDown
+    equal: [device]
+  - source_matchers:
+      - alertname = VirtualMachineDown
+    target_matchers:
+      - alertname = InterfaceDown
+    equal: [device]
+
+receivers:
+  - name: default
+    # slack_configs:
+    #   - api_url: https://hooks.slack.com/services/...
+    #     channel: '#alerts'

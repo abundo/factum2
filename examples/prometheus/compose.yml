@@ -1,0 +1,74 @@
+# Prometheus, Grafana, Alertmanager, and snmp_exporter.
+# Getting started: examples/prometheus/README.md
+#
+# snmp_exporter keeps the image's generated snmp.yml (if_mib, system,
+# hrDevice, hrStorage, …). snmp/auths.yml adds auth names; it cannot
+# replace public_v2, which the image already defines. Do not mount a
+# hand-written module file over /etc/snmp_exporter/snmp.yml.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Directory mount. factum2-prometheus renames a temp file onto
+      # targets.json; a single-file bind returns EBUSY.
+      - ./prometheus/file_sd:/etc/prometheus/file_sd:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - alertmanager
+      - snmp-exporter
+
+  grafana:
+    image: grafana/grafana:13.2.5
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/devices.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    container_name: alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.30.1
+    container_name: snmp-exporter
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+      - --config.file=/etc/snmp_exporter/auths.yml
+    volumes:
+      - ./snmp/auths.yml:/etc/snmp_exporter/auths.yml:ro
+    ports:
+      - "9116:9116"
+
+volumes:
+  prometheus-data:
+  grafana-data:

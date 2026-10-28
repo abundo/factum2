@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: snmp_exporter
+    static_configs:
+      - targets: ["snmp-exporter:9116"]
+
+  # factum2-prometheus writes file_sd JSON into this directory.
+  # targets is the primary IPv4 (snmp_exporter dials it). The device label
+  # is the display name. instance stays the IP.
+  #
+  # Modules are pinned here. The module label factum writes is a single
+  # name (if_mib by default). Relabeling it onto __param_module would drop
+  # system, hrDevice, and hrStorage. Auth is relabeled so the name in the
+  # target file selects the community.
+  - job_name: snmp
+    scrape_interval: 60s
+    scrape_timeout: 55s
+    metrics_path: /snmp
+    honor_labels: true
+    params:
+      auth: [public_v2]
+      module: [if_mib, system, hrDevice, hrStorage]
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/file_sd/*.json
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - source_labels: [auth]
+        target_label: __param_auth
+      - target_label: __address__
+        replacement: snmp-exporter:9116

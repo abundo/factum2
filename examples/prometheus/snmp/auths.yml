@@ -1,0 +1,12 @@
+# Merged with the modules and auths baked into the snmp_exporter image.
+# The image already defines public_v2 (community "public"). A second file
+# cannot redefine that key; snmp_exporter exits with
+# 'key "public_v2" already set in map'. Add a new name here, then set
+# Factum's snmp_exporter auth to that name so the target label selects it.
+#
+# Leave Factum's auth blank to keep using the image's public_v2.
+auths:
+  factum_v2:
+    community: public
+    security_level: noAuthNoPriv
+    version: 2
