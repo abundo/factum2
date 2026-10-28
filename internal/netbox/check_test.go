@@ -177,6 +177,9 @@ func (f *fakeCheckAPI) UpdateCustomField(id uint, changes map[string]any) (*netb
 		if v, ok := changes["choice_set"].(uint); ok {
 			cf.ChoiceSetID = v
 		}
+		if v, ok := changes["default"]; ok {
+			cf.Default = v
+		}
 		return cf, nil
 	}
 	return nil, nil

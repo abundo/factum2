@@ -205,7 +205,35 @@ func customFieldDiff(cf *netboxtool.NBCustomField, spec cfSpec) (map[string]any,
 		changes["group_name"] = spec.group
 		notes = append(notes, "group")
 	}
+	// NetBox 4.6 runs CustomField.clean on every PATCH and rejects a
+	// boolean default that is the string "true" or "false" ("Value must
+	// be true or false"). Older UIs stored those strings. Send a JSON
+	// boolean in the same request, including when nothing else drifted,
+	// or the next metadata edit fails the same way.
+	if spec.typ == cfTypeBoolean {
+		if v, ok := booleanDefaultFix(cf.Default); ok {
+			changes["default"] = v
+			notes = append(notes, "default")
+		}
+	}
 	return changes, notes
+}
+
+// booleanDefaultFix reports the JSON boolean for a string default NetBox
+// 4.6 will not keep. A real bool, null, or 0/1 is already accepted.
+func booleanDefaultFix(v any) (bool, bool) {
+	s, ok := v.(string)
+	if !ok {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func applyCustomFieldUpdate(nb checkAPI, cf *netboxtool.NBCustomField, spec cfSpec, changes map[string]any, notes []string) (cfApplyResult, error) {

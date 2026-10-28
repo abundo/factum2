@@ -193,6 +193,10 @@ type NBCustomField struct {
 	GroupName   string
 	ObjectTypes []string
 	ChoiceSetID uint
+	// Default is the JSON value NetBox stores on the field. A boolean
+	// field accepts true, false, 1, or 0. The strings "true" and "false"
+	// are rejected by NetBox 4.6 on any later save of the field.
+	Default any
 }
 
 // AssignedTo reports whether this custom field is assigned to objectType

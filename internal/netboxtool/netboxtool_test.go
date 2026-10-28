@@ -168,7 +168,8 @@ func TestGetCustomField_ParsesMetadata(t *testing.T) {
 				"required": false,
 				"group_name": "sync",
 				"object_types": ["dcim.device"],
-				"choice_set": null
+				"choice_set": null,
+				"default": "false"
 			}]
 		}`))
 	})
@@ -179,6 +180,7 @@ func TestGetCustomField_ParsesMetadata(t *testing.T) {
 	assert.Equal(t, "sync", cf.GroupName)
 	assert.Equal(t, "identifies the element in becs", cf.Description)
 	assert.False(t, cf.Required)
+	assert.Equal(t, "false", cf.Default)
 }
 
 func TestGetCustomField_Found(t *testing.T) {

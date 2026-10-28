@@ -1282,6 +1282,7 @@ type restCustomField struct {
 	GroupName   string   `json:"group_name"`
 	ObjectTypes []string `json:"object_types"`
 	ChoiceSet   any      `json:"choice_set"`
+	Default     any      `json:"default"`
 }
 
 func (r restCustomField) toNBCustomField() *NBCustomField {
@@ -1293,6 +1294,7 @@ func (r restCustomField) toNBCustomField() *NBCustomField {
 		Required:    r.Required,
 		GroupName:   r.GroupName,
 		ObjectTypes: r.ObjectTypes,
+		Default:     r.Default,
 	}
 	switch t := r.Type.(type) {
 	case string:

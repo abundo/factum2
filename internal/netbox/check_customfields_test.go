@@ -168,6 +168,62 @@ func TestEnsureCustomField_UpdatesDescriptionAndTypes(t *testing.T) {
 	}
 }
 
+func TestEnsureCustomField_RewritesStringBooleanDefault(t *testing.T) {
+	api := &fakeCheckAPI{fields: map[string]*netboxtool.NBCustomField{
+		"alarm_interfaces": {
+			NetboxID: 3, Name: "alarm_interfaces", Type: cfTypeBoolean,
+			ObjectTypes: []string{"dcim.device"},
+			Description: "If true, LibreNMS will generate alerts for all interfaces",
+			Default:     "false",
+		},
+		"monitor_librenms": {
+			NetboxID: 9, Name: "monitor_librenms", Type: cfTypeBoolean,
+			ObjectTypes: []string{"dcim.device"},
+			Description: "If true the device will be monitored by LibreNMS",
+			Default:     "TRUE",
+		},
+		"backup_oxidized": {
+			NetboxID: 5, Name: "backup_oxidized", Type: cfTypeBoolean,
+			ObjectTypes: []string{"dcim.device"},
+			Default:     false,
+		},
+	}}
+	specs := map[string]cfSpec{}
+	for _, spec := range customFieldSpecs(&models.Settings{}) {
+		specs[spec.name] = spec
+	}
+
+	res, err := ensureCustomField(api, specs["alarm_interfaces"], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.action != "updated" || !strings.Contains(res.detail, "default") {
+		t.Fatalf("alarm_interfaces = %+v, want updated default", res)
+	}
+	if api.fields["alarm_interfaces"].Default != false {
+		t.Fatalf("alarm_interfaces default = %#v, want false", api.fields["alarm_interfaces"].Default)
+	}
+
+	res, err = ensureCustomField(api, specs["monitor_librenms"], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.action != "drift" || !strings.Contains(res.detail, "default") {
+		t.Fatalf("monitor_librenms verify = %+v, want drift default", res)
+	}
+	if api.fields["monitor_librenms"].Default != "TRUE" {
+		t.Fatal("verify-only must not write the default")
+	}
+
+	res, err = ensureCustomField(api, specs["backup_oxidized"], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.action != "ok" {
+		t.Fatalf("backup_oxidized = %+v, want ok", res)
+	}
+}
+
 func TestEnsureCustomField_VerifyOnlyDoesNotCreate(t *testing.T) {
 	api := &fakeCheckAPI{}
 	_, err := ensureCustomField(api, cfSpec{

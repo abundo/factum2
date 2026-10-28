@@ -3,6 +3,15 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
+## Unreleased
+
+### Fixed
+
+- `factum2-netbox check --update` rewrites a boolean custom-field default
+  stored as the string `"true"` or `"false"` to a JSON boolean. NetBox
+  4.6 rejects any later save of that field until the default is a real
+  boolean.
+
 ## v1.4.1
 
 ### New
