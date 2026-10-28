@@ -338,6 +338,10 @@ function buildLayers(devices, edges, serviceLinks, sites) {
     // Wide, nearly-invisible pick target: the painted arc is 1.5–2px, which
     // is too thin to rest a pointer on. The visual layer drawn on top is
     // not pickable so it doesn't steal hits from this one.
+    // greatCircle stays off. Deck.gl rebuilds those endpoints in float32,
+    // so the stroke drifts off the device dot as you zoom in (gone entirely
+    // by the high teens). These links are short enough that a mercator line
+    // still meets the same dots the scatter layer draws.
     new ArcLayer({
       id: 'connections-hit',
       data: arcs,
@@ -349,7 +353,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getWidth: CONNECTION_HIT_WIDTH_PX,
       widthMinPixels: CONNECTION_HIT_WIDTH_PX,
       getHeight: 0,
-      greatCircle: true,
+      greatCircle: false,
       onHover: (info) => handleHover('edge', info),
     }),
     new ArcLayer({
@@ -362,7 +366,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getTargetColor: (d) => linkColor(d.kind),
       getWidth: palette.arcWidth,
       getHeight: 0,
-      greatCircle: true,
+      greatCircle: false,
     }),
     new ArcLayer({
       id: 'service-links-hit',
@@ -375,7 +379,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getWidth: CONNECTION_HIT_WIDTH_PX,
       widthMinPixels: CONNECTION_HIT_WIDTH_PX,
       getHeight: (d) => d.bow,
-      greatCircle: true,
+      greatCircle: false,
       onHover: (info) => handleHover('edge', info),
     }),
     new ArcLayer({
@@ -388,7 +392,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getTargetColor: (d) => linkColor(d.kind),
       getWidth: palette.arcWidth + 0.5,
       getHeight: (d) => d.bow,
-      greatCircle: true,
+      greatCircle: false,
     }),
     new ScatterplotLayer({
       id: 'devices',
