@@ -16,9 +16,10 @@ import (
 
 func testClient(dest string) *FactumPrometheusClient {
 	cfg := &util.ConfigPrometheus{
-		DestFile: dest,
-		Module:   "if_mib",
-		Auth:     "public_v2",
+		CommonConfig: util.CommonConfig{DefaultDomain: "example.com"},
+		DestFile:     dest,
+		Module:       "if_mib",
+		Auth:         "public_v2",
 	}
 	return &FactumPrometheusClient{
 		PrometheusConfig: cfg,
@@ -77,8 +78,8 @@ func TestSaveTargetsJSON(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
-	if got[0].Targets[0] != "10.0.0.1" || got[0].Labels["device"] != "a-sw" {
-		t.Fatalf("first = %+v, want a-sw at 10.0.0.1 (sorted)", got[0])
+	if got[0].Targets[0] != "10.0.0.1" || got[0].Labels["device"] != "a-sw.example.com" {
+		t.Fatalf("first = %+v, want a-sw.example.com at 10.0.0.1 (sorted)", got[0])
 	}
 	if got[1].Labels["site"] != "dc1" || got[1].Labels["role"] != "access" {
 		t.Fatalf("second labels = %+v", got[1].Labels)
@@ -120,8 +121,8 @@ func TestSaveTargetsVMAndInventoryLabels(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
-	if got[0].Labels["device"] != "sw1" {
-		t.Fatalf("first = %+v, want sw1 (sorted)", got[0])
+	if got[0].Labels["device"] != "sw1.example.com" {
+		t.Fatalf("first = %+v, want sw1.example.com (sorted)", got[0])
 	}
 	if got[0].Labels["manufacturer"] != "Arista" || got[0].Labels["model"] != "7020R" || got[0].Labels["platform"] != "EOS" {
 		t.Fatalf("sw1 inventory labels = %+v", got[0].Labels)
@@ -129,8 +130,56 @@ func TestSaveTargetsVMAndInventoryLabels(t *testing.T) {
 	if _, ok := got[0].Labels["vm"]; ok {
 		t.Fatalf("sw1 should omit vm: %+v", got[0].Labels)
 	}
-	if got[1].Labels["device"] != "vm1" || got[1].Labels["vm"] != "true" {
+	if got[1].Labels["device"] != "vm1.example.com" || got[1].Labels["vm"] != "true" {
 		t.Fatalf("vm1 labels = %+v", got[1].Labels)
+	}
+}
+
+func TestSaveTargetsDeviceName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snmp.json")
+
+	qualified := testClient(path)
+	devices := []*models.Device{
+		{Name: "jok-ce2", PrimaryIPv4: "10.1.0.2/32"},
+		{Name: "already.other.net", PrimaryIPv4: "10.1.0.3/32"},
+	}
+	if _, err := qualified.Prometheus.SaveTargets(path, devices); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []fileSDTarget
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json: %v\n%s", err, raw)
+	}
+	if got[0].Labels["device"] != "already.other.net" || got[0].Targets[0] != "10.1.0.3" {
+		t.Fatalf("qualified = %+v", got[0])
+	}
+	if got[1].Labels["device"] != "jok-ce2.example.com" || got[1].Targets[0] != "10.1.0.2" {
+		t.Fatalf("short = %+v", got[1])
+	}
+
+	bare := &util.ConfigPrometheus{DestFile: path, Module: "if_mib", Auth: "public_v2"}
+	client := &FactumPrometheusClient{
+		PrometheusConfig: bare,
+		Prometheus:       NewPrometheusClient(*bare),
+	}
+	if _, err := client.Prometheus.SaveTargets(path, devices[:1]); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json: %v\n%s", err, raw)
+	}
+	if got[0].Labels["device"] != "jok-ce2" {
+		t.Fatalf("empty domain device = %q", got[0].Labels["device"])
 	}
 }
 

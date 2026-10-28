@@ -27,9 +27,11 @@ scrape_configs:
       - targets:
           - snmp-exporter:9116
 
-  # factum2-prometheus writes file_sd JSON (device IP + labels). Relabel
-  # sends each target through snmp-exporter. if_mib is interfaces/traffic;
-  # system is sysName/sysUpTime/sysLocation like a LibreNMS device page.
+  # factum2-prometheus writes file_sd JSON. targets is the primary IPv4
+  # (snmp_exporter dials it; DNS is not required). The device label is the
+  # FQDN display name. Relabel copies that IP into instance and sends the
+  # scrape through snmp-exporter. if_mib is interfaces/traffic; system is
+  # sysName/sysUpTime/sysLocation like a LibreNMS device page.
   - job_name: snmp
     metrics_path: /snmp
     scrape_timeout: 25s

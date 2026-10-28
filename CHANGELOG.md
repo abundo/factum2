@@ -5,6 +5,14 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ## Unreleased
 
+### Changed
+
+- Prometheus file_sd keeps the scrape target as the device primary IPv4.
+  The `device` label is the display name: the Factum name with
+  `default_domain` appended when the name has no domain of its own. SNMP
+  does not look the name up in DNS. `instance` stays the address via the
+  existing relabel.
+
 ### Fixed
 
 - `factum2-netbox check --update` rewrites a boolean custom-field default

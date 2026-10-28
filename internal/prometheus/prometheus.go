@@ -46,9 +46,13 @@ const (
 	defaultAuth   = "public_v2"
 )
 
-// fileSDTarget is one Prometheus file_sd group: a single SNMP target
-// (device primary IPv4) plus labels snmp_exporter/Grafana use. Grafana
-// splits Devices vs Virtual Machines on the optional vm=true label.
+// fileSDTarget is one Prometheus file_sd group. Targets is the device
+// primary IPv4, which snmp_exporter dials directly, so a scrape does not
+// need DNS. The device label is the display name: the Factum name with
+// Settings.DefaultDomain appended when the name is not already qualified.
+// Grafana splits Devices vs Virtual Machines on the optional vm=true label.
+// The companion relabel copies the IP into instance, so series stay on the
+// address while device is only the name shown in Grafana and alerts.
 type fileSDTarget struct {
 	Targets []string          `json:"targets"`
 	Labels  map[string]string `json:"labels,omitempty"`
@@ -83,11 +87,11 @@ func primaryIP(device *models.Device) string {
 	return strings.Split(device.PrimaryIPv4, "/")[0]
 }
 
-func fileSDLabels(device *models.Device, module, auth string) map[string]string {
+func fileSDLabels(device *models.Device, module, auth, defaultDomain string) map[string]string {
 	labels := map[string]string{
 		"module": module,
 		"auth":   auth,
-		"device": device.Name,
+		"device": util.FormatName(defaultDomain, device.Name),
 	}
 	if device.Site != "" {
 		labels["site"] = device.Site
@@ -132,7 +136,7 @@ func (p *prometheusClient) SaveTargets(filename string, devices []*models.Device
 		}
 		targets = append(targets, fileSDTarget{
 			Targets: []string{addr},
-			Labels:  fileSDLabels(device, module, auth),
+			Labels:  fileSDLabels(device, module, auth, p.c.DefaultDomain),
 		})
 	}
 
