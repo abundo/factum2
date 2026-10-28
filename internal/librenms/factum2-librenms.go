@@ -271,7 +271,7 @@ func (fl *FactumLibrenmsClient) syncInterfaces(librenmsDevice *LibrenmsDevice, f
 			}
 		}
 		if librenmsInterface.Ignore != ignore {
-			reporter.Emit(jobevent.Info, "updating librenms port %s: ignore=%d", librenmsInterface.IfName, ignore)
+			reporter.Emit(jobevent.Info, "%s/%s: updating librenms port %s: ignore=%d", librenmsDevice.Display, librenmsDevice.Hostname, librenmsInterface.IfName, ignore)
 			fl.Librenms.PortsUpdateIgnore(librenmsInterface.PortID, ignore)
 		}
 	}

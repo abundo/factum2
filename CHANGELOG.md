@@ -7,6 +7,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- LibreNMS port updates name the device as `display/hostname` before
+  the port, so a line such as `updating librenms port gi1` says which
+  device it belongs to.
 - Prometheus file_sd keeps the scrape target as the device primary IPv4.
   The `device` label is the display name: the Factum name with
   `default_domain` appended when the name has no domain of its own. SNMP
