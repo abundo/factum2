@@ -3,10 +3,24 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
-## Unreleased
+## v1.5.0
 
 ### New
 
+- Admin → Services → Directory is the tree of local users, roles, and
+  folders, and of each LDAP server. Login tries the enabled servers in
+  order. Drag a user, role, or folder, and reorder the servers. Folders
+  stay above people and roles, and each group is alphabetical. The
+  internal LDAP server can be turned on in that tree. It serves the
+  Factum users and roles, and publishes `cn=subschema` in OpenLDAP form
+  so Apache Directory Studio can load the schema. Anonymous reads of
+  that entry are allowed. LDAPS uses a certificate from the certificate
+  store, or the hub certificate when none is chosen. Authorization is a
+  tab on Directory. `/admin/authorization` opens that tab.
+- Services → Certificates shows accounts and challenges as tabs. An
+  account can be imported from a `.lego.yaml` file.
+- `examples/prometheus` is a Prometheus and Grafana stack with
+  getting-started notes.
 - LibreNMS sync writes a device's latitude and longitude onto its
   LibreNMS location and sets `fixed_coordinates`, so polling does not
   geocode over them. The location is the Factum location custom field,
@@ -23,7 +37,7 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   those VRF fields. A VRF or prefix added there is created in NetBox.
   Deleting one that came from NetBox is still done in NetBox.
   `factum2-netbox check --update` adds `ipam.prefix` to the webhook
-  event rule. Run `factum2-web migrate` before the next sync.
+  event rule.
 - Device sync reads LLDP on Waystream iBOS (platform `ibos`) and creates
   the NetBox cables. BECS still owns the interfaces, addresses, and
   services, so those are left as they are. The read uses the device-sync
@@ -32,6 +46,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Changed
 
+- Job overview and Job status are one page, with Overview, Status, and
+  Workers tabs.
+- Change password is its own page.
+- A Lime delivery address is one line: street, zip, and city.
+- Forms keep one Save button beside the page title.
+- Network map lines stay on the device when the map is zoomed in.
 - LibreNMS port updates name the device as `display/hostname` before
   the port, so a line such as `updating librenms port gi1` says which
   device it belongs to.
@@ -40,9 +60,16 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   `default_domain` appended when the name has no domain of its own. SNMP
   does not look the name up in DNS. `instance` stays the address via the
   existing relabel.
+- A worker upgrade reads the installed version with sudo when the SSH
+  login cannot read it.
 
 ### Fixed
 
+- `install.py --compose --server` starts a stopped lab with `make dev-up`.
+  `podman compose ps` lists exited containers, so a lab left by
+  `make dev-down` was treated as running and was not started.
+- Device sync drops a stored NetBox cable id when that cable has moved
+  or been deleted.
 - LibreNMS create sends the display name as `display_template`.
   `add_device` ignores `display`, so a new device kept the IP as its
   name until the following field update.
@@ -50,6 +77,20 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   stored as the string `"true"` or `"false"` to a JSON boolean. NetBox
   4.6 rejects any later save of that field until the default is a real
   boolean.
+
+### Upgrading
+
+- Install applies goose migrations `00039` through `00043`. Run
+  `factum2-web migrate` before the next sync. `00039` adds the internal
+  directory, which stays off until it is enabled. `00040` stores the
+  optional LDAPS certificate. `00041` adds `ldap_servers`; login uses
+  those rows, in order. `00042` and `00043` store NetBox prefixes and
+  allow the same prefix in more than one VRF in the Netbox namespace.
+  Factum-created prefixes stay unique per namespace.
+- Run `factum2-netbox check --update` so the webhook event rule includes
+  `ipam.prefix`.
+- The internal directory is served by the worker `ldap` command. Add
+  that command on the worker that should listen.
 
 ## v1.4.1
 
@@ -62,13 +103,6 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Fixed
 
-- The internal LDAP server publishes `cn=subschema`. Apache Directory
-  Studio can load that OpenLDAP-style schema instead of reporting that
-  the directory has none. Anonymous reads of the subschema are allowed,
-  the same as the root DSE.
-- `install.py --compose --server` starts a stopped lab with `make dev-up`.
-  `podman compose ps` lists exited containers, so a lab left by
-  `make dev-down` was treated as running and was not started.
 - LibreNMS sync no longer fails when a port has no interface alias.
   `ports.ifAlias` (and `ifName` / `ifDescr`) may be NULL until SNMP fills
   them in. Those columns are read as empty strings.
