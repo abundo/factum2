@@ -171,6 +171,7 @@ type deltaPlan struct {
 	locations  map[uint]string
 	racks      bool
 	vrfs       bool
+	prefixes   bool
 	l2vpn      bool
 	devTypes   bool
 }
@@ -250,6 +251,8 @@ func (p *deltaPlan) note(ch netboxtool.ObjectChange, lookup parentLookup) error 
 		p.racks = true
 	case "ipam.vrf":
 		p.vrfs = true
+	case "ipam.prefix":
+		p.prefixes = true
 	case "vpn.l2vpn", "vpn.l2vpntermination":
 		p.l2vpn = true
 	case "dcim.devicetype":
@@ -373,8 +376,13 @@ func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter job
 			return err
 		}
 	}
-	if p.vrfs {
+	if p.vrfs || p.prefixes {
 		if err := syncVRFs(db, nb, reporter); err != nil {
+			return err
+		}
+	}
+	if p.prefixes {
+		if err := syncPrefixes(db, nb, reporter); err != nil {
 			return err
 		}
 	}

@@ -6,8 +6,8 @@ import (
 
 	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 	"gorm.io/gorm"
 )
 
@@ -21,8 +21,18 @@ type nbVRFREST struct {
 	Name          string             `json:"name"`
 	RD            *string            `json:"rd"`
 	Description   string             `json:"description"`
+	EnforceUnique *bool              `json:"enforce_unique"`
 	ImportTargets []nbRouteTargetRef `json:"import_targets"`
 	ExportTargets []nbRouteTargetRef `json:"export_targets"`
+}
+
+// uniqueIPSpace reports NetBox Unique IP Space. A missing field is the
+// NetBox default, which is on.
+func (v nbVRFREST) uniqueIPSpace() bool {
+	if v.EnforceUnique == nil {
+		return true
+	}
+	return *v.EnforceUnique
 }
 
 func joinRouteTargetNames(targets []nbRouteTargetRef) string {
@@ -44,24 +54,27 @@ func rdString(rd *string) string {
 	return strings.TrimSpace(*rd)
 }
 
-// syncVRFs mirrors NetBox ipam.VRF rows into the empty (default) namespace
-// as extra VRFs. Factum-created VRFs are never deleted. An empty fetch does
-// not wipe already-synced rows.
+// netboxNamespaceName is the single Factum namespace that holds every
+// VRF and prefix synced from NetBox.
+const netboxNamespaceName = "Netbox"
+
+// syncVRFs mirrors NetBox ipam.VRF rows into the Netbox namespace, so
+// prefixes may overlap the global table and each other. Factum-created
+// VRFs are never deleted. An empty fetch does not wipe already-synced rows.
 func syncVRFs(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Reporter) error {
 	rows, err := restListAll[nbVRFREST](nb, "/api/ipam/vrfs/")
 	if err != nil {
 		return err
 	}
 
-	ns, err := ipam.EnsureEmptyNamespace(db)
-	if err != nil {
+	if _, err := netboxNamespaceID(db); err != nil {
 		return err
 	}
 
 	seen := make(map[uint]bool, len(rows))
 	var countNew, countUpdated, countSkipped int
 	for _, row := range rows {
-		created, updated, skipped, err := upsertNetboxVRF(db, ns.ID, row, reporter)
+		created, updated, skipped, err := upsertNetboxVRF(db, row, reporter)
 		if err != nil {
 			return err
 		}
@@ -97,7 +110,7 @@ func syncVRFs(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Report
 	return nil
 }
 
-func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Reporter) (created, updated, skipped int, err error) {
+func upsertNetboxVRF(db *gorm.DB, row nbVRFREST, reporter jobevent.Reporter) (created, updated, skipped int, err error) {
 	name := strings.TrimSpace(row.Name)
 	if name == "" {
 		reporter.Emit(jobevent.Warning, "Netbox VRF sync: skipping unnamed VRF (netbox_id=%d)", row.ID)
@@ -112,6 +125,12 @@ func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Re
 	imp := joinRouteTargetNames(row.ImportTargets)
 	exp := joinRouteTargetNames(row.ExportTargets)
 	desc := strings.TrimSpace(row.Description)
+	unique := row.uniqueIPSpace()
+
+	nsID, err := netboxNamespaceID(db)
+	if err != nil {
+		return 0, 0, 0, err
+	}
 
 	var existing models.IpamVRF
 	lookupErr := db.Where("netbox_id = ? AND netbox_id != 0", row.ID).First(&existing).Error
@@ -127,16 +146,29 @@ func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Re
 				return 0, 0, 0, clashErr
 			}
 		}
+		oldNS := existing.NamespaceID
+		if nsID != oldNS {
+			if err := db.Model(&models.IpamPrefix{}).Where("vrf_id = ?", existing.ID).Update("namespace_id", nsID).Error; err != nil {
+				return 0, 0, 0, err
+			}
+		}
 		changes := map[string]any{
-			"name":        name,
-			"description": desc,
-			"rd":          rd,
-			"import_rt":   imp,
-			"export_rt":   exp,
-			"source":      models.VRFSourceNetbox,
+			"namespace_id":   nsID,
+			"name":           name,
+			"description":    desc,
+			"rd":             rd,
+			"import_rt":      imp,
+			"export_rt":      exp,
+			"enforce_unique": unique,
+			"source":         models.VRFSourceNetbox,
 		}
 		if err := db.Model(&existing).Updates(changes).Error; err != nil {
 			return 0, 0, 0, err
+		}
+		if nsID != oldNS {
+			if err := deleteNamespaceIfUnused(db, oldNS); err != nil {
+				return 0, 0, 0, err
+			}
 		}
 		return 0, 1, 0, nil
 	}
@@ -155,19 +187,45 @@ func upsertNetboxVRF(db *gorm.DB, nsID uint, row nbVRFREST, reporter jobevent.Re
 	}
 
 	createdRow := models.IpamVRF{
-		NamespaceID: nsID,
-		Name:        name,
-		Description: desc,
-		RD:          rd,
-		ImportRT:    imp,
-		ExportRT:    exp,
-		Source:      models.VRFSourceNetbox,
-		NetboxID:    row.ID,
+		NamespaceID:   nsID,
+		Name:          name,
+		Description:   desc,
+		RD:            rd,
+		ImportRT:      imp,
+		ExportRT:      exp,
+		EnforceUnique: unique,
+		Source:        models.VRFSourceNetbox,
+		NetboxID:      row.ID,
 	}
 	if err := db.Create(&createdRow).Error; err != nil {
 		return 0, 0, 0, err
 	}
 	return 1, 0, 0, nil
+}
+
+// netboxNamespaceID returns the namespace that holds every NetBox VRF and
+// prefix, creating it when this is the first sync.
+func netboxNamespaceID(db *gorm.DB) (uint, error) {
+	var ns models.IpamNamespace
+	err := db.Where("name = ?", netboxNamespaceName).First(&ns).Error
+	if err == nil {
+		return ns.ID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	view, err := ipam.CreateNamespace(db, netboxNamespaceName, "Synced from NetBox")
+	if err == nil {
+		return view.ID, nil
+	}
+	var status *ipam.StatusError
+	if errors.As(err, &status) && status.Status == 409 {
+		if err := db.Where("name = ?", netboxNamespaceName).First(&ns).Error; err != nil {
+			return 0, err
+		}
+		return ns.ID, nil
+	}
+	return 0, err
 }
 
 func deleteNetboxVRF(db *gorm.DB, row models.IpamVRF, reporter jobevent.Reporter) (int, error) {
@@ -179,8 +237,53 @@ func deleteNetboxVRF(db *gorm.DB, row models.IpamVRF, reporter jobevent.Reporter
 		reporter.Emit(jobevent.Warning, "Netbox VRF sync: keeping %q (netbox_id=%d); still has allocated prefixes but is missing from NetBox", row.Name, row.NetboxID)
 		return 0, nil
 	}
+	nsID := row.NamespaceID
 	if err := db.Delete(&row).Error; err != nil {
 		return 0, err
 	}
+	if err := deleteNamespaceIfUnused(db, nsID); err != nil {
+		return 0, err
+	}
 	return 1, nil
+}
+
+// deleteNamespaceIfUnused removes a named namespace that only still has its
+// default VRF. The empty namespace is the global table and is kept.
+func deleteNamespaceIfUnused(db *gorm.DB, nsID uint) error {
+	if nsID == 0 {
+		return nil
+	}
+	var ns models.IpamNamespace
+	if err := db.First(&ns, nsID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if ns.Name == "" {
+		return nil
+	}
+	var n int64
+	if err := db.Model(&models.IpamPrefix{}).Where("namespace_id = ?", nsID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := db.Model(&models.IpamNamespacePrefix{}).Where("namespace_id = ?", nsID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := db.Model(&models.IpamVRF{}).Where("namespace_id = ? AND NOT is_default", nsID).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := db.Where("namespace_id = ?", nsID).Delete(&models.IpamVRF{}).Error; err != nil {
+		return err
+	}
+	return db.Delete(&ns).Error
 }

@@ -49,18 +49,26 @@ type IpamNamespacePrefixDTO struct {
 	Prefix      string `json:"prefix"`
 }
 
-// IpamVRF is a routing domain inside a namespace. Address space is unique
-// across VRFs of the same namespace (not classic overlapping-VRF
-// semantics): once a prefix is allocated to one VRF, no other VRF may
-// take it or anything that overlaps it. Extra VRF names are unique across
-// all namespaces; each namespace still has its own default VRF (named
-// "default"), which is created with the namespace and cannot be deleted.
+// IpamVRF is a routing domain inside a namespace. Factum-created
+// prefixes are unique across VRFs of the same namespace: once a prefix
+// is allocated to one VRF, no other VRF may take it or anything that
+// overlaps it. The namespace named Netbox is the exception: NetBox sync
+// stores one VRF per NetBox VRF there, and the same CIDR may exist in
+// the global table and in several VRFs. Extra VRF names are unique
+// across all namespaces; each namespace still has its own default VRF
+// (named "default"), which is created with the namespace and cannot be
+// deleted.
 type IpamVRF struct {
 	FactumModel
 	NamespaceID uint   `json:"namespace_id" gorm:"index;not null"`
 	Name        string `json:"name" gorm:"not null;type:varchar(255)"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	IsDefault   bool   `json:"is_default"`
+	// EnforceUnique mirrors NetBox Unique IP Space. When true, sync keeps
+	// one exact prefix per VRF. When false, the same CIDR may be stored
+	// more than once in that VRF. The global table (the namespace default
+	// VRF) does not use this flag.
+	EnforceUnique bool `json:"enforce_unique"`
 	// RD is the BGP route distinguisher (e.g. "65000:1").
 	RD string `json:"rd" gorm:"type:varchar(255)"`
 	// ImportRT / ExportRT are route-targets, comma-separated when there
@@ -100,15 +108,17 @@ type IpamVRFIDTO struct {
 	ExportRT    string `json:"export_rt"`
 }
 
-// IpamPrefix is a CIDR allocated to exactly one VRF in a namespace.
-// Parent/child relationships are computed from containment, not stored.
+// IpamPrefix is one CIDR in one VRF. Factum-created rows are unique on
+// (namespace, prefix). Rows synced from NetBox are unique on netbox_id
+// and may repeat a CIDR inside the Netbox namespace. Parent/child
+// relationships are computed from containment within one VRF, not stored.
 // DHCP fields are used when Settings.DhcpEnabled is on; turning that
 // flag off only hides the UI — values stay on the row.
 type IpamPrefix struct {
 	FactumModel
-	NamespaceID uint   `json:"namespace_id" gorm:"uniqueIndex:idx_ipam_alloc_ns_pfx;not null"`
+	NamespaceID uint   `json:"namespace_id" gorm:"index;not null"`
 	VRFID       uint   `json:"vrf_id" gorm:"index;not null"`
-	Prefix      string `json:"prefix" gorm:"uniqueIndex:idx_ipam_alloc_ns_pfx;type:varchar(80);not null"`
+	Prefix      string `json:"prefix" gorm:"type:varchar(80);not null"`
 	Family      int    `json:"family"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	// DhcpEnabled is the per-prefix "run a DHCP server here" checkbox.
@@ -123,9 +133,29 @@ type IpamPrefix struct {
 	// DhcpDnsServers is newline-separated. Empty means use the global
 	// default (Settings.DhcpDnsServers).
 	DhcpDnsServers string `json:"dhcp_dns_servers" gorm:"type:text"`
+	// Source is "netbox" when upserted from sync, "factum" when allocated
+	// in the UI. NetBox-synced rows are read-only. NetboxID is the
+	// ipam.prefix id; uniqueness is a partial index WHERE netbox_id != 0.
+	Source   string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID uint   `json:"netbox_id"`
 }
 
 func (IpamPrefix) TableName() string { return "ipam_prefixes" }
+
+func (p *IpamPrefix) BeforeCreate(tx *gorm.DB) error {
+	if p.Source == "" {
+		if p.NetboxID != 0 {
+			p.Source = VRFSourceNetbox
+		} else {
+			p.Source = VRFSourceFactum
+		}
+	}
+	return nil
+}
+
+func (p IpamPrefix) IsLocal() bool {
+	return p.Source != VRFSourceNetbox
+}
 
 type IpamPrefixDTO struct {
 	ID             uint   `json:"id"`

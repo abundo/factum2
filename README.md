@@ -367,7 +367,7 @@ if that secret isn't set. Configure it in two places:
           cert reachable only internally.
     - **Operations → Event Rules → Add**:
         - Object types: DCIM → Device, DCIM → Interface, DCIM → Cable,
-          DCIM → Site, IPAM → IP Address
+          DCIM → Site, IPAM → IP Address, IPAM → Prefix
         - Events: enable Creations, Updates and Deletions. Device/cable/site
           deletions remove the matching factum row; interface/IP deletions
           still resync the parent device.
@@ -378,7 +378,7 @@ if that secret isn't set. Configure it in two places:
 
 `factum2-netbox check` reads the live NetBox extras API and verifies that
 setup: a webhook whose URL is `{PublicBaseURL}/api/netbox-webhook`, enabled
-event rules covering Device / Interface / IP Address / Cable / Site
+event rules covering Device / Interface / IP Address / Prefix / Cable / Site
 create+update+delete,
 and reports the custom fields factum needs. Pass `--update` to create
 the factum webhook (`factum-sync` at `{PublicBaseURL}/api/netbox-webhook`)

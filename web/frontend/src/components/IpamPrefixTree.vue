@@ -54,9 +54,14 @@ const isAllocated = computed(() => selectedKind.value === 'allocated')
 const isVrf = computed(() => selectedKind.value === 'vrf')
 const isNamedRow = computed(() => selectedKind.value === 'namespace' || isVrf.value)
 const isNetboxVrf = computed(() => isVrf.value && selected.value?.source === 'netbox')
+const isNetboxPrefix = computed(() => isAllocated.value && selected.value?.source === 'netbox')
 const vrfFieldsDisabled = computed(() => !authStore.canWrite || isNetboxVrf.value)
 const canSaveSelected = computed(
-  () => authStore.canWrite && (isAllocated.value || isNamedRow.value) && !isNetboxVrf.value,
+  () =>
+    authStore.canWrite &&
+    (isAllocated.value || isNamedRow.value) &&
+    !isNetboxVrf.value &&
+    !isNetboxPrefix.value,
 )
 
 function sourceLabel(source) {
@@ -639,7 +644,7 @@ defineExpose({
           </PageFormBar>
           <div>
             <div class="text-sm text-muted-color">{{ kindLabel(selectedKind) }}</div>
-            <div v-if="isVrf && selected.source" class="mt-1">
+            <div v-if="(isVrf || isAllocated) && selected.source" class="mt-1">
               <UBadge
                 :label="sourceLabel(selected.source)"
                 :color="sourceBadgeColor(selected.source)"
@@ -651,7 +656,7 @@ defineExpose({
             v-if="isAllocated"
             v-model="form"
             prefix-disabled
-            :disabled="!authStore.canWrite"
+            :disabled="!authStore.canWrite || isNetboxPrefix"
             :show-vrf="!!selected.vrf_name"
             :vrf-name="selected.vrf_name || ''"
           />

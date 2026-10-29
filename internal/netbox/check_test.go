@@ -322,7 +322,7 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 	iface := fullRule()
 	iface.NetboxID = 8
 	iface.Name = "ifaces"
-	iface.ObjectTypes = []string{"dcim.interface", "ipam.ipaddress", "dcim.cable", "dcim.site", "dcim.region", "dcim.location"}
+	iface.ObjectTypes = []string{"dcim.interface", "ipam.ipaddress", "ipam.prefix", "dcim.cable", "dcim.site", "dcim.region", "dcim.location"}
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
 		rules:  []*NBEventRule{device, iface},

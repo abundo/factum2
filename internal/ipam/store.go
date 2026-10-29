@@ -490,6 +490,9 @@ func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string, dhcp Pre
 		}
 		return nil, err
 	}
+	if !row.IsLocal() {
+		return nil, statusErr(403, "prefixes synced from NetBox cannot be edited here")
+	}
 	row.Description = strings.TrimSpace(description)
 	if err := applyDHCP(&row, dhcp); err != nil {
 		return nil, err
@@ -564,12 +567,15 @@ func DeletePrefix(db *gorm.DB, nsID, prefixID uint) error {
 		}
 		return err
 	}
+	if !row.IsLocal() {
+		return statusErr(403, "prefixes synced from NetBox cannot be deleted here")
+	}
 	parent, err := ParsePrefix(row.Prefix)
 	if err != nil {
 		return err
 	}
 	var siblings []models.IpamPrefix
-	if err := db.Where("namespace_id = ? AND id <> ?", nsID, prefixID).Find(&siblings).Error; err != nil {
+	if err := db.Where("namespace_id = ? AND vrf_id = ? AND id <> ?", nsID, row.VRFID, prefixID).Find(&siblings).Error; err != nil {
 		return err
 	}
 	for _, s := range siblings {

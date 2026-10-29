@@ -9,8 +9,8 @@ import (
 
 	"github.com/abundo/factum2/internal/ipam"
 	"github.com/abundo/factum2/internal/jobevent"
-	"github.com/abundo/factum2/models"
 	"github.com/abundo/factum2/internal/netboxtool"
+	"github.com/abundo/factum2/models"
 )
 
 type fakeVRFAPI struct {
@@ -76,6 +76,20 @@ func TestSyncVRFs_ImportsIntoEmptyNamespace(t *testing.T) {
 	if got.ID == 0 || got.Source != models.VRFSourceNetbox || got.NetboxID != 10 {
 		t.Fatalf("CUST-A = %+v", got)
 	}
+	var custNS models.IpamNamespace
+	if err := db.First(&custNS, got.NamespaceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if custNS.Name != "Netbox" {
+		t.Fatalf("CUST-A namespace = %q, want Netbox", custNS.Name)
+	}
+	var emptyNS models.IpamNamespace
+	if err := db.Where("name = ?", "").First(&emptyNS).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.NamespaceID == emptyNS.ID {
+		t.Fatal("NetBox VRF was stored in the empty namespace")
+	}
 	if got.RD != "65000:1" || got.ImportRT != "65000:1" || got.ExportRT != "65000:1, 65000:2" {
 		t.Fatalf("CUST-A rd/rt = rd=%q import=%q export=%q", got.RD, got.ImportRT, got.ExportRT)
 	}
@@ -89,10 +103,13 @@ func TestSyncVRFs_ImportsIntoEmptyNamespace(t *testing.T) {
 	}
 	var sawCust, sawLocal, sawDefault bool
 	for _, n := range roots {
-		if n.Type == "vrf" && n.Title == "CUST-A" {
+		if n.Type == "namespace" && n.Title == "Netbox" {
 			sawCust = true
-			if n.Data.Source != models.VRFSourceNetbox || n.Data.RD != "65000:1" {
-				t.Fatalf("tree node = %+v", n.Data)
+			if len(n.Children) != 1 || n.Children[0].Type != "vrf" || n.Children[0].Title != "CUST-A" {
+				t.Fatalf("CUST-A children = %+v", n.Children)
+			}
+			if n.Children[0].Data.Source != models.VRFSourceNetbox || n.Children[0].Data.RD != "65000:1" {
+				t.Fatalf("tree node = %+v", n.Children[0].Data)
 			}
 		}
 		if n.Type == "vrf" && n.Title == "local-only" {
@@ -162,6 +179,13 @@ func TestSyncVRFs_DeletesMissingAndKeepsPrefixed(t *testing.T) {
 	if _, ok := byName["drop"]; ok {
 		t.Fatal("drop should have been deleted")
 	}
+	var dropNS int64
+	if err := db.Model(&models.IpamNamespace{}).Where("name = ?", "drop").Count(&dropNS).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dropNS != 0 {
+		t.Fatal("empty namespace for a deleted VRF should have been removed")
+	}
 	if _, ok := byName["has-prefix"]; !ok {
 		t.Fatal("VRF with prefixes should have been kept")
 	}
@@ -201,5 +225,64 @@ func TestSyncVRFs_SkipsNameUsedInAnotherNamespace(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("imported colliding NetBox VRF, count=%d", n)
+	}
+}
+
+func TestSyncVRFs_MovesLegacyNamespaceIntoNetbox(t *testing.T) {
+	db := newImportTestDB(t)
+	legacy, err := ipam.CreateNamespace(db, "CUST-A", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vrf := models.IpamVRF{
+		NamespaceID: legacy.ID,
+		Name:        "CUST-A",
+		Source:      models.VRFSourceNetbox,
+		NetboxID:    10,
+	}
+	if err := db.Create(&vrf).Error; err != nil {
+		t.Fatal(err)
+	}
+	pfx := models.IpamPrefix{
+		NamespaceID: legacy.ID,
+		VRFID:       vrf.ID,
+		Prefix:      "10.9.0.0/24",
+		Family:      4,
+		Source:      models.VRFSourceNetbox,
+		NetboxID:    1,
+	}
+	if err := db.Create(&pfx).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeVRFAPI{vrfs: []nbVRFREST{{ID: 10, Name: "CUST-A"}}}
+	if err := syncVRFs(db, fake.client(t), jobevent.NewSlogReporter("test", "vrfs")); err != nil {
+		t.Fatal(err)
+	}
+
+	var got models.IpamVRF
+	if err := db.Where("netbox_id = ?", 10).First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	var ns models.IpamNamespace
+	if err := db.First(&ns, got.NamespaceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ns.Name != "Netbox" || ns.ID == legacy.ID {
+		t.Fatalf("namespace = %+v", ns)
+	}
+	var moved models.IpamPrefix
+	if err := db.First(&moved, pfx.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if moved.NamespaceID != ns.ID {
+		t.Fatalf("prefix namespace = %d, want %d", moved.NamespaceID, ns.ID)
+	}
+	var left int64
+	if err := db.Model(&models.IpamNamespace{}).Where("name = ?", "CUST-A").Count(&left).Error; err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatal("legacy per-VRF namespace should have been removed")
 	}
 }

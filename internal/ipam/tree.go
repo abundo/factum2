@@ -572,6 +572,8 @@ func allocNode(a models.IpamPrefix, p netip.Prefix, vrfName string, hasChild boo
 			Family:      familyOf(p),
 			Description: a.Description,
 			ChildCount:  boolCount(hasChild),
+			Source:      a.Source,
+			NetboxID:    a.NetboxID,
 		}, dhcpFromRow(a)),
 	}
 }

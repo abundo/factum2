@@ -13,6 +13,14 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   or the device's current LibreNMS location when that field is empty.
   Devices that share a location and disagree keep the coordinates of
   the lowest LibreNMS device id.
+- NetBox sync copies every IPAM prefix after VRFs, into one namespace
+  named Netbox. The same prefix may exist in the global table and in a
+  VRF, and in more than one VRF. Unique IP Space still allows only one
+  exact prefix inside that VRF; when it is off, the duplicate is kept.
+  Prefixes with no VRF are the roots of the Netbox namespace. Prefixes
+  that come from NetBox are read-only in the IPAM tree.
+  `factum2-netbox check --update` adds `ipam.prefix` to the webhook
+  event rule. Run `factum2-web migrate` before the next sync.
 - Device sync reads LLDP on Waystream iBOS (platform `ibos`) and creates
   the NetBox cables. BECS still owns the interfaces, addresses, and
   services, so those are left as they are. The read uses the device-sync

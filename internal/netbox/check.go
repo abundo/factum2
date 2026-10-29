@@ -24,6 +24,7 @@ var requiredWebhookObjectTypes = []string{
 	"dcim.device",
 	"dcim.interface",
 	"ipam.ipaddress",
+	"ipam.prefix",
 	"dcim.cable",
 	"dcim.site",
 	"dcim.region",

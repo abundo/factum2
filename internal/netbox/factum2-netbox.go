@@ -206,6 +206,10 @@ func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 			reporter.EmitErr(err)
 			return err
 		}
+		if err := syncPrefixes(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 	}
 
 	// Customer-to-tenant and contact-to-contact sync are one-directional

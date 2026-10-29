@@ -38,6 +38,7 @@ func TestDeltaPlanDevicesInterfacesAndDeletes(t *testing.T) {
 		{ID: 4, Time: t0.Add(3 * time.Second), Action: "create", ChangedType: "dcim.cable", ChangedID: 15},
 		{ID: 5, Time: t0.Add(4 * time.Second), Action: "delete", ChangedType: "dcim.cable", ChangedID: 15},
 		{ID: 6, Time: t0.Add(5 * time.Second), Action: "update", ChangedType: "ipam.vrf", ChangedID: 2},
+		{ID: 8, Time: t0.Add(7 * time.Second), Action: "create", ChangedType: "ipam.prefix", ChangedID: 11},
 		{ID: 7, Time: t0.Add(6 * time.Second), Action: "update", ChangedType: "ipam.ipaddress", ChangedID: 20, RelatedType: "dcim.interface", RelatedID: 30},
 	}, func(vmIface bool, ifaceID uint) (uint, bool, error) {
 		if vmIface || ifaceID != 30 {
@@ -62,6 +63,9 @@ func TestDeltaPlanDevicesInterfacesAndDeletes(t *testing.T) {
 	}
 	if !plan.vrfs {
 		t.Fatal("vrf change should be planned")
+	}
+	if !plan.prefixes {
+		t.Fatal("prefix change should be planned")
 	}
 	if _, ok := plan.devices[7]; !ok {
 		t.Fatal("IP address change should refetch device 7")
