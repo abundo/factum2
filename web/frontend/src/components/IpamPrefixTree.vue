@@ -53,15 +53,9 @@ const selectedKind = computed(() => selected.value?.kind || selected.value?.type
 const isAllocated = computed(() => selectedKind.value === 'allocated')
 const isVrf = computed(() => selectedKind.value === 'vrf')
 const isNamedRow = computed(() => selectedKind.value === 'namespace' || isVrf.value)
-const isNetboxVrf = computed(() => isVrf.value && selected.value?.source === 'netbox')
-const isNetboxPrefix = computed(() => isAllocated.value && selected.value?.source === 'netbox')
-const vrfFieldsDisabled = computed(() => !authStore.canWrite || isNetboxVrf.value)
+const fieldsDisabled = computed(() => !authStore.canWrite)
 const canSaveSelected = computed(
-  () =>
-    authStore.canWrite &&
-    (isAllocated.value || isNamedRow.value) &&
-    !isNetboxVrf.value &&
-    !isNetboxPrefix.value,
+  () => authStore.canWrite && (isAllocated.value || isNamedRow.value),
 )
 
 function sourceLabel(source) {
@@ -656,31 +650,31 @@ defineExpose({
             v-if="isAllocated"
             v-model="form"
             prefix-disabled
-            :disabled="!authStore.canWrite || isNetboxPrefix"
+            :disabled="fieldsDisabled"
             :show-vrf="!!selected.vrf_name"
             :vrf-name="selected.vrf_name || ''"
           />
           <template v-else-if="isNamedRow">
             <div>
               <label class="block font-bold mb-2">Name</label>
-              <UInput v-model="form.name" :disabled="vrfFieldsDisabled" class="w-full" />
+              <UInput v-model="form.name" :disabled="fieldsDisabled" class="w-full" />
             </div>
             <div>
               <label class="block font-bold mb-2">Description</label>
-              <UInput v-model="form.description" :disabled="vrfFieldsDisabled" class="w-full" />
+              <UInput v-model="form.description" :disabled="fieldsDisabled" class="w-full" />
             </div>
             <template v-if="isVrf">
               <div>
                 <label class="block font-bold mb-2">RD</label>
-                <UInput v-model="form.rd" :disabled="vrfFieldsDisabled" class="w-full" />
+                <UInput v-model="form.rd" :disabled="fieldsDisabled" class="w-full" />
               </div>
               <div>
                 <label class="block font-bold mb-2">Import route-target</label>
-                <UInput v-model="form.import_rt" :disabled="vrfFieldsDisabled" class="w-full" />
+                <UInput v-model="form.import_rt" :disabled="fieldsDisabled" class="w-full" />
               </div>
               <div>
                 <label class="block font-bold mb-2">Export route-target</label>
-                <UInput v-model="form.export_rt" :disabled="vrfFieldsDisabled" class="w-full" />
+                <UInput v-model="form.export_rt" :disabled="fieldsDisabled" class="w-full" />
               </div>
             </template>
           </template>

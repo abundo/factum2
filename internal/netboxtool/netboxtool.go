@@ -1889,6 +1889,39 @@ func (nb *NetboxClient) CreatePrefix(prefix string) (*NBPrefix, error) {
 	return result.toNBPrefix(), nil
 }
 
+// CreatePrefixInVRF creates a prefix with status "active". vrfID 0 omits
+// the VRF, which is NetBox's global table. description may be empty.
+func (nb *NetboxClient) CreatePrefixInVRF(prefix, description string, vrfID uint) (uint, error) {
+	payload := map[string]any{
+		"prefix":      prefix,
+		"status":      "active",
+		"description": description,
+	}
+	if vrfID != 0 {
+		payload["vrf"] = vrfID
+	}
+	var created struct {
+		ID uint `json:"id"`
+	}
+	if err := nb.restPost("/api/ipam/prefixes/", payload, &created); err != nil {
+		return 0, err
+	}
+	if created.ID == 0 {
+		return 0, fmt.Errorf("netbox prefix %s was created without an id", prefix)
+	}
+	return created.ID, nil
+}
+
+// UpdatePrefix applies changes (field -> new value) to an existing prefix.
+func (nb *NetboxClient) UpdatePrefix(id uint, changes map[string]any) error {
+	return nb.restPatch("/api/ipam/prefixes/"+strconv.FormatUint(uint64(id), 10)+"/", changes)
+}
+
+// DeletePrefix deletes a prefix.
+func (nb *NetboxClient) DeletePrefix(id uint) error {
+	return nb.restDelete("/api/ipam/prefixes/" + strconv.FormatUint(uint64(id), 10) + "/")
+}
+
 // ---------------------------------------------------------------------------
 //  VLAN Group / VLAN
 // ---------------------------------------------------------------------------
@@ -2036,6 +2069,118 @@ func (nb *NetboxClient) CreateVRF(name, rd, description string) (*NBVRF, error) 
 		return nil, err
 	}
 	return result.toNBVRF(), nil
+}
+
+// CreateVRFWithTargets creates a VRF and assigns route-target ids.
+// An empty rd is sent as null. importIDs and exportIDs may be empty.
+func (nb *NetboxClient) CreateVRFWithTargets(name, rd, description string, importIDs, exportIDs []uint) (uint, error) {
+	if importIDs == nil {
+		importIDs = []uint{}
+	}
+	if exportIDs == nil {
+		exportIDs = []uint{}
+	}
+	payload := map[string]any{
+		"name":           name,
+		"description":    description,
+		"import_targets": importIDs,
+		"export_targets": exportIDs,
+	}
+	if rd == "" {
+		payload["rd"] = nil
+	} else {
+		payload["rd"] = rd
+	}
+	var created struct {
+		ID uint `json:"id"`
+	}
+	if err := nb.restPost("/api/ipam/vrfs/", payload, &created); err != nil {
+		return 0, err
+	}
+	if created.ID == 0 {
+		return 0, fmt.Errorf("netbox VRF %q was created without an id", name)
+	}
+	return created.ID, nil
+}
+
+// UpdateVRF applies changes (field -> new value) to an existing VRF.
+// import_targets and export_targets are lists of route-target ids. An
+// empty rd is sent as null so NetBox clears it.
+func (nb *NetboxClient) UpdateVRF(id uint, changes map[string]any) error {
+	return nb.restPatch("/api/ipam/vrfs/"+strconv.FormatUint(uint64(id), 10)+"/", changes)
+}
+
+// DeleteVRF deletes a VRF.
+func (nb *NetboxClient) DeleteVRF(id uint) error {
+	return nb.restDelete("/api/ipam/vrfs/" + strconv.FormatUint(uint64(id), 10) + "/")
+}
+
+// EnsureRouteTargetIDs returns the NetBox id of each route target,
+// creating a missing name. ids follows names, with blanks and duplicates
+// removed.
+func (nb *NetboxClient) EnsureRouteTargetIDs(names []string) ([]uint, error) {
+	ids := make([]uint, 0, len(names))
+	seen := make(map[string]uint, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if id, ok := seen[name]; ok {
+			ids = append(ids, id)
+			continue
+		}
+		id, err := nb.ensureRouteTarget(name)
+		if err != nil {
+			return nil, err
+		}
+		seen[name] = id
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func (nb *NetboxClient) ensureRouteTarget(name string) (uint, error) {
+	id, found, err := nb.routeTargetID(name)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	var created struct {
+		ID uint `json:"id"`
+	}
+	err = nb.restPost("/api/ipam/route-targets/", map[string]any{"name": name}, &created)
+	if err != nil {
+		// A concurrent create can win the unique name. Look it up again.
+		if id, found, lookupErr := nb.routeTargetID(name); lookupErr == nil && found {
+			return id, nil
+		}
+		return 0, err
+	}
+	if created.ID == 0 {
+		return 0, fmt.Errorf("netbox route target %q was created without an id", name)
+	}
+	return created.ID, nil
+}
+
+func (nb *NetboxClient) routeTargetID(name string) (uint, bool, error) {
+	var page struct {
+		Results []struct {
+			ID   uint   `json:"id"`
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if err := nb.restGet("/api/ipam/route-targets/?name="+url.QueryEscape(name), &page); err != nil {
+		return 0, false, err
+	}
+	for _, row := range page.Results {
+		if row.Name == name && row.ID != 0 {
+			return row.ID, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 // ---------------------------------------------------------------------------

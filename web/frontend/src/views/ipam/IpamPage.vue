@@ -76,12 +76,10 @@ function itemsFor(node) {
       break
     case 'allocated':
       items.push({ id: 'add-prefix', label: 'Add child prefix' })
-      if (node.source !== 'netbox') {
-        items.push({
-          id: 'edit-prefix',
-          label: authStore.dhcpEnabled ? 'Edit prefix' : 'Edit description',
-        })
-      }
+      items.push({
+        id: 'edit-prefix',
+        label: authStore.dhcpEnabled ? 'Edit prefix' : 'Edit description',
+      })
       break
     default:
       break
@@ -333,8 +331,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       and a VRF that still has prefixes cannot be removed. A prefix you add in Factum cannot overlap
       another VRF in that namespace. The Netbox namespace follows NetBox: the same prefix may exist
       in the global table and in a VRF, and in more than one VRF. Unique IP Space still keeps one
-      exact prefix inside that VRF. NetBox VRFs and prefixes are read-only. Click a row to see
-      details. Click [+] / [−] to expand or collapse.
+      exact prefix inside that VRF. Editing a VRF or prefix there updates NetBox, including the
+      route distinguisher and import and export targets. Delete still happens in NetBox. Click a
+      row to see details. Click [+] / [−] to expand or collapse.
     </p>
     <IpamPrefixTree
       ref="treeRef"

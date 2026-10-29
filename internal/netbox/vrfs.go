@@ -1,7 +1,10 @@
 package netbox
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/abundo/factum2/internal/ipam"
@@ -11,9 +14,36 @@ import (
 	"gorm.io/gorm"
 )
 
-// nbRouteTargetRef is the nested route-target object NetBox returns on a VRF.
+// nbRouteTargetRef is one import or export target on a NetBox VRF. The
+// list endpoint returns a nested object (id, name, display). A primary
+// key alone is also accepted.
 type nbRouteTargetRef struct {
-	Name string `json:"name"`
+	ID   uint
+	Name string
+}
+
+func (t *nbRouteTargetRef) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	if b[0] != '{' {
+		return json.Unmarshal(b, &t.ID)
+	}
+	var obj struct {
+		ID      uint   `json:"id"`
+		Name    string `json:"name"`
+		Display string `json:"display"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	t.ID = obj.ID
+	t.Name = strings.TrimSpace(obj.Name)
+	if t.Name == "" {
+		t.Name = strings.TrimSpace(obj.Display)
+	}
+	return nil
 }
 
 type nbVRFREST struct {
@@ -35,16 +65,29 @@ func (v nbVRFREST) uniqueIPSpace() bool {
 	return *v.EnforceUnique
 }
 
-func joinRouteTargetNames(targets []nbRouteTargetRef) string {
+func routeTargetNames(nb *netboxtool.NetboxClient, targets []nbRouteTargetRef) (string, error) {
 	names := make([]string, 0, len(targets))
 	for _, t := range targets {
-		n := strings.TrimSpace(t.Name)
-		if n == "" {
+		name := strings.TrimSpace(t.Name)
+		if name == "" && t.ID != 0 {
+			var got struct {
+				Name    string `json:"name"`
+				Display string `json:"display"`
+			}
+			if err := nb.RestGet("/api/ipam/route-targets/"+strconv.FormatUint(uint64(t.ID), 10)+"/", &got); err != nil {
+				return "", err
+			}
+			name = strings.TrimSpace(got.Name)
+			if name == "" {
+				name = strings.TrimSpace(got.Display)
+			}
+		}
+		if name == "" {
 			continue
 		}
-		names = append(names, n)
+		names = append(names, name)
 	}
-	return strings.Join(names, ", ")
+	return strings.Join(names, ", "), nil
 }
 
 func rdString(rd *string) string {
@@ -54,9 +97,35 @@ func rdString(rd *string) string {
 	return strings.TrimSpace(*rd)
 }
 
-// netboxNamespaceName is the single Factum namespace that holds every
-// VRF and prefix synced from NetBox.
-const netboxNamespaceName = "Netbox"
+// NetboxNamespaceName is the single Factum namespace that holds every
+// VRF and prefix synced from NetBox. Edits in this namespace are written
+// back to NetBox.
+const NetboxNamespaceName = "Netbox"
+
+// SplitRouteTargets splits the comma-separated route-target list stored
+// on a VRF. Commas, semicolons, and whitespace are separators. Order is
+// kept and duplicates are dropped.
+func SplitRouteTargets(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ',', ';', ' ', '\n', '\t', '\r':
+			return true
+		default:
+			return false
+		}
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
 
 // syncVRFs mirrors NetBox ipam.VRF rows into the Netbox namespace, so
 // prefixes may overlap the global table and each other. Factum-created
@@ -74,7 +143,7 @@ func syncVRFs(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Report
 	seen := make(map[uint]bool, len(rows))
 	var countNew, countUpdated, countSkipped int
 	for _, row := range rows {
-		created, updated, skipped, err := upsertNetboxVRF(db, row, reporter)
+		created, updated, skipped, err := upsertNetboxVRF(db, nb, row, reporter)
 		if err != nil {
 			return err
 		}
@@ -110,7 +179,7 @@ func syncVRFs(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Report
 	return nil
 }
 
-func upsertNetboxVRF(db *gorm.DB, row nbVRFREST, reporter jobevent.Reporter) (created, updated, skipped int, err error) {
+func upsertNetboxVRF(db *gorm.DB, nb *netboxtool.NetboxClient, row nbVRFREST, reporter jobevent.Reporter) (created, updated, skipped int, err error) {
 	name := strings.TrimSpace(row.Name)
 	if name == "" {
 		reporter.Emit(jobevent.Warning, "Netbox VRF sync: skipping unnamed VRF (netbox_id=%d)", row.ID)
@@ -122,8 +191,14 @@ func upsertNetboxVRF(db *gorm.DB, row nbVRFREST, reporter jobevent.Reporter) (cr
 	}
 
 	rd := rdString(row.RD)
-	imp := joinRouteTargetNames(row.ImportTargets)
-	exp := joinRouteTargetNames(row.ExportTargets)
+	imp, err := routeTargetNames(nb, row.ImportTargets)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	exp, err := routeTargetNames(nb, row.ExportTargets)
+	if err != nil {
+		return 0, 0, 0, err
+	}
 	desc := strings.TrimSpace(row.Description)
 	unique := row.uniqueIPSpace()
 
@@ -207,20 +282,20 @@ func upsertNetboxVRF(db *gorm.DB, row nbVRFREST, reporter jobevent.Reporter) (cr
 // prefix, creating it when this is the first sync.
 func netboxNamespaceID(db *gorm.DB) (uint, error) {
 	var ns models.IpamNamespace
-	err := db.Where("name = ?", netboxNamespaceName).First(&ns).Error
+	err := db.Where("name = ?", NetboxNamespaceName).First(&ns).Error
 	if err == nil {
 		return ns.ID, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, err
 	}
-	view, err := ipam.CreateNamespace(db, netboxNamespaceName, "Synced from NetBox")
+	view, err := ipam.CreateNamespace(db, NetboxNamespaceName, "Synced from NetBox")
 	if err == nil {
 		return view.ID, nil
 	}
 	var status *ipam.StatusError
 	if errors.As(err, &status) && status.Status == 409 {
-		if err := db.Where("name = ?", netboxNamespaceName).First(&ns).Error; err != nil {
+		if err := db.Where("name = ?", NetboxNamespaceName).First(&ns).Error; err != nil {
 			return 0, err
 		}
 		return ns.ID, nil

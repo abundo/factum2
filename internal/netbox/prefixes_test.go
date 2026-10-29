@@ -165,11 +165,10 @@ func TestSyncPrefixes_DefaultNamespaceAndVRF(t *testing.T) {
 		t.Fatalf("vrf children = %+v", kids)
 	}
 
-	_, err = ipam.UpdatePrefix(db, global.NamespaceID, global.ID, "edited", ipam.PrefixDHCP{})
-	var se *ipam.StatusError
-	if !errors.As(err, &se) || se.Status != 403 {
-		t.Fatalf("update = %v", err)
+	if _, err = ipam.UpdatePrefix(db, global.NamespaceID, global.ID, "edited", ipam.PrefixDHCP{}); err != nil {
+		t.Fatal(err)
 	}
+	var se *ipam.StatusError
 	if err := ipam.DeletePrefix(db, global.NamespaceID, global.ID); !errors.As(err, &se) || se.Status != 403 {
 		t.Fatalf("delete = %v", err)
 	}

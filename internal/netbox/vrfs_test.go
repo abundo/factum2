@@ -286,3 +286,52 @@ func TestSyncVRFs_MovesLegacyNamespaceIntoNetbox(t *testing.T) {
 		t.Fatal("legacy per-VRF namespace should have been removed")
 	}
 }
+
+func TestSplitRouteTargets(t *testing.T) {
+	got := SplitRouteTargets(" 65000:1, 65000:2;65000:1\n65000:3 ")
+	want := []string{"65000:1", "65000:2", "65000:3"}
+	if len(got) != len(want) {
+		t.Fatalf("split = %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("split = %#v", got)
+		}
+	}
+	if SplitRouteTargets("") != nil && len(SplitRouteTargets("")) != 0 {
+		t.Fatalf("empty = %#v", SplitRouteTargets(""))
+	}
+}
+
+func TestSyncVRFs_ResolvesRouteTargetIDs(t *testing.T) {
+	db := newImportTestDB(t)
+	const list = `{"results":[{"id":10,"name":"CUST-A","rd":"65000:1","description":"customer",
+		"import_targets":[7],
+		"export_targets":[{"id":8,"display":"65000:8"},{"id":9,"name":"65000:9"}]}],"next":null}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/ipam/vrfs/":
+			_, _ = w.Write([]byte(list))
+		case "/api/ipam/route-targets/7/":
+			_, _ = w.Write([]byte(`{"id":7,"name":"65000:7"}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	nb, err := netboxtool.NewNetboxClient(netboxtool.ConfigNetbox{URL: srv.URL, Token: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncVRFs(db, nb, jobevent.NewSlogReporter("test", "vrfs")); err != nil {
+		t.Fatal(err)
+	}
+	var got models.IpamVRF
+	if err := db.Where("netbox_id = ?", 10).First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.RD != "65000:1" || got.ImportRT != "65000:7" || got.ExportRT != "65000:8, 65000:9" {
+		t.Fatalf("rd/rt = rd=%q import=%q export=%q", got.RD, got.ImportRT, got.ExportRT)
+	}
+}

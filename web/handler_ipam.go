@@ -6,7 +6,9 @@ import (
 	"strconv"
 
 	"github.com/abundo/factum2/internal/ipam"
+	"github.com/abundo/factum2/models"
 	"github.com/labstack/echo/v5"
+	"gorm.io/gorm"
 )
 
 func (ctrl *Controller) ipamOn() bool {
@@ -239,6 +241,13 @@ func (ctrl *Controller) ApiIpamVRFCreate(c *echo.Context) error {
 	if err != nil {
 		return ipamWriteError(c, err)
 	}
+	if err := ctrl.publishNewVRF(row); err != nil {
+		_ = ipam.DeleteVRF(ctrl.DB, row.NamespaceID, row.ID)
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.DB.First(row, row.ID).Error; err != nil {
+		return ipamWriteError(c, err)
+	}
 	return c.JSON(http.StatusCreated, row)
 }
 
@@ -255,8 +264,22 @@ func (ctrl *Controller) ApiIpamVRFUpdate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	var before models.IpamVRF
+	if err := ctrl.DB.Where("id = ? AND namespace_id = ?", vrfID, id).First(&before).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ipamWriteError(c, err)
+	}
 	row, err := ipam.UpdateVRF(ctrl.DB, id, vrfID, body.write())
 	if err != nil {
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.publishVRFUpdate(&before, row); err != nil {
+		_, _ = ipam.UpdateVRF(ctrl.DB, id, vrfID, ipam.VRFWrite{
+			Name: before.Name, Description: before.Description,
+			RD: before.RD, ImportRT: before.ImportRT, ExportRT: before.ExportRT,
+		})
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.DB.First(row, row.ID).Error; err != nil {
 		return ipamWriteError(c, err)
 	}
 	return c.JSON(http.StatusOK, row)
@@ -302,6 +325,13 @@ func (ctrl *Controller) ApiIpamPrefixCreate(c *echo.Context) error {
 	if err != nil {
 		return ipamWriteError(c, err)
 	}
+	if err := ctrl.publishNewPrefix(row); err != nil {
+		_ = ipam.DeletePrefix(ctrl.DB, row.NamespaceID, row.ID)
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.DB.First(row, row.ID).Error; err != nil {
+		return ipamWriteError(c, err)
+	}
 	return c.JSON(http.StatusCreated, row)
 }
 
@@ -318,8 +348,22 @@ func (ctrl *Controller) ApiIpamPrefixUpdate(c *echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
+	var before models.IpamPrefix
+	if err := ctrl.DB.Where("id = ? AND namespace_id = ?", prefixID, id).First(&before).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ipamWriteError(c, err)
+	}
 	row, err := ipam.UpdatePrefix(ctrl.DB, id, prefixID, body.Description, body.dhcp())
 	if err != nil {
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.publishPrefixUpdate(&before, row); err != nil {
+		_, _ = ipam.UpdatePrefix(ctrl.DB, id, prefixID, before.Description, ipam.PrefixDHCP{
+			Enabled: before.DhcpEnabled, RangeStart: before.DhcpRangeStart,
+			RangeEnd: before.DhcpRangeEnd, Gateway: before.DhcpGateway, DnsServers: before.DhcpDnsServers,
+		})
+		return ipamWriteError(c, err)
+	}
+	if err := ctrl.DB.First(row, row.ID).Error; err != nil {
 		return ipamWriteError(c, err)
 	}
 	return c.JSON(http.StatusOK, row)

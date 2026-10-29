@@ -375,9 +375,6 @@ func UpdateVRF(db *gorm.DB, nsID, vrfID uint, w VRFWrite) (*models.IpamVRF, erro
 		}
 		return nil, err
 	}
-	if !row.IsLocal() {
-		return nil, statusErr(403, "VRFs synced from NetBox cannot be edited here")
-	}
 	w = w.normalized()
 	if w.Name == "" {
 		return nil, statusErr(400, "name is required")
@@ -489,9 +486,6 @@ func UpdatePrefix(db *gorm.DB, nsID, prefixID uint, description string, dhcp Pre
 			return nil, statusErr(404, "prefix not found")
 		}
 		return nil, err
-	}
-	if !row.IsLocal() {
-		return nil, statusErr(403, "prefixes synced from NetBox cannot be edited here")
 	}
 	row.Description = strings.TrimSpace(description)
 	if err := applyDHCP(&row, dhcp); err != nil {

@@ -75,8 +75,9 @@ type IpamVRF struct {
 	// are several (NetBox import_targets / export_targets).
 	ImportRT string `json:"import_rt" gorm:"type:text"`
 	ExportRT string `json:"export_rt" gorm:"type:text"`
-	// Source is "netbox" when upserted from sync, "factum" when created
-	// in the UI. NetBox-synced rows are read-only.
+	// Source is "netbox" when upserted from sync or written back to
+	// NetBox, "factum" when created in the UI. NetBox rows can be edited
+	// here; the edit is pushed to NetBox. They cannot be deleted here.
 	Source   string `json:"source" gorm:"type:varchar(32)"`
 	NetboxID uint   `json:"netbox_id"`
 }
@@ -133,9 +134,11 @@ type IpamPrefix struct {
 	// DhcpDnsServers is newline-separated. Empty means use the global
 	// default (Settings.DhcpDnsServers).
 	DhcpDnsServers string `json:"dhcp_dns_servers" gorm:"type:text"`
-	// Source is "netbox" when upserted from sync, "factum" when allocated
-	// in the UI. NetBox-synced rows are read-only. NetboxID is the
-	// ipam.prefix id; uniqueness is a partial index WHERE netbox_id != 0.
+	// Source is "netbox" when upserted from sync or written back to
+	// NetBox, "factum" when allocated in the UI. NetBox rows can be
+	// edited here; the description is pushed to NetBox. They cannot be
+	// deleted here. NetboxID is the ipam.prefix id; uniqueness is a
+	// partial index WHERE netbox_id != 0.
 	Source   string `json:"source" gorm:"type:varchar(32)"`
 	NetboxID uint   `json:"netbox_id"`
 }

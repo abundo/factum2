@@ -336,13 +336,20 @@ func TestIpamVRFRouteTargetsAndNetboxReadonly(t *testing.T) {
 	}
 	nbID := strconv.FormatUint(uint64(nb.ID), 10)
 	c, rec = jsonRequest(t, http.MethodPut, "/api/ipam/namespaces/x/vrfs/x", ipamVRFBody{
-		Name: "from-netbox", Description: "nope",
+		Name: "from-netbox", Description: "nope", RD: "65000:9",
 	}, []string{"id", "vrfId"}, []string{nsID, nbID})
 	if err := ctrl.ApiIpamVRFUpdate(c); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("netbox update status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("netbox update status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	var unchanged models.IpamVRF
+	if err := ctrl.DB.First(&unchanged, nb.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Description != "" || unchanged.RD != "1:1" {
+		t.Fatalf("netbox VRF changed without NetBox: %+v", unchanged)
 	}
 	c, rec = jsonRequest(t, http.MethodDelete, "/api/ipam/namespaces/x/vrfs/x", nil,
 		[]string{"id", "vrfId"}, []string{nsID, nbID})

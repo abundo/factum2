@@ -17,8 +17,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   named Netbox. The same prefix may exist in the global table and in a
   VRF, and in more than one VRF. Unique IP Space still allows only one
   exact prefix inside that VRF; when it is off, the duplicate is kept.
-  Prefixes with no VRF are the roots of the Netbox namespace. Prefixes
-  that come from NetBox are read-only in the IPAM tree.
+  Prefixes with no VRF are the roots of the Netbox namespace. VRF sync
+  copies the route distinguisher and the import and export targets.
+  Editing a VRF or prefix in that namespace updates NetBox, including
+  those VRF fields. A VRF or prefix added there is created in NetBox.
+  Deleting one that came from NetBox is still done in NetBox.
   `factum2-netbox check --update` adds `ipam.prefix` to the webhook
   event rule. Run `factum2-web migrate` before the next sync.
 - Device sync reads LLDP on Waystream iBOS (platform `ibos`) and creates
