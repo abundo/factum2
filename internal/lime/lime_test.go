@@ -37,10 +37,14 @@ func TestServiceFromDeliveryMapsLimeFields(t *testing.T) {
 		ID:               77,
 		ConnectionNumber: "20-73",
 		Comment:          "Region Norrbotten PÄS-Sbyn",
-		DeliveryPoint:    &limetoolmodels.LimeDeliverypoint{Address: "Site A"},
-		DeliveryPoint2:   &limetoolmodels.LimeDeliverypoint2{Address: "Site B"},
-		Product:          &limetoolmodels.LimeProduct{Name: "Svartfiber"},
-		Service:          &limetoolmodels.LimeService{Name: "Hyra av fiber"},
+		DeliveryPoint: &limetoolmodels.LimeDeliverypoint{
+			Address: "Storgatan", Streetno: "9", Zipcode: "11132", City: "Stockholm",
+		},
+		DeliveryPoint2: &limetoolmodels.LimeDeliverypoint2{
+			Address: "Lillgatan", Streetno: "2", Zipcode: "22222", City: "Malmö",
+		},
+		Product: &limetoolmodels.LimeProduct{Name: "Svartfiber"},
+		Service: &limetoolmodels.LimeService{Name: "Hyra av fiber"},
 		Agreeement: &limetoolmodels.LimeAgreement{
 			Status: &limetoolmodels.LimeAgreementStatus{Key: "active", Text: "Active"},
 		},
@@ -56,7 +60,7 @@ func TestServiceFromDeliveryMapsLimeFields(t *testing.T) {
 	if svc.ServiceID != "20-73" || svc.Comment != delivery.Comment {
 		t.Errorf("ServiceID/Comment = %q/%q", svc.ServiceID, svc.Comment)
 	}
-	if svc.DeliveryPoint1 != "Site A" || svc.DeliveryPoint2 != "Site B" {
+	if svc.DeliveryPoint1 != "Storgatan 9, 11132 Stockholm" || svc.DeliveryPoint2 != "Lillgatan 2, 22222 Malmö" {
 		t.Errorf("delivery points = %q/%q", svc.DeliveryPoint1, svc.DeliveryPoint2)
 	}
 	if svc.Product != "Svartfiber" || svc.Service != "Hyra av fiber" {
@@ -64,6 +68,27 @@ func TestServiceFromDeliveryMapsLimeFields(t *testing.T) {
 	}
 	if svc.AgreementStatus != "Active" {
 		t.Errorf("AgreementStatus = %q, want Active", svc.AgreementStatus)
+	}
+}
+
+func TestFormatDeliveryAddressOmitsEmptyParts(t *testing.T) {
+	cases := []struct {
+		address, streetno, zipcode, city, want string
+	}{
+		{"Storgatan", "9", "11132", "Stockholm", "Storgatan 9, 11132 Stockholm"},
+		{"Flera Leveranser", "", "", "", "Flera Leveranser"},
+		{"Storgatan", "", "11132", "Stockholm", "Storgatan, 11132 Stockholm"},
+		{"Storgatan", "9", "", "Stockholm", "Storgatan 9, Stockholm"},
+		{"", "", "11132", "Stockholm", "11132 Stockholm"},
+		{"  Storgatan ", " 9 ", " 11132 ", " Stockholm ", "Storgatan 9, 11132 Stockholm"},
+		{"", "", "", "", ""},
+	}
+	for _, c := range cases {
+		got := formatDeliveryAddress(c.address, c.streetno, c.zipcode, c.city)
+		if got != c.want {
+			t.Errorf("formatDeliveryAddress(%q, %q, %q, %q) = %q, want %q",
+				c.address, c.streetno, c.zipcode, c.city, got, c.want)
+		}
 	}
 }
 

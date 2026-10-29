@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
 	"github.com/abundo/factum2/internal/jobevent"
@@ -200,6 +201,26 @@ func contactFromPerson(person limetoolmodels.LimePerson, lastSync uint) models.C
 	}
 }
 
+// formatDeliveryAddress merges Lime address, street number, zip code, and
+// city into one line: "Storgatan 9, 11132 Stockholm". Empty parts are
+// omitted, so an address-only point stays "Storgatan".
+func formatDeliveryAddress(address, streetno, zipcode, city string) string {
+	street := joinNonEmpty(" ", address, streetno)
+	place := joinNonEmpty(" ", zipcode, city)
+	return joinNonEmpty(", ", street, place)
+}
+
+func joinNonEmpty(sep string, parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, sep)
+}
+
 // serviceFromDelivery maps a Lime delivery (and its embedded agreement)
 // onto a factum Service. AgreementStatus is Lime's agreement_status.text
 // (e.g. "Active"); it stays empty when the delivery has no agreement or
@@ -215,10 +236,12 @@ func serviceFromDelivery(delivery limetoolmodels.LimeDelivery, customerID, lastS
 		Comment:    delivery.Comment,
 	}
 	if delivery.DeliveryPoint != nil {
-		d.DeliveryPoint1 = delivery.DeliveryPoint.Address
+		dp := delivery.DeliveryPoint
+		d.DeliveryPoint1 = formatDeliveryAddress(dp.Address, dp.Streetno, dp.Zipcode, dp.City)
 	}
 	if delivery.DeliveryPoint2 != nil {
-		d.DeliveryPoint2 = delivery.DeliveryPoint2.Address
+		dp := delivery.DeliveryPoint2
+		d.DeliveryPoint2 = formatDeliveryAddress(dp.Address, dp.Streetno, dp.Zipcode, dp.City)
 	}
 	if delivery.Product != nil {
 		d.Product = delivery.Product.Name
