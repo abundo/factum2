@@ -273,6 +273,11 @@ const router = createRouter({
           component: () => import('@/views/UserSettingsPage.vue'),
         },
         {
+          path: '/user-settings/password',
+          name: 'user-settings-password',
+          component: () => import('@/views/ChangePasswordPage.vue'),
+        },
+        {
           path: '/admin/directory',
           name: 'admin-directory',
           meta: { title: 'Directory', requiresAdmin: true },
