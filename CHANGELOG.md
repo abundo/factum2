@@ -7,6 +7,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- LibreNMS sync writes a device's latitude and longitude onto its
+  LibreNMS location and sets `fixed_coordinates`, so polling does not
+  geocode over them. The location is the Factum location custom field,
+  or the device's current LibreNMS location when that field is empty.
+  Devices that share a location and disagree keep the coordinates of
+  the lowest LibreNMS device id.
 - Device sync reads LLDP on Waystream iBOS (platform `ibos`) and creates
   the NetBox cables. BECS still owns the interfaces, addresses, and
   services, so those are left as they are. The read uses the device-sync

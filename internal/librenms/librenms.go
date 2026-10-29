@@ -799,6 +799,46 @@ func (librenms *LibrenmsClient) LocationCreate(locationName string, lat *float64
 	return parseApiResponse(r, err)
 }
 
+// coordEpsilon is the smallest lat/lng change sync writes. It is wider
+// than float32 rounding on the device API, so a coordinate that already
+// matches is not rewritten every run. About 5 metres.
+const coordEpsilon = 0.00005
+
+// LocationSetCoordinates writes lat/lng onto a LibreNMS location and pins
+// them. Coordinates live on the location row, which every device at that
+// location shares. The edit-location API can set lat/lng, but
+// fixed_coordinates is not fillable there, so the next poll geocodes over
+// the values. The web UI sets the flag itself; this update does the same
+// in the database. A matching row that is already at these coordinates
+// and already fixed is left alone. changed is false in that case.
+func (librenms *LibrenmsClient) LocationSetCoordinates(locationName string, lat, lng float64) (bool, error) {
+	if err := librenms.connectDB(); err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	result, err := librenms.DB.ExecContext(ctx,
+		"UPDATE locations SET lat = ?, lng = ?, fixed_coordinates = 1 WHERE location = ? AND (fixed_coordinates = 0 OR lat IS NULL OR lng IS NULL OR ABS(lat - ?) >= ? OR ABS(lng - ?) >= ?)",
+		lat, lng, locationName, lat, coordEpsilon, lng, coordEpsilon)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows > 0 {
+		return true, nil
+	}
+	var n int
+	if err := librenms.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM locations WHERE location = ?", locationName).Scan(&n); err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, fmt.Errorf("librenms: location %q not found", locationName)
+	}
+	return false, nil
+}
+
 // Update location, location: name or id of the location to edit
 // https://docs.librenms.org/API/Locations/#edit_location
 // curl -X PATCH -d '{"lng":"100.0862462"}' -H 'X-Auth-Token:YOUR-API-TOKEN' https://foo.example/api/v0/locations/Google

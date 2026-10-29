@@ -16,7 +16,8 @@ package librenms
 // - device
 //     enabled flag
 //     display name
-//     location
+//     location name
+//     location coordinates (Factum latitude/longitude)
 //     parents
 // - device interfaces
 // 	   ignore flag
@@ -31,6 +32,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -381,6 +383,102 @@ func (fl *FactumLibrenmsClient) createDevice(addr, name string, reporter jobeven
 	return deviceID, nil
 }
 
+// locationCoordinates is the lat/lng sync will write for one LibreNMS
+// location. Devices that share the location and disagree keep the
+// coordinates of the lowest LibreNMS device id.
+type locationCoordinates struct {
+	Lat, Lng float64
+	DeviceID int
+	Hostname string
+	Conflict bool
+	Warned   bool
+}
+
+// librenmsLocationName is the LibreNMS location this device maps to.
+// The Factum location custom field wins. Otherwise the device keeps the
+// location LibreNMS already has.
+func librenmsLocationName(factumDevice *models.Device, librenmsDevice *LibrenmsDevice) string {
+	if factumDevice.CfLocation != "" {
+		return factumDevice.CfLocation
+	}
+	return librenmsDevice.Location
+}
+
+func coordsClose(lat1, lng1, lat2, lng2 float64) bool {
+	return math.Abs(lat1-lat2) < coordEpsilon && math.Abs(lng1-lng2) < coordEpsilon
+}
+
+// planLocationCoordinates picks one coordinate pair per location name.
+// A device is included when this sync will update it: no destination id
+// yet, or the destination id is this LibreNMS device. Quarantined devices
+// are left out.
+func planLocationCoordinates(devices []*LibrenmsDevice, skip map[int]struct{}, factumFor func(*LibrenmsDevice) *models.Device) map[string]*locationCoordinates {
+	plan := map[string]*locationCoordinates{}
+	for _, librenmsDevice := range devices {
+		if _, skipped := skip[librenmsDevice.DeviceID]; skipped {
+			continue
+		}
+		factumDevice := factumFor(librenmsDevice)
+		if factumDevice == nil || factumDevice.Latitude == nil || factumDevice.Longitude == nil {
+			continue
+		}
+		if factumDevice.LibrenmsID != 0 && factumDevice.LibrenmsID != uint(librenmsDevice.DeviceID) {
+			continue
+		}
+		name := librenmsLocationName(factumDevice, librenmsDevice)
+		if name == "" {
+			continue
+		}
+		lat, lng := *factumDevice.Latitude, *factumDevice.Longitude
+		cur := plan[name]
+		if cur == nil {
+			plan[name] = &locationCoordinates{Lat: lat, Lng: lng, DeviceID: librenmsDevice.DeviceID, Hostname: librenmsDevice.Hostname}
+			continue
+		}
+		if !coordsClose(lat, lng, cur.Lat, cur.Lng) {
+			cur.Conflict = true
+			if librenmsDevice.DeviceID < cur.DeviceID {
+				cur.Lat, cur.Lng = lat, lng
+				cur.DeviceID = librenmsDevice.DeviceID
+				cur.Hostname = librenmsDevice.Hostname
+			}
+		}
+	}
+	return plan
+}
+
+// syncDeviceCoordinates writes this device's Factum coordinates onto its
+// LibreNMS location. LibreNMS stores the pin on the location, so devices
+// that share a location share one pin. The plan's device performs the
+// write. A device with coordinates and no location name is reported and
+// skipped.
+func (fl *FactumLibrenmsClient) syncDeviceCoordinates(librenmsDevice *LibrenmsDevice, factumDevice *models.Device, plan map[string]*locationCoordinates, reporter jobevent.Reporter) (bool, error) {
+	if factumDevice.Latitude == nil || factumDevice.Longitude == nil {
+		return false, nil
+	}
+	name := librenmsLocationName(factumDevice, librenmsDevice)
+	if name == "" {
+		reporter.Emit(jobevent.Warning, "%s %s: has coordinates but no location; not sent to librenms", librenmsDevice.Display, librenmsDevice.Hostname)
+		return false, nil
+	}
+	choice := plan[name]
+	if choice == nil || choice.DeviceID != librenmsDevice.DeviceID {
+		return false, nil
+	}
+	if choice.Conflict && !choice.Warned {
+		choice.Warned = true
+		reporter.Emit(jobevent.Warning, "location %q has devices with different coordinates; using %s (%.6f, %.6f)", name, choice.Hostname, choice.Lat, choice.Lng)
+	}
+	wrote, err := fl.Librenms.LocationSetCoordinates(name, choice.Lat, choice.Lng)
+	if err != nil {
+		return false, err
+	}
+	if wrote {
+		reporter.Emit(jobevent.Info, "%s %s: location %q coordinates %.6f, %.6f", librenmsDevice.Display, librenmsDevice.Hostname, name, choice.Lat, choice.Lng)
+	}
+	return wrote, nil
+}
+
 func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	var err error
 	var librenms_create []*models.Device
@@ -560,6 +658,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		return err
 	}
 	updated := 0
+	coordPlan := planLocationCoordinates(librenmsDevices, stillPending, fl.getFactumDeviceForLibrenmsDevice)
 	for _, librenmsDevice := range librenmsDevices {
 		if _, quarantined := stillPending[librenmsDevice.DeviceID]; quarantined {
 			continue
@@ -628,11 +727,21 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 			updateData["override_sysLocation"] = "1"
 		}
 
+		changed := false
 		if len(updateData) > 0 {
 			if _, err := fl.Librenms.DeviceUpdate(librenmsDevice.DeviceID, updateData); err != nil {
 				reporter.Emit(jobevent.Warning, err.Error())
 				return err
 			}
+			changed = true
+		}
+
+		wrote, err := fl.syncDeviceCoordinates(librenmsDevice, factumDevice, coordPlan, reporter)
+		if err != nil {
+			reporter.Emit(jobevent.Warning, err.Error())
+			return err
+		}
+		if wrote || changed {
 			updated++
 		}
 
