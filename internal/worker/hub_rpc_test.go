@@ -118,8 +118,22 @@ func TestHandleHubRequestInFlightCapAnd429DoesNotIncrement(t *testing.T) {
 			t.Fatal("in-flight RPC did not finish")
 		}
 	}
-	if got := m.inFlightCount("n1"); got != 0 {
-		t.Fatalf("inFlight after drain = %d, want 0", got)
+	// The reply is queued before the defer drops the slot, so the receive
+	// can run first.
+	waitInFlight(t, m, "n1", 0)
+}
+
+func waitInFlight(t *testing.T, m *RemoteManager, node string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if m.inFlightCount(node) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("inFlight = %d, want %d", m.inFlightCount(node), want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
