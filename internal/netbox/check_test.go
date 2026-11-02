@@ -322,7 +322,10 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 	iface := fullRule()
 	iface.NetboxID = 8
 	iface.Name = "ifaces"
-	iface.ObjectTypes = []string{"dcim.interface", "ipam.ipaddress", "ipam.prefix", "dcim.cable", "dcim.site", "dcim.region", "dcim.location"}
+	iface.ObjectTypes = []string{
+		"dcim.interface", "virtualization.virtualmachine", "virtualization.vminterface",
+		"ipam.ipaddress", "ipam.prefix", "dcim.cable", "dcim.site", "dcim.region", "dcim.location",
+	}
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},
 		rules:  []*NBEventRule{device, iface},
@@ -556,6 +559,40 @@ func TestCheckDB_CreatesWebhookAndEventRule(t *testing.T) {
 	}
 	if !contains(api.createdRules[0].EventTypes, "object_deleted") {
 		t.Fatalf("event types = %v", api.createdRules[0].EventTypes)
+	}
+	for _, want := range []string{"virtualization.virtualmachine", "virtualization.vminterface"} {
+		if !contains(api.createdRules[0].ObjectTypes, want) {
+			t.Fatalf("object types = %v, want %s", api.createdRules[0].ObjectTypes, want)
+		}
+	}
+}
+
+func TestCheckDB_UpdateAddsVirtualMachineTypes(t *testing.T) {
+	rule := fullRule()
+	var types []string
+	for _, ot := range rule.ObjectTypes {
+		if ot == "virtualization.virtualmachine" || ot == "virtualization.vminterface" {
+			continue
+		}
+		types = append(types, ot)
+	}
+	rule.ObjectTypes = types
+	api := &fakeCheckAPI{
+		hooks:  []*NBWebhook{factumHook()},
+		rules:  []*NBEventRule{rule},
+		fields: allDeviceCFs(),
+	}
+	s := baseSettings()
+	if err := CheckDB(api, s, CheckOptions{}, jobevent.NewConsoleReporter(io.Discard)); err == nil {
+		t.Fatal("missing virtual machine object types must fail without --update")
+	}
+	if err := CheckDB(api, s, CheckOptions{Update: true}, jobevent.NewConsoleReporter(io.Discard)); err != nil {
+		t.Fatalf("should add virtual machine object types with --update: %v", err)
+	}
+	for _, want := range []string{"virtualization.virtualmachine", "virtualization.vminterface", "dcim.device"} {
+		if !contains(api.rules[0].ObjectTypes, want) {
+			t.Fatalf("object types = %v, want %s", api.rules[0].ObjectTypes, want)
+		}
 	}
 }
 

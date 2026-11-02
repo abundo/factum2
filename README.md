@@ -367,10 +367,13 @@ if that secret isn't set. Configure it in two places:
           cert reachable only internally.
     - **Operations → Event Rules → Add**:
         - Object types: DCIM → Device, DCIM → Interface, DCIM → Cable,
-          DCIM → Site, IPAM → IP Address, IPAM → Prefix
-        - Events: enable Creations, Updates and Deletions. Device/cable/site
-          deletions remove the matching factum row; interface/IP deletions
-          still resync the parent device.
+          DCIM → Site, DCIM → Region, DCIM → Location,
+          Virtualization → Virtual machine, Virtualization → Interface,
+          IPAM → IP Address, IPAM → Prefix
+        - Events: enable Creations, Updates and Deletions. Device, virtual
+          machine, cable, and site deletions remove the matching factum
+          row; interface and IP deletions still resync the parent device
+          or virtual machine.
         - Action type: Webhook, Action: the webhook created above.
     - NetBox's webhook edit page has a "Test" action that sends a real signed
       sample payload — useful for confirming the secret matches without
@@ -378,7 +381,8 @@ if that secret isn't set. Configure it in two places:
 
 `factum2-netbox check` reads the live NetBox extras API and verifies that
 setup: a webhook whose URL is `{PublicBaseURL}/api/netbox-webhook`, enabled
-event rules covering Device / Interface / IP Address / Prefix / Cable / Site
+event rules covering Device / Interface / Virtual machine / VM interface /
+IP Address / Prefix / Cable / Site / Region / Location
 create+update+delete,
 and reports the custom fields factum needs. Pass `--update` to create
 the factum webhook (`factum-sync` at `{PublicBaseURL}/api/netbox-webhook`)

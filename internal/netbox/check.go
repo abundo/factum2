@@ -23,6 +23,8 @@ var requiredWebhookEvents = []string{"object_created", "object_updated", "object
 var requiredWebhookObjectTypes = []string{
 	"dcim.device",
 	"dcim.interface",
+	"virtualization.virtualmachine",
+	"virtualization.vminterface",
 	"ipam.ipaddress",
 	"ipam.prefix",
 	"dcim.cable",

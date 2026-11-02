@@ -413,38 +413,41 @@ func validNetboxSignature(body []byte, signature, secret string) bool {
 	return subtle.ConstantTimeCompare([]byte(signature), []byte(expected)) == 1
 }
 
-// netboxWebhookDeviceName extracts the device name a webhook event applies
-// to, regardless of which of the three subscribed object types fired: a
-// dcim.device event carries it directly on Data; dcim.interface nests it
-// one level down under Data["device"] (InterfaceSerializer's nested
-// DeviceSerializer, which always includes "name"); ipam.ipaddress nests it
-// two levels down under Data["assigned_object"]["device"] (assigned_object
-// is Netbox's generic-FK nested serialization of whatever the address is
-// assigned to - typically an interface, which nests "device" the same way).
+// netboxWebhookDeviceName extracts the device or virtual-machine name a
+// webhook event applies to. A device or VM event carries it on Data.
+// An interface nests it under Data["device"] or Data["virtual_machine"].
+// An IP address nests it one level further, under Data["assigned_object"],
+// which is the interface the address is assigned to.
 func netboxWebhookDeviceName(objectType string, data map[string]any) string {
 	if objectType == "dcim.device" || objectType == "virtualization.virtualmachine" {
 		if name, ok := data["name"].(string); ok {
 			return name
 		}
 	}
-	if dev, ok := data["device"].(map[string]any); ok {
-		if name, ok := dev["name"].(string); ok {
-			return name
-		}
+	if name := nestedObjectName(data, "device"); name != "" {
+		return name
 	}
-	if vm, ok := data["virtual_machine"].(map[string]any); ok {
-		if name, ok := vm["name"].(string); ok {
-			return name
-		}
+	if name := nestedObjectName(data, "virtual_machine"); name != "" {
+		return name
 	}
 	if assignedObject, ok := data["assigned_object"].(map[string]any); ok {
-		if dev, ok := assignedObject["device"].(map[string]any); ok {
-			if name, ok := dev["name"].(string); ok {
-				return name
-			}
+		if name := nestedObjectName(assignedObject, "device"); name != "" {
+			return name
+		}
+		if name := nestedObjectName(assignedObject, "virtual_machine"); name != "" {
+			return name
 		}
 	}
 	return ""
+}
+
+func nestedObjectName(data map[string]any, key string) string {
+	obj, ok := data[key].(map[string]any)
+	if !ok {
+		return ""
+	}
+	name, _ := obj["name"].(string)
+	return name
 }
 
 // netboxWebhookObjectID reads Data["id"] from a default-template webhook

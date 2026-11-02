@@ -77,6 +77,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   stored as the string `"true"` or `"false"` to a JSON boolean. NetBox
   4.6 rejects any later save of that field until the default is a real
   boolean.
+- `factum2-netbox check --update` adds `virtualization.virtualmachine`
+  and `virtualization.vminterface` to the webhook event rule. An IP
+  address assigned to a VM interface queues the same delta as an address
+  on a device interface.
 
 ### Upgrading
 

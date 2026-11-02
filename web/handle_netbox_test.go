@@ -718,6 +718,70 @@ func TestApiNetboxWebhook_FullSyncWhenManyDevicesChange(t *testing.T) {
 	}
 }
 
+func TestApiNetboxWebhook_QueuesVirtualMachine(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = time.Hour
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	post := func(objectType string, data map[string]any) {
+		t.Helper()
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": objectType,
+			"data":        data,
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook %s: %v", objectType, err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook %s status = %d, want %d, body=%s", objectType, rec.Code, http.StatusAccepted, rec.Body.String())
+		}
+	}
+	post("virtualization.vminterface", map[string]any{
+		"id":              9,
+		"name":            "eth0",
+		"virtual_machine": map[string]any{"id": 4, "name": "vm1"},
+	})
+	post("ipam.ipaddress", map[string]any{
+		"id":      15,
+		"address": "10.0.0.8/24",
+		"assigned_object": map[string]any{
+			"id":              9,
+			"name":            "eth0",
+			"virtual_machine": map[string]any{"id": 4, "name": "vm1"},
+		},
+	})
+
+	ctrl.netboxDeviceSyncDebounce.mu.Lock()
+	_, queued := ctrl.netboxDeviceSyncDebounce.pending["vm1"]
+	ctrl.netboxDeviceSyncDebounce.mu.Unlock()
+	if !queued {
+		t.Fatal("vm1 was not queued")
+	}
+}
+
+func TestNetboxWebhookDeviceName(t *testing.T) {
+	vm := map[string]any{"id": float64(4), "name": "vm1"}
+	if got := netboxWebhookDeviceName("virtualization.virtualmachine", map[string]any{"name": "vm1"}); got != "vm1" {
+		t.Fatalf("vm name = %q", got)
+	}
+	if got := netboxWebhookDeviceName("virtualization.vminterface", map[string]any{"virtual_machine": vm}); got != "vm1" {
+		t.Fatalf("vminterface name = %q", got)
+	}
+	if got := netboxWebhookDeviceName("ipam.ipaddress", map[string]any{
+		"assigned_object": map[string]any{"virtual_machine": vm},
+	}); got != "vm1" {
+		t.Fatalf("address on vminterface name = %q", got)
+	}
+	if got := netboxWebhookDeviceName("ipam.ipaddress", map[string]any{
+		"assigned_object": map[string]any{"device": map[string]any{"name": "sw1"}},
+	}); got != "sw1" {
+		t.Fatalf("address on interface name = %q", got)
+	}
+}
+
 func TestNetboxWebhookObjectID(t *testing.T) {
 	cases := []struct {
 		name string
