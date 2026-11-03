@@ -2,9 +2,7 @@ package util
 
 import (
 	"fmt"
-	"log"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/abundo/factum2/internal/cfgmgmt"
@@ -12,7 +10,6 @@ import (
 	"github.com/abundo/factum2/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // ConnectDatabase opens Postgres and does not apply schema migrations.
@@ -31,12 +28,10 @@ func ConnectDatabase(config *ConfigDB) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(dns), &gorm.Config{
 		// cfgmgmt.Seed uses First() then Create(); GORM otherwise logs every
 		// miss as "record not found" during migrate on an empty database.
-		Logger: logger.New(log.New(os.Stdout, "\n", log.LstdFlags), logger.Config{
-			SlowThreshold:             200 * time.Millisecond,
-			LogLevel:                  logger.Warn,
-			IgnoreRecordNotFoundError: true,
-			Colorful:                  true,
-		}),
+		// Slow queries go to slog.Debug so a full-table read that only just
+		// crosses 200ms (the interface load in BECS sync) does not land on
+		// stdout, where the worker would forward it into the GUI log as INFO.
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, err
