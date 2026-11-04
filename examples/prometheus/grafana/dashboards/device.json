@@ -1729,6 +1729,14 @@
       "title": "Port list",
       "transformations": [
         {
+          "id": "filterFieldsByName",
+          "options": {
+            "exclude": {
+              "pattern": "/^(Time|__name__|job|instance|device|site|manufacturer|model|platform|role|auth|module|vm)$/"
+            }
+          }
+        },
+        {
           "id": "merge",
           "options": {}
         },
