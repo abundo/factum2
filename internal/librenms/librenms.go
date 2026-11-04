@@ -839,6 +839,46 @@ func (librenms *LibrenmsClient) LocationSetCoordinates(locationName string, lat,
 	return false, nil
 }
 
+// LocationInsertCoordinates creates a LibreNMS location that already has
+// its pin, with fixed_coordinates set. Sync uses it for a coordinate
+// location that does not exist yet. A duplicate name falls through to
+// LocationSetCoordinates.
+func (librenms *LibrenmsClient) LocationInsertCoordinates(locationName string, lat, lng float64) (bool, error) {
+	if err := librenms.connectDB(); err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	result, err := librenms.DB.ExecContext(ctx,
+		"INSERT INTO locations (location, lat, lng, fixed_coordinates) VALUES (?, ?, ?, 1)",
+		locationName, lat, lng)
+	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+			return librenms.LocationSetCoordinates(locationName, lat, lng)
+		}
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+// DeviceAssignLocation points a device at a location that already exists
+// and keeps polling from replacing it with sysLocation. The coordinate
+// location is created directly in the database, so the device is linked
+// the same way instead of relying on the location field of the device API.
+func (librenms *LibrenmsClient) DeviceAssignLocation(deviceID int, locationName string) error {
+	if err := librenms.connectDB(); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	_, err := librenms.DB.ExecContext(ctx,
+		"UPDATE devices SET location_id = (SELECT id FROM locations WHERE location = ?), `override_sysLocation` = 1 WHERE device_id = ?",
+		locationName, deviceID)
+	return err
+}
+
 // Update location, location: name or id of the location to edit
 // https://docs.librenms.org/API/Locations/#edit_location
 // curl -X PATCH -d '{"lng":"100.0862462"}' -H 'X-Auth-Token:YOUR-API-TOKEN' https://foo.example/api/v0/locations/Google

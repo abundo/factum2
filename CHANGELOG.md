@@ -25,8 +25,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   LibreNMS location and sets `fixed_coordinates`, so polling does not
   geocode over them. The location is the Factum location custom field,
   or the device's current LibreNMS location when that field is empty.
-  Devices that share a location and disagree keep the coordinates of
-  the lowest LibreNMS device id.
+  A device with coordinates and no location is placed at
+  `location <lat,lng>`, which is created when it does not already
+  exist. Devices that share a location and disagree keep the
+  coordinates of the lowest LibreNMS device id.
 - NetBox sync copies every IPAM prefix after VRFs, into one namespace
   named Netbox. The same prefix may exist in the global table and in a
   VRF, and in more than one VRF. Unique IP Space still allows only one

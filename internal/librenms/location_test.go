@@ -27,7 +27,7 @@ func TestPlanLocationCoordinates(t *testing.T) {
 	d := &models.Device{LibrenmsID: 4, CfLocation: "STO", Latitude: f64(59.4), Longitude: f64(18.1)}
 	// No custom location: keep the LibreNMS location name.
 	e := &models.Device{LibrenmsID: 5, Latitude: f64(65.0), Longitude: f64(22.0)}
-	// Coordinates with no location name anywhere are not planned.
+	// Coordinates and no location name: a coordinate location.
 	f := &models.Device{LibrenmsID: 6, Latitude: f64(1), Longitude: f64(2)}
 	// Destination points at a different LibreNMS device.
 	g := &models.Device{LibrenmsID: 99, CfLocation: "STO", Latitude: f64(1), Longitude: f64(2)}
@@ -61,8 +61,37 @@ func TestPlanLocationCoordinates(t *testing.T) {
 	if _, ok := plan[""]; ok {
 		t.Fatal("empty location was planned")
 	}
-	if len(plan) != 2 {
-		t.Fatalf("plan = %d locations, want 2", len(plan))
+	dummy := plan[coordinateLocationName(1, 2)]
+	if dummy == nil || dummy.DeviceID != 6 || dummy.Conflict {
+		t.Fatalf("coordinate location = %+v", dummy)
+	}
+	if len(plan) != 3 {
+		t.Fatalf("plan = %d locations, want 3", len(plan))
+	}
+}
+
+func TestLibrenmsLocationName(t *testing.T) {
+	d := &models.Device{Latitude: f64(59.329324), Longitude: f64(18.068581)}
+	nms := &LibrenmsDevice{}
+	if got := librenmsLocationName(d, nms); got != "location <59.329324,18.068581>" {
+		t.Fatalf("no location: %q", got)
+	}
+	nms.Location = "STO"
+	if got := librenmsLocationName(d, nms); got != "STO" {
+		t.Fatalf("existing location: %q", got)
+	}
+	d.CfLocation = "Lab"
+	if got := librenmsLocationName(d, nms); got != "Lab" {
+		t.Fatalf("custom location: %q", got)
+	}
+	d.CfLocation = ""
+	nms.Location = "location <1.000000,2.000000>"
+	if got := librenmsLocationName(d, nms); got != "location <59.329324,18.068581>" {
+		t.Fatalf("moved coordinate location: %q", got)
+	}
+	d.Latitude, d.Longitude = nil, nil
+	if got := librenmsLocationName(d, nms); got != nms.Location {
+		t.Fatalf("coordinate location without coordinates: %q", got)
 	}
 }
 
@@ -133,9 +162,19 @@ func TestSyncDeviceCoordinates(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`CREATE TABLE devices (
+		device_id integer primary key,
+		location_id integer,
+		override_sysLocation integer
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO locations (id, location, lat, lng, fixed_coordinates) VALUES
 		(1, 'STO', 0, 0, 0),
 		(2, 'LULEA', 65, 22, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO devices (device_id, location_id, override_sysLocation) VALUES (6, NULL, 0)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,10 +218,29 @@ func TestSyncDeviceCoordinates(t *testing.T) {
 		t.Fatalf("matching location wrote=%v err=%v", wrote, err)
 	}
 	wrote, err = fl.syncDeviceCoordinates(nowhere, factum[3], plan, rep)
-	if err != nil || wrote {
+	if err != nil || !wrote {
 		t.Fatalf("no location wrote=%v err=%v", wrote, err)
 	}
-	if !strings.Contains(buf.String(), "no location") {
+	dummyName := coordinateLocationName(1, 2)
+	if !strings.Contains(buf.String(), dummyName) {
 		t.Fatalf("log = %q", buf.String())
+	}
+	var dummyLat, dummyLng float64
+	if err := db.QueryRow(`SELECT lat, lng, fixed_coordinates FROM locations WHERE location = ?`, dummyName).Scan(&dummyLat, &dummyLng, &fixed); err != nil {
+		t.Fatal(err)
+	}
+	if !coordsClose(dummyLat, dummyLng, 1, 2) || fixed != 1 {
+		t.Fatalf("dummy lat=%v lng=%v fixed=%d", dummyLat, dummyLng, fixed)
+	}
+	var locationID, override int
+	if err := db.QueryRow(`SELECT location_id, override_sysLocation FROM devices WHERE device_id = 6`).Scan(&locationID, &override); err != nil {
+		t.Fatal(err)
+	}
+	if locationID == 0 || override != 1 {
+		t.Fatalf("device location_id=%d override=%d", locationID, override)
+	}
+	wrote, err = fl.syncDeviceCoordinates(nowhere, factum[3], plan, rep)
+	if err != nil || wrote {
+		t.Fatalf("dummy unchanged wrote=%v err=%v", wrote, err)
 	}
 }

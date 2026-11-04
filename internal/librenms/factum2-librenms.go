@@ -16,7 +16,7 @@ package librenms
 // - device
 //     enabled flag
 //     display name
-//     location name
+//     location name (Factum location, or location <lat,lng> when none)
 //     location coordinates (Factum latitude/longitude)
 //     parents
 // - device interfaces
@@ -394,12 +394,34 @@ type locationCoordinates struct {
 	Warned   bool
 }
 
+// coordinateLocationName is the LibreNMS location for a device that has
+// coordinates and no location name. The same coordinates share one
+// location, so they share one pin. Six decimal places is about 0.1 m.
+func coordinateLocationName(lat, lng float64) string {
+	return fmt.Sprintf("location <%.6f,%.6f>", lat, lng)
+}
+
+// isCoordinateLocation reports whether name is one of these coordinate
+// locations, so a later coordinate change can move the device to the
+// location named for the new coordinates.
+func isCoordinateLocation(name string) bool {
+	return strings.HasPrefix(name, "location <") && strings.HasSuffix(name, ">") && strings.Contains(name, ",")
+}
+
 // librenmsLocationName is the LibreNMS location this device maps to.
 // The Factum location custom field wins. Otherwise the device keeps the
-// location LibreNMS already has.
+// location LibreNMS already has. Coordinates with no location use
+// coordinateLocationName, including when the current location is itself
+// one of those coordinate locations.
 func librenmsLocationName(factumDevice *models.Device, librenmsDevice *LibrenmsDevice) string {
 	if factumDevice.CfLocation != "" {
 		return factumDevice.CfLocation
+	}
+	if librenmsDevice.Location != "" && !isCoordinateLocation(librenmsDevice.Location) {
+		return librenmsDevice.Location
+	}
+	if factumDevice.Latitude != nil && factumDevice.Longitude != nil {
+		return coordinateLocationName(*factumDevice.Latitude, *factumDevice.Longitude)
 	}
 	return librenmsDevice.Location
 }
@@ -450,16 +472,35 @@ func planLocationCoordinates(devices []*LibrenmsDevice, skip map[int]struct{}, f
 // syncDeviceCoordinates writes this device's Factum coordinates onto its
 // LibreNMS location. LibreNMS stores the pin on the location, so devices
 // that share a location share one pin. The plan's device performs the
-// write. A device with coordinates and no location name is reported and
-// skipped.
+// write. A device with coordinates and no location is placed at
+// coordinateLocationName. That location is created when it is missing,
+// and the device is linked to it.
 func (fl *FactumLibrenmsClient) syncDeviceCoordinates(librenmsDevice *LibrenmsDevice, factumDevice *models.Device, plan map[string]*locationCoordinates, reporter jobevent.Reporter) (bool, error) {
 	if factumDevice.Latitude == nil || factumDevice.Longitude == nil {
 		return false, nil
 	}
 	name := librenmsLocationName(factumDevice, librenmsDevice)
 	if name == "" {
-		reporter.Emit(jobevent.Warning, "%s %s: has coordinates but no location; not sent to librenms", librenmsDevice.Display, librenmsDevice.Hostname)
 		return false, nil
+	}
+	// A coordinate location is this device's own pin, so each device
+	// writes it and is linked to it. Devices at the same coordinates
+	// share the name. The first one creates the row.
+	if isCoordinateLocation(name) {
+		wrote, err := fl.Librenms.LocationSetCoordinates(name, *factumDevice.Latitude, *factumDevice.Longitude)
+		if err != nil && strings.Contains(err.Error(), "not found") {
+			wrote, err = fl.Librenms.LocationInsertCoordinates(name, *factumDevice.Latitude, *factumDevice.Longitude)
+		}
+		if err != nil {
+			return false, err
+		}
+		if err := fl.Librenms.DeviceAssignLocation(librenmsDevice.DeviceID, name); err != nil {
+			return false, err
+		}
+		if wrote {
+			reporter.Emit(jobevent.Info, "%s %s: location %q coordinates %.6f, %.6f", librenmsDevice.Display, librenmsDevice.Hostname, name, *factumDevice.Latitude, *factumDevice.Longitude)
+		}
+		return wrote, nil
 	}
 	choice := plan[name]
 	if choice == nil || choice.DeviceID != librenmsDevice.DeviceID {
@@ -721,9 +762,9 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 			updateData["display_template"] = display
 		}
 
-		if factumDevice.CfLocation != "" && factumDevice.CfLocation != librenmsDevice.Location {
-			reporter.Emit(jobevent.Info, "%s %s: location change from %q to %q", librenmsDevice.Display, librenmsDevice.Hostname, librenmsDevice.Location, factumDevice.CfLocation)
-			updateData["location"] = factumDevice.CfLocation
+		if name := librenmsLocationName(factumDevice, librenmsDevice); name != "" && name != librenmsDevice.Location {
+			reporter.Emit(jobevent.Info, "%s %s: location change from %q to %q", librenmsDevice.Display, librenmsDevice.Hostname, librenmsDevice.Location, name)
+			updateData["location"] = name
 			updateData["override_sysLocation"] = "1"
 		}
 
