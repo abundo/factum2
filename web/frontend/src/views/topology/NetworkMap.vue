@@ -80,6 +80,9 @@ const rawServiceLinks = ref([])
 const rawSites = ref([])
 const activeRoles = ref(new Set())
 const opticalOnly = ref(false)
+// Capacity (CN/CI) arcs are off until the operator turns them on. They are
+// a separate service layer and otherwise cover the cable and optical lines.
+const showCapacity = ref(false)
 
 const availableRoles = computed(() =>
   [...new Set(rawDevices.value.map((d) => d.role || 'Unassigned'))].sort(),
@@ -532,8 +535,11 @@ function rebuild() {
   const laidOutSites = layoutSites(
     rawSites.value.filter((s) => s.latitude != null && s.longitude != null),
   )
+  const serviceLinks = showCapacity.value
+    ? rawServiceLinks.value
+    : rawServiceLinks.value.filter((l) => l.kind !== 'capacity')
   overlay?.setProps({
-    layers: buildLayers(laidOutDevices, rawEdges.value, rawServiceLinks.value, laidOutSites),
+    layers: buildLayers(laidOutDevices, rawEdges.value, serviceLinks, laidOutSites),
   })
   return { devices: laidOutDevices, sites: laidOutSites }
 }
@@ -554,6 +560,11 @@ function showAllRoles() {
 
 function toggleOpticalOnly() {
   opticalOnly.value = !opticalOnly.value
+  rebuild()
+}
+
+function toggleCapacity() {
+  showCapacity.value = !showCapacity.value
   rebuild()
 }
 
@@ -1081,6 +1092,14 @@ onBeforeUnmount(() => {
         color="primary"
         :variant="opticalOnly ? 'solid' : 'outline'"
         @click="toggleOpticalOnly"
+      />
+      <UButton
+        v-if="availableRoles.length"
+        label="Capacity (CN/CI)"
+        size="xs"
+        color="primary"
+        :variant="showCapacity ? 'solid' : 'outline'"
+        @click="toggleCapacity"
       />
       <UButton
         v-for="role in availableRoles"
