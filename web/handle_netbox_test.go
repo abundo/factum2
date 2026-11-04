@@ -279,7 +279,7 @@ func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	}
 }
 
-func TestApiNetboxWebhook_LogsQueuedToHub(t *testing.T) {
+func TestApiNetboxWebhook_QuietUntilDelta(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)
 	hub := NewLogHub()
@@ -310,18 +310,14 @@ func TestApiNetboxWebhook_LogsQueuedToHub(t *testing.T) {
 
 	_, history, unsub := hub.Subscribe()
 	t.Cleanup(unsub)
-	var queued int
 	for _, e := range history {
-		if e.Message == "Netbox webhook sync: device sw1 queued" && e.Source == "netbox" {
-			queued++
+		if e.Source == "netbox" {
+			t.Fatalf("webhook logged before the quiet window: %+v", e)
 		}
-	}
-	if queued != 1 {
-		t.Fatalf("queued log count = %d, want 1 (one line per burst), history=%v", queued, history)
 	}
 }
 
-func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
+func TestApiNetboxWebhook_NoChangesIsOneLine(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)
 	hub := NewLogHub()
@@ -332,6 +328,7 @@ func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
 	orig := netboxSyncDelta
 	netboxSyncDelta = func(_ *gorm.DB, reporter jobevent.Reporter) error {
 		reporter.Emit(jobevent.Info, "Netbox delta sync started")
+		reporter.Emit(jobevent.Info, "Netbox delta sync: no changes")
 		return nil
 	}
 	t.Cleanup(func() { netboxSyncDelta = orig })
@@ -340,41 +337,151 @@ func TestApiNetboxWebhook_LogsSyncStartAndSummaryToHub(t *testing.T) {
 	ctrl.netboxDeviceSyncDebounce.delay = 20 * time.Millisecond
 	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
 
-	c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
-		"event":       "updated",
-		"object_type": "dcim.device",
-		"data":        map[string]any{"id": 1, "name": "sw1"},
-	})
-	if err := ctrl.ApiNetboxWebhook(c); err != nil {
-		t.Fatalf("webhook: %v", err)
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	for _, name := range []string{"sw1", "sw2"} {
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.device",
+			"data":        map[string]any{"id": 1, "name": name},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook: %v", err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
 	}
 
 	deadline := time.Now().Add(300 * time.Millisecond)
-	var started, summary bool
 	for time.Now().Before(deadline) {
 		_, history, unsub := hub.Subscribe()
 		unsub()
-		started, summary = false, false
+		var lines []LogEvent
 		for _, e := range history {
-			if e.Source != "netbox" {
-				continue
-			}
-			if e.Message == "Netbox webhook sync: 1 queued, running delta sync" {
-				started = true
-			}
-			if e.Message == "Netbox delta sync started" {
-				summary = true
+			if e.Source == "netbox" {
+				lines = append(lines, e)
 			}
 		}
-		if started && summary {
-			return
+		if len(lines) == 0 {
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
-		time.Sleep(10 * time.Millisecond)
+		if len(lines) != 1 {
+			t.Fatalf("GUI log lines = %d, want 1: %+v", len(lines), lines)
+		}
+		got := lines[0]
+		if got.Message != "Netbox webhook sync: device sw1, device sw2, no changes" {
+			t.Fatalf("message = %q", got.Message)
+		}
+		if got.Level != "INFO" || got.Attrs["queued"] != "2" {
+			t.Fatalf("line = %+v", got)
+		}
+		return
 	}
-	t.Fatalf("missing GUI logs: started=%v summary=%v", started, summary)
+	t.Fatalf("missing GUI log")
+}
+
+func TestApiNetboxWebhook_ChangeAndErrorStayInTheLog(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+
+	orig := netboxSyncDelta
+	t.Cleanup(func() { netboxSyncDelta = orig })
+
+	run := func(t *testing.T, want int, sync func(*gorm.DB, jobevent.Reporter) error) []LogEvent {
+		t.Helper()
+		hub := NewLogHub()
+		prev := slog.Default()
+		slog.SetDefault(slog.New(newHubHandler(slog.NewTextHandler(io.Discard, nil), hub)))
+		t.Cleanup(func() { slog.SetDefault(prev) })
+		netboxSyncDelta = sync
+
+		ctrl := &Controller{DB: db, LogHub: hub}
+		ctrl.netboxDeviceSyncDebounce.delay = 15 * time.Millisecond
+		t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": "dcim.device",
+			"data":        map[string]any{"id": 1, "name": "sw1"},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook: %v", err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+
+		deadline := time.Now().Add(300 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			_, history, unsub := hub.Subscribe()
+			unsub()
+			var lines []LogEvent
+			for _, e := range history {
+				if e.Source == "netbox" {
+					lines = append(lines, e)
+				}
+			}
+			if len(lines) >= want {
+				return lines
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("missing GUI log")
+		return nil
+	}
+
+	t.Run("change", func(t *testing.T) {
+		lines := run(t, 2, func(_ *gorm.DB, reporter jobevent.Reporter) error {
+			reporter.Emit(jobevent.Info, "Netbox delta sync started")
+			reporter.Emit(jobevent.Info, "Netbox delta sync: %d new, %d updated, %d deleted", 0, 1, 0)
+			reporter.Emit(jobevent.Info, "Netbox delta sync: cursor %s", "2026-11-04T13:50:24Z")
+			return nil
+		})
+		if len(lines) != 2 {
+			t.Fatalf("lines = %+v", lines)
+		}
+		if lines[0].Message != "Netbox delta sync: 0 new, 1 updated, 0 deleted" {
+			t.Fatalf("first = %q", lines[0].Message)
+		}
+		if lines[0].Attrs["device"] != "sw1" {
+			t.Fatalf("device attr = %q", lines[0].Attrs["device"])
+		}
+		if lines[1].Message != "Netbox delta sync: cursor 2026-11-04T13:50:24Z" {
+			t.Fatalf("second = %q", lines[1].Message)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		lines := run(t, 1, func(_ *gorm.DB, reporter jobevent.Reporter) error {
+			reporter.Emit(jobevent.Info, "Netbox delta sync started")
+			err := fmt.Errorf("changelog down")
+			reporter.EmitErr(err)
+			return err
+		})
+		if len(lines) != 1 || lines[0].Message != "changelog down" || lines[0].Level != "ERROR" {
+			t.Fatalf("lines = %+v", lines)
+		}
+	})
+}
+
+func TestWebhookKeyPhrase(t *testing.T) {
+	cases := map[string]string{
+		"al11-ce2":    "device al11-ce2",
+		"cable:12":    "cable 12",
+		"dcim.rack":   "dcim.rack",
+		"dcim.site:5": "dcim.site 5",
+	}
+	for key, want := range cases {
+		if got := webhookKeyPhrase(key); got != want {
+			t.Errorf("webhookKeyPhrase(%q) = %q, want %q", key, got, want)
+		}
+	}
+	keys := []string{"a", "b", "c", "d", "e", "f", "g"}
+	got := webhookNoChangePhrase(keys)
+	want := "device a, device b, device c, device d, device e, and 2 more"
+	if got != want {
+		t.Fatalf("phrase = %q, want %q", got, want)
+	}
 }
 
 func TestNetboxWebhookDebouncer_CoalescesAcrossDevices(t *testing.T) {

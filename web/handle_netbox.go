@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,8 +300,9 @@ func (ctrl *Controller) netboxWebhookSyncDevice(c *echo.Context, payload NetboxW
 }
 
 // netboxWebhookQueueDelta arms the shared quiet window. logName is the
-// GUI log phrase ("device sw1", "dcim.cable"). key is the debounce set
-// member so a repeated event for the same object only logs once.
+// debug phrase ("device sw1", "cable 12"). key is the debounce set
+// member so a repeated event for the same object is one entry. The GUI
+// log stays quiet until the delta finishes.
 func (ctrl *Controller) netboxWebhookQueueDelta(c *echo.Context, key, logName string) error {
 	if key == "" {
 		key = "delta"
@@ -310,21 +312,109 @@ func (ctrl *Controller) netboxWebhookQueueDelta(c *echo.Context, key, logName st
 	// one delta sync reads the changelog.
 	fresh := ctrl.netboxDeviceSyncDebounce.schedule(key, ctrl.netboxWebhookSyncQueued)
 	if fresh {
-		slog.Info("Netbox webhook sync: "+logName+" queued", "source", "netbox", "device", key)
+		slog.Debug("Netbox webhook sync: "+logName+" queued", "source", "netbox", "device", key)
 	}
 	return c.JSON(http.StatusAccepted, map[string]any{"status": "queued"})
 }
 
 // netboxWebhookSyncQueued runs one delta sync for the quiet window.
+// A run that changes nothing is one INFO line. A change, a full-sync
+// fallback, or an error keeps the lines the delta reporter emits.
 func (ctrl *Controller) netboxWebhookSyncQueued(names []string) {
 	if len(names) == 0 {
 		return
 	}
-	slog.Info(fmt.Sprintf("Netbox webhook sync: %d queued, running delta sync", len(names)),
-		"source", "netbox", "queued", len(names))
-	if err := netboxSyncDelta(ctrl.DB, jobevent.NewSlogReporter("source", "netbox")); err != nil {
-		slog.Error("netbox webhook sync", "err", err)
+	attrs := webhookSyncAttrs(names)
+	rep := &webhookDeltaLog{inner: jobevent.NewSlogReporter(attrs...)}
+	err := netboxSyncDelta(ctrl.DB, rep)
+	if err != nil {
+		if !rep.failed {
+			slog.Error("netbox webhook sync", append(attrs, "err", err)...)
+		}
+		return
 	}
+	if rep.quiet || !rep.detail {
+		slog.Info("Netbox webhook sync: "+webhookNoChangePhrase(names)+", no changes", attrs...)
+	}
+}
+
+// webhookDeltaLog forwards delta progress to the GUI log, except the
+// routine "started" and "no changes" lines. Those two, with the webhook
+// queue lines, were four INFO rows for a sync that did nothing.
+type webhookDeltaLog struct {
+	inner  jobevent.Reporter
+	quiet  bool
+	detail bool
+	failed bool
+}
+
+func (r *webhookDeltaLog) Emit(level jobevent.Level, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if level == jobevent.Info && msg == "Netbox delta sync started" {
+		return
+	}
+	if level == jobevent.Info && msg == "Netbox delta sync: no changes" {
+		if !r.detail && !r.failed {
+			r.quiet = true
+		}
+		return
+	}
+	r.quiet = false
+	r.detail = true
+	if level == jobevent.Error {
+		r.failed = true
+	}
+	r.inner.Emit(level, "%s", msg)
+}
+
+func (r *webhookDeltaLog) EmitErr(err error) {
+	if err == nil {
+		return
+	}
+	r.quiet = false
+	r.failed = true
+	r.detail = true
+	r.inner.EmitErr(err)
+}
+
+func webhookSyncAttrs(names []string) []any {
+	attrs := []any{"source", "netbox"}
+	if len(names) == 1 {
+		return append(attrs, "device", names[0])
+	}
+	return append(attrs, "queued", len(names))
+}
+
+// webhookNoChangePhrase names what the quiet window collected. Device
+// keys are bare names; cables and other objects keep their type.
+func webhookNoChangePhrase(keys []string) string {
+	const maxShow = 5
+	n := len(keys)
+	if n > maxShow {
+		n = maxShow
+	}
+	parts := make([]string, n)
+	for i := 0; i < n; i++ {
+		parts[i] = webhookKeyPhrase(keys[i])
+	}
+	phrase := strings.Join(parts, ", ")
+	if extra := len(keys) - n; extra > 0 {
+		phrase += fmt.Sprintf(", and %d more", extra)
+	}
+	return phrase
+}
+
+func webhookKeyPhrase(key string) string {
+	if rest, ok := strings.CutPrefix(key, "cable:"); ok {
+		return "cable " + rest
+	}
+	if typ, id, ok := strings.Cut(key, ":"); ok && strings.Contains(typ, ".") {
+		return typ + " " + id
+	}
+	if strings.Contains(key, ".") {
+		return key
+	}
+	return "device " + key
 }
 
 // netboxWebhookDeleteDevice applies a dcim.device "deleted" event: Netbox

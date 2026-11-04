@@ -52,6 +52,10 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   Workers tabs.
 - Change password is its own page.
 - A Lime delivery address is one line: street, zip, and city.
+- A NetBox webhook that finds nothing to apply writes one GUI log line.
+  The queue, "delta sync started", and "no changes" lines stay out of
+  that log. A change, a full-sync fallback, or a failure still logs
+  what the delta did.
 - Forms keep one Save button beside the page title.
 - Network map lines stay on the device when the map is zoomed in.
 - LibreNMS port updates name the device as `display/hostname` before
