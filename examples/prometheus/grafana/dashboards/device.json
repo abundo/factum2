@@ -68,7 +68,7 @@
           "editorMode": "code",
           "expr": "up{job=\"snmp\", device=\"$device\"}",
           "instant": true,
-          "legendFormat": "Address",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],
@@ -98,10 +98,10 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^instance$/",
+          "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "name"
       }
     },
     {
@@ -128,7 +128,7 @@
           "editorMode": "code",
           "expr": "up{job=\"snmp\", device=\"$device\"}",
           "instant": true,
-          "legendFormat": "Site",
+          "legendFormat": "{{site}}",
           "refId": "A"
         }
       ],
@@ -158,10 +158,10 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^site$/",
+          "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "name"
       }
     },
     {
@@ -188,7 +188,7 @@
           "editorMode": "code",
           "expr": "up{job=\"snmp\", device=\"$device\"}",
           "instant": true,
-          "legendFormat": "Hardware",
+          "legendFormat": "{{model}}",
           "refId": "A"
         }
       ],
@@ -218,10 +218,10 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^model$/",
+          "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "name"
       }
     },
     {
@@ -248,7 +248,7 @@
           "editorMode": "code",
           "expr": "up{job=\"snmp\", device=\"$device\"}",
           "instant": true,
-          "legendFormat": "OS",
+          "legendFormat": "{{platform}}",
           "refId": "A"
         }
       ],
@@ -278,10 +278,10 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^platform$/",
+          "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "name"
       }
     },
     {
@@ -308,7 +308,7 @@
           "editorMode": "code",
           "expr": "sysDescr{job=\"snmp\", device=\"$device\"}",
           "instant": true,
-          "legendFormat": "sysDescr",
+          "legendFormat": "{{sysDescr}}",
           "refId": "A"
         }
       ],
@@ -338,10 +338,10 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^sysDescr$/",
+          "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "name"
       }
     },
     {
