@@ -1,7 +1,13 @@
 <script setup>
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import { ArcLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
-import { Map as MaplibreMap, NavigationControl, setWorkerUrl } from 'maplibre-gl'
+import {
+  FullscreenControl,
+  Map as MaplibreMap,
+  Marker,
+  NavigationControl,
+  setWorkerUrl,
+} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useToast } from '@nuxt/ui/composables'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -11,6 +17,7 @@ import {
   getTopology,
   getTopologyDevices,
   reverseGeocode,
+  searchPlaces,
 } from '@/api/topology'
 import { useAuthStore } from '@/stores/auth'
 import SiteAssignPanel from './SiteAssignPanel.vue'
@@ -68,6 +75,22 @@ const pickedAddress = ref('')
 const pickedAddressLoading = ref(false)
 const assignSaving = ref(false)
 let geocodeGen = 0
+
+// Place search (streets, cities) goes through Nominatim. Debounce so a
+// burst of keystrokes is one request; the server also paces to one call
+// per second.
+const PLACE_SEARCH_MS = 500
+const placeQuery = ref('')
+const placeHits = ref([])
+const placeLoading = ref(false)
+const placeOpen = ref(false)
+const placeEmpty = ref(false)
+const placeHighlight = ref(0)
+let placeTimer = null
+let placeAbort = null
+let placeGen = 0
+let suppressPlaceSearch = false
+let placeMarker = null
 
 // Raw API response, kept around unfiltered so toggling a role filter never
 // needs to re-fetch - only rebuild() below, which re-derives the laid-out
@@ -670,6 +693,168 @@ function clearPickedAddress() {
   pickedAddressLoading.value = false
 }
 
+function mapViewbox() {
+  if (!map) return ''
+  try {
+    const b = map.getBounds()
+    return [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].map((n) => n.toFixed(5)).join(',')
+  } catch {
+    return ''
+  }
+}
+
+function clearPlaceMarker() {
+  placeMarker?.remove()
+  placeMarker = null
+}
+
+function showPlaceMarker(lng, lat) {
+  if (!map || !Number.isFinite(lng) || !Number.isFinite(lat)) return
+  clearPlaceMarker()
+  placeMarker = new Marker({ color: '#0369a1' }).setLngLat([lng, lat]).addTo(map)
+}
+
+function placeSubtitle(hit) {
+  const label = hit?.label || ''
+  const name = hit?.name || ''
+  if (name && label.toLowerCase().startsWith(name.toLowerCase())) {
+    return label.slice(name.length).replace(/^,\s*/, '')
+  }
+  return label === name ? '' : label
+}
+
+function runPlaceSearch() {
+  const q = placeQuery.value.trim()
+  if (placeAbort) placeAbort.abort()
+  placeAbort = null
+  if ([...q].length < 2) {
+    placeHits.value = []
+    placeEmpty.value = false
+    placeLoading.value = false
+    placeOpen.value = false
+    return
+  }
+  const gen = ++placeGen
+  const ac = new AbortController()
+  placeAbort = ac
+  placeHits.value = []
+  placeOpen.value = false
+  placeLoading.value = true
+  searchPlaces(q, mapViewbox(), { signal: ac.signal })
+    .then((data) => {
+      if (gen !== placeGen) return
+      placeHits.value = Array.isArray(data) ? data : []
+      placeHighlight.value = 0
+      placeEmpty.value = placeHits.value.length === 0
+      placeOpen.value = true
+    })
+    .catch((err) => {
+      if (gen !== placeGen || err?.code === 'ERR_CANCELED') return
+      placeHits.value = []
+      placeEmpty.value = false
+      placeOpen.value = false
+      toast.add({
+        color: 'error',
+        title: 'Place search failed',
+        description: err.response?.data?.error ?? err.message ?? 'Request failed.',
+        duration: 4000,
+      })
+    })
+    .finally(() => {
+      if (gen === placeGen) placeLoading.value = false
+    })
+}
+
+function schedulePlaceSearch() {
+  if (placeTimer) clearTimeout(placeTimer)
+  placeTimer = setTimeout(() => {
+    placeTimer = null
+    runPlaceSearch()
+  }, PLACE_SEARCH_MS)
+}
+
+function pinPlaceQuery(next) {
+  if (placeQuery.value === next) return
+  suppressPlaceSearch = true
+  placeQuery.value = next
+}
+
+function choosePlace(hit) {
+  if (!hit || !map) return
+  const [west, south, east, north] = hit.bbox ?? []
+  const boxOk =
+    [west, south, east, north].every((n) => Number.isFinite(n)) && east > west && north > south
+  if (boxOk) {
+    map.fitBounds(
+      [
+        [west, south],
+        [east, north],
+      ],
+      { padding: 48, maxZoom: 17, duration: 700 },
+    )
+  } else if (Number.isFinite(hit.lng) && Number.isFinite(hit.lat)) {
+    map.flyTo({ center: [hit.lng, hit.lat], zoom: 16, duration: 700 })
+  }
+  showPlaceMarker(hit.lng, hit.lat)
+  if (placeTimer) clearTimeout(placeTimer)
+  placeTimer = null
+  if (placeAbort) placeAbort.abort()
+  placeGen += 1
+  pinPlaceQuery(hit.name || hit.label || '')
+  placeHits.value = []
+  placeEmpty.value = false
+  placeOpen.value = false
+  placeLoading.value = false
+}
+
+function onPlaceEnter() {
+  if (!placeOpen.value) {
+    if (placeTimer) clearTimeout(placeTimer)
+    placeTimer = null
+    runPlaceSearch()
+    return
+  }
+  const hit = placeHits.value[placeHighlight.value] ?? placeHits.value[0]
+  if (hit) choosePlace(hit)
+}
+
+function onPlaceEscape() {
+  if (placeOpen.value) {
+    placeOpen.value = false
+    return
+  }
+  clearPlaceSearch()
+}
+
+function clearPlaceSearch() {
+  if (placeTimer) clearTimeout(placeTimer)
+  placeTimer = null
+  if (placeAbort) placeAbort.abort()
+  placeGen += 1
+  pinPlaceQuery('')
+  placeHits.value = []
+  placeEmpty.value = false
+  placeOpen.value = false
+  placeLoading.value = false
+  clearPlaceMarker()
+}
+
+function movePlaceHighlight(delta) {
+  if (!placeHits.value.length) return
+  placeOpen.value = true
+  const n = placeHits.value.length
+  placeHighlight.value = (placeHighlight.value + delta + n) % n
+}
+
+function onPlaceFocus() {
+  if (placeHits.value.length || placeEmpty.value) placeOpen.value = true
+}
+
+function onPlaceFocusOut(event) {
+  if (event.currentTarget.contains(event.relatedTarget)) return
+  placeOpen.value = false
+}
+
 function lookupPickedAddress(lat, lng) {
   const gen = ++geocodeGen
   pickedAddress.value = ''
@@ -1001,7 +1186,34 @@ watch([assignSelected, assignSelectedSite, pickedCoords], () => {
   if (overlay) rebuild()
 })
 
+watch(placeQuery, () => {
+  if (suppressPlaceSearch) {
+    suppressPlaceSearch = false
+    return
+  }
+  clearPlaceMarker()
+  placeEmpty.value = false
+  if ([...placeQuery.value.trim()].length < 2) {
+    if (placeTimer) clearTimeout(placeTimer)
+    placeTimer = null
+    if (placeAbort) placeAbort.abort()
+    placeGen += 1
+    placeHits.value = []
+    placeOpen.value = false
+    placeLoading.value = false
+    return
+  }
+  schedulePlaceSearch()
+})
+
+function resizeMap() {
+  // Fullscreen changes the stage size without a layout pass MapLibre
+  // always notices. Measure again once the box has its new height.
+  nextTick(() => map?.resize())
+}
+
 onMounted(() => {
+  document.addEventListener('fullscreenchange', resizeMap)
   map = new MaplibreMap({
     container: mapContainer.value,
     style: BASEMAP_STYLE,
@@ -1011,6 +1223,9 @@ onMounted(() => {
     antialias: true,
   })
   map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
+  // Fullscreen the stage, not the canvas: the device card and hover
+  // tooltip are siblings of the canvas and would otherwise stay behind.
+  map.addControl(new FullscreenControl({ container: mapWrap.value }), 'top-right')
 
   overlay = new MapboxOverlay({ layers: [], pickingRadius: PICKING_RADIUS_PX })
   map.addControl(overlay)
@@ -1030,6 +1245,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', resizeMap)
+  if (placeTimer) clearTimeout(placeTimer)
+  if (placeAbort) placeAbort.abort()
+  clearPlaceMarker()
+  if (document.fullscreenElement === mapWrap.value) document.exitFullscreen()
   map?.remove()
   map = null
   overlay = null
@@ -1145,7 +1365,7 @@ onBeforeUnmount(() => {
       />
       <div
         ref="mapWrap"
-        class="relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default"
+        class="map-stage relative min-h-0 flex-1 rounded-lg overflow-hidden border border-default"
         :class="pickingCoords ? 'cursor-crosshair ring-2 ring-primary' : ''"
       >
         <!--
@@ -1164,32 +1384,96 @@ onBeforeUnmount(() => {
           <UIcon name="i-lucide-loader-2" class="size-8 animate-spin" />
         </div>
 
-        <div
-          v-if="pickingCoords"
-          class="absolute top-3 left-3 z-10 rounded-lg border border-default bg-default px-3 py-2 text-sm shadow-lg"
-        >
-          Click the map to set latitude and longitude.
-        </div>
-
-        <div
-          v-if="selected && !assignMode"
-          class="absolute top-3 left-3 z-10 w-64 rounded-lg border border-default bg-default p-3 shadow-lg"
-        >
-          <div class="flex items-start justify-between gap-2 mb-2">
-            <div class="font-medium">{{ selected.name }}</div>
-            <UButton
-              icon="i-lucide-x"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              @click="selected = null"
-            />
+        <div class="absolute top-3 left-3 z-30 flex w-80 max-w-[calc(100%-4.5rem)] flex-col gap-2">
+          <div class="relative" @focusout="onPlaceFocusOut">
+            <UInput
+              v-model="placeQuery"
+              icon="i-lucide-search"
+              size="sm"
+              placeholder="Search streets, cities…"
+              aria-label="Search streets, cities"
+              :loading="placeLoading"
+              :ui="{ trailing: 'pe-1' }"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="place-search-list"
+              :aria-expanded="placeOpen"
+              @keydown.enter.prevent="onPlaceEnter"
+              @keydown.esc="onPlaceEscape"
+              @keydown.down.prevent="movePlaceHighlight(1)"
+              @keydown.up.prevent="movePlaceHighlight(-1)"
+              @focus="onPlaceFocus"
+            >
+              <template v-if="placeQuery && !placeLoading" #trailing>
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  size="sm"
+                  icon="i-lucide-x"
+                  aria-label="Clear search"
+                  title="Clear search"
+                  @mousedown.prevent
+                  @click="clearPlaceSearch"
+                />
+              </template>
+            </UInput>
+            <ul
+              v-if="placeOpen && placeHits.length"
+              id="place-search-list"
+              role="listbox"
+              class="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-auto rounded-lg border border-default bg-default py-1 text-sm shadow-lg"
+            >
+              <li
+                v-for="(hit, i) in placeHits"
+                :key="`${hit.lat},${hit.lng},${hit.label}`"
+                role="option"
+                :aria-selected="i === placeHighlight"
+                class="cursor-pointer px-3 py-1.5"
+                :class="i === placeHighlight ? 'bg-primary/10' : ''"
+                @mousedown.prevent="choosePlace(hit)"
+                @mousemove="placeHighlight = i"
+              >
+                <div class="truncate font-medium">{{ hit.name }}</div>
+                <div v-if="placeSubtitle(hit)" class="truncate text-xs text-muted-color">
+                  {{ placeSubtitle(hit) }}
+                </div>
+              </li>
+            </ul>
+            <div
+              v-else-if="placeOpen && placeEmpty"
+              class="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-default bg-default px-3 py-2 text-sm text-muted-color shadow-lg"
+            >
+              No places found.
+            </div>
           </div>
-          <div class="text-sm text-muted-color space-y-1">
-            <div v-if="hardwareLabel(selected)">{{ hardwareLabel(selected) }}</div>
-            <div>Site: {{ selected.site || '-' }}</div>
-            <div>Role: {{ selected.role || '-' }}</div>
-            <div>Status: {{ selected.status || '-' }}</div>
+
+          <div
+            v-if="pickingCoords"
+            class="rounded-lg border border-default bg-default px-3 py-2 text-sm shadow-lg"
+          >
+            Click the map to set latitude and longitude.
+          </div>
+
+          <div
+            v-if="selected && !assignMode"
+            class="w-full rounded-lg border border-default bg-default p-3 shadow-lg"
+          >
+            <div class="flex items-start justify-between gap-2 mb-2">
+              <div class="font-medium">{{ selected.name }}</div>
+              <UButton
+                icon="i-lucide-x"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                @click="selected = null"
+              />
+            </div>
+            <div class="text-sm text-muted-color space-y-1">
+              <div v-if="hardwareLabel(selected)">{{ hardwareLabel(selected) }}</div>
+              <div>Site: {{ selected.site || '-' }}</div>
+              <div>Role: {{ selected.role || '-' }}</div>
+              <div>Status: {{ selected.status || '-' }}</div>
+            </div>
           </div>
         </div>
 
@@ -1268,3 +1552,12 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Fullscreen lifts the stage out of the page column. Drop the card chrome
+   so the map fills the screen edge to edge. */
+.map-stage:fullscreen {
+  border-radius: 0;
+  border-color: transparent;
+}
+</style>

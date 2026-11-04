@@ -19,3 +19,7 @@ export function assignSiteLocation(id, body) {
 export function reverseGeocode(lat, lng) {
   return http.get('/topology/geocode', { params: { lat, lng } }).then((res) => res.data)
 }
+
+export function searchPlaces(q, viewbox, config) {
+  return http.get('/topology/places', { params: { q, viewbox }, ...config }).then((res) => res.data)
+}

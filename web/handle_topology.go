@@ -797,3 +797,32 @@ func (ctrl *Controller) ApiTopologyGeocode(c *echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, TopologyGeocodeDTO{Address: addr})
 }
+
+// ApiTopologyPlaces searches OSM Nominatim for streets, cities, and other
+// places so the network map can fly there. A short query is empty, not an
+// error. Nominatim failures are 502; the map stays usable.
+func (ctrl *Controller) ApiTopologyPlaces(c *echo.Context) error {
+	q := strings.TrimSpace(c.QueryParam("q"))
+	if len(q) > 200 {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "query too long"})
+	}
+	if len([]rune(q)) < 2 {
+		return c.JSON(http.StatusOK, []netbox.Place{})
+	}
+	places, err := netbox.SearchPlaces(
+		c.Request().Context(),
+		q,
+		c.QueryParam("viewbox"),
+		c.Request().Header.Get("Accept-Language"),
+	)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return c.JSON(http.StatusBadGateway, map[string]any{"error": "place search failed"})
+	}
+	if places == nil {
+		places = []netbox.Place{}
+	}
+	return c.JSON(http.StatusOK, places)
+}

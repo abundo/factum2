@@ -499,6 +499,27 @@ func TestApiTopologyGeocode_BadCoords(t *testing.T) {
 	}
 }
 
+func TestApiTopologyPlaces_ShortAndLongQuery(t *testing.T) {
+	ctrl := &Controller{}
+
+	c, rec := jsonRequest(t, http.MethodGet, "/api/topology/places?q=a", nil, nil, nil)
+	if err := ctrl.ApiTopologyPlaces(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("short query status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	long := strings.Repeat("x", 201)
+	c, rec = jsonRequest(t, http.MethodGet, "/api/topology/places?q="+long, nil, nil, nil)
+	if err := ctrl.ApiTopologyPlaces(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiTopologyDeviceLocation_NotFound(t *testing.T) {
 	db := newTestDB(t)
 	c, rec := jsonRequest(t, http.MethodPost, "/api/topology/devices/x/location", topologyLocationRequest{
