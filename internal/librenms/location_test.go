@@ -45,7 +45,7 @@ func TestPlanLocationCoordinates(t *testing.T) {
 	}
 	plan := planLocationCoordinates(devices, map[int]struct{}{3: {}}, func(d *LibrenmsDevice) *models.Device {
 		return byID[d.DeviceID]
-	})
+	}, nil)
 
 	sto := plan["STO"]
 	if sto == nil || sto.DeviceID != 1 || !sto.Conflict || !coordsClose(sto.Lat, sto.Lng, 59.3, 18.0) {
@@ -61,7 +61,7 @@ func TestPlanLocationCoordinates(t *testing.T) {
 	if _, ok := plan[""]; ok {
 		t.Fatal("empty location was planned")
 	}
-	dummy := plan[coordinateLocationName(1, 2)]
+	dummy := plan[coordinateLocationName(1, 2, nil)]
 	if dummy == nil || dummy.DeviceID != 6 || dummy.Conflict {
 		t.Fatalf("coordinate location = %+v", dummy)
 	}
@@ -73,25 +73,72 @@ func TestPlanLocationCoordinates(t *testing.T) {
 func TestLibrenmsLocationName(t *testing.T) {
 	d := &models.Device{Latitude: f64(59.329324), Longitude: f64(18.068581)}
 	nms := &LibrenmsDevice{}
-	if got := librenmsLocationName(d, nms); got != "location <59.329324,18.068581>" {
+	const want = "9FFW83H9+PCG"
+	if got := librenmsLocationName(d, nms, nil); got != want {
 		t.Fatalf("no location: %q", got)
 	}
 	nms.Location = "STO"
-	if got := librenmsLocationName(d, nms); got != "STO" {
+	if got := librenmsLocationName(d, nms, nil); got != "STO" {
 		t.Fatalf("existing location: %q", got)
 	}
 	d.CfLocation = "Lab"
-	if got := librenmsLocationName(d, nms); got != "Lab" {
+	if got := librenmsLocationName(d, nms, nil); got != "Lab" {
 		t.Fatalf("custom location: %q", got)
 	}
 	d.CfLocation = ""
 	nms.Location = "location <1.000000,2.000000>"
-	if got := librenmsLocationName(d, nms); got != "location <59.329324,18.068581>" {
+	if got := librenmsLocationName(d, nms, nil); got != want {
 		t.Fatalf("moved coordinate location: %q", got)
 	}
+	nms.Location = openLocationCode(1, 2)
+	if got := librenmsLocationName(d, nms, nil); got != want {
+		t.Fatalf("moved open location code: %q", got)
+	}
 	d.Latitude, d.Longitude = nil, nil
-	if got := librenmsLocationName(d, nms); got != nms.Location {
+	if got := librenmsLocationName(d, nms, nil); got != nms.Location {
 		t.Fatalf("coordinate location without coordinates: %q", got)
+	}
+}
+
+func TestCoordinateLocationNameNearSite(t *testing.T) {
+	const lat, lng = 59.329324, 18.068581
+	here := []locationPlace{{Name: "Hemmingsmark", Lat: lat, Lng: lng}}
+	if got := coordinateLocationName(lat, lng, here); got != "+PCG Hemmingsmark" {
+		t.Fatalf("at the site: %q", got)
+	}
+	// About 1.1 km north: short enough to name the town, too far for a
+	// leading "+".
+	near := []locationPlace{{Name: "Hemmingsmark", Lat: lat + 0.01, Lng: lng}}
+	if got := coordinateLocationName(lat, lng, near); got != "H9+PCG Hemmingsmark" {
+		t.Fatalf("nearby: %q", got)
+	}
+	// About 22 km north, still inside the four-digit shorten range.
+	town := []locationPlace{{Name: "Hemmingsmark", Lat: lat + 0.2, Lng: lng}}
+	if got := coordinateLocationName(lat, lng, town); got != "83H9+PCG Hemmingsmark" {
+		t.Fatalf("town: %q", got)
+	}
+	far := []locationPlace{{Name: "Hemmingsmark", Lat: lat + 2, Lng: lng}}
+	if got := coordinateLocationName(lat, lng, far); got != "9FFW83H9+PCG" {
+		t.Fatalf("far: %q", got)
+	}
+	// The nearer site wins. A region and a rack location are not places.
+	places := locationPlaces([]models.Site{
+		{Name: "Sweden", NetboxKind: models.SiteNetboxKindRegion, Latitude: lat, Longitude: lng},
+		{Name: "MDF", NetboxKind: models.SiteNetboxKindLocation, Latitude: lat, Longitude: lng},
+		{Name: "Default", NetboxKind: models.SiteNetboxKindSite, Latitude: lat, Longitude: lng},
+		{Name: "Piteå", NetboxKind: models.SiteNetboxKindSite, Latitude: lat + 0.2, Longitude: lng},
+		{Name: "Hemmingsmark", NetboxKind: models.SiteNetboxKindSite, Latitude: lat, Longitude: lng},
+	})
+	if got := coordinateLocationName(lat, lng, places); got != "+PCG Hemmingsmark" {
+		t.Fatalf("nearest site: %q", got)
+	}
+	d := &models.Device{Latitude: f64(lat), Longitude: f64(lng)}
+	nms := &LibrenmsDevice{Location: "+PCG Hemmingsmark"}
+	if got := librenmsLocationName(d, nms, here); got != "+PCG Hemmingsmark" {
+		t.Fatalf("kept short code: %q", got)
+	}
+	if got := librenmsLocationName(d, nms, near); got != "H9+PCG Hemmingsmark" {
+		t.Fatalf("moved short code: %q", got)
 	}
 }
 
@@ -189,7 +236,7 @@ func TestSyncDeviceCoordinates(t *testing.T) {
 		{LibrenmsID: 6, Latitude: f64(1), Longitude: f64(2)},
 	}
 	fl := &FactumLibrenmsClient{Librenms: &LibrenmsClient{DB: db}, FactumDevices: factum}
-	plan := planLocationCoordinates([]*LibrenmsDevice{other, nms, same, nowhere}, nil, fl.getFactumDeviceForLibrenmsDevice)
+	plan := planLocationCoordinates([]*LibrenmsDevice{other, nms, same, nowhere}, nil, fl.getFactumDeviceForLibrenmsDevice, nil)
 
 	var buf bytes.Buffer
 	rep := jobevent.NewConsoleReporter(&buf)
@@ -221,7 +268,7 @@ func TestSyncDeviceCoordinates(t *testing.T) {
 	if err != nil || !wrote {
 		t.Fatalf("no location wrote=%v err=%v", wrote, err)
 	}
-	dummyName := coordinateLocationName(1, 2)
+	dummyName := coordinateLocationName(1, 2, nil)
 	if !strings.Contains(buf.String(), dummyName) {
 		t.Fatalf("log = %q", buf.String())
 	}

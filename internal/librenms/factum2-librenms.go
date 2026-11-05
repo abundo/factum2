@@ -16,7 +16,8 @@ package librenms
 // - device
 //     enabled flag
 //     display name
-//     location name (Factum location, or location <lat,lng> when none)
+//     location name (Factum location, or an Open Location Code when none;
+//     a short code plus the nearest site name when that site is close)
 //     location coordinates (Factum latitude/longitude)
 //     parents
 // - device interfaces
@@ -74,15 +75,18 @@ func splitLines(list string) []string {
 }
 
 type FactumLibrenmsClient struct {
-	Config                     *util.ConfigFactum
-	DB                         *util.ConfigDB
-	Factum                     *factum.FactumClient
-	Librenms                   *LibrenmsClient
-	Netbox                     *netboxtool.NetboxClient
-	FactumDevices              []*models.Device
-	LibrenmsDevices            []*LibrenmsDevice   // cache of devices
-	LibrenmsPorts              []*LibrenmsPort     // cache of ports
-	LibrenmsLocations          []*LibrenmsLocation // cache of locations
+	Config            *util.ConfigFactum
+	DB                *util.ConfigDB
+	Factum            *factum.FactumClient
+	Librenms          *LibrenmsClient
+	Netbox            *netboxtool.NetboxClient
+	FactumDevices     []*models.Device
+	LibrenmsDevices   []*LibrenmsDevice   // cache of devices
+	LibrenmsPorts     []*LibrenmsPort     // cache of ports
+	LibrenmsLocations []*LibrenmsLocation // cache of locations
+	// Places are NetBox sites with coordinates, used to shorten a
+	// generated location code. Empty when sites could not be loaded.
+	Places                     []locationPlace
 	RolesEnabledCompiled       []*regexp.Regexp
 	InterfacesDisabledCompiled []*regexp.Regexp
 }
@@ -394,17 +398,75 @@ type locationCoordinates struct {
 	Warned   bool
 }
 
+// locationPlace is a NetBox site close enough to shorten an Open Location
+// Code. The site name is the place written after the code.
+type locationPlace struct {
+	Name     string
+	Lat, Lng float64
+}
+
+// locationPlaces keeps sites that have a name and coordinates. Regions
+// and rack locations are not towns. The placeholder site Default is skipped.
+func locationPlaces(sites []models.Site) []locationPlace {
+	places := make([]locationPlace, 0, len(sites))
+	for _, site := range sites {
+		name := strings.TrimSpace(site.Name)
+		if name == "" || name == "Default" || !site.HasCoordinates() {
+			continue
+		}
+		if site.NetboxKind == models.SiteNetboxKindRegion || site.NetboxKind == models.SiteNetboxKindLocation {
+			continue
+		}
+		places = append(places, locationPlace{Name: name, Lat: site.Latitude, Lng: site.Longitude})
+	}
+	return places
+}
+
 // coordinateLocationName is the LibreNMS location for a device that has
-// coordinates and no location name. The same coordinates share one
-// location, so they share one pin. Six decimal places is about 0.1 m.
-func coordinateLocationName(lat, lng float64) string {
-	return fmt.Sprintf("location <%.6f,%.6f>", lat, lng)
+// coordinates and no location name. Devices in the same Open Location
+// Code cell share that name, and therefore one pin. A site within about
+// 33 km shortens the code and is written after it. Within about 80 m the
+// code starts with "+", as in "+PCG Hemmingsmark".
+func coordinateLocationName(lat, lng float64, places []locationPlace) string {
+	code := openLocationCode(lat, lng)
+	area, err := decodeOpenLocationCode(code)
+	if err != nil || len(places) == 0 {
+		return code
+	}
+	centerLat, centerLng := area.center()
+	var best *locationPlace
+	bestDist := 0.0
+	bestShort := ""
+	for i := range places {
+		place := &places[i]
+		short, ok := shortenOpenLocationCode(code, place.Lat, place.Lng)
+		if !ok {
+			continue
+		}
+		dist := math.Max(math.Abs(centerLat-olcClipLat(place.Lat)), math.Abs(centerLng-olcNormalizeLng(place.Lng)))
+		if best == nil || dist < bestDist || (dist == bestDist && place.Name < best.Name) {
+			best = place
+			bestDist = dist
+			bestShort = short
+		}
+	}
+	if best == nil {
+		return code
+	}
+	return bestShort + " " + best.Name
 }
 
 // isCoordinateLocation reports whether name is one of these coordinate
 // locations, so a later coordinate change can move the device to the
-// location named for the new coordinates.
+// location named for the new coordinates. The older
+// "location <lat,lng>" names are included so a sync replaces them.
 func isCoordinateLocation(name string) bool {
+	if isOpenLocationCode(name) {
+		return true
+	}
+	if code, place, ok := strings.Cut(name, " "); ok && place != "" && !strings.Contains(place, "  ") && isShortOpenLocationCode(code) {
+		return true
+	}
 	return strings.HasPrefix(name, "location <") && strings.HasSuffix(name, ">") && strings.Contains(name, ",")
 }
 
@@ -413,7 +475,7 @@ func isCoordinateLocation(name string) bool {
 // location LibreNMS already has. Coordinates with no location use
 // coordinateLocationName, including when the current location is itself
 // one of those coordinate locations.
-func librenmsLocationName(factumDevice *models.Device, librenmsDevice *LibrenmsDevice) string {
+func librenmsLocationName(factumDevice *models.Device, librenmsDevice *LibrenmsDevice, places []locationPlace) string {
 	if factumDevice.CfLocation != "" {
 		return factumDevice.CfLocation
 	}
@@ -421,7 +483,7 @@ func librenmsLocationName(factumDevice *models.Device, librenmsDevice *LibrenmsD
 		return librenmsDevice.Location
 	}
 	if factumDevice.Latitude != nil && factumDevice.Longitude != nil {
-		return coordinateLocationName(*factumDevice.Latitude, *factumDevice.Longitude)
+		return coordinateLocationName(*factumDevice.Latitude, *factumDevice.Longitude, places)
 	}
 	return librenmsDevice.Location
 }
@@ -434,7 +496,7 @@ func coordsClose(lat1, lng1, lat2, lng2 float64) bool {
 // A device is included when this sync will update it: no destination id
 // yet, or the destination id is this LibreNMS device. Quarantined devices
 // are left out.
-func planLocationCoordinates(devices []*LibrenmsDevice, skip map[int]struct{}, factumFor func(*LibrenmsDevice) *models.Device) map[string]*locationCoordinates {
+func planLocationCoordinates(devices []*LibrenmsDevice, skip map[int]struct{}, factumFor func(*LibrenmsDevice) *models.Device, places []locationPlace) map[string]*locationCoordinates {
 	plan := map[string]*locationCoordinates{}
 	for _, librenmsDevice := range devices {
 		if _, skipped := skip[librenmsDevice.DeviceID]; skipped {
@@ -447,7 +509,7 @@ func planLocationCoordinates(devices []*LibrenmsDevice, skip map[int]struct{}, f
 		if factumDevice.LibrenmsID != 0 && factumDevice.LibrenmsID != uint(librenmsDevice.DeviceID) {
 			continue
 		}
-		name := librenmsLocationName(factumDevice, librenmsDevice)
+		name := librenmsLocationName(factumDevice, librenmsDevice, places)
 		if name == "" {
 			continue
 		}
@@ -479,7 +541,7 @@ func (fl *FactumLibrenmsClient) syncDeviceCoordinates(librenmsDevice *LibrenmsDe
 	if factumDevice.Latitude == nil || factumDevice.Longitude == nil {
 		return false, nil
 	}
-	name := librenmsLocationName(factumDevice, librenmsDevice)
+	name := librenmsLocationName(factumDevice, librenmsDevice, fl.Places)
 	if name == "" {
 		return false, nil
 	}
@@ -542,6 +604,13 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 	if err != nil {
 		reporter.EmitErr(err)
 		return err
+	}
+	sites, err := fl.Factum.GetSites()
+	if err != nil {
+		reporter.Emit(jobevent.Warning, "location names stay full Open Location Codes: %s", err)
+		fl.Places = nil
+	} else {
+		fl.Places = locationPlaces(sites)
 	}
 
 	// Netbox credentials are database-backed (Settings, admin-editable in
@@ -699,7 +768,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		return err
 	}
 	updated := 0
-	coordPlan := planLocationCoordinates(librenmsDevices, stillPending, fl.getFactumDeviceForLibrenmsDevice)
+	coordPlan := planLocationCoordinates(librenmsDevices, stillPending, fl.getFactumDeviceForLibrenmsDevice, fl.Places)
 	for _, librenmsDevice := range librenmsDevices {
 		if _, quarantined := stillPending[librenmsDevice.DeviceID]; quarantined {
 			continue
@@ -762,7 +831,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 			updateData["display_template"] = display
 		}
 
-		if name := librenmsLocationName(factumDevice, librenmsDevice); name != "" && name != librenmsDevice.Location {
+		if name := librenmsLocationName(factumDevice, librenmsDevice, fl.Places); name != "" && name != librenmsDevice.Location {
 			reporter.Emit(jobevent.Info, "%s %s: location change from %q to %q", librenmsDevice.Display, librenmsDevice.Hostname, librenmsDevice.Location, name)
 			updateData["location"] = name
 			updateData["override_sysLocation"] = "1"

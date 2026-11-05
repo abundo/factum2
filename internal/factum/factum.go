@@ -63,6 +63,19 @@ func (factum *FactumClient) GetDevices() ([]*models.Device, error) {
 	return factum.GetDeviceHelper("")
 }
 
+// GetSites is GET /api/sites. LibreNMS sync uses site coordinates to
+// shorten an Open Location Code and append the site name.
+func (factum *FactumClient) GetSites() ([]models.Site, error) {
+	var rows []models.Site
+	if err := factum.doJSON(http.MethodGet, "/api/sites", nil, &rows); err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []models.Site{}
+	}
+	return rows, nil
+}
+
 // GetDevicesWithInterfaces is GET /api/device?include=interfaces. The
 // default /api/device list is shallow (no nested interfaces/addresses) so
 // the device-list UI stays cheap; DNS sync needs the nested addresses to
