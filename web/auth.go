@@ -24,6 +24,11 @@ import (
 // reassign this package var to a stub and restore it via t.Cleanup.
 var ldapAuthenticate = ldapauth.Authenticate
 
+// ldapLookupByEmail abstracts internal/ldapauth.LookupByEmail for the same
+// reason. Login uses it to turn an email address into the directory
+// username before the bind.
+var ldapLookupByEmail = ldapauth.LookupByEmail
+
 // jwtKey signs and verifies the "token" auth cookie. It's set once at
 // startup from util.Config.Web.JWTSecret (see web.go's GUI()) rather than
 // hardcoded here: a secret checked into source would let anyone who reads
@@ -254,43 +259,111 @@ func CheckPasswordHash(password, hash string) bool {
 // needed.
 const ldapSentinelPassword = "@LDAP"
 
-// AuthenticateUser checks username and password, trying local auth first and
-// falling back to LDAP/AD per the rules below. Returns the user object on
-// success, (nil, nil) on any kind of "bad credentials" (mirrors the
-// pre-LDAP behavior other callers already depend on), and (nil, err) only
-// for a real infrastructure problem (DB error, or LDAP server
-// unreachable/misconfigured).
+// AuthenticateUser checks login and password. login is a username, or an
+// email address. Returns the user object on success, (nil, nil) on any
+// kind of "bad credentials" (mirrors the pre-LDAP behavior other callers
+// already depend on), and (nil, err) only for a real infrastructure
+// problem (a database error). An LDAP server that is down or rejects the
+// password is a denial, not an error.
 //
-//  1. Local user found, PasswordHash == ldapSentinelPassword: authenticate
-//     against LDAP/AD instead of bcrypt (authenticateExistingLDAPUser).
-//  2. Local user found, PasswordHash is a normal bcrypt hash: unchanged
-//     bcrypt check.
-//  3. No local user found: try LDAP/AD; on success, auto-provision a local
-//     user with PasswordHash = ldapSentinelPassword so subsequent logins
-//     take path 1 (authenticateNewLDAPUser).
-func AuthenticateUser(db *gorm.DB, username string, password string) (*models.User, error) {
+//  1. A local row whose username equals login is used as-is. An address
+//     that happens to be stored as a username never falls through to a
+//     different account that merely has that address in email.
+//  2. Otherwise, when login contains "@", one local row with that email
+//     (case-insensitive) is used. Several rows is a denial: the address
+//     does not identify one person. A wrong password stops here.
+//  3. Otherwise LDAP is tried. An email address is resolved to the
+//     directory username first (the same lookup forgot-password uses), and
+//     the local row is stored under that username. No directory match
+//     falls back to binding with login itself, so a user filter written
+//     on mail still works.
+//
+// A loaded row with PasswordHash == ldapSentinelPassword is checked
+// against LDAP (authenticateExistingLDAPUser). A bcrypt hash is checked
+// locally. A first successful LDAP bind auto-provisions the local row
+// (authenticateNewLDAPUser).
+func AuthenticateUser(db *gorm.DB, login string, password string) (*models.User, error) {
+	login = strings.TrimSpace(login)
 	var user models.User
 	// Eager load roles when fetching the user
-	err := db.Preload("Roles").Where("username = ?", username).First(&user).Error
+	err := db.Preload("Roles").Where("username = ?", login).First(&user).Error
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Database error during authentication for user '%s': %v", username, err)
+			log.Printf("Database error during authentication for user '%s': %v", login, err)
 			return nil, err // Database error
 		}
-		return authenticateNewLDAPUser(db, username, password)
+		return authenticateByEmailOrLDAP(db, login, password)
 	}
+	return authenticateLoadedUser(db, &user, password)
+}
 
+// authenticateLoadedUser checks password against an already identified
+// local row. A failed check is terminal: callers must not try another
+// account with the same address.
+func authenticateLoadedUser(db *gorm.DB, user *models.User, password string) (*models.User, error) {
 	if user.PasswordHash == ldapSentinelPassword {
-		return authenticateExistingLDAPUser(db, &user, password)
+		return authenticateExistingLDAPUser(db, user, password)
 	}
-
 	if CheckPasswordHash(password, user.PasswordHash) {
-		log.Printf("User '%s' authenticated successfully", username)
-		return &user, nil
+		log.Printf("User '%s' authenticated successfully", user.Username)
+		return user, nil
 	}
+	log.Printf("Authentication failed: Invalid password for user '%s'", user.Username)
+	return nil, nil
+}
 
-	log.Printf("Authentication failed: Invalid password for user '%s'", username)
-	return nil, nil // Invalid password
+// localUserByEmail returns the single local row whose email equals email,
+// compared case-insensitively. ambiguous is true when several rows share
+// it. No row is (nil, false, nil).
+func localUserByEmail(db *gorm.DB, email string) (user *models.User, ambiguous bool, err error) {
+	var users []models.User
+	if err := db.Preload("Roles").Where("LOWER(email) = LOWER(?)", email).Find(&users).Error; err != nil {
+		return nil, false, err
+	}
+	switch len(users) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		return &users[0], false, nil
+	default:
+		return nil, true, nil
+	}
+}
+
+// authenticateByEmailOrLDAP is AuthenticateUser's path when login is not
+// a local username.
+func authenticateByEmailOrLDAP(db *gorm.DB, login, password string) (*models.User, error) {
+	if strings.Contains(login, "@") {
+		local, ambiguous, err := localUserByEmail(db, login)
+		if err != nil {
+			log.Printf("Database error during authentication for email '%s': %v", login, err)
+			return nil, err
+		}
+		if ambiguous {
+			log.Printf("Authentication failed: email %q matches more than one local user", login)
+			return nil, nil
+		}
+		if local != nil {
+			return authenticateLoadedUser(db, local, password)
+		}
+
+		// A database error from the server list is reported. A directory
+		// lookup that fails (ambiguous address, server down) is a denial,
+		// same as a rejected bind, and does not fall through to binding
+		// with the address as a username.
+		if _, err := ldapAuthConfigs(db); err != nil {
+			return nil, err
+		}
+		info, err := lookupLDAPByEmail(db, login)
+		if err != nil {
+			log.Printf("Authentication failed: LDAP email lookup for %q: %v", login, err)
+			return nil, nil
+		}
+		if info != nil && info.Username != "" {
+			return authenticateNewLDAPUser(db, info.Username, password)
+		}
+	}
+	return authenticateNewLDAPUser(db, login, password)
 }
 
 // ldapSettingsIfEnabled loads Settings and reports whether any LDAP server

@@ -33,7 +33,7 @@ function persistRememberedUsername() {
 
 function submit() {
   if (!username.value || !password.value) {
-    error.value = 'Username and password are required.'
+    error.value = 'Username or email and password are required.'
     return
   }
 
@@ -83,12 +83,12 @@ function submit() {
         </div>
 
         <form @submit.prevent="submit">
-          <label for="username" class="mb-2 block text-xl font-medium">Username</label>
+          <label for="username" class="mb-2 block text-xl font-medium">Username or email</label>
           <UInput
             id="username"
             v-model="username"
             type="text"
-            placeholder="Username"
+            placeholder="Username or email"
             class="mb-8 w-full md:w-120"
             autofocus
           />

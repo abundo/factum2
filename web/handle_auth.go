@@ -70,7 +70,7 @@ func (ctrl *Controller) ApiLogin(c *echo.Context) error {
 		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "too many requests"})
 	}
 	if req.Username == "" || req.Password == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "username and password are required"})
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "username or email and password are required"})
 	}
 
 	user, err := AuthenticateUser(ctrl.DB, req.Username, req.Password)

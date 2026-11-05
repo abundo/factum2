@@ -602,3 +602,62 @@ func TestAuthenticateUser(t *testing.T) {
 		}
 	})
 }
+
+func TestAuthenticateUser_Email(t *testing.T) {
+	db := newTestDB(t)
+	bob := createTestUser(t, db, "bob", "s3cret", false)
+	bob.Email = "Bob@Example.com"
+	if err := db.Save(&bob).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := createTestUser(t, db, "other@example.com", "other-secret", false)
+	other.Email = "unused@example.com"
+	if err := db.Save(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("email signs in as the username", func(t *testing.T) {
+		user, err := AuthenticateUser(db, "bob@example.com", "s3cret")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user == nil || user.Username != "bob" {
+			t.Fatalf("got %+v, want bob", user)
+		}
+	})
+
+	t.Run("wrong password does not match another account", func(t *testing.T) {
+		user, err := AuthenticateUser(db, "bob@example.com", "other-secret")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user != nil {
+			t.Fatalf("got %+v, want nil", user)
+		}
+	})
+
+	t.Run("username that looks like an email wins over email", func(t *testing.T) {
+		user, err := AuthenticateUser(db, "other@example.com", "other-secret")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user == nil || user.Username != "other@example.com" {
+			t.Fatalf("got %+v, want other@example.com", user)
+		}
+	})
+
+	t.Run("shared email is a denial", func(t *testing.T) {
+		second := createTestUser(t, db, "carol", "carol-secret", false)
+		second.Email = "bob@example.com"
+		if err := db.Save(&second).Error; err != nil {
+			t.Fatal(err)
+		}
+		user, err := AuthenticateUser(db, "bob@example.com", "s3cret")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user != nil {
+			t.Fatalf("got %+v, want nil when two users share the email", user)
+		}
+	})
+}

@@ -21,6 +21,13 @@ func stubLDAP(t *testing.T, fn func(cfg ldapauth.Config, username, password stri
 	t.Cleanup(func() { ldapAuthenticate = orig })
 }
 
+func stubLDAPEmail(t *testing.T, fn func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error)) {
+	t.Helper()
+	orig := ldapLookupByEmail
+	ldapLookupByEmail = fn
+	t.Cleanup(func() { ldapLookupByEmail = orig })
+}
+
 // enableLDAP flips Settings.LdapEnabled on, creating the Settings row if
 // needed.
 func enableLDAP(t *testing.T, db *gorm.DB) *models.Settings {
@@ -237,6 +244,129 @@ func TestAuthenticateUser_AutoProvision_Success(t *testing.T) {
 	if stored.PasswordHash != ldapSentinelPassword {
 		t.Errorf("stored PasswordHash = %q, want sentinel", stored.PasswordHash)
 	}
+}
+
+func TestAuthenticateUser_EmailLDAP(t *testing.T) {
+	t.Run("provisioned user binds with the directory username", func(t *testing.T) {
+		db := newTestDB(t)
+		enableLDAP(t, db)
+		user := models.User{
+			Username: "carol", PasswordHash: ldapSentinelPassword,
+			Name: "carol", Email: "carol@example.com",
+		}
+		if err := db.Create(&user).Error; err != nil {
+			t.Fatal(err)
+		}
+		stubLDAPEmail(t, func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error) {
+			t.Fatal("email lookup must not run once a local row matches")
+			return nil, nil
+		})
+		stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+			if username != "carol" || password != "s3cret" {
+				t.Fatalf("bind got %q / %q", username, password)
+			}
+			return true, &ldapauth.UserInfo{Email: "carol@example.com", DisplayName: "Carol"}, nil
+		})
+		got, err := AuthenticateUser(db, "Carol@Example.com", "s3cret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Username != "carol" {
+			t.Fatalf("got %+v, want carol", got)
+		}
+	})
+
+	t.Run("first login provisions the directory username", func(t *testing.T) {
+		db := newTestDB(t)
+		enableLDAP(t, db)
+		stubLDAPEmail(t, func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error) {
+			if email != "dave@example.com" {
+				t.Fatalf("lookup email = %q", email)
+			}
+			return &ldapauth.UserInfo{Username: "dave", Email: "dave@example.com", DisplayName: "Dave"}, nil
+		})
+		stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+			if username != "dave" {
+				t.Fatalf("bind username = %q, want dave", username)
+			}
+			return true, &ldapauth.UserInfo{Email: "dave@example.com", DisplayName: "Dave Directory"}, nil
+		})
+		got, err := AuthenticateUser(db, "dave@example.com", "s3cret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Username != "dave" || got.PasswordHash != ldapSentinelPassword {
+			t.Fatalf("got %+v, want provisioned dave", got)
+		}
+		var count int64
+		db.Model(&models.User{}).Where("username = ?", "dave@example.com").Count(&count)
+		if count != 0 {
+			t.Fatalf("stored the typed email as a username")
+		}
+	})
+
+	t.Run("wrong password does not provision", func(t *testing.T) {
+		db := newTestDB(t)
+		enableLDAP(t, db)
+		stubLDAPEmail(t, func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error) {
+			return &ldapauth.UserInfo{Username: "dave"}, nil
+		})
+		stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+			return false, nil, nil
+		})
+		got, err := AuthenticateUser(db, "dave@example.com", "wrong")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Fatalf("got %+v, want nil", got)
+		}
+		var count int64
+		db.Model(&models.User{}).Count(&count)
+		if count != 0 {
+			t.Fatalf("provisioned %d users on a rejected bind", count)
+		}
+	})
+
+	t.Run("ambiguous directory email does not bind the address", func(t *testing.T) {
+		db := newTestDB(t)
+		enableLDAP(t, db)
+		stubLDAPEmail(t, func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error) {
+			return nil, errors.New("ldap: email matched 2 entries, expected 1")
+		})
+		stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+			t.Fatal("bind must not run when the email lookup is ambiguous")
+			return false, nil, nil
+		})
+		got, err := AuthenticateUser(db, "shared@example.com", "s3cret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Fatalf("got %+v, want nil", got)
+		}
+	})
+
+	t.Run("no directory email falls back to the typed login", func(t *testing.T) {
+		db := newTestDB(t)
+		enableLDAP(t, db)
+		stubLDAPEmail(t, func(cfg ldapauth.Config, email string) (*ldapauth.UserInfo, error) {
+			return nil, nil
+		})
+		stubLDAP(t, func(cfg ldapauth.Config, username, password string) (bool, *ldapauth.UserInfo, error) {
+			if username != "dave@example.com" {
+				t.Fatalf("bind username = %q", username)
+			}
+			return true, &ldapauth.UserInfo{DisplayName: "Dave"}, nil
+		})
+		got, err := AuthenticateUser(db, "dave@example.com", "s3cret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Username != "dave@example.com" {
+			t.Fatalf("got %+v, want the typed login", got)
+		}
+	})
 }
 
 func TestAuthenticateUser_AutoProvision_Disabled(t *testing.T) {

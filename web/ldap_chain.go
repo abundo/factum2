@@ -95,7 +95,7 @@ func lookupLDAPByEmail(db *gorm.DB, email string) (*ldapauth.UserInfo, error) {
 	var last error
 	answered := false
 	for _, cfg := range cfgs {
-		info, err := ldapauth.LookupByEmail(cfg, email)
+		info, err := ldapLookupByEmail(cfg, email)
 		if err != nil {
 			log.Printf("LDAP email lookup on %s failed: %v", cfg.Host, err)
 			last = err
