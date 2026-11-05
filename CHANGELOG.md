@@ -3,15 +3,67 @@
 The major changes in each release. A release's notes on GitHub are its section
 here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
-## v1.5.0
+## v1.6.0
 
 ### New
 
+- Sign-in accepts an email address as well as a username.
+- OpenLDAP people and groups, including memberships, can be added and
+  changed from Admin → Directory when write-back is configured. A person
+  needs a username, a name, and a surname. A new group needs at least
+  one member. Active Directory stays browse-only.
+- Zoomed out, the network map draws one marker per site and one line for
+  the cables between those sites. Zoom in, or click the site, and each
+  device is drawn on its own. A device with no site, or only the
+  placeholder site Default, stays its own marker. The map can search for
+  a place and can be shown fullscreen.
 - Prometheus settings have Ignore interfaces, one regular expression per
   line. A sample whose ifName, ifDescr, or ifAlias matches the whole
   expression is dropped before it is stored, so it is not graphed or
   alerted. `Vlan.*` drops Vlan10. The next sync rewrites the
   `factum-if-ignore` block in the Prometheus scrape config.
+- A LibreNMS device with coordinates and no location is placed at its
+  full Open Location Code (for example `9FFW83H9+PCG`), which is created
+  when it does not already exist. A NetBox site within about 33 km
+  shortens that code and is written after it, for example
+  `83H9+PCG Hemmingsmark`. Within about 80 m of the site the code starts
+  with `+`, for example `+PCG Hemmingsmark`.
+
+### Changed
+
+- Directory is the first Admin menu entry. RADIUS stays under
+  Admin → Services.
+- Capacity (CN/CI) links on the network map stay hidden until they are
+  turned on.
+- A NetBox webhook that finds nothing to apply writes one GUI log line.
+  The queue, "delta sync started", and "no changes" lines stay out of
+  that log. A change, a full-sync fallback, or a failure still logs
+  what the delta did.
+- SQL slower than 200 ms is logged at debug, so it stays out of the GUI
+  log.
+- The example Prometheus device dashboard shows the identity in one
+  panel, and address, site, hardware, OS, and sysDescr. Each interface
+  is listed once.
+
+### Fixed
+
+- `factum2-netbox check --update` adds `virtualization.virtualmachine`
+  and `virtualization.vminterface` to the webhook event rule. An IP
+  address assigned to a VM interface queues the same delta as an address
+  on a device interface.
+
+### Upgrading
+
+- Install applies goose migration `00044`. It stores the Prometheus
+  Ignore interfaces list. Run `factum2-web migrate` before the next
+  Prometheus sync. An empty list keeps every interface.
+- Run `factum2-netbox check --update` so the webhook event rule includes
+  `virtualization.virtualmachine` and `virtualization.vminterface`.
+
+## v1.5.0
+
+### New
+
 - Admin → Services → Directory is the tree of local users, roles, and
   folders, and of each LDAP server. Login tries the enabled servers in
   order. Drag a user, role, or folder, and reorder the servers. Folders
@@ -30,14 +82,8 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   LibreNMS location and sets `fixed_coordinates`, so polling does not
   geocode over them. The location is the Factum location custom field,
   or the device's current LibreNMS location when that field is empty.
-  A device with coordinates and no location is placed at its full
-  Open Location Code (for example `9FFW83H9+PCG`), which is created
-  when it does not already exist. A NetBox site within about 33 km
-  shortens that code and is written after it, for example
-  `83H9+PCG Hemmingsmark`. Within about 80 m of the site the code
-  starts with `+`, for example `+PCG Hemmingsmark`. Devices that share
-  a location and disagree keep the coordinates of the lowest LibreNMS
-  device id.
+  Devices that share a location and disagree keep the coordinates of
+  the lowest LibreNMS device id.
 - NetBox sync copies every IPAM prefix after VRFs, into one namespace
   named Netbox. The same prefix may exist in the global table and in a
   VRF, and in more than one VRF. Unique IP Space still allows only one
@@ -61,10 +107,6 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   Workers tabs.
 - Change password is its own page.
 - A Lime delivery address is one line: street, zip, and city.
-- A NetBox webhook that finds nothing to apply writes one GUI log line.
-  The queue, "delta sync started", and "no changes" lines stay out of
-  that log. A change, a full-sync fallback, or a failure still logs
-  what the delta did.
 - Forms keep one Save button beside the page title.
 - Network map lines stay on the device when the map is zoomed in.
 - LibreNMS port updates name the device as `display/hostname` before
@@ -92,10 +134,6 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   stored as the string `"true"` or `"false"` to a JSON boolean. NetBox
   4.6 rejects any later save of that field until the default is a real
   boolean.
-- `factum2-netbox check --update` adds `virtualization.virtualmachine`
-  and `virtualization.vminterface` to the webhook event rule. An IP
-  address assigned to a VM interface queues the same delta as an address
-  on a device interface.
 
 ### Upgrading
 
