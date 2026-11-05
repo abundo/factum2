@@ -20,6 +20,12 @@ import {
   searchPlaces,
 } from '@/api/topology'
 import { useAuthStore } from '@/stores/auth'
+import {
+  SITE_OPEN_ZOOM,
+  aggregateBySite,
+  applyLaidOutEndpoints,
+  clusterModeForZoom,
+} from '@/utils/mapClusters'
 import SiteAssignPanel from './SiteAssignPanel.vue'
 
 const toast = useToast()
@@ -106,6 +112,11 @@ const opticalOnly = ref(false)
 // Capacity (CN/CI) arcs are off until the operator turns them on. They are
 // a separate service layer and otherwise cover the cable and optical lines.
 const showCapacity = ref(false)
+// Street-level zoom draws every device. Farther out, devices that share a
+// site collapse to one marker so a campus does not stack every hostname.
+// Starts collapsed: the map opens at country scale, then fits the network
+// still below the detail zoom.
+const clusterSites = ref(true)
 
 const availableRoles = computed(() =>
   [...new Set(rawDevices.value.map((d) => d.role || 'Unassigned'))].sort(),
@@ -228,6 +239,16 @@ function linkColor(kind) {
   return LINK_COLORS[kind] ?? LINK_COLORS.cable
 }
 
+// A site-to-site bundle is one stroke. A few parallel cables stay the
+// normal width; a large bundle reads a little heavier, capped so it does
+// not turn into a bar.
+function arcWidth(d, extra = 0) {
+  const n = d?.linkCount || 1
+  const base = OVERLAY_PALETTE.arcWidth + extra
+  if (n <= 1) return base
+  return Math.min(base + Math.log2(n), 6)
+}
+
 function linkSwatch(kind) {
   const [r, g, b] = linkColor(kind)
   return `rgb(${r} ${g} ${b})`
@@ -333,12 +354,15 @@ function bowServiceLinks(links) {
   })
 }
 
-function buildLayers(devices, edges, serviceLinks, sites) {
+function buildLayers(devices, edges, serviceLinks, sites, clusters = null) {
   const palette = OVERLAY_PALETTE
+  const overview = clusters != null
   const byID = new Map(devices.map((d) => [d.id, d]))
 
-  const arcs = placeEdges(edges, byID)
-  const serviceArcs = bowServiceLinks(placeEdges(serviceLinks, byID))
+  // Overview arcs are already positioned on site anchors. Detail arcs still
+  // need each device's ring coordinate.
+  const arcs = overview ? edges : placeEdges(edges, byID)
+  const serviceArcs = bowServiceLinks(overview ? serviceLinks : placeEdges(serviceLinks, byID))
   const labeledArcs = [...arcs, ...serviceArcs].filter((e) => e.label)
 
   return [
@@ -390,7 +414,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getTargetPosition: (d) => d.target,
       getSourceColor: (d) => linkColor(d.kind),
       getTargetColor: (d) => linkColor(d.kind),
-      getWidth: palette.arcWidth,
+      getWidth: (d) => arcWidth(d),
       getHeight: 0,
       greatCircle: false,
     }),
@@ -416,7 +440,7 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       getTargetPosition: (d) => d.target,
       getSourceColor: (d) => linkColor(d.kind),
       getTargetColor: (d) => linkColor(d.kind),
-      getWidth: palette.arcWidth + 0.5,
+      getWidth: (d) => arcWidth(d, 0.5),
       getHeight: (d) => d.bow,
       greatCircle: false,
     }),
@@ -443,6 +467,29 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       },
       onHover: (info) => handleHover('device', info),
     }),
+    ...(clusters?.length
+      ? [
+          new ScatterplotLayer({
+            id: 'site-clusters',
+            data: clusters,
+            pickable: true,
+            stroked: true,
+            radiusUnits: 'pixels',
+            getPosition: (d) => [d.mapLng, d.mapLat],
+            getFillColor: (d) => statusColor(d.status),
+            getLineColor: palette.deviceStroke,
+            lineWidthMinPixels: palette.deviceStrokeWidth,
+            getRadius: 9,
+            radiusMinPixels: 8,
+            radiusMaxPixels: 14,
+            onClick: ({ object }) => {
+              if (!object || pickingCoords.value) return
+              openCluster(object)
+            },
+            onHover: (info) => handleHover('cluster', info),
+          }),
+        ]
+      : []),
     new TextLayer({
       id: 'site-labels',
       data: sites,
@@ -483,6 +530,29 @@ function buildLayers(devices, edges, serviceLinks, sites) {
       backgroundPadding: [4, 2],
       fontFamily: '"Helvetica Neue", Arial, sans-serif',
     }),
+    ...(clusters?.length
+      ? [
+          new TextLayer({
+            id: 'cluster-labels',
+            data: clusters,
+            pickable: true,
+            getPosition: (d) => [d.mapLng, d.mapLat],
+            getText: (d) => d.name,
+            getColor: palette.labelText,
+            getSize: 13,
+            getPixelOffset: [0, -18],
+            background: true,
+            getBackgroundColor: palette.labelBg,
+            backgroundPadding: [4, 2],
+            fontFamily: '"Helvetica Neue", Arial, sans-serif',
+            onClick: ({ object }) => {
+              if (!object || pickingCoords.value) return
+              openCluster(object)
+            },
+            onHover: (info) => handleHover('cluster', info),
+          }),
+        ]
+      : []),
     ...(pickedCoords.value
       ? [
           new ScatterplotLayer({
@@ -554,17 +624,82 @@ function rebuild() {
     if (opticalOnly.value && !d.optical_kind) return false
     return true
   })
-  const laidOutDevices = layoutDevices(devices)
   const laidOutSites = layoutSites(
     rawSites.value.filter((s) => s.latitude != null && s.longitude != null),
   )
   const serviceLinks = showCapacity.value
     ? rawServiceLinks.value
     : rawServiceLinks.value.filter((l) => l.kind !== 'capacity')
-  overlay?.setProps({
-    layers: buildLayers(laidOutDevices, rawEdges.value, serviceLinks, laidOutSites),
-  })
+  // Fit still uses every device, including ones folded into a site marker,
+  // so the opening view covers the network rather than only the site pins.
+  const laidOutDevices = layoutDevices(devices)
+  let layers
+  if (clusterSites.value) {
+    const overview = aggregateBySite({
+      devices,
+      sites: laidOutSites,
+      edges: rawEdges.value,
+      serviceLinks,
+    })
+    const individuals = layoutDevices(overview.individuals)
+    layers = buildLayers(
+      individuals,
+      applyLaidOutEndpoints(overview.arcs, individuals),
+      applyLaidOutEndpoints(overview.serviceArcs, individuals),
+      overview.bareSites,
+      overview.clusters,
+    )
+  } else {
+    layers = buildLayers(laidOutDevices, rawEdges.value, serviceLinks, laidOutSites)
+  }
+  overlay?.setProps({ layers })
   return { devices: laidOutDevices, sites: laidOutSites }
+}
+
+// Click a site marker to frame its devices and cross into the per-device
+// drawing. A site whose devices cover more than the detail zoom can show
+// at once is pushed to that zoom, centered on the same frame.
+function openCluster(cluster) {
+  if (!map || !cluster) return
+  const pts = (cluster.devices ?? []).filter((d) => d.latitude != null && d.longitude != null)
+  if (!pts.length) {
+    map.flyTo({
+      center: [cluster.mapLng, cluster.mapLat],
+      zoom: SITE_OPEN_ZOOM,
+      duration: 650,
+    })
+    return
+  }
+  let minLat = Infinity
+  let maxLat = -Infinity
+  let minLng = Infinity
+  let maxLng = -Infinity
+  for (const d of pts) {
+    minLat = Math.min(minLat, d.latitude)
+    maxLat = Math.max(maxLat, d.latitude)
+    minLng = Math.min(minLng, d.longitude)
+    maxLng = Math.max(maxLng, d.longitude)
+  }
+  const pad = 0.0008
+  map.fitBounds(
+    [
+      [minLng - pad, minLat - pad],
+      [maxLng + pad, maxLat + pad],
+    ],
+    { padding: 72, duration: 650, maxZoom: 16 },
+  )
+  map.once('moveend', () => {
+    if (!map || !clusterSites.value) return
+    map.easeTo({ zoom: SITE_OPEN_ZOOM, duration: 350 })
+  })
+}
+
+function onMapZoom() {
+  if (!map) return
+  const next = clusterModeForZoom(clusterSites.value, map.getZoom())
+  if (next === clusterSites.value) return
+  clusterSites.value = next
+  rebuild()
 }
 
 function toggleRole(role) {
@@ -667,11 +802,11 @@ function loadAllDevices() {
     })
 }
 
-function panTo(lat, lng) {
+function panTo(lat, lng, minZoom = 10) {
   if (!map || lat == null || lng == null) return
   map.flyTo({
     center: [lng, lat],
-    zoom: Math.max(map.getZoom(), 10),
+    zoom: Math.max(map.getZoom(), minZoom),
     duration: 800,
   })
 }
@@ -882,7 +1017,7 @@ function selectAssignDevice(device, { fromMap = false } = {}) {
     ? { lat: device.latitude, lng: device.longitude }
     : null
   if (hasMappableCoords(device)) {
-    panTo(device.latitude, device.longitude)
+    panTo(device.latitude, device.longitude, SITE_OPEN_ZOOM)
     setPicking(false)
   } else {
     setPicking(authStore.canWrite)
@@ -980,7 +1115,7 @@ function showAssignedOnMap(latitude, longitude) {
   pickedCoords.value = null
   setPicking(false)
   rebuild()
-  panTo(latitude, longitude)
+  panTo(latitude, longitude, SITE_OPEN_ZOOM)
 }
 
 // AssignLocation only returns the pinned device. Other devices at that
@@ -1241,6 +1376,7 @@ onMounted(() => {
     rebuild()
   })
 
+  map.on('zoom', onMapZoom)
   map.on('load', loadTopology)
 })
 
@@ -1495,10 +1631,23 @@ onBeforeUnmount(() => {
           <template v-else-if="hoverInfo.kind === 'site'">
             <div class="font-medium">{{ hoverInfo.object.name }}</div>
           </template>
+          <template v-else-if="hoverInfo.kind === 'cluster'">
+            <div class="font-medium">{{ hoverInfo.object.name }}</div>
+            <div class="text-muted-color">
+              {{ hoverInfo.object.deviceCount }}
+              {{ hoverInfo.object.deviceCount === 1 ? 'device' : 'devices' }}
+            </div>
+            <div v-if="hoverInfo.object.statusText" class="text-muted-color">
+              {{ hoverInfo.object.statusText }}
+            </div>
+          </template>
           <template v-else>
             <div class="space-y-1.5">
               <div>
                 <div class="font-medium">{{ kindLabel(hoverInfo.object.kind) }}</div>
+                <div v-if="hoverInfo.object.linkCount > 1" class="text-muted-color">
+                  {{ hoverInfo.object.linkCount }} links
+                </div>
                 <div v-if="hoverInfo.object.service_id" class="text-muted-color">
                   {{ hoverInfo.object.service_id }}
                 </div>

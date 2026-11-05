@@ -75,6 +75,12 @@ push and device-sync. `factum2-driver-cli` still takes `--username` /
 synced from NetBox, plus cables created in Factum). Sites without GPS
 are omitted.
 
+Zoomed out, devices that belong to the same site are drawn as one marker
+labeled with the site name, and the cables between them as one line
+between sites. Zoom in, or click the site marker, and each device is
+drawn on its own with its name, as before. A device with no site, or
+only the placeholder site Default, stays its own marker at every zoom.
+
 **Infrastructure → Racks**, **Floor plans**, and **Connections** are the room
 and rack drawings. On **Connections → Between devices** you can create,
 change, and remove cables. When both ports came from NetBox, the cable is
