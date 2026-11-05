@@ -27,8 +27,7 @@ Podman works the same way (`podman compose up -d`).
 | snmp_exporter | http://127.0.0.1:9116 | |
 
 Change the Grafana password before exposing port 3000. The home dashboard
-is **Devices and Virtual Machines**. A device name opens **LibreNMS-style
-Device**.
+is **Devices and Virtual Machines**. A device name opens **Device**.
 
 Prometheus targets stay empty until `prometheus/file_sd/` contains a JSON
 file. `prometheus/file_sd/targets.json` ships as `[]`.

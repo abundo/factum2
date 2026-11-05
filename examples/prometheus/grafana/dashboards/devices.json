@@ -1,8 +1,8 @@
 {
-  "uid": "librenms-devices",
+  "uid": "factum-devices",
   "title": "Devices and Virtual Machines",
-  "description": "LibreNMS-style inventory. Click a device name to open its graphs. Status is the SNMP scrape; uptime needs the system module.",
-  "tags": ["snmp", "librenms", "factum"],
+  "description": "Inventory. Click a device name to open its graphs. Status is the SNMP scrape; uptime needs the system module.",
+  "tags": ["snmp", "factum"],
   "timezone": "utc",
   "schemaVersion": 39,
   "version": 1,
@@ -340,7 +340,7 @@
                 "value": [
                   {
                     "title": "Device graphs",
-                    "url": "/d/librenms-device-snmp?var-device=${__data.fields.Device}&${__url_time_range}",
+                    "url": "/d/factum-device?var-device=${__data.fields.Device}&${__url_time_range}",
                     "targetBlank": false
                   }
                 ]
@@ -465,7 +465,7 @@
                 "value": [
                   {
                     "title": "Device graphs",
-                    "url": "/d/librenms-device-snmp?var-device=${__data.fields.VM}&${__url_time_range}",
+                    "url": "/d/factum-device?var-device=${__data.fields.VM}&${__url_time_range}",
                     "targetBlank": false
                   }
                 ]

@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "LibreNMS-style device page for factum2-prometheus targets. Status, uptime, site and hardware come from the scrape; traffic, packets, errors and the port table come from if_mib. Ports down counts admin-up interfaces that are operationally down.",
+  "description": "Device page for factum2-prometheus targets. Status, uptime, site and hardware come from the scrape; traffic, packets, errors and the port table come from if_mib. Ports down counts admin-up interfaces that are operationally down.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -25,7 +25,7 @@
       "title": "All devices",
       "type": "link",
       "icon": "dashboard",
-      "url": "/d/librenms-devices",
+      "url": "/d/factum-devices",
       "keepTime": true,
       "targetBlank": false
     }
@@ -46,302 +46,18 @@
     },
     {
       "id": 30,
-      "type": "stat",
-      "title": "Address",
-      "description": "Scrape address (primary IPv4).",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "type": "text",
+      "title": "",
+      "transparent": false,
       "gridPos": {
-        "h": 3,
-        "w": 4,
+        "h": 6,
+        "w": 24,
         "x": 0,
         "y": 1
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "up{job=\"snmp\", device=\"$device\"}",
-          "instant": true,
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
-      }
-    },
-    {
-      "id": 31,
-      "type": "stat",
-      "title": "Site",
-      "description": "Factum site label.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 4,
-        "x": 4,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "up{job=\"snmp\", device=\"$device\"}",
-          "instant": true,
-          "legendFormat": "{{site}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
-      }
-    },
-    {
-      "id": 32,
-      "type": "stat",
-      "title": "Hardware",
-      "description": "Factum model label.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 5,
-        "x": 8,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "up{job=\"snmp\", device=\"$device\"}",
-          "instant": true,
-          "legendFormat": "{{model}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
-      }
-    },
-    {
-      "id": 33,
-      "type": "stat",
-      "title": "OS",
-      "description": "Factum platform label.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 4,
-        "x": 13,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "up{job=\"snmp\", device=\"$device\"}",
-          "instant": true,
-          "legendFormat": "{{platform}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
-      }
-    },
-    {
-      "id": 34,
-      "type": "stat",
-      "title": "sysDescr",
-      "description": "From the snmp_exporter system module. Empty until a scrape succeeds.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 7,
-        "x": 17,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "sysDescr{job=\"snmp\", device=\"$device\"}",
-          "instant": true,
-          "legendFormat": "{{sysDescr}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
+        "mode": "markdown",
+        "content": "**Address** ${addr}  \n**Site** ${site}  \n**Hardware** ${model}  \n**OS** ${os}\n\n${sysdescr}"
       }
     },
     {
@@ -391,7 +107,7 @@
         "h": 4,
         "w": 3,
         "x": 0,
-        "y": 4
+        "y": 7
       },
       "id": 2,
       "options": {
@@ -456,7 +172,7 @@
         "h": 4,
         "w": 4,
         "x": 3,
-        "y": 4
+        "y": 7
       },
       "id": 3,
       "options": {
@@ -529,7 +245,7 @@
         "h": 4,
         "w": 3,
         "x": 7,
-        "y": 4
+        "y": 7
       },
       "id": 4,
       "options": {
@@ -595,7 +311,7 @@
         "h": 4,
         "w": 3,
         "x": 10,
-        "y": 4
+        "y": 7
       },
       "id": 5,
       "options": {
@@ -664,7 +380,7 @@
         "h": 4,
         "w": 3,
         "x": 13,
-        "y": 4
+        "y": 7
       },
       "id": 6,
       "options": {
@@ -729,7 +445,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 4
+        "y": 7
       },
       "id": 7,
       "options": {
@@ -793,7 +509,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 4
+        "y": 7
       },
       "id": 8,
       "options": {
@@ -911,7 +627,7 @@
         "h": 9,
         "w": 16,
         "x": 0,
-        "y": 8
+        "y": 11
       },
       "id": 9,
       "options": {
@@ -1028,7 +744,7 @@
         "h": 9,
         "w": 8,
         "x": 16,
-        "y": 8
+        "y": 11
       },
       "id": 10,
       "options": {
@@ -1144,7 +860,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 20
       },
       "id": 11,
       "options": {
@@ -1262,7 +978,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 20
       },
       "id": 12,
       "options": {
@@ -1337,7 +1053,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 28
       },
       "id": 13,
       "title": "Ports",
@@ -1359,7 +1075,8 @@
               "type": "auto"
             },
             "filterable": true,
-            "inspect": false
+            "inspect": false,
+            "minWidth": 56
           },
           "mappings": [],
           "thresholds": {
@@ -1430,6 +1147,10 @@
                   "mode": "basic",
                   "type": "color-background"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 132
               }
             ]
           },
@@ -1470,6 +1191,10 @@
                   "mode": "basic",
                   "type": "color-background"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 84
               }
             ]
           },
@@ -1486,6 +1211,10 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 108
               }
             ]
           },
@@ -1502,6 +1231,10 @@
               {
                 "id": "decimals",
                 "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 108
               }
             ]
           },
@@ -1518,6 +1251,10 @@
               {
                 "id": "decimals",
                 "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 108
               }
             ]
           },
@@ -1549,6 +1286,10 @@
               {
                 "id": "min",
                 "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 140
               }
             ]
           },
@@ -1565,6 +1306,10 @@
               {
                 "id": "unit",
                 "value": "ops"
+              },
+              {
+                "id": "custom.width",
+                "value": 92
               }
             ]
           },
@@ -1581,6 +1326,79 @@
               {
                 "id": "unit",
                 "value": "ops"
+              },
+              {
+                "id": "custom.width",
+                "value": 96
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Port"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 140
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Select port",
+                    "url": "/d/factum-device?${__url_time_range}&var-device=${device:percentencode}&var-port=${__data.fields.Port:percentencode}&${iface:queryparam}",
+                    "targetBlank": false,
+                    "oneClick": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Alias"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Select port",
+                    "url": "/d/factum-device?${__url_time_range}&var-device=${device:percentencode}&var-port=${__data.fields.Port:percentencode}&${iface:queryparam}",
+                    "targetBlank": false,
+                    "oneClick": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Descr"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Select port",
+                    "url": "/d/factum-device?${__url_time_range}&var-device=${device:percentencode}&var-port=${__data.fields.Port:percentencode}&${iface:queryparam}",
+                    "targetBlank": false,
+                    "oneClick": true
+                  }
+                ]
               }
             ]
           }
@@ -1590,7 +1408,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 29
       },
       "id": 14,
       "options": {
@@ -1606,8 +1424,8 @@
         "showHeader": true,
         "sortBy": [
           {
-            "desc": true,
-            "displayName": "In"
+            "desc": false,
+            "displayName": "Port"
           }
         ]
       },
@@ -1749,7 +1567,7 @@
               "instance": true,
               "job": true,
               "site": true,
-              "ifIndex": false,
+              "ifIndex": true,
               "device": true,
               "manufacturer": true,
               "model": true,
@@ -1763,15 +1581,14 @@
               "ifName": 0,
               "ifAlias": 1,
               "ifDescr": 2,
-              "ifIndex": 3,
-              "Value #B": 4,
-              "Value #A": 5,
-              "Value #C": 6,
-              "Value #D": 7,
-              "Value #E": 8,
-              "Value #F": 9,
-              "Value #G": 10,
-              "Value #H": 11
+              "Value #B": 3,
+              "Value #A": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7,
+              "Value #F": 8,
+              "Value #G": 9,
+              "Value #H": 10
             },
             "renameByName": {
               "Value #A": "Oper",
@@ -1784,13 +1601,13 @@
               "Value #H": "Err Out",
               "ifAlias": "Alias",
               "ifDescr": "Descr",
-              "ifIndex": "Idx",
               "ifName": "Port"
             }
           }
         }
       ],
-      "type": "table"
+      "type": "table",
+      "description": "Click a port name, alias, or description to graph that port below."
     },
     {
       "collapsed": false,
@@ -1798,10 +1615,10 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 41
       },
       "id": 15,
-      "title": "Selected port graphs  (use Port variable \u2014 LibreNMS port page)",
+      "title": "Selected port",
       "type": "row"
     },
     {
@@ -1885,7 +1702,7 @@
         "h": 9,
         "w": 16,
         "x": 0,
-        "y": 39
+        "y": 42
       },
       "id": 16,
       "options": {
@@ -1981,7 +1798,7 @@
         "h": 9,
         "w": 8,
         "x": 16,
-        "y": 39
+        "y": 42
       },
       "id": 17,
       "options": {
@@ -2054,7 +1871,6 @@
   "schemaVersion": 39,
   "tags": [
     "snmp",
-    "librenms",
     "network",
     "if_mib"
   ],
@@ -2082,6 +1898,121 @@
         "hide": 0,
         "regex": "",
         "skipUrlSync": false
+      },
+      {
+        "name": "addr",
+        "label": "Address",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "query_result(up{job=\"snmp\", device=\"$device\"})",
+        "query": {
+          "qryType": 1,
+          "query": "query_result(up{job=\"snmp\", device=\"$device\"})",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "current": {},
+        "hide": 2,
+        "regex": "/instance=\"([^\"]*)\"/",
+        "skipUrlSync": true
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "query_result(up{job=\"snmp\", device=\"$device\"})",
+        "query": {
+          "qryType": 1,
+          "query": "query_result(up{job=\"snmp\", device=\"$device\"})",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "current": {},
+        "hide": 2,
+        "regex": "/site=\"([^\"]*)\"/",
+        "skipUrlSync": true
+      },
+      {
+        "name": "model",
+        "label": "Hardware",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "query_result(up{job=\"snmp\", device=\"$device\"})",
+        "query": {
+          "qryType": 1,
+          "query": "query_result(up{job=\"snmp\", device=\"$device\"})",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "current": {},
+        "hide": 2,
+        "regex": "/model=\"([^\"]*)\"/",
+        "skipUrlSync": true
+      },
+      {
+        "name": "os",
+        "label": "OS",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "query_result(up{job=\"snmp\", device=\"$device\"})",
+        "query": {
+          "qryType": 1,
+          "query": "query_result(up{job=\"snmp\", device=\"$device\"})",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "current": {},
+        "hide": 2,
+        "regex": "/platform=\"([^\"]*)\"/",
+        "skipUrlSync": true
+      },
+      {
+        "name": "sysdescr",
+        "label": "sysDescr",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "query_result(sysDescr{job=\"snmp\", device=\"$device\"})",
+        "query": {
+          "qryType": 1,
+          "query": "query_result(sysDescr{job=\"snmp\", device=\"$device\"})",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "current": {},
+        "hide": 2,
+        "regex": "/sysDescr=\"([^\"]*)\"/",
+        "skipUrlSync": true
       },
       {
         "name": "iface",
@@ -2148,8 +2079,8 @@
     ]
   },
   "timezone": "browser",
-  "title": "LibreNMS-style Device",
-  "uid": "librenms-device-snmp",
+  "title": "Device",
+  "uid": "factum-device",
   "version": 1,
   "weekStart": ""
 }
