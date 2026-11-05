@@ -19,6 +19,7 @@ type PrometheusConfigResponse struct {
 	IgnoreManufacturers string `json:"ignore_manufacturers"`
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
+	IgnoreInterfaces    string `json:"ignore_interfaces"`
 }
 
 // ApiPrometheusConfig returns the Prometheus/snmp_exporter sync settings
@@ -40,5 +41,6 @@ func (ctrl *Controller) ApiPrometheusConfig(c *echo.Context) error {
 		IgnoreManufacturers: settings.PrometheusIgnoreManufacturers,
 		IgnoreModels:        settings.PrometheusIgnoreModels,
 		IgnorePlatforms:     settings.PrometheusIgnorePlatforms,
+		IgnoreInterfaces:    settings.PrometheusIgnoreInterfaces,
 	})
 }

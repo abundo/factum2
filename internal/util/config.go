@@ -136,6 +136,10 @@ type ConfigPrometheus struct {
 	IgnoreManufacturers string
 	IgnoreModels        string
 	IgnorePlatforms     string
+	// IgnoreInterfaces is a newline-separated list of regular expressions.
+	// A sample whose ifName, ifDescr, or ifAlias matches the whole
+	// expression is dropped before it is stored.
+	IgnoreInterfaces string
 }
 
 // ConfigDNS is a runtime-only DTO, not part of ConfigRoot - same pattern as

@@ -669,6 +669,10 @@ type Settings struct {
 	PrometheusIgnoreManufacturers string `gorm:"column:prometheus_ignore_manufacturers;type:text" form:"prometheus_ignore_manufacturers" json:"prometheus_ignore_manufacturers"`
 	PrometheusIgnoreModels        string `gorm:"column:prometheus_ignore_models;type:text" form:"prometheus_ignore_models" json:"prometheus_ignore_models"`
 	PrometheusIgnorePlatforms     string `gorm:"column:prometheus_ignore_platforms;type:text" form:"prometheus_ignore_platforms" json:"prometheus_ignore_platforms"`
+	// PrometheusIgnoreInterfaces is a newline-separated list of regular
+	// expressions. A scraped sample whose ifName, ifDescr, or ifAlias
+	// matches the whole expression is dropped before it is stored.
+	PrometheusIgnoreInterfaces string `gorm:"column:prometheus_ignore_interfaces;type:text" form:"prometheus_ignore_interfaces" json:"prometheus_ignore_interfaces"`
 
 	// Device Sync (internal/device-sync) - VRFInGlobal/DeviceStates/
 	// DeviceIgnore are newline-separated lists, edited as multiline boxes in

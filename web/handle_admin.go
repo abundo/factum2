@@ -7,6 +7,7 @@ import (
 
 	"github.com/abundo/factum2/internal/certs"
 	"github.com/abundo/factum2/internal/mail"
+	"github.com/abundo/factum2/internal/prometheus"
 	"github.com/abundo/factum2/internal/radius"
 	"github.com/abundo/factum2/internal/storage"
 	"github.com/abundo/factum2/internal/util"
@@ -56,6 +57,9 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 		storage.ApplySettingsDefaults(settings)
 	}
 	if err := validateDestinationKeys(settings); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if _, err := prometheus.CompileIgnoreInterfaces(settings.PrometheusIgnoreInterfaces); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	if err := validateBranding(settings.BrandLogo, settings.BrandText); err != nil {

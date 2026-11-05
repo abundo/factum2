@@ -8,6 +8,39 @@ import (
 	"github.com/abundo/factum2/internal/util"
 )
 
+func TestApiSettingsUpdateIgnoreInterfaces(t *testing.T) {
+	db := newTestDB(t)
+	ctrl := &Controller{DB: db}
+	settings, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.PrometheusIgnoreInterfaces = ".*\n"
+	c, rec := jsonRequest(t, http.MethodPut, "/api/admin/settings", settings, nil, nil)
+	if err := ctrl.ApiSettingsUpdate(c); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	settings.PrometheusIgnoreInterfaces = "Vlan.*\nNull.*"
+	c, rec = jsonRequest(t, http.MethodPut, "/api/admin/settings", settings, nil, nil)
+	if err := ctrl.ApiSettingsUpdate(c); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := util.GetOrCreateSettings(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PrometheusIgnoreInterfaces != "Vlan.*\nNull.*" {
+		t.Fatalf("stored = %q", got.PrometheusIgnoreInterfaces)
+	}
+}
+
 func TestApiPrometheusConfig(t *testing.T) {
 	db := newTestDB(t)
 	ctrl := &Controller{DB: db}
@@ -21,6 +54,7 @@ func TestApiPrometheusConfig(t *testing.T) {
 	settings.PrometheusModule = "if_mib"
 	settings.PrometheusAuth = "public_v2"
 	settings.PrometheusIgnoreDevices = "lab-sw1"
+	settings.PrometheusIgnoreInterfaces = "Vlan.*\nNull.*"
 	if err := db.Save(settings).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +78,9 @@ func TestApiPrometheusConfig(t *testing.T) {
 	}
 	if body.IgnoreDevices != "lab-sw1" {
 		t.Fatalf("ignore_devices = %q", body.IgnoreDevices)
+	}
+	if body.IgnoreInterfaces != "Vlan.*\nNull.*" {
+		t.Fatalf("ignore_interfaces = %q", body.IgnoreInterfaces)
 	}
 	if body.DefaultDomain != "example.com" {
 		t.Fatalf("default_domain = %q", body.DefaultDomain)

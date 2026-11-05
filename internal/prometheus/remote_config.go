@@ -22,6 +22,7 @@ type remoteConfigResponse struct {
 	IgnoreManufacturers string `json:"ignore_manufacturers"`
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
+	IgnoreInterfaces    string `json:"ignore_interfaces"`
 }
 
 // FetchRemoteConfig pulls the Prometheus/snmp_exporter sync settings from
@@ -42,5 +43,6 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigPrometheus,
 		IgnoreManufacturers: remote.IgnoreManufacturers,
 		IgnoreModels:        remote.IgnoreModels,
 		IgnorePlatforms:     remote.IgnorePlatforms,
+		IgnoreInterfaces:    remote.IgnoreInterfaces,
 	}, nil
 }

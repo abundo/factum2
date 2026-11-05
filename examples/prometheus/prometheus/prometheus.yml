@@ -52,3 +52,19 @@ scrape_configs:
         target_label: __param_auth
       - target_label: __address__
         replacement: snmp-exporter:9116
+    # factum2-prometheus rewrites the factum-if-ignore block from Settings
+    # "Ignore interfaces". A sample whose ifName, ifDescr, or ifAlias matches
+    # is dropped before it is stored. This file sits next to file_sd/, which
+    # is where the worker writes targets.json.
+    metric_relabel_configs:
+      # factum-if-ignore:begin
+      - source_labels: [ifName]
+        regex: "a^"
+        action: drop
+      - source_labels: [ifDescr]
+        regex: "a^"
+        action: drop
+      - source_labels: [ifAlias]
+        regex: "a^"
+        action: drop
+      # factum-if-ignore:end

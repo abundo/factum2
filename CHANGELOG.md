@@ -7,6 +7,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- Prometheus settings have Ignore interfaces, one regular expression per
+  line. A sample whose ifName, ifDescr, or ifAlias matches the whole
+  expression is dropped before it is stored, so it is not graphed or
+  alerted. `Vlan.*` drops Vlan10. The next sync rewrites the
+  `factum-if-ignore` block in the Prometheus scrape config.
 - Admin → Services → Directory is the tree of local users, roles, and
   folders, and of each LDAP server. Login tries the enabled servers in
   order. Drag a user, role, or folder, and reorder the servers. Folders

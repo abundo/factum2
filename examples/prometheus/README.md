@@ -71,6 +71,12 @@ boxes. The target address is that IPv4. The `device` label is the Factum
 name, with the default domain appended when the name has no dot. `instance`
 in Prometheus is the IP.
 
+Ignore interfaces is one regular expression per line. The expression matches
+the whole ifName, ifDescr, or ifAlias (`Vlan.*` drops Vlan10). Sync rewrites
+the `factum-if-ignore` block in `prometheus/prometheus.yml`. A match is
+dropped before Prometheus stores it, so panels and alerts do not see it.
+The device scrape still walks the interface table.
+
 Check a scrape before waiting for Grafana:
 
 ```sh

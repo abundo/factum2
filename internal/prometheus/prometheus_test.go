@@ -233,6 +233,52 @@ func TestSyncDevicesUnchangedSkipsReload(t *testing.T) {
 	}
 }
 
+func TestSyncDevicesIgnoreRulesReload(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "snmp.json")
+	cfg := filepath.Join(dir, "runtime.yml")
+	initial := "job:\n  # factum-if-ignore:begin\n  - source_labels: [ifName]\n    regex: \"a^\"\n    action: drop\n  - source_labels: [ifDescr]\n    regex: \"a^\"\n    action: drop\n  - source_labels: [ifAlias]\n    regex: \"a^\"\n    action: drop\n  # factum-if-ignore:end\n"
+	if err := os.WriteFile(cfg, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fpc := testClient(dest)
+	fpc.PrometheusConfig.IgnoreInterfaces = "Vlan.*"
+	fpc.PrometheusConfig.ReloadURL = "http://example.invalid/-/reload"
+	fpc.Prometheus.c.ReloadURL = fpc.PrometheusConfig.ReloadURL
+	reloads := 0
+	fpc.Prometheus.reload = func() error {
+		reloads++
+		return nil
+	}
+	devices := []*models.Device{
+		{Name: "r1", Enabled: true, CfMonitorGrafana: true, PrimaryIPv4: "10.0.0.1/24"},
+	}
+	if err := fpc.syncDevices(jobevent.NewConsoleReporter(os.Stdout), devices); err != nil {
+		t.Fatal(err)
+	}
+	if reloads != 1 {
+		t.Fatalf("reloads = %d, want 1", reloads)
+	}
+	raw, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"(?:Vlan.*)"`) {
+		t.Fatalf("runtime.yml = %s", raw)
+	}
+	if err := fpc.syncDevices(jobevent.NewConsoleReporter(os.Stdout), devices); err != nil {
+		t.Fatal(err)
+	}
+	if reloads != 1 {
+		t.Fatalf("second reloads = %d, want 1", reloads)
+	}
+
+	fpc.PrometheusConfig.IgnoreInterfaces = "["
+	if err := fpc.syncDevices(jobevent.NewConsoleReporter(os.Stdout), devices); err == nil {
+		t.Fatal("invalid regexp should fail the sync")
+	}
+}
+
 func TestSyncDevicesNoReloadURL(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "snmp.json")

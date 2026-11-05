@@ -140,6 +140,10 @@ func (fpc *FactumPrometheusClient) Sync(reporter jobevent.Reporter) error {
 }
 
 func (fpc *FactumPrometheusClient) syncDevices(reporter jobevent.Reporter, all []*models.Device) error {
+	if _, err := CompileIgnoreInterfaces(fpc.PrometheusConfig.IgnoreInterfaces); err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
 	devices, counts := fpc.filterDevices(all)
 	reporter.Emit(jobevent.Info,
 		"Filtered devices: %d not enabled, %d not flagged for grafana/prometheus, %d ignored by name, "+
@@ -161,7 +165,11 @@ func (fpc *FactumPrometheusClient) syncDevices(reporter jobevent.Reporter, all [
 		reporter.EmitErr(err)
 		return err
 	}
-	if changed {
+	ignoreChanged, err := fpc.installIgnore(reporter)
+	if err != nil {
+		return err
+	}
+	if changed || ignoreChanged {
 		if strings.TrimSpace(fpc.PrometheusConfig.ReloadURL) == "" {
 			reporter.Emit(jobevent.Info, "Configuration changed (no reload URL configured)")
 			return nil
@@ -175,4 +183,26 @@ func (fpc *FactumPrometheusClient) syncDevices(reporter jobevent.Reporter, all [
 		reporter.Emit(jobevent.Info, "Configuration unchanged")
 	}
 	return nil
+}
+
+// installIgnore rewrites the factum-if-ignore block in the scrape config
+// next to the file_sd file. A missing marker is a warning when the list is
+// non-empty: the targets file is still written.
+func (fpc *FactumPrometheusClient) installIgnore(reporter jobevent.Reporter) (bool, error) {
+	list := fpc.PrometheusConfig.IgnoreInterfaces
+	path, changed, err := InstallIgnoreInterfaces(fpc.PrometheusConfig.DestFile, list)
+	if err != nil {
+		if errors.Is(err, ErrNoIgnoreConfig) {
+			if strings.TrimSpace(list) != "" {
+				reporter.Emit(jobevent.Warning, "Interface ignore list is not applied: %s", err)
+			}
+			return false, nil
+		}
+		reporter.EmitErr(err)
+		return false, err
+	}
+	if changed {
+		reporter.Emit(jobevent.Info, "Updated interface ignore rules in %s", path)
+	}
+	return changed, nil
 }
