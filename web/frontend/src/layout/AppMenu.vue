@@ -179,6 +179,7 @@ const groups = computed(() => {
   if (authStore.isAdmin) {
     result.push(
       section('Admin', [
+        { label: 'Directory', icon: 'i-lucide-folder-tree', to: '/admin/directory' },
         {
           label: 'Settings',
           icon: 'i-lucide-settings',
@@ -235,7 +236,6 @@ const groups = computed(() => {
           icon: 'i-lucide-radio',
           children: [
             { label: 'RADIUS', icon: 'i-lucide-shield-check', to: '/admin/radius' },
-            { label: 'Directory', icon: 'i-lucide-folder-tree', to: '/admin/directory' },
           ],
         },
       ]),

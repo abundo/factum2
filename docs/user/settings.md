@@ -10,6 +10,18 @@ in the database (this UI), not in `/etc/factum2/factum2.yaml`. The YAML
 file is process config: database URL, bind address, JWT secret, worker
 TLS. After install, you almost never edit YAML to turn NetBox or DNS on.
 
+## Directory
+
+**Directory** is the internal LDAP tree (people, roles, and folders) and
+each OpenLDAP or Active Directory server. Workers with an `ldap` command
+serve the internal directory. Server connection settings are edited on
+the selected server. Login tries enabled servers in order and denies the
+client when none accepts. OpenLDAP entries can be added and changed when
+`ldap_writeback` is set in the config file. Active Directory is
+browse-only. `admin` cannot be deleted. The **Authorization** tab maps
+LDAP group DNs to Factum roles, and sets a default role for users who
+match no group. See [Directory](directory.md).
+
 ## Settings → Factum
 
 Feature switches (all off by default except as noted):
@@ -119,12 +131,3 @@ Interface refresh, VLAN push, and service push do not apply to them.
 
 - **RADIUS** — switch and router login. LDAP groups are mapped to NetBox
   device roles. See [RADIUS](radius.md)
-- **Directory** — the internal LDAP tree (people, roles, and folders) and
-  each OpenLDAP or Active Directory server. Workers with an `ldap` command
-  serve the internal directory. Server connection settings are edited on
-  the selected server. Login tries enabled servers in order and denies the
-  client when none accepts. OpenLDAP entries can be added and changed when
-  `ldap_writeback` is set in the config file. Active Directory is
-  browse-only. `admin` cannot be deleted. The **Authorization** tab maps
-  LDAP group DNs to Factum roles, and sets a default role for users who
-  match no group. See [Directory](directory.md)

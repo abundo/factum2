@@ -5,7 +5,7 @@ order: 56
 
 # Directory
 
-**Admin → Services → Directory** is the internal LDAP directory: people, roles,
+**Admin → Directory** is the internal LDAP directory: people, roles,
 and folders. OpenLDAP and Active Directory servers are further roots in
 the same tree. Add, change, and remove them there. The form on the right
 is the server's connection settings.

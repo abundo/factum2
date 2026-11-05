@@ -28,7 +28,7 @@ currently on GitHub.
 | DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
 | Certificates | Services | Certificates, accounts, and challenges, as tabs. Only if **Certificates** is enabled (Destinations) |
 | Overview / scheduler | Jobs | Trigger and watch syncs. Overview, Status, and Workers are tabs |
-| Settings, users, workers | Admin | Administrators only |
+| Directory / Settings / Sources / Destinations / Services | Admin | Administrators only. Directory is the first entry |
 
 Some entries appear only when the matching feature is on (Oxidized,
 Software, optical, IPAM, organization, DNS zone editor, DHCP). Turning a

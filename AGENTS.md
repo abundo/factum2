@@ -469,7 +469,7 @@ uses `worker.tls_cert` / `worker.tls_key`. The private key is not
 copied into the snapshot. When
 `radius_use_internal_ldap` is set, the RADIUS snapshot points LDAP at
 `127.0.0.1` on that listen port, so the same worker must run both
-commands. MS-CHAPv2 still needs Active Directory. GUI: Admin → Services →
+commands. MS-CHAPv2 still needs Active Directory. GUI: Admin →
 Directory. Renaming a role or moving its folder rewrites
 `radius_policies.group_dn` and `ldap_role_mappings.group_dn`.
 
