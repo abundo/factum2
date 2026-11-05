@@ -2,10 +2,67 @@ package ldapauth
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
 )
+
+func TestStructuralClass(t *testing.T) {
+	if got := StructuralClass([]string{"top", "organizationalUnit"}); got != "organizationalUnit" {
+		t.Fatalf("ou class = %q", got)
+	}
+	if got := StructuralClass([]string{"top", "container"}); got != "container" {
+		t.Fatalf("ad container class = %q", got)
+	}
+	if got := StructuralClass([]string{"top", "person", "organizationalPerson", "inetOrgPerson"}); got != "inetOrgPerson" {
+		t.Fatalf("person class = %q", got)
+	}
+	if got := StructuralClass([]string{"domain", "dcObject"}); got != "domain" {
+		t.Fatalf("domain class = %q", got)
+	}
+	if got := StructuralClass([]string{"top", "groupOfNames"}); got != "groupOfNames" {
+		t.Fatalf("group class = %q", got)
+	}
+}
+
+func TestEntryStringMail(t *testing.T) {
+	e := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "mail;lang-en", Values: []string{"ada@example.com"}},
+		{Name: "cn", Values: []string{"Ada"}},
+	}}
+	if got := entryString(e, "mail"); got != "ada@example.com" {
+		t.Fatalf("tagged mail = %q", got)
+	}
+	alias := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "rfc822Mailbox", Values: []string{"ada@example.com"}},
+	}}
+	if got := entryString(alias, "AttrEmail", "mail"); got != "ada@example.com" {
+		t.Fatalf("alias mail = %q", got)
+	}
+	if got := entryString(e, "userPrincipalName", "mail"); got != "ada@example.com" {
+		t.Fatalf("fallback mail = %q", got)
+	}
+}
+
+func TestMembershipFilter(t *testing.T) {
+	got := membershipFilter("uid=ada,ou=people,dc=example,dc=com", "ada")
+	if !strings.Contains(got, "(member=uid=ada,ou=people,dc=example,dc=com)") || !strings.Contains(got, "(memberUid=ada)") {
+		t.Fatalf("filter = %q", got)
+	}
+	if membershipFilter("", "") != "" {
+		t.Fatal("empty filter should be empty")
+	}
+}
+
+func TestMailAttr(t *testing.T) {
+	if mailAttr(Config{}) != "mail" || mailAttr(Config{AttrEmail: "rfc822Mailbox"}) != "mail" {
+		t.Fatal("mail alias should write mail")
+	}
+	if mailAttr(Config{AttrEmail: "email"}) != "email" {
+		t.Fatal("custom email attribute should be kept")
+	}
+}
 
 func TestEntryKind(t *testing.T) {
 	cases := []struct {

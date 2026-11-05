@@ -141,7 +141,7 @@ const group = ref({})
 const groupSaving = ref(false)
 const groupLoading = ref(false)
 const groupDeleting = ref(false)
-const memberBrowser = ref(false)
+const browser = ref({ open: false, selectable: 'person', serverId: 0, target: 'group' })
 
 const activeForm = computed(() => {
   if (panel.value === 'user') return user.value
@@ -182,11 +182,15 @@ function nodeWritable(node) {
   return !!serverOf(node?.server_id)?.writable
 }
 
+function emailAttr(serverId) {
+  return (serverOf(serverId)?.attr_email || '').trim() || 'mail'
+}
+
 const intro = computed(() => {
   if (!servers.value.length) {
     return 'People and roles in this directory are served to RADIUS, NetBox, LibreNMS, and Icinga. Right-click to add an OpenLDAP or Active Directory server.'
   }
-  return 'Login tries each enabled server in order. If none accepts the password, the client is denied. OpenLDAP entries can be changed when ldap_writeback is set. Active Directory is browse-only.'
+  return 'Login tries each enabled server in order. If none accepts the password, the client is denied. OpenLDAP entries can be changed with ldap_writeback, or with the server bind account. Active Directory is browse-only.'
 })
 
 const menuItems = computed(() => {
@@ -201,15 +205,15 @@ const menuItems = computed(() => {
   const ldapHere =
     kind === 'server' || kind === 'directory' || kind === 'container' || kind === 'other'
   if (nodeWritable(node) && ldapHere) {
-    items.push({ id: 'new-person', label: 'New directory user' })
-    items.push({ id: 'new-group', label: 'New group' })
+    items.push({ id: 'new-person', label: 'New inetOrgPerson' })
+    items.push({ id: 'new-group', label: 'New groupOfNames' })
   }
   if (!node || kind === 'server' || kind === 'internal') {
     items.push({ id: 'new-openldap', label: 'New OpenLDAP server' })
     items.push({ id: 'new-ad', label: 'New Active Directory' })
   }
   if (kind === 'internal' || kind === 'ou') {
-    items.push({ id: 'new-folder', label: 'New folder' })
+    items.push({ id: 'new-folder', label: 'New organizationalUnit' })
     items.push({ id: 'new-user', label: 'New user' })
     items.push({ id: 'new-role', label: 'New role' })
   }
@@ -408,7 +412,7 @@ function ldapNodeKey(serverId, dn) {
 function renderCell(e) {
   for (const col of Object.values(e.renderColInfosById ?? {})) {
     if (col.id === 'kind') {
-      col.elem.textContent = ldapKindLabel(e.node.data?.kind || e.node.type)
+      col.elem.textContent = ldapKindLabel(e.node.data?.kind || e.node.type, e.node.data?.object_class)
     }
   }
 }
@@ -716,7 +720,7 @@ function buildTree() {
     source,
     columns: [
       { id: '*', title: 'Name', width: '*' },
-      { id: 'kind', title: 'Kind', width: '72px' },
+      { id: 'kind', title: 'Object class', width: '200px' },
     ],
     types: {
       user: { icon: false },
@@ -991,7 +995,13 @@ async function showSelection(n) {
     try {
       const entry = await getLdapEntry(n.dn || n.key, n.server_id)
       if (seq !== fillSeq) return
-      person.value = { ...entry, server_id: n.server_id, password: '' }
+      person.value = {
+        ...entry,
+        mail: entry.mail || entry.email || '',
+        groups: entry.groups ?? [],
+        server_id: n.server_id,
+        password: '',
+      }
     } catch (err) {
       if (seq !== fillSeq) return
       panel.value = ''
@@ -1006,7 +1016,11 @@ async function showSelection(n) {
     try {
       const entry = await getLdapEntry(n.dn || n.key, n.server_id)
       if (seq !== fillSeq) return
-      group.value = { ...entry, server_id: n.server_id, members: entry.members ?? [] }
+      group.value = {
+        ...entry,
+        server_id: n.server_id,
+        members: entry.members ?? [],
+      }
     } catch (err) {
       if (seq !== fillSeq) return
       panel.value = ''
@@ -1100,6 +1114,7 @@ async function openNewPerson(node) {
     display_name: '',
     mobile: '',
     password: '',
+    groups: [],
     editable: true,
   }
   await nextTick()
@@ -1222,6 +1237,7 @@ function savePerson() {
     display_name: person.value.display_name,
     mobile: person.value.mobile,
     password: person.value.password,
+    groups: person.value.groups ?? [],
   }
   if (!body.password) delete body.password
   const request = body.dn ? updateLdapPerson(body) : createLdapPerson(body)
@@ -1279,6 +1295,32 @@ async function performDeletePerson(target) {
     })
 }
 
+function openBrowser(target) {
+  const source = target === 'person-groups' ? person.value : group.value
+  browser.value = {
+    open: true,
+    selectable: target === 'person-groups' ? 'group' : 'person',
+    serverId: source.server_id || 0,
+    target,
+  }
+}
+
+function onBrowseSelect(dn) {
+  if (browser.value.target === 'person-groups') addPersonGroup(dn)
+  else addMember(dn)
+}
+
+function addPersonGroup(dn) {
+  const groups = person.value.groups ?? []
+  if (!groups.some((g) => g.toLowerCase() === dn.toLowerCase())) {
+    person.value.groups = [...groups, dn]
+  }
+}
+
+function removePersonGroup(dn) {
+  person.value.groups = (person.value.groups ?? []).filter((g) => g !== dn)
+}
+
 function addMember(dn) {
   const members = group.value.members ?? []
   if (!members.some((m) => m.toLowerCase() === dn.toLowerCase())) {
@@ -1293,7 +1335,8 @@ function removeMember(dn) {
 function saveGroup() {
   submitted.value = true
   if (!group.value.editable) return
-  if (!group.value.cn?.trim() || !(group.value.members ?? []).length) return
+  if (!group.value.cn?.trim()) return
+  if (group.value.member_attr !== 'memberUid' && !(group.value.members ?? []).length) return
   groupSaving.value = true
   const body = {
     server_id: group.value.server_id,
@@ -1667,7 +1710,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <UButton
-            label="New folder"
+            label="New organizationalUnit"
             icon="i-lucide-folder-plus"
             color="neutral"
             size="sm"
@@ -1703,7 +1746,7 @@ onBeforeUnmount(() => {
           />
           <UButton
             v-if="nodeWritable(selected)"
-            label="New group"
+            label="New groupOfNames"
             icon="i-lucide-plus"
             color="neutral"
             size="sm"
@@ -1864,8 +1907,9 @@ onBeforeUnmount(() => {
                 label="Allow password changes to be written back"
               />
               <p class="text-sm text-muted-color">
-                The account that writes the password is ldap_writeback in the config file. The same
-                account adds and changes OpenLDAP entries. Active Directory stays browse-only.
+                Password changes use ldap_writeback in the config file. OpenLDAP people and groups
+                use that account when it is set, and otherwise this server's bind account. Active
+                Directory stays browse-only.
               </p>
               <div class="flex gap-2">
                 <UButton
@@ -1967,7 +2011,7 @@ onBeforeUnmount(() => {
               class="flex flex-col gap-4"
               @submit.prevent="saveOU"
             >
-              <h5 class="m-0">{{ ouForm.id ? 'Folder' : 'New folder' }}</h5>
+              <h5 class="m-0">{{ ouForm.id ? 'organizationalUnit' : 'New organizationalUnit' }}</h5>
               <UFormField label="Name">
                 <UInput
                   v-model.trim="ouForm.name"
@@ -2006,7 +2050,9 @@ onBeforeUnmount(() => {
 
             <div v-else-if="panel === 'node'" class="flex flex-col gap-2">
               <h5 class="m-0">{{ selected?.title }}</h5>
-              <p class="text-sm text-muted-color">{{ ldapKindLabel(selected?.kind) }}</p>
+              <p class="text-sm text-muted-color">
+                {{ ldapKindLabel(selected?.kind, selected?.object_class) }}
+              </p>
               <p v-if="selected?.dn" class="font-mono text-sm break-all">{{ selected.dn }}</p>
             </div>
             <form
@@ -2143,10 +2189,20 @@ onBeforeUnmount(() => {
               class="flex flex-col gap-4"
               @submit.prevent="savePerson"
             >
-              <h5 class="m-0">{{ person.dn ? 'Directory user' : 'New directory user' }}</h5>
+              <h5 class="m-0">{{ person.dn ? person.object_class || 'inetOrgPerson' : 'New inetOrgPerson' }}</h5>
               <p v-if="personLoading" class="text-sm text-muted-color">Loading…</p>
-              <UFormField label="Container">
-                <UInput :model-value="personParent()" readonly class="w-full" />
+              <UAlert
+                v-if="person.dn && !person.editable && !personLoading"
+                color="neutral"
+                variant="subtle"
+                title="This entry is shown read-only. Factum edits inetOrgPerson on an OpenLDAP server when ldap_writeback or the server bind account can write."
+              />
+              <template v-if="!personLoading">
+              <UFormField label="Parent">
+                <UInput :model-value="personParent()" readonly class="w-full font-mono" />
+                <small class="text-muted-color">
+                  ou= is an organizationalUnit. container is a different Active Directory class.
+                </small>
               </UFormField>
               <UFormField label="Username">
                 <UInput
@@ -2174,14 +2230,51 @@ onBeforeUnmount(() => {
                   >Surname is required.</small
                 >
               </UFormField>
-              <UFormField label="Email">
-                <UInput v-model="person.mail" :disabled="!person.editable" class="w-full" />
+              <UFormField label="Email" :hint="emailAttr(person.server_id)">
+                <UInput
+                  v-model="person.mail"
+                  :disabled="!person.editable"
+                  autocomplete="off"
+                  class="w-full"
+                />
               </UFormField>
               <UFormField label="Display name">
                 <UInput v-model="person.display_name" :disabled="!person.editable" class="w-full" />
               </UFormField>
               <UFormField label="Mobile">
                 <UInput v-model="person.mobile" :disabled="!person.editable" class="w-full" />
+              </UFormField>
+              <UFormField label="memberOf">
+                <div class="flex flex-col gap-2">
+                  <div
+                    v-for="groupDn in person.groups ?? []"
+                    :key="groupDn"
+                    class="flex items-center gap-2"
+                  >
+                    <span class="min-w-0 flex-1 truncate font-mono text-sm" :title="groupDn">{{
+                      groupDn
+                    }}</span>
+                    <UButton
+                      v-if="person.editable"
+                      icon="i-lucide-x"
+                      color="neutral"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove group"
+                      @click="removePersonGroup(groupDn)"
+                    />
+                  </div>
+                  <UButton
+                    v-if="person.editable"
+                    label="Add group"
+                    icon="i-lucide-plus"
+                    color="neutral"
+                    size="sm"
+                    class="self-start"
+                    @click="openBrowser('person-groups')"
+                  />
+                  <small class="text-muted-color">Direct groups. Nested groups are not listed.</small>
+                </div>
               </UFormField>
               <UFormField v-if="person.editable" label="Password">
                 <PasswordInput
@@ -2207,6 +2300,7 @@ onBeforeUnmount(() => {
                   @click="performDeletePerson()"
                 />
               </div>
+              </template>
             </form>
 
             <form
@@ -2215,20 +2309,26 @@ onBeforeUnmount(() => {
               class="flex flex-col gap-4"
               @submit.prevent="saveGroup"
             >
-              <h5 class="m-0">{{ group.dn ? 'Directory group' : 'New directory group' }}</h5>
+              <h5 class="m-0">
+                {{ group.dn ? group.object_class || 'groupOfNames' : 'New groupOfNames' }}
+              </h5>
               <p v-if="groupLoading" class="text-sm text-muted-color">Loading…</p>
               <UAlert
-                v-if="group.dn && !group.editable"
+                v-if="group.dn && !group.editable && !groupLoading"
                 color="neutral"
                 variant="subtle"
-                title="This group is shown read-only. Factum edits groupOfNames and groupOfUniqueNames entries on an OpenLDAP-compatible server."
+                title="This group is shown read-only. Factum edits groupOfNames, groupOfUniqueNames, and posixGroup on an OpenLDAP server."
               />
-              <UFormField label="Container">
+              <template v-if="!groupLoading">
+              <UFormField label="Parent">
                 <UInput
                   :model-value="group.dn ? parentOfDN(group.dn) : group.parent_dn"
                   readonly
-                  class="w-full"
+                  class="w-full font-mono"
                 />
+                <small class="text-muted-color">
+                  ou= is an organizationalUnit. container is a different Active Directory class.
+                </small>
               </UFormField>
               <UFormField label="Name">
                 <UInput
@@ -2251,7 +2351,7 @@ onBeforeUnmount(() => {
                   class="w-full"
                 />
               </UFormField>
-              <UFormField label="Members">
+              <UFormField :label="group.member_attr || 'member'">
                 <div class="flex flex-col gap-2">
                   <div
                     v-for="member in group.members ?? []"
@@ -2276,10 +2376,13 @@ onBeforeUnmount(() => {
                     color="neutral"
                     size="sm"
                     class="self-start"
-                    @click="memberBrowser = true"
+                    @click="openBrowser('group-members')"
                   />
-                  <small v-if="submitted && !(group.members ?? []).length" class="text-red-500">
-                    A group needs at least one member.
+                  <small
+                    v-if="submitted && group.member_attr !== 'memberUid' && !(group.members ?? []).length"
+                    class="text-red-500"
+                  >
+                    A groupOfNames group needs at least one member.
                   </small>
                 </div>
               </UFormField>
@@ -2294,6 +2397,7 @@ onBeforeUnmount(() => {
                   @click="performDeleteGroup()"
                 />
               </div>
+              </template>
             </form>
           </div>
         </div>
@@ -2304,7 +2408,13 @@ onBeforeUnmount(() => {
     </template>
   </UTabs>
 
-  <LdapTreeBrowser v-model:visible="memberBrowser" selectable="person" @select="addMember" />
+  <LdapTreeBrowser
+    v-model:visible="browser.open"
+    :selectable="browser.selectable"
+    :server-id="browser.serverId"
+    :title="browser.selectable === 'group' ? 'Select a group' : 'Select a person'"
+    @select="onBrowseSelect"
+  />
 
   <div
     v-if="menu.open && menuItems.length"

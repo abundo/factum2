@@ -13,6 +13,9 @@ import '@/assets/wunderbaum-theme.css'
 const props = defineProps({
   visible: { type: Boolean, default: false },
   selectable: { type: String, default: 'group' },
+  // serverId browses that external server. Empty uses the first enabled one.
+  serverId: { type: Number, default: 0 },
+  title: { type: String, default: 'Browse directory' },
 })
 const emit = defineEmits(['update:visible', 'select'])
 
@@ -41,7 +44,7 @@ function renderCell(e) {
   for (const col of Object.values(e.renderColInfosById ?? {})) {
     const data = e.node.data ?? {}
     if (col.id === 'kind') {
-      col.elem.textContent = ldapKindLabel(data.kind || e.node.type)
+      col.elem.textContent = ldapKindLabel(data.kind || e.node.type, data.object_class)
     }
   }
 }
@@ -74,7 +77,7 @@ function buildTree(source) {
     source,
     columns: [
       { id: '*', title: 'Name', width: '320px' },
-      { id: 'kind', title: 'Kind', width: '*' },
+      { id: 'kind', title: 'Object class', width: '200px' },
     ],
     types: {
       group: { icon: false },
@@ -83,7 +86,9 @@ function buildTree(source) {
       other: { icon: false },
     },
     lazyLoad: (e) =>
-      browseLdap(e.node.data?.dn || e.node.key).then((rows) => (rows ?? []).map(toLdapNode)),
+      browseLdap(e.node.data?.dn || e.node.key, props.serverId).then((rows) =>
+        (rows ?? []).map(toLdapNode),
+      ),
     render: renderCell,
     activate: (e) => {
       selected.value = selectedPayload(e.node)
@@ -101,7 +106,7 @@ function loadRoot() {
   error.value = null
   selected.value = null
   const host = el.value
-  browseLdap('')
+  browseLdap('', props.serverId)
     .then((entries) => {
       if (el.value !== host) return
       buildTree((entries ?? []).map(toLdapNode))
@@ -148,7 +153,7 @@ onBeforeUnmount(destroyTree)
   <UModal
     :open="visible"
     :dismissible="false"
-    title="Browse directory"
+    :title="title"
     :ui="{
       overlay: 'ldap-browser-layer',
       content:

@@ -713,7 +713,10 @@ type Entry struct {
 	DN            string
 	RDN           string // display label - the value of the DN's leftmost attribute, e.g. "Admins"
 	ObjectClasses []string
-	IsGroup       bool
+	// ObjectClass is the LDAP class to show, such as organizationalUnit
+	// or inetOrgPerson. Kind stays the coarse tree bucket.
+	ObjectClass string
+	IsGroup     bool
 	// Kind is "person", "group", "container", or "other". The directory
 	// tree uses it to decide which entries are leaves and which can be edited.
 	Kind string
@@ -760,6 +763,52 @@ var containerObjectClasses = map[string]bool{
 	"dcobject":           true,
 	"country":            true,
 	"locality":           true,
+}
+
+// structuralClassOrder is most-specific first. organizationalUnit and the
+// Active Directory class container are different classes.
+var structuralClassOrder = []string{
+	"inetOrgPerson",
+	"user",
+	"posixAccount",
+	"organizationalPerson",
+	"person",
+	"groupOfUniqueNames",
+	"groupOfNames",
+	"posixGroup",
+	"group",
+	"organizationalUnit",
+	"organizationalRole",
+	"organization",
+	"locality",
+	"country",
+	"domain",
+	"container",
+	"dcObject",
+}
+
+// StructuralClass is the LDAP object class to show for these values.
+// A known class is returned in its schema spelling. Otherwise the first
+// class other than top is returned as the server sent it.
+func StructuralClass(classes []string) string {
+	found := map[string]bool{}
+	fallback := ""
+	for _, c := range classes {
+		key := strings.ToLower(strings.TrimSpace(c))
+		if key == "" || key == "top" {
+			continue
+		}
+		if fallback == "" {
+			fallback = strings.TrimSpace(c)
+		}
+		found[key] = true
+	}
+	for _, want := range structuralClassOrder {
+		if found[strings.ToLower(want)] {
+			return want
+		}
+	}
+	return fallback
 }
 
 // EntryKind classifies objectClass values for the directory tree.
@@ -831,6 +880,7 @@ func Browse(cfg Config, dn string) ([]Entry, error) {
 			DN:            e.DN,
 			RDN:           rdnValue(e.DN),
 			ObjectClasses: classes,
+			ObjectClass:   StructuralClass(classes),
 			IsGroup:       kind == "group",
 			Kind:          kind,
 		})

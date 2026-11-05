@@ -3,6 +3,7 @@ package ldapauth
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/go-ldap/ldap/v3"
@@ -15,15 +16,18 @@ import (
 var ErrADReadOnly = errors.New("ldap: Active Directory accounts are managed with Active Directory's own tools")
 
 // ErrWritebackMissing is returned when a directory write is attempted
-// without the elevated config-file identity.
-var ErrWritebackMissing = errors.New("ldap: directory changes need ldap_writeback.bind_dn and ldap_writeback.bind_password in the config file")
+// without either the config-file write-back account or the server's own
+// bind DN and password.
+var ErrWritebackMissing = errors.New("ldap: directory changes need ldap_writeback in the config file, or a bind DN and password on the OpenLDAP server")
 
 // Record is one directory entry's editable attributes. Members is set for
-// groups (member or uniqueMember). Person fields are set for people.
+// groups (member, uniqueMember, or memberUid). Groups is the person's
+// direct group DNs. Person fields are set for people.
 type Record struct {
 	DN            string
 	RDN           string
 	Kind          string
+	ObjectClass   string
 	ObjectClasses []string
 	UID           string
 	CN            string
@@ -33,15 +37,19 @@ type Record struct {
 	Mobile        string
 	Description   string
 	Members       []string
-	// MemberAttr is "member" or "uniqueMember" for a group Factum can edit.
-	// Empty for a group type that is only shown (posixGroup, AD group).
+	Groups        []string
+	// MemberAttr is "member", "uniqueMember", or "memberUid" for a group
+	// Factum can edit. Empty for an Active Directory group.
 	MemberAttr string
 }
 
-// PersonInput is a new or updated inetOrgPerson. ParentDN is the container
-// the entry is created under. DN is the existing entry on update. Password
+// PersonInput is a new or updated inetOrgPerson. ParentDN is the entry the
+// person is created under. DN is the existing entry on update. Password
 // is required on create and optional on update; it is applied with the
 // RFC 3062 password-modify operation so the server chooses the hash.
+// Groups, when SetGroups is set, replaces the person's direct group
+// membership (groupOfNames member, groupOfUniqueNames uniqueMember, and
+// posixGroup memberUid).
 type PersonInput struct {
 	DN          string
 	ParentDN    string
@@ -52,6 +60,8 @@ type PersonInput struct {
 	DisplayName string
 	Mobile      string
 	Password    string
+	Groups      []string
+	SetGroups   bool
 }
 
 // GroupInput is a groupOfNames entry. Members are user DNs. A groupOfNames
@@ -170,27 +180,134 @@ func requireBelowBase(dn, base, what string) error {
 // ReadEntry loads one entry's display attributes. It uses the search
 // identity and may fail over to the second host.
 func ReadEntry(cfg Config, dn string) (*Record, error) {
+	return ReadEntryAs(cfg, WritebackConfig{}, dn)
+}
+
+// ReadEntryAs loads one entry the way the directory editor shows it.
+// A write-back or server bind account is tried first so attributes the
+// search account cannot read, such as mail, still populate. A failed
+// privileged bind falls back to the search account.
+func ReadEntryAs(cfg Config, wb WritebackConfig, dn string) (*Record, error) {
 	dn = strings.TrimSpace(dn)
 	if err := requireBelowBase(dn, cfg.BaseDN, "entry"); err != nil {
 		return nil, err
 	}
-	conn, err := connect(cfg)
+	conn, err := dialBound(cfg, wb)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	if err := bindService(conn, cfg); err != nil {
+	rec, err := readRecord(conn, cfg, dn)
+	if err != nil {
 		return nil, err
 	}
-	return readRecord(conn, dn)
+	if rec.Kind == "person" {
+		groups, err := directGroups(conn, cfg.BaseDN, rec.DN, rec.UID)
+		if err != nil {
+			return nil, err
+		}
+		rec.Groups = groups
+	}
+	if rec.MemberAttr == "memberUid" {
+		rec.Members = resolveMemberUIDs(conn, cfg.BaseDN, rec.Members)
+	}
+	return rec, nil
 }
 
-func readRecord(conn *ldap.Conn, dn string) (*Record, error) {
+// dialBound binds as wb when that account is set and this is not Active
+// Directory. A rejected privileged bind is discarded and the search
+// account is used instead, so the editor still opens.
+func dialBound(cfg Config, wb WritebackConfig) (*ldap.Conn, error) {
+	conn, err := connect(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(wb.BindDN) != "" && wb.Password != "" && !strings.EqualFold(cfg.ServerType, "ad") {
+		if err := conn.Bind(wb.BindDN, wb.Password); err == nil {
+			return conn, nil
+		}
+		conn.Close()
+		conn, err = connect(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := bindService(conn, cfg); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func readAttrs(cfg Config) []string {
+	attrs := []string{
+		"*", "objectClass", "uid", "cn", "sn", "mail", "rfc822Mailbox",
+		"displayName", "mobile", "description", "member", "uniqueMember", "memberUid",
+	}
+	for _, extra := range []string{cfg.AttrEmail, cfg.AttrDisplayName, cfg.AttrMobile, cfg.AttrUsername, cfg.AttrGroups} {
+		if strings.TrimSpace(extra) != "" {
+			attrs = append(attrs, extra)
+		}
+	}
+	return attrs
+}
+
+// mailAttr is the attribute a person write updates. The rfc822Mailbox
+// alias is stored as mail.
+func mailAttr(cfg Config) string {
+	a := strings.TrimSpace(cfg.AttrEmail)
+	if a == "" || strings.EqualFold(a, "mail") || strings.EqualFold(a, "rfc822Mailbox") {
+		return "mail"
+	}
+	return a
+}
+
+// attrBase is an attribute description without a language option, with
+// the OpenLDAP aliases of mail and uid folded to the primary name.
+func attrBase(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if i := strings.IndexByte(name, ';'); i >= 0 {
+		name = name[:i]
+	}
+	switch name {
+	case "rfc822mailbox":
+		return "mail"
+	case "userid":
+		return "uid"
+	default:
+		return name
+	}
+}
+
+// entryString returns the first non-empty value of names. A language
+// option such as mail;lang-en matches mail, and rfc822Mailbox matches mail.
+func entryString(e *ldap.Entry, names ...string) string {
+	if e == nil {
+		return ""
+	}
+	for _, name := range names {
+		want := attrBase(name)
+		if want == "" {
+			continue
+		}
+		for _, a := range e.Attributes {
+			if attrBase(a.Name) != want {
+				continue
+			}
+			for _, v := range a.Values {
+				if strings.TrimSpace(v) != "" {
+					return v
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func readRecord(conn *ldap.Conn, cfg Config, dn string) (*Record, error) {
 	req := ldap.NewSearchRequest(
 		dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 1, 0, false,
-		"(objectClass=*)",
-		[]string{"objectClass", "uid", "cn", "sn", "mail", "displayName", "mobile", "description", "member", "uniqueMember"},
-		nil,
+		"(objectClass=*)", readAttrs(cfg), nil,
 	)
 	res, err := conn.Search(req)
 	if err != nil {
@@ -205,25 +322,32 @@ func readRecord(conn *ldap.Conn, dn string) (*Record, error) {
 		DN:            e.DN,
 		RDN:           rdnValue(e.DN),
 		Kind:          EntryKind(classes),
+		ObjectClass:   StructuralClass(classes),
 		ObjectClasses: classes,
-		UID:           e.GetEqualFoldAttributeValue("uid"),
-		CN:            e.GetEqualFoldAttributeValue("cn"),
-		SN:            e.GetEqualFoldAttributeValue("sn"),
-		Mail:          e.GetEqualFoldAttributeValue("mail"),
-		DisplayName:   e.GetEqualFoldAttributeValue("displayName"),
-		Mobile:        e.GetEqualFoldAttributeValue("mobile"),
-		Description:   e.GetEqualFoldAttributeValue("description"),
+		UID:           entryString(e, "uid", "userid"),
+		CN:            entryString(e, "cn"),
+		SN:            entryString(e, "sn"),
+		Mail:          entryString(e, cfg.AttrEmail, "mail", "rfc822Mailbox"),
+		DisplayName:   entryString(e, cfg.AttrDisplayName, "displayName"),
+		Mobile:        entryString(e, cfg.AttrMobile, "mobile"),
+		Description:   entryString(e, "description"),
 	}
 	switch {
-	case hasClass(classes, "groupofnames"):
+	case hasClass(classes, "groupofnames") || (hasClass(classes, "group") && !strings.EqualFold(cfg.ServerType, "ad")):
 		rec.MemberAttr = "member"
 		rec.Members = e.GetEqualFoldAttributeValues("member")
 	case hasClass(classes, "groupofuniquenames"):
 		rec.MemberAttr = "uniqueMember"
 		rec.Members = e.GetEqualFoldAttributeValues("uniqueMember")
+	case hasClass(classes, "posixgroup"):
+		rec.MemberAttr = "memberUid"
+		rec.Members = e.GetEqualFoldAttributeValues("memberUid")
 	}
 	if rec.Members == nil {
 		rec.Members = []string{}
+	}
+	if rec.Groups == nil {
+		rec.Groups = []string{}
 	}
 	return rec, nil
 }
@@ -267,7 +391,7 @@ func CreatePerson(cfg Config, wb WritebackConfig, in PersonInput) (string, error
 		add.Attribute("cn", []string{cn})
 		add.Attribute("sn", []string{sn})
 		if v := strings.TrimSpace(in.Mail); v != "" {
-			add.Attribute("mail", []string{v})
+			add.Attribute(mailAttr(cfg), []string{v})
 		}
 		if v := strings.TrimSpace(in.DisplayName); v != "" {
 			add.Attribute("displayName", []string{v})
@@ -281,6 +405,12 @@ func CreatePerson(cfg Config, wb WritebackConfig, in PersonInput) (string, error
 		if _, err := conn.PasswordModify(ldap.NewPasswordModifyRequest(dn, "", in.Password)); err != nil {
 			_ = conn.Del(ldap.NewDelRequest(dn, nil))
 			return fmt.Errorf("ldap: set password for %q failed: %w", dn, err)
+		}
+		if in.SetGroups {
+			if err := syncPersonGroups(conn, cfg, dn, uid, in.Groups); err != nil {
+				_ = conn.Del(ldap.NewDelRequest(dn, nil))
+				return err
+			}
 		}
 		created = dn
 		return nil
@@ -302,7 +432,7 @@ func UpdatePerson(cfg Config, wb WritebackConfig, in PersonInput) (string, error
 	}
 	var newDN string
 	err := modifyDirectory(cfg, wb, func(conn *ldap.Conn) error {
-		rec, err := readRecord(conn, dn)
+		rec, err := readRecord(conn, cfg, dn)
 		if err != nil {
 			return err
 		}
@@ -314,13 +444,14 @@ func UpdatePerson(cfg Config, wb WritebackConfig, in PersonInput) (string, error
 			return err
 		}
 		mod := ldap.NewModifyRequest(updated, nil)
+		emailAttr := mailAttr(cfg)
 		current := map[string]string{
 			"uid": rec.UID, "cn": rec.CN, "sn": rec.SN,
-			"mail": rec.Mail, "displayName": rec.DisplayName, "mobile": rec.Mobile,
+			emailAttr: rec.Mail, "displayName": rec.DisplayName, "mobile": rec.Mobile,
 		}
 		next := map[string]string{
 			"uid": strings.TrimSpace(in.UID), "cn": strings.TrimSpace(in.CN), "sn": strings.TrimSpace(in.SN),
-			"mail": strings.TrimSpace(in.Mail), "displayName": strings.TrimSpace(in.DisplayName), "mobile": strings.TrimSpace(in.Mobile),
+			emailAttr: strings.TrimSpace(in.Mail), "displayName": strings.TrimSpace(in.DisplayName), "mobile": strings.TrimSpace(in.Mobile),
 		}
 		if applyAttrDiff(mod, current, next) {
 			if err := conn.Modify(mod); err != nil {
@@ -330,6 +461,11 @@ func UpdatePerson(cfg Config, wb WritebackConfig, in PersonInput) (string, error
 		if strings.TrimSpace(in.Password) != "" {
 			if _, err := conn.PasswordModify(ldap.NewPasswordModifyRequest(updated, "", in.Password)); err != nil {
 				return fmt.Errorf("ldap: set password for %q failed: %w", updated, err)
+			}
+		}
+		if in.SetGroups {
+			if err := syncPersonGroups(conn, cfg, updated, strings.TrimSpace(in.UID), in.Groups); err != nil {
+				return err
 			}
 		}
 		newDN = updated
@@ -375,7 +511,7 @@ func DeletePerson(cfg Config, wb WritebackConfig, dn string) error {
 		return err
 	}
 	return modifyDirectory(cfg, wb, func(conn *ldap.Conn) error {
-		rec, err := readRecord(conn, dn)
+		rec, err := readRecord(conn, cfg, dn)
 		if err != nil {
 			return err
 		}
@@ -439,9 +575,10 @@ func CreateGroup(cfg Config, wb WritebackConfig, in GroupInput) (string, error) 
 	return created, err
 }
 
-// UpdateGroup changes a groupOfNames or groupOfUniqueNames entry. A cn
-// change renames a cn-RDN entry and returns the new DN so the caller can
-// retarget role mappings. posixGroup and Active Directory groups are refused.
+// UpdateGroup changes a groupOfNames, groupOfUniqueNames, or posixGroup
+// entry. A cn change renames a cn-RDN entry and returns the new DN so the
+// caller can retarget role mappings. Active Directory groups are refused.
+// posixGroup members are user DNs in and memberUid values on the server.
 func UpdateGroup(cfg Config, wb WritebackConfig, in GroupInput) (string, error) {
 	dn := strings.TrimSpace(in.DN)
 	if err := requireBelowBase(dn, cfg.BaseDN, "entry"); err != nil {
@@ -454,7 +591,7 @@ func UpdateGroup(cfg Config, wb WritebackConfig, in GroupInput) (string, error) 
 	}
 	var newDN string
 	err := modifyDirectory(cfg, wb, func(conn *ldap.Conn) error {
-		rec, err := readRecord(conn, dn)
+		rec, err := readRecord(conn, cfg, dn)
 		if err != nil {
 			return err
 		}
@@ -462,13 +599,18 @@ func UpdateGroup(cfg Config, wb WritebackConfig, in GroupInput) (string, error) 
 			return fmt.Errorf("ldap: %q is not a group", dn)
 		}
 		if rec.MemberAttr == "" {
-			return fmt.Errorf("ldap: %q is not a groupOfNames or groupOfUniqueNames group", dn)
+			return fmt.Errorf("ldap: %q is not a groupOfNames, groupOfUniqueNames, or posixGroup group", dn)
 		}
-		members, err := cleanMembers(in.Members, cfg.BaseDN)
+		var members []string
+		if rec.MemberAttr == "memberUid" {
+			members, err = memberUIDs(conn, cfg, in.Members)
+		} else {
+			members, err = cleanMembers(in.Members, cfg.BaseDN)
+		}
 		if err != nil {
 			return err
 		}
-		if len(members) == 0 {
+		if rec.MemberAttr != "memberUid" && len(members) == 0 {
 			return fmt.Errorf("ldap: a group needs at least one member")
 		}
 		updated := dn
@@ -489,7 +631,12 @@ func UpdateGroup(cfg Config, wb WritebackConfig, in GroupInput) (string, error) 
 		}
 		mod := ldap.NewModifyRequest(updated, nil)
 		mod.Replace("cn", []string{cn})
-		mod.Replace(rec.MemberAttr, members)
+		switch {
+		case len(members) == 0 && len(rec.Members) > 0:
+			mod.Delete(rec.MemberAttr, []string{})
+		case len(members) > 0:
+			mod.Replace(rec.MemberAttr, members)
+		}
 		if desc == "" {
 			if rec.Description != "" {
 				mod.Delete("description", []string{})
@@ -514,7 +661,7 @@ func DeleteGroup(cfg Config, wb WritebackConfig, dn string) error {
 		return err
 	}
 	return modifyDirectory(cfg, wb, func(conn *ldap.Conn) error {
-		rec, err := readRecord(conn, dn)
+		rec, err := readRecord(conn, cfg, dn)
 		if err != nil {
 			return err
 		}
@@ -526,6 +673,229 @@ func DeleteGroup(cfg Config, wb WritebackConfig, dn string) error {
 		}
 		return nil
 	})
+}
+
+// membershipFilter matches groups that list personDN or uid directly.
+func membershipFilter(personDN, uid string) string {
+	var clauses []string
+	if dn := strings.TrimSpace(personDN); dn != "" {
+		esc := ldap.EscapeFilter(dn)
+		clauses = append(clauses, "(member="+esc+")", "(uniqueMember="+esc+")")
+	}
+	if id := strings.TrimSpace(uid); id != "" {
+		clauses = append(clauses, "(memberUid="+ldap.EscapeFilter(id)+")")
+	}
+	if len(clauses) == 0 {
+		return ""
+	}
+	return "(|" + strings.Join(clauses, "") + ")"
+}
+
+func directGroups(conn *ldap.Conn, base, personDN, uid string) ([]string, error) {
+	filter := membershipFilter(personDN, uid)
+	if filter == "" || strings.TrimSpace(base) == "" {
+		return []string{}, nil
+	}
+	req := ldap.NewSearchRequest(
+		base, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		filter, []string{"objectClass"}, nil,
+	)
+	res, err := conn.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("ldap: group search for %q failed: %w", personDN, err)
+	}
+	self := NormalizeDN(personDN)
+	seen := map[string]bool{}
+	out := make([]string, 0, len(res.Entries))
+	for _, e := range res.Entries {
+		key := NormalizeDN(e.DN)
+		if key == "" || key == self || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e.DN)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	return out, nil
+}
+
+func resolveMemberUIDs(conn *ldap.Conn, base string, uids []string) []string {
+	out := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			continue
+		}
+		if strings.Contains(uid, "=") {
+			out = append(out, uid)
+			continue
+		}
+		if dn := findUID(conn, base, uid); dn != "" {
+			out = append(out, dn)
+			continue
+		}
+		out = append(out, uid)
+	}
+	return out
+}
+
+func findUID(conn *ldap.Conn, base, uid string) string {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(uid) == "" {
+		return ""
+	}
+	filter := "(uid=" + ldap.EscapeFilter(uid) + ")"
+	req := ldap.NewSearchRequest(
+		base, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
+		filter, []string{"dn"}, nil,
+	)
+	res, err := conn.Search(req)
+	if err != nil || len(res.Entries) != 1 {
+		return ""
+	}
+	return res.Entries[0].DN
+}
+
+func memberUIDs(conn *ldap.Conn, cfg Config, members []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		uid := m
+		if strings.Contains(m, "=") {
+			if err := requireBelowBase(m, cfg.BaseDN, "member"); err != nil {
+				return nil, err
+			}
+			attr, val, err := rdnTypeValue(m)
+			if err != nil {
+				return nil, err
+			}
+			if strings.EqualFold(attr, "uid") {
+				uid = val
+			} else {
+				rec, err := readRecord(conn, cfg, m)
+				if err != nil {
+					return nil, err
+				}
+				uid = strings.TrimSpace(rec.UID)
+				if uid == "" {
+					return nil, fmt.Errorf("ldap: %q has no uid for memberUid", m)
+				}
+			}
+		}
+		key := strings.ToLower(uid)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, uid)
+	}
+	return out, nil
+}
+
+// syncPersonGroups makes personDN a direct member of exactly want.
+// groupOfNames and groupOfUniqueNames keep at least one member.
+func syncPersonGroups(conn *ldap.Conn, cfg Config, personDN, uid string, want []string) error {
+	current, err := directGroups(conn, cfg.BaseDN, personDN, uid)
+	if err != nil {
+		return err
+	}
+	wanted := map[string]string{}
+	for _, g := range want {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		if _, err := ldap.ParseDN(g); err != nil {
+			return fmt.Errorf("ldap: group %q is not a DN", g)
+		}
+		if err := requireBelowBase(g, cfg.BaseDN, "group"); err != nil {
+			return err
+		}
+		if NormalizeDN(g) == NormalizeDN(personDN) {
+			return fmt.Errorf("ldap: %q cannot be a member of itself", personDN)
+		}
+		wanted[NormalizeDN(g)] = g
+	}
+	have := map[string]string{}
+	for _, g := range current {
+		have[NormalizeDN(g)] = g
+	}
+	var remove, add []string
+	for key, g := range have {
+		if _, ok := wanted[key]; !ok {
+			remove = append(remove, g)
+		}
+	}
+	for key, g := range wanted {
+		if _, ok := have[key]; !ok {
+			add = append(add, g)
+		}
+	}
+	for _, g := range remove {
+		if err := setMembership(conn, cfg, g, personDN, uid, false); err != nil {
+			return err
+		}
+	}
+	for _, g := range add {
+		if err := setMembership(conn, cfg, g, personDN, uid, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setMembership(conn *ldap.Conn, cfg Config, groupDN, personDN, uid string, present bool) error {
+	rec, err := readRecord(conn, cfg, groupDN)
+	if err != nil {
+		return err
+	}
+	if rec.Kind != "group" || rec.MemberAttr == "" {
+		return fmt.Errorf("ldap: %q is not a groupOfNames, groupOfUniqueNames, or posixGroup group", groupDN)
+	}
+	value := personDN
+	if rec.MemberAttr == "memberUid" {
+		value = strings.TrimSpace(uid)
+		if value == "" {
+			return fmt.Errorf("ldap: %q has no uid to store on %q", personDN, groupDN)
+		}
+	}
+	found, exact := membershipValue(rec.MemberAttr, rec.Members, personDN, value)
+	if present == found {
+		return nil
+	}
+	if !present && (rec.MemberAttr == "member" || rec.MemberAttr == "uniqueMember") && len(rec.Members) <= 1 {
+		return fmt.Errorf("ldap: %q must keep at least one member", groupDN)
+	}
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	if present {
+		mod.Add(rec.MemberAttr, []string{value})
+	} else {
+		mod.Delete(rec.MemberAttr, []string{exact})
+	}
+	if err := conn.Modify(mod); err != nil {
+		return fmt.Errorf("ldap: update %s on %q failed: %w", rec.MemberAttr, groupDN, err)
+	}
+	return nil
+}
+
+func membershipValue(attr string, values []string, personDN, uid string) (bool, string) {
+	for _, v := range values {
+		if attr == "memberUid" {
+			if strings.EqualFold(v, uid) {
+				return true, v
+			}
+			continue
+		}
+		if NormalizeDN(v) == NormalizeDN(personDN) {
+			return true, v
+		}
+	}
+	return false, ""
 }
 
 func cleanMembers(members []string, base string) ([]string, error) {

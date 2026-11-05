@@ -40,7 +40,7 @@ type LdapServerDTO struct {
 
 func ldapServerToDTO(row *models.LdapServer, wb ldapauth.WritebackConfig) LdapServerDTO {
 	enabled := serverEnabled(row)
-	code, _ := directoryWriteBlock(row.ServerType, enabled, wb)
+	code, _ := directoryWriteBlock(row.ServerType, enabled, writeIdentity(row.BindDN, row.BindPassword, wb))
 	port := row.Port
 	if port == 0 {
 		port = 389

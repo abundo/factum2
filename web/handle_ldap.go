@@ -115,6 +115,8 @@ type LdapBrowseEntryDTO struct {
 	IsGroup bool   `json:"is_group"`
 	// Kind is person, group, container, or other.
 	Kind string `json:"kind"`
+	// ObjectClass is the LDAP class name, such as organizationalUnit.
+	ObjectClass string `json:"object_class,omitempty"`
 }
 
 // ApiLdapBrowse lists the immediate children of the ?dn= query param (or the
@@ -135,7 +137,9 @@ func (ctrl *Controller) ApiLdapBrowse(c *echo.Context) error {
 
 	dtos := make([]LdapBrowseEntryDTO, 0, len(entries))
 	for _, e := range entries {
-		dtos = append(dtos, LdapBrowseEntryDTO{DN: e.DN, Name: e.RDN, IsGroup: e.IsGroup, Kind: e.Kind})
+		dtos = append(dtos, LdapBrowseEntryDTO{
+			DN: e.DN, Name: e.RDN, IsGroup: e.IsGroup, Kind: e.Kind, ObjectClass: e.ObjectClass,
+		})
 	}
 	return c.JSON(http.StatusOK, dtos)
 }

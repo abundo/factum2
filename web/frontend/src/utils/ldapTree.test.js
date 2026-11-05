@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   internalDropRegions,
+  ldapKindLabel,
   serverDropRegions,
   serverOrderAfterDrop,
   sortDirectoryNodes,
@@ -55,6 +56,15 @@ test('a folder cannot be dropped into itself', () => {
     }),
     false,
   )
+})
+
+test('object class names come from LDAP, and container is not an organizationalUnit', () => {
+  assert.equal(ldapKindLabel('ou'), 'organizationalUnit')
+  assert.equal(ldapKindLabel('person'), 'inetOrgPerson')
+  assert.equal(ldapKindLabel('container', 'organizationalUnit'), 'organizationalUnit')
+  assert.equal(ldapKindLabel('container', 'container'), 'container')
+  assert.equal(ldapKindLabel('group', 'posixGroup'), 'posixGroup')
+  assert.equal(ldapKindLabel('user'), 'inetOrgPerson')
 })
 
 test('LDAP servers reorder beside servers and cannot pass the local directory', () => {

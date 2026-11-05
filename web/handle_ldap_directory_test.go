@@ -21,6 +21,17 @@ func TestDirectoryWriteBlock(t *testing.T) {
 	if code, msg := directoryWriteBlock("generic", true, wb); code != 0 || msg != "" {
 		t.Fatalf("writable code = %d %q", code, msg)
 	}
+	ident := writeIdentity("cn=admin,dc=example,dc=com", "secret", ldapauth.WritebackConfig{})
+	if code, msg := directoryWriteBlock("generic", true, ident); code != 0 || msg != "" {
+		t.Fatalf("server bind code = %d %q", code, msg)
+	}
+	if code, _ := directoryWriteBlock("ad", true, ident); code != 403 {
+		t.Fatalf("ad with bind code = %d", code)
+	}
+	preferred := writeIdentity("cn=search,dc=example,dc=com", "search", wb)
+	if preferred.BindDN != wb.BindDN {
+		t.Fatalf("write-back should win, got %q", preferred.BindDN)
+	}
 	blankType := &models.Settings{LdapEnabled: boolPtr(true)}
 	status := directoryStatus(blankType, wb)
 	if !status.Writable || status.ServerType != "generic" {

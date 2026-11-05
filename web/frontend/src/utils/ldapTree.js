@@ -17,6 +17,7 @@ export function toLdapNode(entry) {
     type: kind,
     kind,
     dn: entry.dn,
+    object_class: entry.object_class || '',
     is_group: kind === 'group',
   }
 }
@@ -77,7 +78,12 @@ export function serverOrderAfterDrop(serverIds, sourceId, targetKind, targetId, 
   return ids
 }
 
-export function ldapKindLabel(kind) {
+// ldapKindLabel is the object class shown in the tree. objectClass is the
+// LDAP name from the server (organizationalUnit, container, inetOrgPerson).
+// It wins over the coarse kind. organizationalUnit and container are
+// different classes: an ou= entry is an organizationalUnit.
+export function ldapKindLabel(kind, objectClass) {
+  if (objectClass) return objectClass
   switch (kind) {
     case 'local':
       return 'Local'
@@ -86,23 +92,20 @@ export function ldapKindLabel(kind) {
     case 'roles':
       return 'Roles'
     case 'user':
-      return 'User'
-    case 'role':
-      return 'Role'
     case 'person':
-      return 'Person'
+      return 'inetOrgPerson'
+    case 'role':
     case 'group':
-      return 'Group'
+      return 'groupOfNames'
     case 'container':
-      return 'Container'
+    case 'ou':
+      return 'organizationalUnit'
     case 'directory':
       return 'Directory'
     case 'internal':
       return 'Internal'
     case 'server':
       return 'Server'
-    case 'ou':
-      return 'Folder'
     case 'other':
       return 'Entry'
     default:

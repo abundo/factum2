@@ -25,16 +25,17 @@ type LdapDirectoryStatusDTO struct {
 }
 
 type ldapPersonRequest struct {
-	ServerID    uint   `json:"server_id"`
-	DN          string `json:"dn"`
-	ParentDN    string `json:"parent_dn"`
-	UID         string `json:"uid"`
-	CN          string `json:"cn"`
-	SN          string `json:"sn"`
-	Mail        string `json:"mail"`
-	DisplayName string `json:"display_name"`
-	Mobile      string `json:"mobile"`
-	Password    string `json:"password"`
+	ServerID    uint      `json:"server_id"`
+	DN          string    `json:"dn"`
+	ParentDN    string    `json:"parent_dn"`
+	UID         string    `json:"uid"`
+	CN          string    `json:"cn"`
+	SN          string    `json:"sn"`
+	Mail        string    `json:"mail"`
+	DisplayName string    `json:"display_name"`
+	Mobile      string    `json:"mobile"`
+	Password    string    `json:"password"`
+	Groups      *[]string `json:"groups"`
 }
 
 type ldapGroupRequest struct {
@@ -50,14 +51,16 @@ type ldapEntryDTO struct {
 	DN          string   `json:"dn"`
 	Name        string   `json:"name"`
 	Kind        string   `json:"kind"`
+	ObjectClass string   `json:"object_class,omitempty"`
 	UID         string   `json:"uid,omitempty"`
 	CN          string   `json:"cn,omitempty"`
 	SN          string   `json:"sn,omitempty"`
-	Mail        string   `json:"mail,omitempty"`
+	Mail        string   `json:"mail"`
 	DisplayName string   `json:"display_name,omitempty"`
 	Mobile      string   `json:"mobile,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Members     []string `json:"members,omitempty"`
+	Groups      []string `json:"groups,omitempty"`
 	MemberAttr  string   `json:"member_attr,omitempty"`
 	Editable    bool     `json:"editable"`
 }
@@ -94,17 +97,31 @@ func serverEnabled(row *models.LdapServer) bool {
 	return row != nil && row.Enabled != nil && *row.Enabled
 }
 
+// writeIdentity is the account that changes OpenLDAP entries. The
+// config-file write-back account wins. Otherwise the server's own bind
+// DN is used, which is enough when that account can write. Active
+// Directory is still refused by directoryWriteBlock.
+func writeIdentity(bindDN, bindPassword string, wb ldapauth.WritebackConfig) ldapauth.WritebackConfig {
+	if strings.TrimSpace(wb.BindDN) != "" && wb.Password != "" {
+		return wb
+	}
+	if strings.TrimSpace(bindDN) != "" && bindPassword != "" {
+		return ldapauth.WritebackConfig{BindDN: strings.TrimSpace(bindDN), Password: bindPassword}
+	}
+	return ldapauth.WritebackConfig{}
+}
+
 // directoryWriteBlock is the reason a directory write must be refused,
-// or 0 when the OpenLDAP write-back account may be used. Reads are allowed
-// for both server types once that server is enabled.
-func directoryWriteBlock(serverType string, enabled bool, wb ldapauth.WritebackConfig) (int, string) {
+// or 0 when ident may change OpenLDAP entries. Reads are allowed for
+// both server types once that server is enabled.
+func directoryWriteBlock(serverType string, enabled bool, ident ldapauth.WritebackConfig) (int, string) {
 	if !enabled {
 		return http.StatusBadRequest, "LDAP is not enabled"
 	}
 	if strings.EqualFold(ldapServerTypeName(serverType), "ad") {
 		return http.StatusForbidden, ldapauth.ErrADReadOnly.Error()
 	}
-	if strings.TrimSpace(wb.BindDN) == "" || wb.Password == "" {
+	if strings.TrimSpace(ident.BindDN) == "" || ident.Password == "" {
 		return http.StatusBadRequest, ldapauth.ErrWritebackMissing.Error()
 	}
 	return 0, ""
@@ -120,7 +137,11 @@ func directoryStatus(settings *models.Settings, wb ldapauth.WritebackConfig) Lda
 	if settings != nil {
 		status.BaseDN = settings.LdapBaseDN
 	}
-	code, _ := directoryWriteBlock(status.ServerType, enabled, wb)
+	ident := wb
+	if settings != nil {
+		ident = writeIdentity(settings.LdapBindDN, settings.LdapBindPassword, wb)
+	}
+	code, _ := directoryWriteBlock(status.ServerType, enabled, ident)
 	status.Writable = code == 0
 	return status
 }
@@ -212,7 +233,7 @@ func (ctrl *Controller) ApiLdapDirectoryStatus(c *echo.Context) error {
 	}
 	if found {
 		enabled := serverEnabled(row)
-		code, _ := directoryWriteBlock(row.ServerType, enabled, wb)
+		code, _ := directoryWriteBlock(row.ServerType, enabled, writeIdentity(row.BindDN, row.BindPassword, wb))
 		return c.JSON(http.StatusOK, LdapDirectoryStatusDTO{
 			Enabled:    enabled,
 			ServerType: ldapServerTypeName(row.ServerType),
@@ -241,12 +262,12 @@ func (ctrl *Controller) loadDirectoryWrite(c *echo.Context, id uint) (ldapauth.C
 	if !ok {
 		return ldapauth.Config{}, ldapauth.WritebackConfig{}, false
 	}
-	wb := ldapWritebackConfig()
-	if code, msg := directoryWriteBlock(target.serverType, target.enabled, wb); code != 0 {
+	ident := writeIdentity(target.cfg.BindDN, target.cfg.BindPassword, ldapWritebackConfig())
+	if code, msg := directoryWriteBlock(target.serverType, target.enabled, ident); code != 0 {
 		_ = c.JSON(code, map[string]any{"error": msg})
 		return ldapauth.Config{}, ldapauth.WritebackConfig{}, false
 	}
-	return target.cfg, wb, true
+	return target.cfg, ident, true
 }
 
 func ldapDirectoryError(c *echo.Context, err error) error {
@@ -266,10 +287,15 @@ func toLDAPEntryDTO(rec *ldapauth.Record, writable bool) ldapEntryDTO {
 	if members == nil {
 		members = []string{}
 	}
+	groups := rec.Groups
+	if rec.Kind == "person" && groups == nil {
+		groups = []string{}
+	}
 	return ldapEntryDTO{
 		DN:          rec.DN,
 		Name:        rec.RDN,
 		Kind:        rec.Kind,
+		ObjectClass: rec.ObjectClass,
 		UID:         rec.UID,
 		CN:          rec.CN,
 		SN:          rec.SN,
@@ -278,6 +304,7 @@ func toLDAPEntryDTO(rec *ldapauth.Record, writable bool) ldapEntryDTO {
 		Mobile:      rec.Mobile,
 		Description: rec.Description,
 		Members:     members,
+		Groups:      groups,
 		MemberAttr:  rec.MemberAttr,
 		Editable:    editable,
 	}
@@ -288,16 +315,17 @@ func (ctrl *Controller) ApiLdapEntry(c *echo.Context) error {
 	if !ok {
 		return nil
 	}
-	rec, err := ldapauth.ReadEntry(target.cfg, c.QueryParam("dn"))
+	ident := writeIdentity(target.cfg.BindDN, target.cfg.BindPassword, ldapWritebackConfig())
+	rec, err := ldapauth.ReadEntryAs(target.cfg, ident, c.QueryParam("dn"))
 	if err != nil {
 		return ldapDirectoryError(c, err)
 	}
-	_, msg := directoryWriteBlock(target.serverType, target.enabled, ldapWritebackConfig())
+	_, msg := directoryWriteBlock(target.serverType, target.enabled, ident)
 	return c.JSON(http.StatusOK, toLDAPEntryDTO(rec, msg == ""))
 }
 
 func personInput(req ldapPersonRequest) ldapauth.PersonInput {
-	return ldapauth.PersonInput{
+	in := ldapauth.PersonInput{
 		DN:          req.DN,
 		ParentDN:    req.ParentDN,
 		UID:         req.UID,
@@ -308,6 +336,11 @@ func personInput(req ldapPersonRequest) ldapauth.PersonInput {
 		Mobile:      req.Mobile,
 		Password:    req.Password,
 	}
+	if req.Groups != nil {
+		in.SetGroups = true
+		in.Groups = *req.Groups
+	}
+	return in
 }
 
 func (ctrl *Controller) ApiLdapPersonCreate(c *echo.Context) error {

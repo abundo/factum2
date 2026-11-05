@@ -351,13 +351,13 @@ func project(e *Entry, names []string, typesOnly bool) [][2]string {
 		case "+":
 			wantOp = true
 		default:
-			explicit[strings.ToLower(n)] = true
+			explicit[canonicalAttr(n)] = true
 		}
 	}
 	var out [][2]string
 	for name, vals := range e.Attrs {
 		op := e.operational[name]
-		if explicit[name] || (!op && wantAll) || (op && wantOp) {
+		if explicit[canonicalAttr(name)] || (!op && wantAll) || (op && wantOp) {
 			if typesOnly {
 				out = append(out, [2]string{name, ""})
 				continue
@@ -369,6 +369,26 @@ func project(e *Entry, names []string, typesOnly bool) [][2]string {
 	}
 	sortPairs(out)
 	return out
+}
+
+// canonicalAttr folds an attribute name to the key this directory stores.
+// rfc822Mailbox is the alias of mail, so a client that asks for the alias
+// still receives the address.
+func canonicalAttr(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if i := strings.IndexByte(name, ';'); i >= 0 {
+		name = name[:i]
+	}
+	switch name {
+	case "rfc822mailbox":
+		return "mail"
+	case "userid":
+		return "uid"
+	case "domaincomponent":
+		return "dc"
+	default:
+		return name
+	}
 }
 
 func sortPairs(s [][2]string) {
