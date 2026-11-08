@@ -2784,6 +2784,74 @@ func TestProjectEndpointScopesDedupsIdentity(t *testing.T) {
 	}
 }
 
+func TestScopeTreePlacesSitesBeforeDevices(t *testing.T) {
+	db := newTestDB(t)
+	root, err := RootScope(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(parent uint, name, kind string, order int) {
+		t.Helper()
+		row := models.ConfigScope{ParentID: &parent, Name: name, Kind: kind, SortOrder: order}
+		mustCreate(t, db, &row)
+	}
+	// Sort orders are the reverse of the wanted display order.
+	mk(root.ID, "sw-a", models.ConfigScopeKindDevice, 0)
+	mk(root.ID, "notes", models.ConfigScopeKindFolder, 1)
+	mk(root.ID, "rack", models.ConfigScopeKindLocation, 2)
+	mk(root.ID, "sto", models.ConfigScopeKindSite, 3)
+	mk(root.ID, "eu", models.ConfigScopeKindRegion, 4)
+	mk(root.ID, "ntp", models.ConfigScopeKindParameter, 0)
+	mk(root.ID, "sw-b", models.ConfigScopeKindDevice, 5)
+	mk(root.ID, "north", models.ConfigScopeKindRegion, 0)
+	mk(root.ID, "south", models.ConfigScopeKindRegion, 0)
+
+	var sto models.ConfigScope
+	if err := db.Where("name = ? AND kind = ?", "sto", models.ConfigScopeKindSite).First(&sto).Error; err != nil {
+		t.Fatal(err)
+	}
+	mk(sto.ID, "sw-site", models.ConfigScopeKindDevice, 0)
+	mk(sto.ID, "hall", models.ConfigScopeKindLocation, 9)
+	mk(sto.ID, "extra", models.ConfigScopeKindFolder, 1)
+
+	tree, err := ScopeTree(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var global *ScopeTreeNode
+	walkTree(tree, func(n ScopeTreeNode) {
+		if n.Data.ID == root.ID {
+			cp := n
+			global = &cp
+		}
+	})
+	if global == nil {
+		t.Fatal("global missing from tree")
+	}
+	var titles []string
+	for _, c := range global.Children {
+		titles = append(titles, c.Title)
+	}
+	want := []string{"north", "south", "eu", "sto", "rack", "_catalog", "_services", "ntp", "notes", "sw-a", "sw-b"}
+	if strings.Join(titles, ",") != strings.Join(want, ",") {
+		t.Fatalf("global children = %v, want %v", titles, want)
+	}
+	var site *ScopeTreeNode
+	for i := range global.Children {
+		if global.Children[i].Title == "sto" {
+			site = &global.Children[i]
+		}
+	}
+	var siteTitles []string
+	for _, c := range site.Children {
+		siteTitles = append(siteTitles, c.Title)
+	}
+	siteWant := []string{"hall", "extra", "sw-site"}
+	if strings.Join(siteTitles, ",") != strings.Join(siteWant, ",") {
+		t.Fatalf("site children = %v, want %v", siteTitles, siteWant)
+	}
+}
+
 func TestVirtualRefsSkipUnattached(t *testing.T) {
 	db := newTestDB(t)
 	mustELANType(t, db)

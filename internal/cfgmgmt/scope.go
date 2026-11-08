@@ -977,10 +977,7 @@ func ScopeTree(db *gorm.DB) ([]ScopeTreeNode, error) {
 		byParent[*s.ParentID] = append(byParent[*s.ParentID], s)
 	}
 	sort.Slice(roots, func(i, j int) bool {
-		if roots[i].SortOrder != roots[j].SortOrder {
-			return roots[i].SortOrder < roots[j].SortOrder
-		}
-		return roots[i].Name < roots[j].Name
+		return lessScopeTree(roots[i], roots[j])
 	})
 	out := make([]ScopeTreeNode, 0, len(roots))
 	path := map[uint]bool{}
@@ -1094,13 +1091,62 @@ func virtualServiceRefs(db *gorm.DB, scopes []models.ConfigScope) (map[uint][]Sc
 	return out, nil
 }
 
+// scopeTreeRank groups siblings for display. Place nodes come first
+// (region, then site, then location). Devices come last. Everything else
+// keeps sort_order, then name, in the middle.
+func scopeTreeRank(kind string) int {
+	switch kind {
+	case models.ConfigScopeKindRegion:
+		return 0
+	case models.ConfigScopeKindSite:
+		return 1
+	case models.ConfigScopeKindLocation:
+		return 2
+	case models.ConfigScopeKindDevice:
+		return 4
+	default:
+		return 3
+	}
+}
+
+func lessScopeTree(a, b models.ConfigScope) bool {
+	if ra, rb := scopeTreeRank(a.Kind), scopeTreeRank(b.Kind); ra != rb {
+		return ra < rb
+	}
+	if a.SortOrder != b.SortOrder {
+		return a.SortOrder < b.SortOrder
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.ID < b.ID
+}
+
+// sinkTreeDevices moves device nodes to the end of one level. Service refs
+// are appended after stored children, so this runs after that append.
+func sinkTreeDevices(nodes []ScopeTreeNode) []ScopeTreeNode {
+	if len(nodes) < 2 {
+		return nodes
+	}
+	out := make([]ScopeTreeNode, 0, len(nodes))
+	devices := make([]ScopeTreeNode, 0)
+	for _, n := range nodes {
+		if n.Type == models.ConfigScopeKindDevice {
+			devices = append(devices, n)
+			continue
+		}
+		out = append(out, n)
+	}
+	if len(devices) == 0 {
+		return nodes
+	}
+	return append(out, devices...)
+}
+
 func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope, refs map[uint][]ScopeTreeNode, path map[uint]bool) ScopeTreeNode {
 	kids := byParent[s.ID]
 	sort.Slice(kids, func(i, j int) bool {
-		if kids[i].SortOrder != kids[j].SortOrder {
-			return kids[i].SortOrder < kids[j].SortOrder
-		}
-		return kids[i].Name < kids[j].Name
+		return lessScopeTree(kids[i], kids[j])
 	})
 	n := ScopeTreeNode{
 		Key:   strconv.FormatUint(uint64(s.ID), 10),
@@ -1130,6 +1176,7 @@ func buildTreeNode(s *models.ConfigScope, byParent map[uint][]models.ConfigScope
 		n.Children = append(n.Children, buildTreeNode(&kids[i], byParent, refs, path))
 	}
 	n.Children = append(n.Children, refs[s.ID]...)
+	n.Children = sinkTreeDevices(n.Children)
 	delete(path, s.ID)
 	return n
 }
