@@ -71,7 +71,7 @@ push and device-sync. `factum2-driver-cli` still takes `--username` /
 
 ## Network map
 
-**Network map** draws sites and links from Factum's topology (cables
+**Infrastructure → Network map** draws sites and links from Factum's topology (cables
 synced from NetBox, plus cables created in Factum). Sites without GPS
 are omitted.
 

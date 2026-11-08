@@ -125,12 +125,12 @@ const groups = computed(() => {
           : []),
       ]),
       section('Infrastructure', [
+        { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Racks', icon: 'i-lucide-rows-3', to: '/dcim/racks' },
         { label: 'Floor plans', icon: 'i-lucide-layout-panel-left', to: '/dcim/floor-plans' },
         { label: 'Connections', icon: 'i-lucide-share-2', to: '/dcim/connections' },
       ]),
       section('DCIM', [
-        { label: 'Network map', icon: 'i-lucide-globe', to: '/network-map' },
         { label: 'Configuration', icon: 'i-lucide-square-terminal', to: '/dcim/configuration' },
         { label: 'Devices', icon: 'i-lucide-server', to: '/device' },
         { label: 'Interfaces', icon: 'i-lucide-cable', to: '/dcim/interfaces' },

@@ -21,8 +21,8 @@ currently on GitHub.
 | Dashboard | Home | Welcome plus admin-configured shortcut links |
 | Customers / Contacts / Sites | Organization | Only if **Organization** is enabled under Admin → Settings → Factum |
 | Services / Config / Maintenance | Provisioning | Capacity services, config tree (CLI / parameters), optical maintenance |
-| Racks / Floor plans / Connections | Infrastructure | Room drawings, rack elevations, direct cables |
-| Network map / Configuration / Devices / Interfaces / Interface types / Oxidized | DCIM | Inventory, topology, live configuration, config backups |
+| Network map / Racks / Floor plans / Connections | Infrastructure | Topology, room drawings, rack elevations, direct cables |
+| Configuration / Devices / Interfaces / Interface types / Oxidized | DCIM | Inventory, live configuration, config backups |
 | Packet capture / Software | Tools | Port mirror and NOS images |
 | Prefixes / IP addresses / ASNs / Route targets | IPAM | Only if **IP address management** is enabled. ASNs has tabs for ranges and numbers |
 | DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
