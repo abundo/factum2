@@ -224,6 +224,11 @@ const groups = computed(() => {
               icon: 'i-lucide-file-key',
               to: '/admin/destinations/certificates',
             },
+            {
+              label: 'Common',
+              icon: 'i-lucide-list-filter',
+              to: '/admin/destinations/common',
+            },
             { label: 'DHCP', icon: 'i-lucide-router', to: '/admin/destinations/dhcp' },
             { label: 'DNS', icon: 'i-lucide-globe-2', to: '/admin/destinations/dns' },
             { label: 'Icinga', icon: 'i-lucide-bell', to: '/admin/destinations/icinga' },

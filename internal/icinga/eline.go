@@ -135,7 +135,7 @@ func elinePrefix(t elineTarget) string {
 // selectElineTargets keeps applied ELINE endpoints on monitored devices
 // that are not in the ignore list. One Icinga service per service id on
 // a host, named the same way sync writes the object.
-func selectElineTargets(rows []models.IcingaEline, domain, ignore string) []elineDevice {
+func selectElineTargets(rows []models.IcingaEline, domain string, filter models.DeviceFilter) []elineDevice {
 	type acc struct {
 		host     string
 		addr     string
@@ -145,7 +145,7 @@ func selectElineTargets(rows []models.IcingaEline, domain, ignore string) []elin
 	order := make([]string, 0)
 	byHost := map[string]*acc{}
 	for _, row := range rows {
-		if !row.Monitor || isIgnoredDevice(row.Device, ignore) {
+		if !row.Monitor || models.ListContains(row.Device, filter.Devices) || models.ListContains(row.Platform, filter.Platforms) {
 			continue
 		}
 		id := strings.TrimSpace(row.ServiceID)

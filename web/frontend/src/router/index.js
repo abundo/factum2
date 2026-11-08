@@ -362,6 +362,12 @@ const router = createRouter({
           component: () => import('@/views/admin/SettingsCertsPage.vue'),
         },
         {
+          path: '/admin/destinations/common',
+          name: 'admin-destinations-common',
+          meta: { requiresAdmin: true },
+          component: () => import('@/views/admin/SettingsCommonPage.vue'),
+        },
+        {
           path: '/admin/destinations/dhcp',
           name: 'admin-destinations-dhcp',
           meta: { requiresAdmin: true },

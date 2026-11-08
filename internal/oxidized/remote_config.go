@@ -23,6 +23,8 @@ type remoteConfigResponse struct {
 	IgnoreManufacturers string `json:"ignore_manufacturers"`
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
+	IgnoreInterfaces    string `json:"ignore_interfaces"`
+	RolesEnabled        string `json:"roles_enabled"`
 }
 
 // FetchRemoteConfig pulls the Oxidized API connection settings from the
@@ -44,6 +46,8 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigOxidized, e
 		IgnoreManufacturers: remote.IgnoreManufacturers,
 		IgnoreModels:        remote.IgnoreModels,
 		IgnorePlatforms:     remote.IgnorePlatforms,
+		IgnoreInterfaces:    remote.IgnoreInterfaces,
+		RolesEnabled:        remote.RolesEnabled,
 	}, nil
 }
 

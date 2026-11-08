@@ -29,6 +29,11 @@ type IcingaConfigResponse struct {
 	EAPIUser            string                  `json:"eapi_user"`
 	EAPIPassword        string                  `json:"eapi_password"`
 	IgnoreDevices       string                  `json:"ignore_devices"`
+	IgnoreManufacturers string                  `json:"ignore_manufacturers"`
+	IgnoreModels        string                  `json:"ignore_models"`
+	IgnorePlatforms     string                  `json:"ignore_platforms"`
+	IgnoreInterfaces    string                  `json:"ignore_interfaces"`
+	RolesEnabled        string                  `json:"roles_enabled"`
 	DefaultNotification string                  `json:"default_notification"`
 	HostTemplate        string                  `json:"host_template"`
 	DependencyTemplate  string                  `json:"dependency_template"`
@@ -61,6 +66,7 @@ func (ctrl *Controller) ApiIcingaConfig(c *echo.Context) error {
 			Name: cert.Name, Host: cert.Host, Domains: domains,
 		})
 	}
+	filter := settings.IcingaDeviceFilter()
 	return c.JSON(http.StatusOK, IcingaConfigResponse{
 		CommonConfig: util.WithSMTP(util.NewCommonConfig(settings), settings),
 		URL:          settings.IcingaApiURL,
@@ -75,7 +81,12 @@ func (ctrl *Controller) ApiIcingaConfig(c *echo.Context) error {
 		SNMPCommunities:     settings.IcingaSNMPCommunities,
 		EAPIUser:            settings.IcingaEAPIUser,
 		EAPIPassword:        settings.IcingaEAPIPassword,
-		IgnoreDevices:       settings.IcingaIgnoreDevices,
+		IgnoreDevices:       filter.Devices,
+		IgnoreManufacturers: filter.Manufacturers,
+		IgnoreModels:        filter.Models,
+		IgnorePlatforms:     filter.Platforms,
+		IgnoreInterfaces:    settings.IcingaIgnoreInterfacesEffective(),
+		RolesEnabled:        filter.Roles,
 		DefaultNotification: settings.IcingaDefaultNotification,
 		HostTemplate:        settings.IcingaHostTemplate,
 		DependencyTemplate:  settings.IcingaDependencyTemplate,

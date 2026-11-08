@@ -8,7 +8,6 @@ package oxidized
 import (
 	"bytes"
 	"os"
-	"strings"
 
 	"github.com/abundo/factum2/internal/factum"
 	"github.com/abundo/factum2/internal/jobevent"
@@ -65,20 +64,6 @@ func installConfFile(tmpFile, dst string) (bool, error) {
 	return true, nil
 }
 
-// isInList reports whether value appears in list, a newline-separated set
-// of values (Settings.OxidizedIgnore*).
-func isInList(value, list string) bool {
-	if value == "" {
-		return false
-	}
-	for _, item := range strings.Split(list, "\n") {
-		if strings.TrimSpace(item) == value {
-			return true
-		}
-	}
-	return false
-}
-
 // filterCounts tallies why devices were skipped, reported once at the end
 // of filterDevices - mirrors the Python original's Counter().
 type filterCounts struct {
@@ -88,6 +73,7 @@ type filterCounts struct {
 	ignoreManufacturer int
 	ignoreModel        int
 	ignorePlatform     int
+	ignoreRole         int
 	noPrimaryIP        int
 }
 
@@ -97,6 +83,10 @@ type filterCounts struct {
 func (foc *FactumOxidizedClient) filterDevices(all []*models.Device) ([]*models.Device, filterCounts) {
 	var counts filterCounts
 	var devices []*models.Device
+	filter := util.ConfigOxidized{}.DeviceFilter()
+	if foc.OxidizedConfig != nil {
+		filter = foc.OxidizedConfig.DeviceFilter()
+	}
 
 	for _, device := range all {
 		if !device.Enabled {
@@ -107,20 +97,24 @@ func (foc *FactumOxidizedClient) filterDevices(all []*models.Device) ([]*models.
 			counts.notBackupOxidized++
 			continue
 		}
-		if isInList(device.Name, foc.OxidizedConfig.IgnoreDevices) {
+		if models.ListContains(device.Name, filter.Devices) {
 			counts.ignoreDevice++
 			continue
 		}
-		if isInList(device.Manufacturer, foc.OxidizedConfig.IgnoreManufacturers) {
+		if models.ListContains(device.Manufacturer, filter.Manufacturers) {
 			counts.ignoreManufacturer++
 			continue
 		}
-		if isInList(device.ModelName, foc.OxidizedConfig.IgnoreModels) {
+		if models.ListContains(device.ModelName, filter.Models) {
 			counts.ignoreModel++
 			continue
 		}
-		if isInList(device.Platform, foc.OxidizedConfig.IgnorePlatforms) {
+		if models.ListContains(device.Platform, filter.Platforms) {
 			counts.ignorePlatform++
+			continue
+		}
+		if !models.RoleMatches(device.Role, filter.Roles) {
+			counts.ignoreRole++
 			continue
 		}
 		if device.PrimaryIPv4 == "" {
@@ -147,9 +141,9 @@ func (foc *FactumOxidizedClient) Sync(reporter jobevent.Reporter) error {
 	devices, counts := foc.filterDevices(allDevices)
 	reporter.Emit(jobevent.Info,
 		"Filtered devices: %d not enabled, %d not flagged for oxidized backup, %d ignored by name, "+
-			"%d ignored manufacturer, %d ignored model, %d ignored platform, %d without primary ip4",
+			"%d ignored manufacturer, %d ignored model, %d ignored platform, %d ignored role, %d without primary ip4",
 		counts.notEnabled, counts.notBackupOxidized, counts.ignoreDevice,
-		counts.ignoreManufacturer, counts.ignoreModel, counts.ignorePlatform, counts.noPrimaryIP)
+		counts.ignoreManufacturer, counts.ignoreModel, counts.ignorePlatform, counts.ignoreRole, counts.noPrimaryIP)
 	reporter.Emit(jobevent.Info, "Devices: %d of %d total", len(devices), len(allDevices))
 
 	tmpFile := foc.OxidizedConfig.DestFile + ".tmp"

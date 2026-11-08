@@ -25,6 +25,11 @@ type remoteConfigResponse struct {
 	DelayedDeleteDays    int    `json:"delayed_delete_days"`
 	RolesEnabled         string `json:"roles_enabled"`
 	InterfacesDisabled   string `json:"interfaces_disabled"`
+	IgnoreDevices        string `json:"ignore_devices"`
+	IgnoreManufacturers  string `json:"ignore_manufacturers"`
+	IgnoreModels         string `json:"ignore_models"`
+	IgnorePlatforms      string `json:"ignore_platforms"`
+	IgnoreInterfaces     string `json:"ignore_interfaces"`
 	SNMPVersion          string `json:"snmp_version"`
 	SNMPCommunities      string `json:"snmp_communities"`
 }
@@ -47,6 +52,11 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigLibrenms, e
 		DelayedDeleteDays:    remote.DelayedDeleteDays,
 		RolesEnabled:         remote.RolesEnabled,
 		InterfacesDisabled:   remote.InterfacesDisabled,
+		IgnoreDevices:        remote.IgnoreDevices,
+		IgnoreManufacturers:  remote.IgnoreManufacturers,
+		IgnoreModels:         remote.IgnoreModels,
+		IgnorePlatforms:      remote.IgnorePlatforms,
+		IgnoreInterfaces:     remote.IgnoreInterfaces,
 		SNMPVersion:          remote.SNMPVersion,
 		SNMPCommunities:      remote.SNMPCommunities,
 	}, nil

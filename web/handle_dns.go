@@ -16,18 +16,22 @@ import (
 // parses - keep the JSON tags in sync with that type.
 type DNSConfigResponse struct {
 	util.CommonConfig
-	DestFile        string                   `json:"dest_file"`
-	IgnoreModels    string                   `json:"ignore_models"`
-	IgnorePlatforms string                   `json:"ignore_platforms"`
-	ZonesEnabled    bool                     `json:"zones_enabled"`
-	DhcpEnabled     bool                     `json:"dhcp_enabled"`
-	ZonesFile       string                   `json:"zones_file"`
-	PrefixesFile    string                   `json:"prefixes_file"`
-	Zones           []dns.ConfigDNSZone      `json:"zones"`
-	SOATemplates    []dns.ConfigSOATemplate  `json:"soa_templates,omitempty"`
-	ZoneTemplates   []dns.ConfigZoneTemplate `json:"zone_templates,omitempty"`
-	DNSSECPolicies  []dns.ConfigDNSSECPolicy `json:"dnssec_policies,omitempty"`
-	DHCP            dns.ConfigDHCP           `json:"dhcp"`
+	DestFile            string                   `json:"dest_file"`
+	IgnoreDevices       string                   `json:"ignore_devices"`
+	IgnoreManufacturers string                   `json:"ignore_manufacturers"`
+	IgnoreModels        string                   `json:"ignore_models"`
+	IgnorePlatforms     string                   `json:"ignore_platforms"`
+	IgnoreInterfaces    string                   `json:"ignore_interfaces"`
+	RolesEnabled        string                   `json:"roles_enabled"`
+	ZonesEnabled        bool                     `json:"zones_enabled"`
+	DhcpEnabled         bool                     `json:"dhcp_enabled"`
+	ZonesFile           string                   `json:"zones_file"`
+	PrefixesFile        string                   `json:"prefixes_file"`
+	Zones               []dns.ConfigDNSZone      `json:"zones"`
+	SOATemplates        []dns.ConfigSOATemplate  `json:"soa_templates,omitempty"`
+	ZoneTemplates       []dns.ConfigZoneTemplate `json:"zone_templates,omitempty"`
+	DNSSECPolicies      []dns.ConfigDNSSECPolicy `json:"dnssec_policies,omitempty"`
+	DHCP                dns.ConfigDHCP           `json:"dhcp"`
 }
 
 // ApiDNSConfig returns the DNS sync settings from the database-backed
@@ -40,15 +44,20 @@ func (ctrl *Controller) ApiDNSConfig(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	filter := settings.DNSDeviceFilter()
 	resp := DNSConfigResponse{
-		CommonConfig:    util.NewCommonConfig(settings),
-		DestFile:        settings.DnsDestFile,
-		IgnoreModels:    settings.DnsIgnoreModels,
-		IgnorePlatforms: settings.DnsIgnorePlatforms,
-		ZonesEnabled:    dns.ZonesEnabled(ctrl.DB),
-		DhcpEnabled:     dns.DhcpEnabled(ctrl.DB),
-		ZonesFile:       settings.DnsZonesFile,
-		PrefixesFile:    settings.DhcpPrefixesFile,
+		CommonConfig:        util.NewCommonConfig(settings),
+		DestFile:            settings.DnsDestFile,
+		IgnoreDevices:       filter.Devices,
+		IgnoreManufacturers: filter.Manufacturers,
+		IgnoreModels:        filter.Models,
+		IgnorePlatforms:     filter.Platforms,
+		IgnoreInterfaces:    settings.DNSIgnoreInterfaces(),
+		RolesEnabled:        filter.Roles,
+		ZonesEnabled:        dns.ZonesEnabled(ctrl.DB),
+		DhcpEnabled:         dns.DhcpEnabled(ctrl.DB),
+		ZonesFile:           settings.DnsZonesFile,
+		PrefixesFile:        settings.DhcpPrefixesFile,
 	}
 	if resp.DhcpEnabled {
 		dhcp, err := loadDHCPSyncPayload(ctrl.DB, settings)

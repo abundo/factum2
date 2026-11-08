@@ -1,4 +1,5 @@
 <script setup>
+import DestinationFilterFields from '@/components/DestinationFilterFields.vue'
 import SettingsFormPage from '@/components/SettingsFormPage.vue'
 </script>
 
@@ -64,64 +65,16 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
         <span class="font-mono">snmp.yml</span>, not the community string itself.
       </p>
     </div>
-    <div>
-      <label for="prometheus_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
-      <UTextarea
-        id="prometheus_ignore_devices"
-        v-model="settings.prometheus_ignore_devices"
-        :rows="4"
-        placeholder="One device name per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="prometheus_ignore_manufacturers" class="block font-bold mb-3"
-        >Ignore manufacturers</label
-      >
-      <UTextarea
-        id="prometheus_ignore_manufacturers"
-        v-model="settings.prometheus_ignore_manufacturers"
-        :rows="4"
-        placeholder="One manufacturer per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="prometheus_ignore_models" class="block font-bold mb-3">Ignore models</label>
-      <UTextarea
-        id="prometheus_ignore_models"
-        v-model="settings.prometheus_ignore_models"
-        :rows="4"
-        placeholder="One model per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="prometheus_ignore_platforms" class="block font-bold mb-3">Ignore platforms</label>
-      <UTextarea
-        id="prometheus_ignore_platforms"
-        v-model="settings.prometheus_ignore_platforms"
-        :rows="4"
-        placeholder="One platform per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="prometheus_ignore_interfaces" class="block font-bold mb-3">Ignore interfaces</label>
-      <UTextarea
-        id="prometheus_ignore_interfaces"
-        v-model="settings.prometheus_ignore_interfaces"
-        :rows="4"
-        placeholder="One regexp per line"
-        class="w-full"
-      />
-      <p class="text-muted-color mt-1">
-        A sample is dropped when its ifName, ifDescr, or ifAlias matches the whole expression.
-        <span class="font-mono">Vlan.*</span>
-        drops Vlan10. It is not stored or alerted. The next Prometheus sync rewrites the
-        <span class="font-mono">factum-if-ignore</span>
-        block in the scrape config.
-      </p>
-    </div>
+    <DestinationFilterFields :settings="settings" prefix="prometheus">
+      <template #ignore-interfaces>
+        <p class="text-muted-color mt-1">
+          A sample is dropped when its ifName, ifDescr, or ifAlias matches the whole expression.
+          <span class="font-mono">Vlan.*</span>
+          drops Vlan10. It is not stored or alerted. The next Prometheus sync rewrites the
+          <span class="font-mono">factum-if-ignore</span>
+          block in the scrape config.
+        </p>
+      </template>
+    </DestinationFilterFields>
   </SettingsFormPage>
 </template>

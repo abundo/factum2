@@ -7,6 +7,17 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- Admin → Destinations → Common, after Certificates, holds shared ignore
+  lists for devices, models, platforms, manufacturers, and interfaces,
+  plus Roles enabled. DNS, Icinga, LibreNMS, Oxidized, and Prometheus
+  have the same six fields and use the Common list when their own
+  matching field is empty. Ignore interfaces is regular expressions:
+  DNS omits those interface records, Icinga omits the interface check,
+  Prometheus drops matching samples, and LibreNMS turns alerting off.
+  Roles enabled is regular expressions. DNS, Icinga, Oxidized, and
+  Prometheus include a device only when its role matches a non-empty
+  list. LibreNMS uses the list to turn alerting on for a matching
+  interface role.
 - Device roles can be created in Factum only, or created, renamed, and
   deleted in NetBox from **DCIM → Device roles**. A Factum-only role is
   left alone by NetBox sync. A role that is still assigned to a device

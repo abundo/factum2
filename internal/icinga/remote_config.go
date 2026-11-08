@@ -27,6 +27,11 @@ type remoteConfigResponse struct {
 	EAPIUser            string                  `json:"eapi_user"`
 	EAPIPassword        string                  `json:"eapi_password"`
 	IgnoreDevices       string                  `json:"ignore_devices"`
+	IgnoreManufacturers string                  `json:"ignore_manufacturers"`
+	IgnoreModels        string                  `json:"ignore_models"`
+	IgnorePlatforms     string                  `json:"ignore_platforms"`
+	IgnoreInterfaces    string                  `json:"ignore_interfaces"`
+	RolesEnabled        string                  `json:"roles_enabled"`
 	DefaultNotification string                  `json:"default_notification"`
 	HostTemplate        string                  `json:"host_template"`
 	DependencyTemplate  string                  `json:"dependency_template"`
@@ -58,6 +63,11 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigIcinga, err
 		EAPIUser:            remote.EAPIUser,
 		EAPIPassword:        remote.EAPIPassword,
 		IgnoreDevices:       remote.IgnoreDevices,
+		IgnoreManufacturers: remote.IgnoreManufacturers,
+		IgnoreModels:        remote.IgnoreModels,
+		IgnorePlatforms:     remote.IgnorePlatforms,
+		IgnoreInterfaces:    remote.IgnoreInterfaces,
+		RolesEnabled:        remote.RolesEnabled,
 		DefaultNotification: remote.DefaultNotification,
 		HostTemplate:        remote.HostTemplate,
 		DependencyTemplate:  remote.DependencyTemplate,

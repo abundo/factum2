@@ -13,18 +13,22 @@ import (
 // remoteConfigResponse mirrors web.DNSConfigResponse.
 type remoteConfigResponse struct {
 	util.CommonConfig
-	DestFile        string               `json:"dest_file"`
-	IgnoreModels    string               `json:"ignore_models"`
-	IgnorePlatforms string               `json:"ignore_platforms"`
-	ZonesEnabled    bool                 `json:"zones_enabled"`
-	DhcpEnabled     bool                 `json:"dhcp_enabled"`
-	ZonesFile       string               `json:"zones_file"`
-	PrefixesFile    string               `json:"prefixes_file"`
-	Zones           []ConfigDNSZone      `json:"zones"`
-	SOATemplates    []ConfigSOATemplate  `json:"soa_templates"`
-	ZoneTemplates   []ConfigZoneTemplate `json:"zone_templates"`
-	DNSSECPolicies  []ConfigDNSSECPolicy `json:"dnssec_policies"`
-	DHCP            ConfigDHCP           `json:"dhcp"`
+	DestFile            string               `json:"dest_file"`
+	IgnoreDevices       string               `json:"ignore_devices"`
+	IgnoreManufacturers string               `json:"ignore_manufacturers"`
+	IgnoreModels        string               `json:"ignore_models"`
+	IgnorePlatforms     string               `json:"ignore_platforms"`
+	IgnoreInterfaces    string               `json:"ignore_interfaces"`
+	RolesEnabled        string               `json:"roles_enabled"`
+	ZonesEnabled        bool                 `json:"zones_enabled"`
+	DhcpEnabled         bool                 `json:"dhcp_enabled"`
+	ZonesFile           string               `json:"zones_file"`
+	PrefixesFile        string               `json:"prefixes_file"`
+	Zones               []ConfigDNSZone      `json:"zones"`
+	SOATemplates        []ConfigSOATemplate  `json:"soa_templates"`
+	ZoneTemplates       []ConfigZoneTemplate `json:"zone_templates"`
+	DNSSECPolicies      []ConfigDNSSECPolicy `json:"dnssec_policies"`
+	DHCP                ConfigDHCP           `json:"dhcp"`
 }
 
 // FetchRemoteConfig pulls the DNS sync settings from the primary,
@@ -37,10 +41,14 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*Config, error) {
 	}
 	return &Config{
 		ConfigDNS: util.ConfigDNS{
-			CommonConfig:    remote.CommonConfig,
-			DestFile:        remote.DestFile,
-			IgnoreModels:    remote.IgnoreModels,
-			IgnorePlatforms: remote.IgnorePlatforms,
+			CommonConfig:        remote.CommonConfig,
+			DestFile:            remote.DestFile,
+			IgnoreDevices:       remote.IgnoreDevices,
+			IgnoreManufacturers: remote.IgnoreManufacturers,
+			IgnoreModels:        remote.IgnoreModels,
+			IgnorePlatforms:     remote.IgnorePlatforms,
+			IgnoreInterfaces:    remote.IgnoreInterfaces,
+			RolesEnabled:        remote.RolesEnabled,
 		},
 		ZonesEnabled:   remote.ZonesEnabled,
 		DhcpEnabled:    remote.DhcpEnabled,

@@ -23,6 +23,7 @@ type remoteConfigResponse struct {
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
 	IgnoreInterfaces    string `json:"ignore_interfaces"`
+	RolesEnabled        string `json:"roles_enabled"`
 }
 
 // FetchRemoteConfig pulls the Prometheus/snmp_exporter sync settings from
@@ -44,5 +45,6 @@ func FetchRemoteConfig(factumConfig *util.ConfigFactum) (*util.ConfigPrometheus,
 		IgnoreModels:        remote.IgnoreModels,
 		IgnorePlatforms:     remote.IgnorePlatforms,
 		IgnoreInterfaces:    remote.IgnoreInterfaces,
+		RolesEnabled:        remote.RolesEnabled,
 	}, nil
 }

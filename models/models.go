@@ -435,15 +435,34 @@ type Settings struct {
 	BecsEapiPass string `gorm:"column:becs_eapi_pass" form:"becs_eapi_pass" json:"becs_eapi_pass"`
 	BecsEapiOID  uint   `gorm:"column:becs_eapi_oid" form:"becs_eapi_oid" json:"becs_eapi_oid"`
 
+	// Common destination ignore lists, edited on Admin → Destinations →
+	// Common. Each is newline-separated. A destination uses its own list
+	// when that list names an entry (IgnoreOrDefault) and the matching
+	// common list when it does not. DNS reads models and platforms, Icinga
+	// reads devices, models, platforms, manufacturers, and interfaces.
+	// DNS, Icinga, Oxidized, and Prometheus also read roles (device role
+	// regexes). LibreNMS reads roles as interface-role alerting regexes.
+	CommonIgnoreDevices       string `gorm:"column:common_ignore_devices;type:text" form:"common_ignore_devices" json:"common_ignore_devices"`
+	CommonIgnoreModels        string `gorm:"column:common_ignore_models;type:text" form:"common_ignore_models" json:"common_ignore_models"`
+	CommonIgnorePlatforms     string `gorm:"column:common_ignore_platforms;type:text" form:"common_ignore_platforms" json:"common_ignore_platforms"`
+	CommonIgnoreManufacturers string `gorm:"column:common_ignore_manufacturers;type:text" form:"common_ignore_manufacturers" json:"common_ignore_manufacturers"`
+	CommonIgnoreInterfaces    string `gorm:"column:common_ignore_interfaces;type:text" form:"common_ignore_interfaces" json:"common_ignore_interfaces"`
+	CommonRolesEnabled        string `gorm:"column:common_roles_enabled;type:text" form:"common_roles_enabled" json:"common_roles_enabled"`
+
 	// DNS
 	// DnsDestFile is a worker.paths key (dns_dest_file). The JSON records
 	// path is only in the worker YAML.
 	DnsDestFile string `gorm:"column:dns_dest_file" form:"dns_dest_file" json:"dns_dest_file"`
-	// IgnoreModels/IgnorePlatforms are newline-separated lists (one model or
-	// platform name per line), edited as a multiline box in the admin UI -
-	// internal/dns.filterDevices skips a device matching either.
-	DnsIgnoreModels    string `gorm:"column:dns_ignore_models;type:text" form:"dns_ignore_models" json:"dns_ignore_models"`
-	DnsIgnorePlatforms string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
+	// The DNS ignore lists and DnsRolesEnabled are newline-separated.
+	// An empty list uses the matching Common* list. filterDevices skips a
+	// device that matches an ignore list or whose role matches none of a
+	// non-empty role list. DnsIgnoreInterfaces drops interface records.
+	DnsIgnoreDevices       string `gorm:"column:dns_ignore_devices;type:text" form:"dns_ignore_devices" json:"dns_ignore_devices"`
+	DnsIgnoreManufacturers string `gorm:"column:dns_ignore_manufacturers;type:text" form:"dns_ignore_manufacturers" json:"dns_ignore_manufacturers"`
+	DnsIgnoreModels        string `gorm:"column:dns_ignore_models;type:text" form:"dns_ignore_models" json:"dns_ignore_models"`
+	DnsIgnorePlatforms     string `gorm:"column:dns_ignore_platforms;type:text" form:"dns_ignore_platforms" json:"dns_ignore_platforms"`
+	DnsIgnoreInterfaces    string `gorm:"column:dns_ignore_interfaces;type:text" form:"dns_ignore_interfaces" json:"dns_ignore_interfaces"`
+	DnsRolesEnabled        string `gorm:"column:dns_roles_enabled;type:text" form:"dns_roles_enabled" json:"dns_roles_enabled"`
 	// DnsZonesFile is a worker.paths key (dns_zones_file) for the dnsmgr2
 	// zone-include YAML written when DnsZonesEnabled is on. Empty skips
 	// writing when the zone editor is off (the operator lists zones in
@@ -535,9 +554,16 @@ type Settings struct {
 	// is enough. Empty leaves EOS ELINE checks UNKNOWN.
 	IcingaEAPIUser     string `gorm:"column:icinga_eapi_user" form:"icinga_eapi_user" json:"icinga_eapi_user"`
 	IcingaEAPIPassword string `gorm:"column:icinga_eapi_password" form:"icinga_eapi_password" json:"icinga_eapi_password"`
-	// IcingaIgnoreDevices is a newline-separated list of device names (one
-	// per line) that factum2-icinga's Update() skips entirely.
-	IcingaIgnoreDevices string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`
+	// Icinga ignore lists and IcingaRolesEnabled match the Common fields.
+	// An empty list uses the matching Common* list. factum2-icinga skips a
+	// device that matches an ignore list or whose role matches none of a
+	// non-empty role list. IcingaIgnoreInterfaces omits interface checks.
+	IcingaIgnoreDevices       string `gorm:"column:icinga_ignore_devices;type:text" form:"icinga_ignore_devices" json:"icinga_ignore_devices"`
+	IcingaIgnoreManufacturers string `gorm:"column:icinga_ignore_manufacturers;type:text" form:"icinga_ignore_manufacturers" json:"icinga_ignore_manufacturers"`
+	IcingaIgnoreModels        string `gorm:"column:icinga_ignore_models;type:text" form:"icinga_ignore_models" json:"icinga_ignore_models"`
+	IcingaIgnorePlatforms     string `gorm:"column:icinga_ignore_platforms;type:text" form:"icinga_ignore_platforms" json:"icinga_ignore_platforms"`
+	IcingaIgnoreInterfaces    string `gorm:"column:icinga_ignore_interfaces;type:text" form:"icinga_ignore_interfaces" json:"icinga_ignore_interfaces"`
+	IcingaRolesEnabled        string `gorm:"column:icinga_roles_enabled;type:text" form:"icinga_roles_enabled" json:"icinga_roles_enabled"`
 	// IcingaDefaultNotification is a Jet template executed with .Device
 	// for a host that has no cf_alarm_destination, e.g.
 	// `  vars.pe_notify_default = true`. Literal Icinga with no {{ }} is
@@ -582,6 +608,14 @@ type Settings struct {
 	// respectively, overriding the device's CfAlarmInterfaces default.
 	LibrenmsRolesEnabled       string `gorm:"column:librenms_roles_enabled;type:text" form:"librenms_roles_enabled" json:"librenms_roles_enabled"`
 	LibrenmsInterfacesDisabled string `gorm:"column:librenms_interfaces_disabled;type:text" form:"librenms_interfaces_disabled" json:"librenms_interfaces_disabled"`
+	// LibrenmsIgnore* match the Common ignore lists. An empty list uses
+	// the matching Common* list. A matching device is left out of sync.
+	// LibrenmsIgnoreInterfaces forces alerting off for a matching name.
+	LibrenmsIgnoreDevices       string `gorm:"column:librenms_ignore_devices;type:text" form:"librenms_ignore_devices" json:"librenms_ignore_devices"`
+	LibrenmsIgnoreManufacturers string `gorm:"column:librenms_ignore_manufacturers;type:text" form:"librenms_ignore_manufacturers" json:"librenms_ignore_manufacturers"`
+	LibrenmsIgnoreModels        string `gorm:"column:librenms_ignore_models;type:text" form:"librenms_ignore_models" json:"librenms_ignore_models"`
+	LibrenmsIgnorePlatforms     string `gorm:"column:librenms_ignore_platforms;type:text" form:"librenms_ignore_platforms" json:"librenms_ignore_platforms"`
+	LibrenmsIgnoreInterfaces    string `gorm:"column:librenms_ignore_interfaces;type:text" form:"librenms_ignore_interfaces" json:"librenms_ignore_interfaces"`
 	// LibrenmsSNMPVersion is the SNMP version (e.g. "v1", "v2c", "v3") used
 	// when creating devices in LibreNMS.
 	LibrenmsSNMPVersion string `gorm:"column:librenms_snmp_version" form:"librenms_snmp_version" json:"librenms_snmp_version"`
@@ -634,13 +668,15 @@ type Settings struct {
 	// Oxidized's CSV source must map name: 0, ip: 1, model: 2.
 	OxidizedDestFile string `gorm:"column:oxidized_dest_file" form:"oxidized_dest_file" json:"oxidized_dest_file"`
 	// OxidizedIgnoreDevices/Manufacturers/Models/Platforms are
-	// newline-separated lists, edited as multiline boxes in the admin UI -
-	// a device matching any one of them is skipped by
-	// FactumOxidizedClient.Sync.
+	// newline-separated lists, edited as multiline boxes in the admin UI.
+	// An empty list uses the matching CommonIgnore* list. A device matching
+	// any one of them is skipped by FactumOxidizedClient.Sync.
 	OxidizedIgnoreDevices       string `gorm:"column:oxidized_ignore_devices;type:text" form:"oxidized_ignore_devices" json:"oxidized_ignore_devices"`
 	OxidizedIgnoreManufacturers string `gorm:"column:oxidized_ignore_manufacturers;type:text" form:"oxidized_ignore_manufacturers" json:"oxidized_ignore_manufacturers"`
 	OxidizedIgnoreModels        string `gorm:"column:oxidized_ignore_models;type:text" form:"oxidized_ignore_models" json:"oxidized_ignore_models"`
 	OxidizedIgnorePlatforms     string `gorm:"column:oxidized_ignore_platforms;type:text" form:"oxidized_ignore_platforms" json:"oxidized_ignore_platforms"`
+	OxidizedIgnoreInterfaces    string `gorm:"column:oxidized_ignore_interfaces;type:text" form:"oxidized_ignore_interfaces" json:"oxidized_ignore_interfaces"`
+	OxidizedRolesEnabled        string `gorm:"column:oxidized_roles_enabled;type:text" form:"oxidized_roles_enabled" json:"oxidized_roles_enabled"`
 
 	// Prometheus + snmp_exporter. PrometheusDestFile is a worker.paths key
 	// (prometheus_dest_file). factum2-prometheus writes a Prometheus
@@ -662,17 +698,19 @@ type Settings struct {
 	// treated as "public_v2" at write time.
 	PrometheusAuth string `gorm:"column:prometheus_auth" form:"prometheus_auth" json:"prometheus_auth"`
 	// PrometheusIgnoreDevices/Manufacturers/Models/Platforms are
-	// newline-separated lists, same convention as Oxidized's Ignore* -
-	// a device matching any one of them is skipped by
-	// FactumPrometheusClient.Sync.
+	// newline-separated lists, same convention as Oxidized's Ignore*.
+	// An empty list uses the matching CommonIgnore* list. A device
+	// matching any one of them is skipped by FactumPrometheusClient.Sync.
 	PrometheusIgnoreDevices       string `gorm:"column:prometheus_ignore_devices;type:text" form:"prometheus_ignore_devices" json:"prometheus_ignore_devices"`
 	PrometheusIgnoreManufacturers string `gorm:"column:prometheus_ignore_manufacturers;type:text" form:"prometheus_ignore_manufacturers" json:"prometheus_ignore_manufacturers"`
 	PrometheusIgnoreModels        string `gorm:"column:prometheus_ignore_models;type:text" form:"prometheus_ignore_models" json:"prometheus_ignore_models"`
 	PrometheusIgnorePlatforms     string `gorm:"column:prometheus_ignore_platforms;type:text" form:"prometheus_ignore_platforms" json:"prometheus_ignore_platforms"`
 	// PrometheusIgnoreInterfaces is a newline-separated list of regular
-	// expressions. A scraped sample whose ifName, ifDescr, or ifAlias
-	// matches the whole expression is dropped before it is stored.
+	// expressions. An empty list uses CommonIgnoreInterfaces. A scraped
+	// sample whose ifName, ifDescr, or ifAlias matches the whole
+	// expression is dropped before it is stored.
 	PrometheusIgnoreInterfaces string `gorm:"column:prometheus_ignore_interfaces;type:text" form:"prometheus_ignore_interfaces" json:"prometheus_ignore_interfaces"`
+	PrometheusRolesEnabled     string `gorm:"column:prometheus_roles_enabled;type:text" form:"prometheus_roles_enabled" json:"prometheus_roles_enabled"`
 
 	// Device Sync (internal/device-sync) - VRFInGlobal/DeviceStates/
 	// DeviceIgnore are newline-separated lists, edited as multiline boxes in

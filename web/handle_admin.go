@@ -59,8 +59,29 @@ func (ctrl *Controller) ApiSettingsUpdate(c *echo.Context) error {
 	if err := validateDestinationKeys(settings); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	if _, err := prometheus.CompileIgnoreInterfaces(settings.PrometheusIgnoreInterfaces); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	for _, list := range []string{
+		settings.CommonIgnoreInterfaces,
+		settings.DnsIgnoreInterfaces,
+		settings.IcingaIgnoreInterfaces,
+		settings.LibrenmsIgnoreInterfaces,
+		settings.OxidizedIgnoreInterfaces,
+		settings.PrometheusIgnoreInterfaces,
+	} {
+		if _, err := prometheus.CompileIgnoreInterfaces(list); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
+	}
+	for _, list := range []string{
+		settings.CommonRolesEnabled,
+		settings.DnsRolesEnabled,
+		settings.IcingaRolesEnabled,
+		settings.LibrenmsRolesEnabled,
+		settings.OxidizedRolesEnabled,
+		settings.PrometheusRolesEnabled,
+	} {
+		if err := models.ValidateRegexpList(list); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
 	}
 	if err := validateBranding(settings.BrandLogo, settings.BrandText); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})

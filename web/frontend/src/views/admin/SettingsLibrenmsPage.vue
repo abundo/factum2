@@ -1,4 +1,5 @@
 <script setup>
+import DestinationFilterFields from '@/components/DestinationFilterFields.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SettingsFormPage from '@/components/SettingsFormPage.vue'
 
@@ -78,16 +79,7 @@ function onDelayedDeleteToggle(settings, val) {
         class="w-full"
       />
     </div>
-    <div>
-      <label for="librenms_roles_enabled" class="block font-bold mb-3">Roles enabled</label>
-      <UTextarea
-        id="librenms_roles_enabled"
-        v-model="settings.librenms_roles_enabled"
-        :rows="4"
-        placeholder="One regex per line, matched against an interface's role to force alerting on"
-        class="w-full"
-      />
-    </div>
+    <DestinationFilterFields :settings="settings" prefix="librenms" />
     <div>
       <label for="librenms_interfaces_disabled" class="block font-bold mb-3"
         >Interfaces disabled</label

@@ -1,4 +1,5 @@
 <script setup>
+import DestinationFilterFields from '@/components/DestinationFilterFields.vue'
 import SettingsFormPage from '@/components/SettingsFormPage.vue'
 </script>
 
@@ -21,26 +22,7 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
         Leave blank to use dns_dest_file.</small
       >
     </div>
-    <div>
-      <label for="dns_ignore_models" class="block font-bold mb-3">Ignore models</label>
-      <UTextarea
-        id="dns_ignore_models"
-        v-model="settings.dns_ignore_models"
-        :rows="4"
-        placeholder="One model per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="dns_ignore_platforms" class="block font-bold mb-3">Ignore platforms</label>
-      <UTextarea
-        id="dns_ignore_platforms"
-        v-model="settings.dns_ignore_platforms"
-        :rows="4"
-        placeholder="One platform per line"
-        class="w-full"
-      />
-    </div>
+    <DestinationFilterFields :settings="settings" prefix="dns" />
     <div>
       <label for="dns_zones_file" class="block font-bold mb-3">Include file</label>
       <UInput

@@ -44,20 +44,6 @@ func NewFactumPrometheusClient(root *util.ConfigAgentRoot) (*FactumPrometheusCli
 	return client, nil
 }
 
-// isInList reports whether value appears in list, a newline-separated set
-// of values (Settings.PrometheusIgnore*).
-func isInList(value, list string) bool {
-	if value == "" {
-		return false
-	}
-	for _, item := range strings.Split(list, "\n") {
-		if strings.TrimSpace(item) == value {
-			return true
-		}
-	}
-	return false
-}
-
 // filterCounts tallies why devices were skipped, reported once at the end
 // of filterDevices.
 type filterCounts struct {
@@ -67,6 +53,7 @@ type filterCounts struct {
 	ignoreManufacturer int
 	ignoreModel        int
 	ignorePlatform     int
+	ignoreRole         int
 	noPrimaryIP        int
 }
 
@@ -76,6 +63,10 @@ type filterCounts struct {
 func (fpc *FactumPrometheusClient) filterDevices(all []*models.Device) ([]*models.Device, filterCounts) {
 	var counts filterCounts
 	var devices []*models.Device
+	filter := util.ConfigPrometheus{}.DeviceFilter()
+	if fpc.PrometheusConfig != nil {
+		filter = fpc.PrometheusConfig.DeviceFilter()
+	}
 
 	for _, device := range all {
 		if !device.Enabled {
@@ -86,20 +77,24 @@ func (fpc *FactumPrometheusClient) filterDevices(all []*models.Device) ([]*model
 			counts.notMonitorGrafana++
 			continue
 		}
-		if isInList(device.Name, fpc.PrometheusConfig.IgnoreDevices) {
+		if models.ListContains(device.Name, filter.Devices) {
 			counts.ignoreDevice++
 			continue
 		}
-		if isInList(device.Manufacturer, fpc.PrometheusConfig.IgnoreManufacturers) {
+		if models.ListContains(device.Manufacturer, filter.Manufacturers) {
 			counts.ignoreManufacturer++
 			continue
 		}
-		if isInList(device.ModelName, fpc.PrometheusConfig.IgnoreModels) {
+		if models.ListContains(device.ModelName, filter.Models) {
 			counts.ignoreModel++
 			continue
 		}
-		if isInList(device.Platform, fpc.PrometheusConfig.IgnorePlatforms) {
+		if models.ListContains(device.Platform, filter.Platforms) {
 			counts.ignorePlatform++
+			continue
+		}
+		if !models.RoleMatches(device.Role, filter.Roles) {
+			counts.ignoreRole++
 			continue
 		}
 		if device.PrimaryIPv4 == "" {
@@ -147,9 +142,9 @@ func (fpc *FactumPrometheusClient) syncDevices(reporter jobevent.Reporter, all [
 	devices, counts := fpc.filterDevices(all)
 	reporter.Emit(jobevent.Info,
 		"Filtered devices: %d not enabled, %d not flagged for grafana/prometheus, %d ignored by name, "+
-			"%d ignored manufacturer, %d ignored model, %d ignored platform, %d without primary ip4",
+			"%d ignored manufacturer, %d ignored model, %d ignored platform, %d ignored role, %d without primary ip4",
 		counts.notEnabled, counts.notMonitorGrafana, counts.ignoreDevice,
-		counts.ignoreManufacturer, counts.ignoreModel, counts.ignorePlatform, counts.noPrimaryIP)
+		counts.ignoreManufacturer, counts.ignoreModel, counts.ignorePlatform, counts.ignoreRole, counts.noPrimaryIP)
 	reporter.Emit(jobevent.Info, "Devices: %d of %d total", len(devices), len(all))
 
 	tmpFile := fpc.PrometheusConfig.DestFile + ".tmp"

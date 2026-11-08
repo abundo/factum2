@@ -28,7 +28,7 @@ func TestSelectInterfaceTargets(t *testing.T) {
 		{Name: "down", Enabled: false, PrimaryIPv4: "10.0.0.3/24", CfAlarmInterfaces: true, Interfaces: []models.Interface{{Name: "Ethernet1"}}},
 		{Name: "skip", Enabled: true, PrimaryIPv4: "10.0.0.4/24", CfAlarmInterfaces: true, Interfaces: []models.Interface{{Name: "Ethernet9"}}},
 	}
-	got := selectInterfaceTargets(devices, "lab.example", "skip\n")
+	got := selectInterfaceTargets(devices, "lab.example", models.DeviceFilter{Devices: "skip\n"}, "")
 	if len(got) != 1 || got[0].Host != "r1.lab.example" || got[0].Addr != "10.0.0.1" {
 		t.Fatalf("targets: %#v", got)
 	}

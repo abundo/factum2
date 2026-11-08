@@ -133,17 +133,6 @@ func installConfFile(tmpFile, dst string) (bool, error) {
 	return true, nil
 }
 
-// isIgnoredDevice reports whether name appears in ignoreDevices, a
-// newline-separated list (Settings.IcingaIgnoreDevices).
-func isIgnoredDevice(name, ignoreDevices string) bool {
-	for _, ignored := range strings.Split(ignoreDevices, "\n") {
-		if strings.TrimSpace(ignored) == name {
-			return true
-		}
-	}
-	return false
-}
-
 // hostTemplateFuncs are the custom functions available inside
 // Settings.IcingaHostTemplate and Settings.IcingaDefaultNotification.
 // defaultDomain is Settings.DefaultDomain, used by "fqdn" to qualify
@@ -212,7 +201,7 @@ func (fic *FactumIcingaClient) writeDevices(devices []*models.Device, reporter j
 
 	written := 0
 	for _, device := range devices {
-		if !deviceEligible(device, fic.IcingaConfig.IgnoreDevices) {
+		if !deviceEligible(device, fic.IcingaConfig.DeviceFilter()) {
 			continue
 		}
 
@@ -466,8 +455,8 @@ func (fic *FactumIcingaClient) writeInterfaces(devices []*models.Device, elines 
 	var targets []deviceIfaces
 	var elineTargets []elineDevice
 	if fic.IcingaConfig.MonitorInterfaces {
-		targets = selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
-		elineTargets = selectElineTargets(elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices)
+		targets = selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.DeviceFilter(), fic.IcingaConfig.IgnoreInterfaces)
+		elineTargets = selectElineTargets(elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.DeviceFilter())
 	}
 	n := countIfaces(targets)
 	nElines := 0

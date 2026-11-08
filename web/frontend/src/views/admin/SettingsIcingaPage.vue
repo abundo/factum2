@@ -1,4 +1,5 @@
 <script setup>
+import DestinationFilterFields from '@/components/DestinationFilterFields.vue'
 import GoTemplateField from '@/components/GoTemplateField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SettingsFormPage from '@/components/SettingsFormPage.vue'
@@ -30,16 +31,7 @@ import {
       <label for="icinga_api_pass" class="block font-bold mb-3">API Password</label>
       <PasswordInput id="icinga_api_pass" v-model="settings.icinga_api_pass" />
     </div>
-    <div>
-      <label for="icinga_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
-      <UTextarea
-        id="icinga_ignore_devices"
-        v-model="settings.icinga_ignore_devices"
-        :rows="4"
-        placeholder="One device name per line"
-        class="w-full"
-      />
-    </div>
+    <DestinationFilterFields :settings="settings" prefix="icinga" />
     <div class="flex items-center gap-2">
       <USwitch v-model="settings.icinga_monitor_interfaces" id="icinga_monitor_interfaces" />
       <label for="icinga_monitor_interfaces" class="font-bold">Monitor interfaces</label>

@@ -342,8 +342,8 @@ func pollDevice(ctx context.Context, open func(context.Context, string, string) 
 
 func (fic *FactumIcingaClient) pollOnce(ctx context.Context, opt PollOptions, devices []*models.Device, store *counterStore, submit resultSubmitter, now time.Time) (pollStats, error) {
 	targets := mergePollTargets(
-		selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices),
-		selectElineTargets(opt.Elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.IgnoreDevices),
+		selectInterfaceTargets(devices, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.DeviceFilter(), fic.IcingaConfig.IgnoreInterfaces),
+		selectElineTargets(opt.Elines, fic.IcingaConfig.DefaultDomain, fic.IcingaConfig.DeviceFilter()),
 	)
 	nIfaces, nElines := countPoll(targets)
 	stats := pollStats{Devices: len(targets), Interfaces: nIfaces, Elines: nElines}

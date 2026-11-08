@@ -143,7 +143,7 @@ func TestSelectAndRenderElines(t *testing.T) {
 		{Device: "r2", Address: "10.0.0.4/24", Platform: "eos", Monitor: true, ServiceID: "CN00580", PWID: 1000580, Local: true},
 		{Device: "z9", Address: "10.0.0.9/24", Platform: "ios-xr", Monitor: true, ServiceID: "CN00570", PWID: 1000570},
 	}
-	got := selectElineTargets(rows, "lab.example", "skip\n")
+	got := selectElineTargets(rows, "lab.example", models.DeviceFilter{Devices: "skip\n"})
 	if len(got) != 3 {
 		t.Fatalf("devices %#v", got)
 	}

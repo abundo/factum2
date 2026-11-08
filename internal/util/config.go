@@ -63,8 +63,16 @@ type ConfigIcinga struct {
 	EAPIPassword      string
 
 	// IgnoreDevices is a newline-separated list of device names to skip
-	// entirely (Settings.IcingaIgnoreDevices).
-	IgnoreDevices string
+	// entirely (Settings.IcingaIgnoreDevices). The other Ignore* lists and
+	// RolesEnabled match Destinations → Common. IgnoreInterfaces is a
+	// newline-separated list of regular expressions matched against the
+	// whole interface name.
+	IgnoreDevices       string
+	IgnoreManufacturers string
+	IgnoreModels        string
+	IgnorePlatforms     string
+	IgnoreInterfaces    string
+	RolesEnabled        string
 	// DefaultNotification is Jet template source executed with
 	// .Device for a host that has no CfAlarmDestination
 	// (Settings.IcingaDefaultNotification). Literal Icinga lines with no
@@ -112,11 +120,15 @@ type ConfigOxidized struct {
 
 	// IgnoreDevices/IgnoreManufacturers/IgnoreModels/IgnorePlatforms are
 	// newline-separated lists (one value per line) - a device matching any
-	// one of them is skipped during sync.
+	// one of them is skipped during sync. RolesEnabled is a regex list
+	// matched against the device role; empty includes every role.
+	// IgnoreInterfaces is stored with the other destination fields.
 	IgnoreDevices       string
 	IgnoreManufacturers string
 	IgnoreModels        string
 	IgnorePlatforms     string
+	IgnoreInterfaces    string
+	RolesEnabled        string
 }
 
 // ConfigPrometheus is a runtime-only DTO, not part of ConfigRoot - same
@@ -140,6 +152,9 @@ type ConfigPrometheus struct {
 	// A sample whose ifName, ifDescr, or ifAlias matches the whole
 	// expression is dropped before it is stored.
 	IgnoreInterfaces string
+	// RolesEnabled is a regex list matched against the device role.
+	// Empty includes every role.
+	RolesEnabled string
 }
 
 // ConfigDNS is a runtime-only DTO, not part of ConfigRoot - same pattern as
@@ -149,9 +164,13 @@ type ConfigPrometheus struct {
 // by internal/dns.FetchRemoteConfig/RemoteClient from web.ApiDNSConfig.
 type ConfigDNS struct {
 	CommonConfig
-	DestFile        string
-	IgnoreModels    string
-	IgnorePlatforms string
+	DestFile            string
+	IgnoreDevices       string
+	IgnoreManufacturers string
+	IgnoreModels        string
+	IgnorePlatforms     string
+	IgnoreInterfaces    string
+	RolesEnabled        string
 }
 
 // ConfigNetbox is a runtime-only DTO, not part of ConfigRoot - same pattern
@@ -240,8 +259,15 @@ type ConfigLibrenms struct {
 	DelayedDeleteDays    int
 	// RolesEnabled/InterfacesDisabled are newline-separated lists of
 	// regexes - see Settings.LibrenmsRolesEnabled's doc comment.
-	RolesEnabled       string
-	InterfacesDisabled string
+	// Ignore* match Destinations → Common. IgnoreInterfaces forces
+	// alerting off when the interface name matches.
+	RolesEnabled        string
+	InterfacesDisabled  string
+	IgnoreDevices       string
+	IgnoreManufacturers string
+	IgnoreModels        string
+	IgnorePlatforms     string
+	IgnoreInterfaces    string
 
 	// SNMPVersion/SNMPCommunities are used when creating devices in
 	// LibreNMS - see Settings.LibrenmsSNMPVersion/LibrenmsSNMPCommunities's

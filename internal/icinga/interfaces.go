@@ -103,8 +103,8 @@ type deviceIfaces struct {
 	Ifaces []ifaceTarget
 }
 
-func deviceEligible(device *models.Device, ignore string) bool {
-	return device != nil && !isIgnoredDevice(device.Name, ignore) && device.Enabled && device.PrimaryIPv4 != ""
+func deviceEligible(device *models.Device, filter models.DeviceFilter) bool {
+	return device != nil && device.Enabled && device.PrimaryIPv4 != "" && !filter.Excludes(device)
 }
 
 func deviceAddr(device *models.Device) string {
@@ -128,7 +128,7 @@ func interfaceServiceName(name string) string {
 	return b.String()
 }
 
-func assignServiceNames(ifaces []models.Interface) []ifaceTarget {
+func assignServiceNames(ifaces []models.Interface, ignoreInterfaces string) []ifaceTarget {
 	sorted := append([]models.Interface(nil), ifaces...)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Name != sorted[j].Name {
@@ -140,7 +140,7 @@ func assignServiceNames(ifaces []models.Interface) []ifaceTarget {
 	out := make([]ifaceTarget, 0, len(sorted))
 	for _, iface := range sorted {
 		name := strings.TrimSpace(iface.Name)
-		if name == "" {
+		if name == "" || models.MatchesWholeRegexp(name, ignoreInterfaces) {
 			continue
 		}
 		base := interfaceServiceName(name)
@@ -161,13 +161,13 @@ func assignServiceNames(ifaces []models.Interface) []ifaceTarget {
 // selectInterfaceTargets returns devices that are written as Icinga hosts
 // and have Interface alarms set. Host names use the same FQDN rule as the
 // host template's fqdn() function.
-func selectInterfaceTargets(devices []*models.Device, domain, ignore string) []deviceIfaces {
+func selectInterfaceTargets(devices []*models.Device, domain string, filter models.DeviceFilter, ignoreInterfaces string) []deviceIfaces {
 	out := make([]deviceIfaces, 0, len(devices))
 	for _, device := range devices {
-		if !device.CfAlarmInterfaces || !deviceEligible(device, ignore) || strings.TrimSpace(device.Name) == "" {
+		if !device.CfAlarmInterfaces || !deviceEligible(device, filter) || strings.TrimSpace(device.Name) == "" {
 			continue
 		}
-		ifaces := assignServiceNames(device.Interfaces)
+		ifaces := assignServiceNames(device.Interfaces, ignoreInterfaces)
 		if len(ifaces) == 0 {
 			continue
 		}

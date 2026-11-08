@@ -23,6 +23,8 @@ type OxidizedConfigResponse struct {
 	IgnoreManufacturers string `json:"ignore_manufacturers"`
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
+	IgnoreInterfaces    string `json:"ignore_interfaces"`
+	RolesEnabled        string `json:"roles_enabled"`
 }
 
 // ApiOxidizedConfig returns the Oxidized API connection settings from the
@@ -34,6 +36,7 @@ func (ctrl *Controller) ApiOxidizedConfig(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	filter := settings.OxidizedDeviceFilter()
 	return c.JSON(http.StatusOK, OxidizedConfigResponse{
 		CommonConfig: util.NewCommonConfig(settings),
 		URL:          settings.OxidizedApiURL,
@@ -41,10 +44,12 @@ func (ctrl *Controller) ApiOxidizedConfig(c *echo.Context) error {
 		Pass:         settings.OxidizedApiPass,
 
 		DestFile:            settings.OxidizedDestFile,
-		IgnoreDevices:       settings.OxidizedIgnoreDevices,
-		IgnoreManufacturers: settings.OxidizedIgnoreManufacturers,
-		IgnoreModels:        settings.OxidizedIgnoreModels,
-		IgnorePlatforms:     settings.OxidizedIgnorePlatforms,
+		IgnoreDevices:       filter.Devices,
+		IgnoreManufacturers: filter.Manufacturers,
+		IgnoreModels:        filter.Models,
+		IgnorePlatforms:     filter.Platforms,
+		IgnoreInterfaces:    settings.OxidizedIgnoreInterfacesEffective(),
+		RolesEnabled:        filter.Roles,
 	})
 }
 

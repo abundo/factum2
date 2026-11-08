@@ -1,4 +1,5 @@
 <script setup>
+import DestinationFilterFields from '@/components/DestinationFilterFields.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
 import SettingsFormPage from '@/components/SettingsFormPage.vue'
 </script>
@@ -52,47 +53,6 @@ import SettingsFormPage from '@/components/SettingsFormPage.vue'
         map would treat the IP as the model. Leave blank to use oxidized_dest_file.
       </p>
     </div>
-    <div>
-      <label for="oxidized_ignore_devices" class="block font-bold mb-3">Ignore devices</label>
-      <UTextarea
-        id="oxidized_ignore_devices"
-        v-model="settings.oxidized_ignore_devices"
-        :rows="4"
-        placeholder="One device name per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="oxidized_ignore_manufacturers" class="block font-bold mb-3"
-        >Ignore manufacturers</label
-      >
-      <UTextarea
-        id="oxidized_ignore_manufacturers"
-        v-model="settings.oxidized_ignore_manufacturers"
-        :rows="4"
-        placeholder="One manufacturer per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="oxidized_ignore_models" class="block font-bold mb-3">Ignore models</label>
-      <UTextarea
-        id="oxidized_ignore_models"
-        v-model="settings.oxidized_ignore_models"
-        :rows="4"
-        placeholder="One model per line"
-        class="w-full"
-      />
-    </div>
-    <div>
-      <label for="oxidized_ignore_platforms" class="block font-bold mb-3">Ignore platforms</label>
-      <UTextarea
-        id="oxidized_ignore_platforms"
-        v-model="settings.oxidized_ignore_platforms"
-        :rows="4"
-        placeholder="One platform per line"
-        class="w-full"
-      />
-    </div>
+    <DestinationFilterFields :settings="settings" prefix="oxidized" />
   </SettingsFormPage>
 </template>

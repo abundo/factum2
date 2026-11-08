@@ -20,6 +20,7 @@ type PrometheusConfigResponse struct {
 	IgnoreModels        string `json:"ignore_models"`
 	IgnorePlatforms     string `json:"ignore_platforms"`
 	IgnoreInterfaces    string `json:"ignore_interfaces"`
+	RolesEnabled        string `json:"roles_enabled"`
 }
 
 // ApiPrometheusConfig returns the Prometheus/snmp_exporter sync settings
@@ -31,16 +32,18 @@ func (ctrl *Controller) ApiPrometheusConfig(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	filter := settings.PrometheusDeviceFilter()
 	return c.JSON(http.StatusOK, PrometheusConfigResponse{
 		CommonConfig:        util.NewCommonConfig(settings),
 		DestFile:            settings.PrometheusDestFile,
 		ReloadURL:           settings.PrometheusReloadURL,
 		Module:              settings.PrometheusModule,
 		Auth:                settings.PrometheusAuth,
-		IgnoreDevices:       settings.PrometheusIgnoreDevices,
-		IgnoreManufacturers: settings.PrometheusIgnoreManufacturers,
-		IgnoreModels:        settings.PrometheusIgnoreModels,
-		IgnorePlatforms:     settings.PrometheusIgnorePlatforms,
-		IgnoreInterfaces:    settings.PrometheusIgnoreInterfaces,
+		IgnoreDevices:       filter.Devices,
+		IgnoreManufacturers: filter.Manufacturers,
+		IgnoreModels:        filter.Models,
+		IgnorePlatforms:     filter.Platforms,
+		IgnoreInterfaces:    settings.PrometheusIgnoreInterfacesEffective(),
+		RolesEnabled:        filter.Roles,
 	})
 }

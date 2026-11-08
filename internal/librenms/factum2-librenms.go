@@ -61,6 +61,13 @@ func (s factumPendingStore) Remove(deviceID int) error {
 	return s.client.DeleteLibrenmsPendingDelete(deviceID)
 }
 
+func (fl *FactumLibrenmsClient) deviceExcluded(device *models.Device) bool {
+	if fl == nil || fl.Librenms == nil || fl.Librenms.P == nil {
+		return false
+	}
+	return fl.Librenms.P.DeviceFilter().Excludes(device)
+}
+
 // splitLines turns a newline-separated Settings field (e.g.
 // Settings.LibrenmsRolesEnabled) into its non-empty, trimmed lines.
 func splitLines(list string) []string {
@@ -274,6 +281,10 @@ func (fl *FactumLibrenmsClient) syncInterfaces(librenmsDevice *LibrenmsDevice, f
 						ignore = 1
 					}
 				}
+			}
+			if models.MatchesWholeRegexp(fi.Name, fl.Librenms.P.IgnoreInterfaces) ||
+				models.MatchesWholeRegexp(librenmsInterface.IfName, fl.Librenms.P.IgnoreInterfaces) {
+				ignore = 1
 			}
 		}
 		if librenmsInterface.Ignore != ignore {
@@ -652,7 +663,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 				fmt.Printf("DEBUG factum disabled: librenms hostname=%q -> factum %q\n", librenmsDevice.Hostname, factumDevice.Name)
 			}
 			librenms_delete = append(librenms_delete, librenmsDevice)
-		case !factumDevice.CfMonitorLibrenms:
+		case !factumDevice.CfMonitorLibrenms || fl.deviceExcluded(factumDevice):
 			notMonitored++
 			if notMonitored <= 10 {
 				fmt.Printf("DEBUG factum not monitored: librenms hostname=%q -> factum %q\n", librenmsDevice.Hostname, factumDevice.Name)
@@ -669,7 +680,7 @@ func (fl *FactumLibrenmsClient) Sync(reporter jobevent.Reporter) error {
 		if !factumDevice.Enabled {
 			continue
 		}
-		if !factumDevice.CfMonitorLibrenms {
+		if !factumDevice.CfMonitorLibrenms || fl.deviceExcluded(factumDevice) {
 			continue
 		}
 		if matchedFactumIDs[factumDevice.ID] {

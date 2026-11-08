@@ -104,8 +104,8 @@ func (dns *DNSClient) validate() error {
 func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Device) error {
 	devices, counts := dns.filterDevices(all)
 	reporter.Emit(jobevent.Info,
-		"Filtered devices: %d not enabled, %d ignored model, %d ignored platform, %d empty DNS name",
-		counts.notEnabled, counts.ignoreModel, counts.ignorePlatform, counts.emptyName)
+		"Filtered devices: %d not enabled, %d ignored by name, %d ignored manufacturer, %d ignored model, %d ignored platform, %d ignored role, %d empty DNS name",
+		counts.notEnabled, counts.ignoreDevice, counts.ignoreManufacturer, counts.ignoreModel, counts.ignorePlatform, counts.ignoreRole, counts.emptyName)
 	reporter.Emit(jobevent.Info, "Devices: %d of %d total", len(devices), len(all))
 
 	tmpFile := dns.DNS.DestFile + ".tmp"
@@ -114,6 +114,7 @@ func (dns *DNSClient) syncDevices(reporter jobevent.Reporter, all []*models.Devi
 		reporter.EmitErr(err)
 		return err
 	}
+	stripIgnoredInterfaces(devices, dns.DNS.IgnoreInterfaces)
 	recordCount, err := writeRecordsWithZones(f, dns.DNS.DefaultDomain, devices, dns.zoneSections())
 	closeErr := f.Close()
 	if err != nil {
@@ -289,25 +290,32 @@ func installConfFile(tmpFile, dst string) (bool, error) {
 	return true, nil
 }
 
-// isInList reports whether value appears in list, a newline-separated set
-// of values (Settings.DnsIgnore*).
-func isInList(value, list string) bool {
-	if value == "" {
-		return false
-	}
-	for _, item := range strings.Split(list, "\n") {
-		if strings.TrimSpace(item) == value {
-			return true
+// stripIgnoredInterfaces drops interface addresses whose name matches the
+// destination ignore-interfaces list. The device record itself stays.
+func stripIgnoredInterfaces(devices []*models.Device, list string) {
+	for _, device := range devices {
+		if len(device.Interfaces) == 0 {
+			continue
 		}
+		kept := make([]models.Interface, 0, len(device.Interfaces))
+		for _, intf := range device.Interfaces {
+			if models.MatchesWholeRegexp(intf.Name, list) {
+				continue
+			}
+			kept = append(kept, intf)
+		}
+		device.Interfaces = kept
 	}
-	return false
 }
 
 type filterCounts struct {
-	notEnabled     int
-	ignoreModel    int
-	ignorePlatform int
-	emptyName      int
+	notEnabled         int
+	ignoreDevice       int
+	ignoreManufacturer int
+	ignoreModel        int
+	ignorePlatform     int
+	ignoreRole         int
+	emptyName          int
 }
 
 // filterDevices keeps devices that should appear in the dnsmgr2 records
@@ -317,24 +325,34 @@ func (dns *DNSClient) filterDevices(all []*models.Device) ([]*models.Device, fil
 	var counts filterCounts
 	var devices []*models.Device
 	domain := ""
-	ignoreModels := ""
-	ignorePlatforms := ""
+	filter := util.ConfigDNS{}.DeviceFilter()
 	if dns.DNS != nil {
 		domain = dns.DNS.DefaultDomain
-		ignoreModels = dns.DNS.IgnoreModels
-		ignorePlatforms = dns.DNS.IgnorePlatforms
+		filter = dns.DNS.DeviceFilter()
 	}
 	for _, device := range all {
 		if !device.Enabled {
 			counts.notEnabled++
 			continue
 		}
-		if isInList(device.ModelName, ignoreModels) {
+		if models.ListContains(device.Name, filter.Devices) {
+			counts.ignoreDevice++
+			continue
+		}
+		if models.ListContains(device.Manufacturer, filter.Manufacturers) {
+			counts.ignoreManufacturer++
+			continue
+		}
+		if models.ListContains(device.ModelName, filter.Models) {
 			counts.ignoreModel++
 			continue
 		}
-		if isInList(device.Platform, ignorePlatforms) {
+		if models.ListContains(device.Platform, filter.Platforms) {
 			counts.ignorePlatform++
+			continue
+		}
+		if !models.RoleMatches(device.Role, filter.Roles) {
+			counts.ignoreRole++
 			continue
 		}
 		if dnsDeviceName(device.Name, domain) == "" {

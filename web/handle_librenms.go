@@ -22,6 +22,11 @@ type LibrenmsConfigResponse struct {
 	DelayedDeleteDays    int    `json:"delayed_delete_days"`
 	RolesEnabled         string `json:"roles_enabled"`
 	InterfacesDisabled   string `json:"interfaces_disabled"`
+	IgnoreDevices        string `json:"ignore_devices"`
+	IgnoreManufacturers  string `json:"ignore_manufacturers"`
+	IgnoreModels         string `json:"ignore_models"`
+	IgnorePlatforms      string `json:"ignore_platforms"`
+	IgnoreInterfaces     string `json:"ignore_interfaces"`
 	SNMPVersion          string `json:"snmp_version"`
 	SNMPCommunities      string `json:"snmp_communities"`
 }
@@ -47,6 +52,7 @@ func (ctrl *Controller) ApiLibrenmsConfig(c *echo.Context) error {
 	if days < 1 {
 		days = 30
 	}
+	filter := settings.LibrenmsDeviceFilter()
 	return c.JSON(http.StatusOK, LibrenmsConfigResponse{
 		CommonConfig:         util.NewCommonConfig(settings),
 		URL:                  settings.LibrenmsApiURL,
@@ -54,8 +60,13 @@ func (ctrl *Controller) ApiLibrenmsConfig(c *echo.Context) error {
 		PersistentDevices:    settings.LibrenmsPersistentDevices,
 		DelayedDeleteEnabled: settingOn(settings.LibrenmsDelayedDeleteEnabled),
 		DelayedDeleteDays:    days,
-		RolesEnabled:         settings.LibrenmsRolesEnabled,
+		RolesEnabled:         settings.LibrenmsRolesEffective(),
 		InterfacesDisabled:   settings.LibrenmsInterfacesDisabled,
+		IgnoreDevices:        filter.Devices,
+		IgnoreManufacturers:  filter.Manufacturers,
+		IgnoreModels:         filter.Models,
+		IgnorePlatforms:      filter.Platforms,
+		IgnoreInterfaces:     settings.LibrenmsIgnoreInterfacesEffective(),
 		SNMPVersion:          settings.LibrenmsSNMPVersion,
 		SNMPCommunities:      settings.LibrenmsSNMPCommunities,
 	})
