@@ -9,7 +9,14 @@ const route = useRoute()
 
 // Shared across the per-group AccordionRoots inside UNavigationMenu. Selecting a
 // leaf item (or changing route) keeps only the matching heading(s) open.
-const openSections = ref([])
+//
+// Nested accordions (Admin → Settings/Sources/Destinations/Services) forward
+// the same update:modelValue. Their model is only their own items, so closing
+// the last one emits [] and would wipe every top-level heading. OPEN_ANCHOR
+// stays in this list so a real top-level emit always includes it; nested
+// emits do not, and are ignored.
+const OPEN_ANCHOR = '__menu__'
+const openSections = ref([OPEN_ANCHOR])
 
 function section(label, children) {
   return [
@@ -62,7 +69,7 @@ function openValuesForPath(path) {
 }
 
 function collapseToPath(path) {
-  openSections.value = openValuesForPath(path)
+  openSections.value = [OPEN_ANCHOR, ...openValuesForPath(path)]
 }
 
 function topLevelValues() {
@@ -75,16 +82,11 @@ function topLevelValues() {
   return values
 }
 
-// Nested accordions (Admin > Settings/Sources/Destinations/Services) also emit
-// update:modelValue through UNavigationMenu. Ignore those so they don't
-// collapse every top-level heading.
 function onOpenSectionsUpdate(val) {
   const incoming = Array.isArray(val) ? val : val != null ? [val] : []
+  if (!incoming.includes(OPEN_ANCHOR)) return
   const allowed = topLevelValues()
-  const next = incoming.filter((v) => allowed.has(v))
-  if (next.length > 0 || incoming.length === 0) {
-    openSections.value = next
-  }
+  openSections.value = [OPEN_ANCHOR, ...incoming.filter((v) => allowed.has(v))]
 }
 
 function decorate(item, path) {
