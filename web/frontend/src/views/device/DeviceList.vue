@@ -30,6 +30,7 @@ const {
     d.name,
     d.site,
     d.role,
+    d.virtual_chassis?.name,
     d.status,
     d.manufacturer,
     d.model_name,
@@ -49,6 +50,7 @@ const columns = [
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'site', header: 'Site' },
   { accessorKey: 'role', header: 'Role' },
+  { id: 'chassis', header: 'Chassis' },
   { accessorKey: 'status', header: 'Status' },
   { id: 'affected', header: 'Affected' },
   { accessorKey: 'manufacturer', header: 'Manufacturer' },
@@ -258,6 +260,12 @@ function loadDevices() {
     })
 }
 
+function chassisMemberRole(member) {
+  if (!member) return ''
+  if (member.master) return 'shelf controller'
+  return member.position ? `degree ${member.position}` : 'degree'
+}
+
 function statusColor(status) {
   switch ((status ?? '').toLowerCase()) {
     case 'active':
@@ -331,7 +339,7 @@ onMounted(() => {
     >
       <template
         v-for="col in columns.filter((c) => c.id !== 'actions')"
-        :key="col.accessorKey"
+        :key="col.id || col.accessorKey"
         #[`${col.accessorKey}-header`]="{ column }"
       >
         <SortableColumnHeader :column="column" :label="col.header" />
@@ -344,6 +352,21 @@ onMounted(() => {
           size="sm"
           @click="showDetail(row.original)"
         />
+      </template>
+      <template #chassis-cell="{ row }">
+        <span v-if="row.original.virtual_chassis">
+          {{ row.original.virtual_chassis.name }}
+          <span class="text-muted-color">
+            ·
+            {{
+              chassisMemberRole({
+                master: row.original.virtual_chassis.master,
+                position: row.original.vc_position,
+              })
+            }}
+          </span>
+        </span>
+        <span v-else class="text-muted-color">—</span>
       </template>
       <template #status-cell="{ row }">
         <UBadge

@@ -31,7 +31,10 @@ import (
 // reconciled against Netbox: anything no longer present there is removed
 // from factum, whether the sync is for a single device or all of them.
 // Cable, site, VRF, interface type, customer, contact, and L2VPN→service
-// import only run on a full sync.
+// import only run on a full sync. Virtual chassis membership is stored
+// with each device: the NetBox master is the shelf controller and every
+// other member is one degree. Chassis with no remaining members are
+// removed on every sync.
 func Sync(c *util.ConfigRoot, name string, reporter jobevent.Reporter) error {
 	db, err := util.ConnectDatabase(&c.DB)
 	if err != nil {
@@ -173,6 +176,18 @@ func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 			reporter.EmitErr(err)
 			return err
 		}
+	}
+	if err := finishVirtualChassis(db); err != nil {
+		reporter.EmitErr(err)
+		return err
+	}
+	if fullSync {
+		var vcCount int64
+		if err := db.Model(&models.VirtualChassis{}).Count(&vcCount).Error; err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		reporter.Emit(jobevent.Info, "Netbox virtual chassis: %d", vcCount)
 	}
 
 	if err := syncDeviceTypeTemplates(db, nb, nb_devices); err != nil {
@@ -828,6 +843,9 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 	device.CfSource = nb_device.CfSource
 	device.CfSourceID = nb_device.CfSourceID
 	device.LibrenmsID = nb_device.LibrenmsID
+	if err := assignVirtualChassis(db, &device, nb_device); err != nil {
+		return wrap(err)
+	}
 
 	kindMaps, mapErr := optical.LoadKindMaps(db)
 	if mapErr != nil {

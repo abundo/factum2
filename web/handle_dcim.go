@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,14 @@ import (
 // fetchDeviceList loads devices without their interfaces/addresses, for the
 // device list view which doesn't render them.
 func fetchDeviceList(ctx context.Context, DB *gorm.DB) ([]models.Device, error) {
-	return gorm.G[models.Device](DB).Order("Name").Find(ctx)
+	items, err := gorm.G[models.Device](DB).Order("Name").Find(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachVirtualChassis(ctx, DB, items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // fetchDevices loads devices (optionally filtered to ids), with their
@@ -202,7 +210,97 @@ func fetchDevices(ctx context.Context, DB *gorm.DB, ids []uint) ([]models.Device
 	for i := range items {
 		items[i].Interfaces = interfacesByDeviceID[items[i].ID]
 	}
+	if err := attachVirtualChassis(ctx, DB, items); err != nil {
+		return nil, err
+	}
 	return items, nil
+}
+
+// attachVirtualChassis fills Device.VirtualChassis from the chassis rows.
+// The NetBox master is the shelf controller. Every other member is a degree.
+func attachVirtualChassis(ctx context.Context, DB *gorm.DB, devices []models.Device) error {
+	ids := make([]uint, 0)
+	seen := map[uint]struct{}{}
+	for _, device := range devices {
+		if device.VirtualChassisID == 0 {
+			continue
+		}
+		if _, ok := seen[device.VirtualChassisID]; ok {
+			continue
+		}
+		seen[device.VirtualChassisID] = struct{}{}
+		ids = append(ids, device.VirtualChassisID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	chassis, err := gorm.G[models.VirtualChassis](DB).Where("id IN ?", ids).Find(ctx)
+	if err != nil {
+		return err
+	}
+	byID := make(map[uint]models.VirtualChassis, len(chassis))
+	for _, row := range chassis {
+		byID[row.ID] = row
+	}
+	var memberRows []models.Device
+	if err := DB.WithContext(ctx).
+		Select("id", "name", "virtual_chassis_id", "vc_position").
+		Where("virtual_chassis_id IN ?", ids).
+		Find(&memberRows).Error; err != nil {
+		return err
+	}
+	grouped := make(map[uint][]models.VirtualChassisMember, len(ids))
+	for _, member := range memberRows {
+		row, ok := byID[member.VirtualChassisID]
+		if !ok {
+			continue
+		}
+		master := row.MasterDeviceID != 0 && row.MasterDeviceID == member.ID
+		kind := models.VCMemberDegree
+		if master {
+			kind = models.VCMemberController
+		}
+		grouped[member.VirtualChassisID] = append(grouped[member.VirtualChassisID], models.VirtualChassisMember{
+			DeviceID: member.ID,
+			Name:     member.Name,
+			Position: member.VCPosition,
+			Master:   master,
+			Member:   kind,
+		})
+	}
+	for id, members := range grouped {
+		sort.Slice(members, func(i, j int) bool {
+			if members[i].Master != members[j].Master {
+				return members[i].Master
+			}
+			if members[i].Position != members[j].Position {
+				return members[i].Position < members[j].Position
+			}
+			return members[i].Name < members[j].Name
+		})
+		grouped[id] = members
+	}
+	for i := range devices {
+		row, ok := byID[devices[i].VirtualChassisID]
+		if !ok {
+			continue
+		}
+		master := row.MasterDeviceID != 0 && row.MasterDeviceID == devices[i].ID
+		kind := models.VCMemberDegree
+		if master {
+			kind = models.VCMemberController
+		}
+		devices[i].VirtualChassis = &models.VirtualChassisRef{
+			ID:       row.ID,
+			NetboxID: row.NetboxID,
+			Name:     row.Name,
+			Domain:   row.Domain,
+			Master:   master,
+			Member:   kind,
+			Members:  grouped[row.ID],
+		}
+	}
+	return nil
 }
 
 // Fetch all devices. Default is the shallow list (no nested

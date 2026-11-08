@@ -14,6 +14,7 @@ func AutoMigrateAll(db *gorm.DB) error {
 		&PasswordResetToken{},
 
 		&Device{},
+		&VirtualChassis{},
 		&Interface{},
 		&InterfaceTemplate{},
 		&Address{},

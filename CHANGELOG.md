@@ -7,6 +7,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- NetBox virtual chassis sync into Factum. A ROADM modeled as a virtual
+  chassis keeps its shelf controller (the NetBox master) and one device
+  per degree, with position. The device list and the device dialog show
+  that membership. `factum2-netbox check --update` adds
+  `dcim.virtualchassis` to the webhook event rule. A chassis change
+  queues a delta sync, which refetches the member devices.
 - NetBox ASN ranges, ASNs, and route targets sync into IPAM. ASNs is one
   page with tabs for ranges and numbers. Route targets is its own page.
   `factum2-netbox check --update` adds `ipam.asnrange`, `ipam.asn`, and

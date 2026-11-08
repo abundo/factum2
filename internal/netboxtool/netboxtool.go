@@ -225,6 +225,21 @@ type JSONDevice struct {
 	Tags        []NetboxTag        `json:"tags"`
 	CF          NetboxCustomFields `json:"custom_fields"`
 	Interfaces  []JSONInterface    `json:"interfaces"`
+	// VirtualChassis is set when the device is a member of a NetBox
+	// virtual chassis. The master device is the shelf controller.
+	VirtualChassis *JSONVirtualChassis `json:"virtual_chassis"`
+	VCPosition     *int                `json:"vc_position"`
+	VCPriority     *int                `json:"vc_priority"`
+}
+
+// JSONVirtualChassis is the virtual_chassis object nested on a device.
+type JSONVirtualChassis struct {
+	ID     uint   `json:"id,string"`
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
+	Master *struct {
+		ID uint `json:"id,string"`
+	} `json:"master"`
 }
 type JSONDevices struct {
 	Data struct {
@@ -412,6 +427,20 @@ func (nb *NetboxClient) parseDevices(devices []JSONDevice, vm bool) ([]*NBDevice
 		dbdevice.CustomFields = device.CF.All
 		dbdevice.LibrenmsID = LibrenmsDeviceID(device.CF.All)
 		dbdevice.Tags = netboxTagsToNBTags(device.Tags)
+		if !vm && device.VirtualChassis != nil && device.VirtualChassis.ID != 0 {
+			dbdevice.VirtualChassisID = device.VirtualChassis.ID
+			dbdevice.VirtualChassisName = device.VirtualChassis.Name
+			dbdevice.VirtualChassisDomain = device.VirtualChassis.Domain
+			if device.VirtualChassis.Master != nil {
+				dbdevice.VirtualChassisMasterID = device.VirtualChassis.Master.ID
+			}
+			if device.VCPosition != nil {
+				dbdevice.VCPosition = *device.VCPosition
+			}
+			if device.VCPriority != nil {
+				dbdevice.VCPriority = *device.VCPriority
+			}
+		}
 
 		for _, jintf := range device.Interfaces {
 			var addresses []NBAddress

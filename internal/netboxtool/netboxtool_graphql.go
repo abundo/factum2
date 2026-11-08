@@ -53,6 +53,16 @@ var deviceListGraphQLbody = `
          	name
         }
         custom_fields
+        virtual_chassis {
+            id
+            name
+            domain
+            master {
+                id
+            }
+        }
+        vc_position
+        vc_priority
         interfaces {
             id
             name
@@ -276,6 +286,16 @@ var flatDeviceListGraphQLbody = `
          	name
         }
         custom_fields
+        virtual_chassis {
+            id
+            name
+            domain
+            master {
+                id
+            }
+        }
+        vc_position
+        vc_priority
     }
 }
 `

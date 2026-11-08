@@ -407,6 +407,12 @@ const xcB = ref(null)
 
 // Intra-device optical xconnects (tributary, add/drop, express, passthrough)
 // only apply to classified optical chassis — not packet routers/switches.
+function chassisMemberRole(member) {
+  if (!member) return ''
+  if (member.master) return 'shelf controller'
+  return member.position ? `degree ${member.position}` : 'degree'
+}
+
 const isOpticalDevice = computed(() => {
   const kind = (device.value?.optical_kind ?? '').toLowerCase()
   return ['roadm', 'wdm_shelf', 'ila', 'passive'].includes(kind)
@@ -1128,6 +1134,30 @@ onMounted(() => {
         <label for="device-role" class="font-bold whitespace-nowrap">Role</label>
         <UInput v-if="isLocalDevice" id="device-role" v-model="createForm.role" class="w-full" />
         <UInput v-else id="device-role" :model-value="device.role || ''" disabled class="w-full" />
+
+        <template v-if="!isLocalDevice && device.virtual_chassis">
+          <span class="font-bold whitespace-nowrap">Virtual chassis</span>
+          <div class="min-w-0 text-sm">
+            <div>
+              <span class="font-medium">{{ device.virtual_chassis.name }}</span>
+              <span class="text-muted-color">
+                ·
+                {{
+                  chassisMemberRole({
+                    master: device.virtual_chassis.master,
+                    position: device.vc_position,
+                  })
+                }}
+              </span>
+            </div>
+            <ul v-if="device.virtual_chassis.members?.length" class="mt-1 space-y-0.5">
+              <li v-for="member in device.virtual_chassis.members" :key="member.device_id">
+                <span :class="member.device_id === device.id ? 'font-medium' : ''">{{ member.name }}</span>
+                <span class="text-muted-color"> · {{ chassisMemberRole(member) }}</span>
+              </li>
+            </ul>
+          </div>
+        </template>
 
         <label for="device-type" class="font-bold whitespace-nowrap">Device type</label>
         <USelect

@@ -22,6 +22,7 @@ var requiredWebhookEvents = []string{"object_created", "object_updated", "object
 // requiredWebhookObjectTypes is what ApiNetboxWebhook actually handles.
 var requiredWebhookObjectTypes = []string{
 	"dcim.device",
+	"dcim.virtualchassis",
 	"dcim.interface",
 	"virtualization.virtualmachine",
 	"virtualization.vminterface",

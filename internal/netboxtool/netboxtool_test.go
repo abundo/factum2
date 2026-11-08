@@ -509,6 +509,45 @@ func TestUpdateCable_PatchesTerminationsAndLabel(t *testing.T) {
 	require.NoError(t, nb.UpdateCable(11, 100, 200, map[string]any{"label": "uplink"}))
 }
 
+func TestParseDevices_VirtualChassis(t *testing.T) {
+	nb := &NetboxClient{}
+	pos, pri := 2, 10
+	devices, err := nb.parseDevices([]JSONDevice{{
+		ID:   11,
+		Name: "roadm-a-deg1",
+		VirtualChassis: &JSONVirtualChassis{
+			ID:     7,
+			Name:   "roadm-a",
+			Domain: "wdm",
+			Master: &struct {
+				ID uint `json:"id,string"`
+			}{ID: 10},
+		},
+		VCPosition: &pos,
+		VCPriority: &pri,
+	}}, false)
+	require.NoError(t, err)
+	require.Len(t, devices, 1)
+	got := devices[0]
+	assert.Equal(t, uint(7), got.VirtualChassisID)
+	assert.Equal(t, "roadm-a", got.VirtualChassisName)
+	assert.Equal(t, "wdm", got.VirtualChassisDomain)
+	assert.Equal(t, uint(10), got.VirtualChassisMasterID)
+	assert.Equal(t, 2, got.VCPosition)
+	assert.Equal(t, 10, got.VCPriority)
+
+	vms, err := nb.parseDevices([]JSONDevice{{
+		ID:   3,
+		Name: "vm1",
+		VirtualChassis: &JSONVirtualChassis{
+			ID:   7,
+			Name: "roadm-a",
+		},
+	}}, true)
+	require.NoError(t, err)
+	assert.Equal(t, uint(0), vms[0].VirtualChassisID)
+}
+
 func TestParseDevices_VLANNames(t *testing.T) {
 	nb := &NetboxClient{}
 	devices, err := nb.parseDevices([]JSONDevice{{

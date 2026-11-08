@@ -161,22 +161,23 @@ func saveNetboxChangelogCursor(db *gorm.DB, settingsID uint, mark netboxtool.Cha
 // window. Device and VM ids are NetBox ids. Cable and site maps hold the
 // last action for that id ("create", "update", or "delete").
 type deltaPlan struct {
-	devices      map[uint]struct{}
-	vms          map[uint]struct{}
-	delDevices   map[uint]struct{}
-	delVMs       map[uint]struct{}
-	cables       map[uint]string
-	sites        map[uint]string
-	regions      map[uint]string
-	locations    map[uint]string
-	racks        bool
-	vrfs         bool
-	prefixes     bool
-	asnRanges    bool
-	asns         bool
-	routeTargets bool
-	l2vpn        bool
-	devTypes     bool
+	devices        map[uint]struct{}
+	vms            map[uint]struct{}
+	delDevices     map[uint]struct{}
+	delVMs         map[uint]struct{}
+	cables         map[uint]string
+	sites          map[uint]string
+	regions        map[uint]string
+	locations      map[uint]string
+	racks          bool
+	vrfs           bool
+	prefixes       bool
+	asnRanges      bool
+	asns           bool
+	routeTargets   bool
+	l2vpn          bool
+	devTypes       bool
+	virtualChassis map[uint]string
 }
 
 // parentLookup resolves an interface netbox id to its device netbox id.
@@ -185,14 +186,15 @@ type parentLookup func(vmIface bool, ifaceID uint) (deviceID uint, ok bool, err 
 
 func newDeltaPlan(changes []netboxtool.ObjectChange, lookup parentLookup) (*deltaPlan, error) {
 	p := &deltaPlan{
-		devices:    map[uint]struct{}{},
-		vms:        map[uint]struct{}{},
-		delDevices: map[uint]struct{}{},
-		delVMs:     map[uint]struct{}{},
-		cables:     map[uint]string{},
-		sites:      map[uint]string{},
-		regions:    map[uint]string{},
-		locations:  map[uint]string{},
+		devices:        map[uint]struct{}{},
+		vms:            map[uint]struct{}{},
+		delDevices:     map[uint]struct{}{},
+		delVMs:         map[uint]struct{}{},
+		cables:         map[uint]string{},
+		sites:          map[uint]string{},
+		regions:        map[uint]string{},
+		locations:      map[uint]string{},
+		virtualChassis: map[uint]string{},
 	}
 	for _, ch := range changes {
 		if err := p.note(ch, lookup); err != nil {
@@ -266,6 +268,10 @@ func (p *deltaPlan) note(ch netboxtool.ObjectChange, lookup parentLookup) error 
 		p.l2vpn = true
 	case "dcim.devicetype":
 		p.devTypes = true
+	case "dcim.virtualchassis":
+		if ch.ChangedID != 0 {
+			p.virtualChassis[ch.ChangedID] = ch.Action
+		}
 	}
 	return nil
 }
@@ -315,6 +321,10 @@ func parentDevice(db *gorm.DB, nb *netboxtool.NetboxClient, ifaceID uint, vmIfac
 }
 
 func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter jobevent.Reporter) error {
+	if err := p.expandVirtualChassis(db, nb); err != nil {
+		return err
+	}
+
 	var deleted int
 	for id := range p.delDevices {
 		n, err := DeleteDeviceByNetboxID(db, id, false)
@@ -364,6 +374,18 @@ func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter job
 		}
 	}
 	reporter.Emit(jobevent.Info, "Netbox delta sync: %d new, %d updated, %d deleted", created, updated, deleted)
+
+	for id, action := range p.virtualChassis {
+		if action != "delete" {
+			continue
+		}
+		if err := deleteVirtualChassisByNetboxID(db, id); err != nil {
+			return err
+		}
+	}
+	if err := finishVirtualChassis(db); err != nil {
+		return err
+	}
 
 	if len(devices) > 0 {
 		if err := syncDeviceTypeTemplates(db, nb, devices); err != nil {

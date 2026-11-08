@@ -49,6 +49,17 @@ type Device struct {
 	Latitude  *float64 `json:"latitude"`
 	Longitude *float64 `json:"longitude"`
 
+	// VirtualChassisID is the Factum virtual_chassis row. 0 when this
+	// device is not a member. The NetBox master of that chassis is the
+	// shelf controller; every other member is one degree.
+	VirtualChassisID uint `json:"virtual_chassis_id" gorm:"index"`
+	// VCPosition is the NetBox member position. 0 when not a member.
+	VCPosition int `json:"vc_position"`
+	// VCPriority is the NetBox member priority. 0 when unset.
+	VCPriority int `json:"vc_priority"`
+	// VirtualChassis is filled for the device API. Not stored.
+	VirtualChassis *VirtualChassisRef `json:"virtual_chassis,omitempty" gorm:"-"`
+
 	// OpticalKind is computed on every NetBox sync (CF then role map).
 	// Always assigned on the upsert struct so UpdateAll cannot zero it.
 	OpticalKind string `json:"optical_kind" gorm:"type:varchar(32);index"`

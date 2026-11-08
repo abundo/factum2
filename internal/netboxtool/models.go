@@ -58,7 +58,20 @@ type NBDevice struct {
 	CustomFields map[string]any `json:"custom_fields"`
 	// LibrenmsID is filled from the destination custom field, with the
 	// legacy librenms_id / librenms_device_id fields as fallback.
-	LibrenmsID uint          `json:"librenms_id"`
+	LibrenmsID uint `json:"librenms_id"`
+	// VirtualChassisID is the NetBox dcim.VirtualChassis id, 0 if this
+	// device is not a member. VMs are never members.
+	VirtualChassisID uint `json:"virtual_chassis_id"`
+	// VirtualChassisName and VirtualChassisDomain are copied from that chassis.
+	VirtualChassisName   string `json:"virtual_chassis_name"`
+	VirtualChassisDomain string `json:"virtual_chassis_domain"`
+	// VirtualChassisMasterID is the NetBox device id of the chassis master
+	// (the shelf controller). 0 if the chassis has no master.
+	VirtualChassisMasterID uint `json:"virtual_chassis_master_id"`
+	// VCPosition and VCPriority are the member position and priority.
+	// 0 means unset.
+	VCPosition int           `json:"vc_position"`
+	VCPriority int           `json:"vc_priority"`
 	Interfaces []NBInterface `json:"interfaces"` // gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	Tags       []NBTag       `json:"tags"`
 }
