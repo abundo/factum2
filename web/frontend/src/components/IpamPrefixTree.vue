@@ -141,10 +141,18 @@ function compareLpm(a, b) {
   return b.bits - a.bits
 }
 
+// Under every parent: namespaces, then VRFs, then prefixes.
+function nodeSortGroup(n) {
+  const kind = n.kind || n.type
+  if (kind === 'vrf') return 1
+  if (isPrefixNode(n)) return 2
+  return 0
+}
+
 function compareTreeNodes(a, b) {
-  const aPfx = isPrefixNode(a)
-  const bPfx = isPrefixNode(b)
-  if (aPfx && bPfx) {
+  const group = nodeSortGroup(a) - nodeSortGroup(b)
+  if (group !== 0) return group
+  if (isPrefixNode(a)) {
     const ap = parseCidr(a.title)
     const bp = parseCidr(b.title)
     if (ap && bp) return compareLpm(ap, bp)
@@ -152,7 +160,6 @@ function compareTreeNodes(a, b) {
     if (bp) return 1
     return (a.title || '').localeCompare(b.title || '')
   }
-  if (aPfx !== bPfx) return aPfx ? -1 : 1
   return (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
 }
 
