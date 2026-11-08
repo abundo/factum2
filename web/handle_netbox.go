@@ -279,7 +279,7 @@ func (ctrl *Controller) ApiNetboxWebhook(c *echo.Context) error {
 		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.region")
 	case "dcim.location":
 		return ctrl.netboxWebhookTreeItem(c, payload, "dcim.location")
-	case "dcim.virtualchassis", "dcim.rack", "dcim.devicetype", "ipam.vrf", "ipam.prefix", "ipam.asnrange", "ipam.asn", "ipam.routetarget", "vpn.l2vpn", "vpn.l2vpntermination":
+	case "dcim.virtualchassis", "dcim.rack", "dcim.devicetype", "dcim.devicerole", "ipam.vrf", "ipam.prefix", "ipam.asnrange", "ipam.asn", "ipam.routetarget", "vpn.l2vpn", "vpn.l2vpntermination":
 		return ctrl.netboxWebhookQueueDelta(c, payload.ObjectType, payload.ObjectType)
 	default:
 		slog.Debug("netbox webhook", "object_type", payload.ObjectType, "status", "ignored")

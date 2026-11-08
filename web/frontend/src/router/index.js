@@ -121,6 +121,12 @@ const router = createRouter({
           component: () => import('@/views/dcim/PlatformList.vue'),
         },
         {
+          path: '/dcim/device-roles',
+          name: 'dcim-device-roles',
+          meta: { title: 'Device roles', requiresRead: true },
+          component: () => import('@/views/dcim/DeviceRoleList.vue'),
+        },
+        {
           path: '/dcim/racks',
           name: 'dcim-racks',
           meta: { title: 'Racks', requiresRead: true },

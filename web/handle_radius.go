@@ -3,6 +3,7 @@ package web
 import (
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -425,13 +426,31 @@ func policyDTO(row models.RadiusPolicy) radiusPolicyDTO {
 }
 
 func (ctrl *Controller) ApiRadiusDeviceRoles(c *echo.Context) error {
-	var roles []string
-	if err := ctrl.DB.Model(&models.Device{}).Where("role <> ''").Distinct().Pluck("role", &roles).Error; err != nil {
+	seen := map[string]struct{}{}
+	add := func(names []string) {
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			seen[name] = struct{}{}
+		}
+	}
+	var fromDevices []string
+	if err := ctrl.DB.Model(&models.Device{}).Where("role <> ''").Distinct().Pluck("role", &fromDevices).Error; err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-	if roles == nil {
-		roles = []string{}
+	add(fromDevices)
+	var fromCatalog []string
+	if err := ctrl.DB.Model(&models.DeviceRole{}).Where("name <> ''").Pluck("name", &fromCatalog).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	add(fromCatalog)
+	roles := make([]string, 0, len(seen))
+	for name := range seen {
+		roles = append(roles, name)
+	}
+	sort.Strings(roles)
 	return c.JSON(http.StatusOK, roles)
 }
 

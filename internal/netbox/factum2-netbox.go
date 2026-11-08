@@ -30,8 +30,9 @@ import (
 // Interfaces, addresses and tags belonging to a synced device are always
 // reconciled against Netbox: anything no longer present there is removed
 // from factum, whether the sync is for a single device or all of them.
-// Cable, site, VRF, interface type, customer, contact, and L2VPN→service
-// import only run on a full sync. Virtual chassis membership is stored
+// Cable, site, device role, VRF, interface type, customer, contact, and
+// L2VPN→service import only run on a full sync. A device sync still
+// records the role attached to that device. Virtual chassis membership is stored
 // with each device: the NetBox master is the shelf controller and every
 // other member is one degree. Chassis with no remaining members are
 // removed on every sync.
@@ -201,6 +202,10 @@ func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 	// "removed" apart from "just not in this device's slice", so - like
 	// customer-to-tenant sync below - it only runs on a full sync.
 	if fullSync {
+		if err := syncDeviceRoles(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 		if err := syncInterfaceTypes(db, nb, reporter); err != nil {
 			reporter.EmitErr(err)
 			return err
@@ -818,6 +823,9 @@ func syncDevice(db *gorm.DB, nb_device *netboxtool.NBDevice, dnsNames map[uint]s
 		device.DeviceTypeID = dt.ID
 	}
 	if _, err := upsertPlatform(db, nb_device.Platform, nb_device.PlatformID); err != nil {
+		return wrap(err)
+	}
+	if err := upsertDeviceRoleRef(db, nb_device.Role, nb_device.RoleID); err != nil {
 		return wrap(err)
 	}
 	device.PrimaryIPv4 = nb_device.PrimaryIPv4

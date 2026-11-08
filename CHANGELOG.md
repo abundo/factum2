@@ -7,6 +7,16 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- Device roles can be created in Factum only, or created, renamed, and
+  deleted in NetBox from **DCIM → Device roles**. A Factum-only role is
+  left alone by NetBox sync. A role that is still assigned to a device
+  cannot be deleted.
+- NetBox device roles sync into Factum. A full sync stores every
+  `dcim.device-role`. A role rename updates devices that still point
+  at that NetBox role. RADIUS lists those roles, including a role no
+  device uses yet. `factum2-netbox check --update` adds
+  `dcim.devicerole` to the webhook event rule. A role change queues a
+  delta sync.
 - NetBox virtual chassis sync into Factum. A ROADM modeled as a virtual
   chassis keeps its shelf controller (the NetBox master) and one device
   per degree, with position. The device list and the device dialog show
@@ -65,6 +75,12 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### Upgrading
 
+- Install applies goose migrations `00047` and `00048`. `00047` stores
+  NetBox device roles and fills them from devices already synced.
+  `00048` lets a Factum-only role and a NetBox role share a slug. Run
+  `factum2-web migrate` before the next NetBox sync.
+- Run `factum2-netbox check --update` so the webhook event rule includes
+  `dcim.devicerole`.
 - Install applies goose migration `00044`. It stores the Prometheus
   Ignore interfaces list. Run `factum2-web migrate` before the next
   Prometheus sync. An empty list keeps every interface.

@@ -45,6 +45,9 @@ func TestRadiusConfigAndPolicy(t *testing.T) {
 	if err := db.Create(&models.RadiusPolicy{GroupDN: "cn=wdm-ops,dc=example,dc=com", Roles: "WDM"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&models.DeviceRole{Name: "ILA", Slug: "ila", Source: "netbox", NetboxID: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
 	ctrl := &Controller{DB: db}
 	c, rec := jsonRequest(t, http.MethodGet, "/api/radius-config", nil, nil, nil)
 	if err := ctrl.ApiRadiusConfig(c); err != nil {
@@ -116,7 +119,7 @@ func TestRadiusConfigAndPolicy(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &roles); err != nil {
 		t.Fatal(err)
 	}
-	if len(roles) != 1 || roles[0] != "WDM" {
+	if len(roles) != 2 || roles[0] != "ILA" || roles[1] != "WDM" {
 		t.Fatalf("roles %+v", roles)
 	}
 }

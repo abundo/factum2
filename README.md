@@ -321,7 +321,7 @@ determine group credentials`) and takes **hub command dispatch** down —
 ## NetBox sync
 
 `factum2-netbox sync` is a full inventory reconcile (devices, VMs, cables,
-sites, racks, VRFs, interface types, and, when enabled, customer and
+sites, racks, device roles, VRFs, interface types, and, when enabled, customer and
 contact push plus L2VPN import). Run it a few times a day. A successful
 full sync records a changelog cursor.
 

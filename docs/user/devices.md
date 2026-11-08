@@ -19,6 +19,14 @@ machine. Picking a device type marked VM checks that for you; you can
 still change it before creating. NetBox sync sets the same flag:
 virtual machines are VMs, physical devices are not.
 
+**DCIM → Device roles** lists roles from NetBox and roles that exist only
+in Factum. Leave **NetBox** off to keep a role local. Turn it on to create
+the role in NetBox, or to publish a Factum role there. A NetBox role can
+be renamed and deleted here; the change is written to NetBox, and devices
+that use it take the new name. A role still assigned to a device cannot
+be deleted. A full sync does not overwrite or remove a Factum-only role.
+A renamed NetBox role updates devices that still use that role.
+
 **DCIM → Interface types** is the list used by the Type picker on
 interfaces and device-type templates. A full NetBox sync loads NetBox's
 port types (1000BASE-T, SFP+, virtual, …). You can add Factum-only types

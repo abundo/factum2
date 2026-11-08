@@ -177,6 +177,7 @@ type deltaPlan struct {
 	routeTargets   bool
 	l2vpn          bool
 	devTypes       bool
+	roles          bool
 	virtualChassis map[uint]string
 }
 
@@ -268,6 +269,8 @@ func (p *deltaPlan) note(ch netboxtool.ObjectChange, lookup parentLookup) error 
 		p.l2vpn = true
 	case "dcim.devicetype":
 		p.devTypes = true
+	case "dcim.devicerole":
+		p.roles = true
 	case "dcim.virtualchassis":
 		if ch.ChangedID != 0 {
 			p.virtualChassis[ch.ChangedID] = ch.Action
@@ -401,6 +404,11 @@ func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter job
 	}
 	if err := p.placeChangedDevices(db, devices, reporter); err != nil {
 		return err
+	}
+	if p.roles {
+		if err := syncDeviceRoles(db, nb, reporter); err != nil {
+			return err
+		}
 	}
 	if p.racks || p.devTypes || len(p.devices) > 0 {
 		if err := syncRacksAndPlacements(db, nb, reporter); err != nil {

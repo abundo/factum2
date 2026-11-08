@@ -1273,6 +1273,41 @@ func (nb *NetboxClient) GetDeviceRoleBySlug(slug string) (*NetboxNamedRef, error
 	return nb.restGetNamed("/api/dcim/device-roles/?slug=" + url.QueryEscape(slug))
 }
 
+// CreateDeviceRole creates a dcim.device-role and returns its NetBox id.
+// An empty color is sent as 9e9e9e, which is NetBox's default.
+func (nb *NetboxClient) CreateDeviceRole(name, slug, color, description string, vmRole bool) (uint, error) {
+	if strings.TrimSpace(color) == "" {
+		color = "9e9e9e"
+	}
+	payload := map[string]any{
+		"name":        name,
+		"slug":        slug,
+		"color":       color,
+		"description": description,
+		"vm_role":     vmRole,
+	}
+	var created struct {
+		ID uint `json:"id"`
+	}
+	if err := nb.restPost("/api/dcim/device-roles/", payload, &created); err != nil {
+		return 0, err
+	}
+	if created.ID == 0 {
+		return 0, fmt.Errorf("netbox device role %q was created without an id", name)
+	}
+	return created.ID, nil
+}
+
+// UpdateDeviceRole patches a dcim.device-role.
+func (nb *NetboxClient) UpdateDeviceRole(id uint, changes map[string]any) error {
+	return nb.restPatch("/api/dcim/device-roles/"+strconv.FormatUint(uint64(id), 10)+"/", changes)
+}
+
+// DeleteDeviceRole deletes a dcim.device-role.
+func (nb *NetboxClient) DeleteDeviceRole(id uint) error {
+	return nb.restDelete("/api/dcim/device-roles/" + strconv.FormatUint(uint64(id), 10) + "/")
+}
+
 // GetPlatformBySlug looks up a platform by slug. Returns nil, nil if none
 // matches.
 func (nb *NetboxClient) GetPlatformBySlug(slug string) (*NetboxNamedRef, error) {

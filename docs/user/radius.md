@@ -33,7 +33,8 @@ an all-devices group can log in to every role. A correct password in the
 wrong group is rejected. An address factum2 does not know is rejected.
 
 Role names match the device role synced from NetBox, ignoring case. The
-Groups tab lists the roles currently in inventory.
+Groups tab lists the roles synced from NetBox, including a role that no
+device uses yet, and any role still stored on a device.
 
 ## Worker
 

@@ -138,6 +138,7 @@ const groups = computed(() => {
         { label: 'Manufacturers', icon: 'i-lucide-factory', to: '/dcim/manufacturers' },
         { label: 'Device types', icon: 'i-lucide-cpu', to: '/dcim/device-types' },
         { label: 'Platforms', icon: 'i-lucide-layers', to: '/dcim/platforms' },
+        { label: 'Device roles', icon: 'i-lucide-badge', to: '/dcim/device-roles' },
         ...(authStore.oxidizedEnabled
           ? [{ label: 'Oxidized', icon: 'i-lucide-save', to: '/oxidized' }]
           : []),

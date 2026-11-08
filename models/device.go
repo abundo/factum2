@@ -489,6 +489,51 @@ func (p *Platform) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
+// DeviceRole is the shared DCIM catalog (NetBox dcim.DeviceRole).
+// Device.Role stays the display name and Device.RoleID stays the NetBox
+// role id. A rename during sync updates devices that still point at that id.
+type DeviceRole struct {
+	FactumModel
+	Name        string `json:"name" gorm:"type:varchar(255);not null"`
+	Slug        string `json:"slug" gorm:"type:varchar(255);not null"`
+	Color       string `json:"color" gorm:"type:varchar(6)"`
+	Description string `json:"description" gorm:"type:text"`
+	VMRole      bool   `json:"vm_role"`
+	Source      string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID    uint   `json:"netbox_id"`
+}
+
+func (r *DeviceRole) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(r.Slug) == "" {
+		r.Slug = Slugify(r.Name)
+	}
+	if r.Source == "" {
+		r.Source = "factum"
+	}
+	return nil
+}
+
+func (r *DeviceRole) BeforeUpdate(tx *gorm.DB) error {
+	if strings.TrimSpace(r.Slug) == "" {
+		r.Slug = Slugify(r.Name)
+	}
+	return nil
+}
+
+// DeviceRoleDTO is the write body for DCIM device roles. Netbox asks
+// Factum to create or update the role in NetBox. A role already stored
+// with source netbox is always written there. Omit Netbox to keep the
+// role in Factum only.
+type DeviceRoleDTO struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
+	VMRole      bool   `json:"vm_role"`
+	Netbox      bool   `json:"netbox"`
+}
+
 // InterfaceType is a DCIM catalog row for NetBox interface.type choices
 // (e.g. "1000base-t"). NetBox has no interface-types resource; full sync
 // fills this from OPTIONS /api/dcim/interfaces/. Factum-local rows can be

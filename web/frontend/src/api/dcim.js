@@ -98,6 +98,22 @@ export function deletePlatform(id) {
   return http.delete(`/dcim/platforms/${id}`).then((res) => res.data)
 }
 
+export function getDeviceRoles() {
+  return http.get('/dcim/device-roles').then((res) => res.data)
+}
+
+export function createDeviceRole(payload) {
+  return http.post('/dcim/device-roles', payload).then((res) => res.data)
+}
+
+export function updateDeviceRole(id, payload) {
+  return http.put(`/dcim/device-roles/${id}`, payload).then((res) => res.data)
+}
+
+export function deleteDeviceRole(id) {
+  return http.delete(`/dcim/device-roles/${id}`).then((res) => res.data)
+}
+
 export function getInterfaceTypes() {
   return http.get('/dcim/interface-types').then((res) => res.data)
 }
