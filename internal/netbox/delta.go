@@ -161,19 +161,22 @@ func saveNetboxChangelogCursor(db *gorm.DB, settingsID uint, mark netboxtool.Cha
 // window. Device and VM ids are NetBox ids. Cable and site maps hold the
 // last action for that id ("create", "update", or "delete").
 type deltaPlan struct {
-	devices    map[uint]struct{}
-	vms        map[uint]struct{}
-	delDevices map[uint]struct{}
-	delVMs     map[uint]struct{}
-	cables     map[uint]string
-	sites      map[uint]string
-	regions    map[uint]string
-	locations  map[uint]string
-	racks      bool
-	vrfs       bool
-	prefixes   bool
-	l2vpn      bool
-	devTypes   bool
+	devices      map[uint]struct{}
+	vms          map[uint]struct{}
+	delDevices   map[uint]struct{}
+	delVMs       map[uint]struct{}
+	cables       map[uint]string
+	sites        map[uint]string
+	regions      map[uint]string
+	locations    map[uint]string
+	racks        bool
+	vrfs         bool
+	prefixes     bool
+	asnRanges    bool
+	asns         bool
+	routeTargets bool
+	l2vpn        bool
+	devTypes     bool
 }
 
 // parentLookup resolves an interface netbox id to its device netbox id.
@@ -253,6 +256,12 @@ func (p *deltaPlan) note(ch netboxtool.ObjectChange, lookup parentLookup) error 
 		p.vrfs = true
 	case "ipam.prefix":
 		p.prefixes = true
+	case "ipam.asnrange":
+		p.asnRanges = true
+	case "ipam.asn":
+		p.asns = true
+	case "ipam.routetarget":
+		p.routeTargets = true
 	case "vpn.l2vpn", "vpn.l2vpntermination":
 		p.l2vpn = true
 	case "dcim.devicetype":
@@ -383,6 +392,21 @@ func (p *deltaPlan) apply(db *gorm.DB, nb *netboxtool.NetboxClient, reporter job
 	}
 	if p.prefixes {
 		if err := syncPrefixes(db, nb, reporter); err != nil {
+			return err
+		}
+	}
+	if p.asnRanges {
+		if err := syncASNRanges(db, nb, reporter); err != nil {
+			return err
+		}
+	}
+	if p.asns {
+		if err := syncASNs(db, nb, reporter); err != nil {
+			return err
+		}
+	}
+	if p.routeTargets {
+		if err := syncRouteTargets(db, nb, reporter); err != nil {
 			return err
 		}
 	}

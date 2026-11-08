@@ -175,6 +175,18 @@ const router = createRouter({
           component: () => import('@/views/ipam/IpamAddressList.vue'),
         },
         {
+          path: '/ipam/asns',
+          name: 'ipam-asns',
+          meta: { title: 'ASNs', requiresRead: true, requiresIpam: true },
+          component: () => import('@/views/ipam/IpamASNPage.vue'),
+        },
+        {
+          path: '/ipam/route-targets',
+          name: 'ipam-route-targets',
+          meta: { title: 'Route targets', requiresRead: true, requiresIpam: true },
+          component: () => import('@/views/ipam/IpamRouteTargetList.vue'),
+        },
+        {
           path: '/dns',
           name: 'dns',
           meta: { title: 'DNS', requiresRead: true, requiresDnsZones: true },

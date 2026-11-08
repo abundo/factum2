@@ -324,7 +324,7 @@ func TestCheckDB_UnionCoverageAcrossRules(t *testing.T) {
 	iface.Name = "ifaces"
 	iface.ObjectTypes = []string{
 		"dcim.interface", "virtualization.virtualmachine", "virtualization.vminterface",
-		"ipam.ipaddress", "ipam.prefix", "dcim.cable", "dcim.site", "dcim.region", "dcim.location",
+		"ipam.ipaddress", "ipam.prefix", "ipam.asnrange", "ipam.asn", "ipam.routetarget", "dcim.cable", "dcim.site", "dcim.region", "dcim.location",
 	}
 	api := &fakeCheckAPI{
 		hooks:  []*NBWebhook{factumHook()},

@@ -210,6 +210,18 @@ func syncDB(db *gorm.DB, name string, reporter jobevent.Reporter) error {
 			reporter.EmitErr(err)
 			return err
 		}
+		if err := syncASNRanges(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		if err := syncASNs(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
+		if err := syncRouteTargets(db, nb, reporter); err != nil {
+			reporter.EmitErr(err)
+			return err
+		}
 	}
 
 	// Customer-to-tenant and contact-to-contact sync are one-directional

@@ -29,7 +29,7 @@ Feature switches (all off by default except as noted):
 - **Organization** — customers, contacts, and hierarchical sites
 - **Optical / WDM modeling** — ROADM/transponder inventory, paths,
   maintenance impact
-- **IP address management** — namespaces, VRFs, prefixes
+- **IP address management** — namespaces, VRFs, prefixes, ASN ranges, ASNs, and route targets
 - **DNS zone editor** — zones, DNS templates, SOA templates, DNSSEC
   policies. Distinct from Admin → Destinations → DNS (device-record sync).
 - **Software repository** — NOS images for routers and switches

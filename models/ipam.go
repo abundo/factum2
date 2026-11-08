@@ -160,6 +160,86 @@ func (p IpamPrefix) IsLocal() bool {
 	return p.Source != VRFSourceNetbox
 }
 
+// IpamASNRange is one NetBox ipam.ASNRange. Factum does not allocate from
+// it; the row is a mirror. A Factum-local row (netbox_id 0) is left alone.
+type IpamASNRange struct {
+	FactumModel
+	Name        string `json:"name" gorm:"type:varchar(255);not null"`
+	Slug        string `json:"slug" gorm:"type:varchar(255)"`
+	RIR         string `json:"rir" gorm:"type:varchar(255)"`
+	Start       int64  `json:"start"`
+	End         int64  `json:"end"`
+	Tenant      string `json:"tenant" gorm:"type:varchar(255)"`
+	Description string `json:"description" gorm:"type:varchar(255)"`
+	Source      string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID    uint   `json:"netbox_id"`
+}
+
+func (IpamASNRange) TableName() string { return "ipam_asn_ranges" }
+
+func (r *IpamASNRange) BeforeCreate(tx *gorm.DB) error {
+	if r.Source == "" {
+		if r.NetboxID != 0 {
+			r.Source = VRFSourceNetbox
+		} else {
+			r.Source = VRFSourceFactum
+		}
+	}
+	return nil
+}
+
+// IpamASN is one NetBox ipam.ASN. ASN is the number (1 … 2^32-1). The same
+// number is unique in NetBox; Factum still keys the mirror on netbox_id.
+type IpamASN struct {
+	FactumModel
+	ASN         int64  `json:"asn"`
+	RIR         string `json:"rir" gorm:"type:varchar(255)"`
+	Role        string `json:"role" gorm:"type:varchar(255)"`
+	Tenant      string `json:"tenant" gorm:"type:varchar(255)"`
+	Description string `json:"description" gorm:"type:varchar(255)"`
+	Sites       string `json:"sites" gorm:"type:text"`
+	Source      string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID    uint   `json:"netbox_id"`
+}
+
+func (IpamASN) TableName() string { return "ipam_asns" }
+
+func (a *IpamASN) BeforeCreate(tx *gorm.DB) error {
+	if a.Source == "" {
+		if a.NetboxID != 0 {
+			a.Source = VRFSourceNetbox
+		} else {
+			a.Source = VRFSourceFactum
+		}
+	}
+	return nil
+}
+
+// IpamRouteTarget is one NetBox ipam.RouteTarget. Name is the target
+// (for example 65000:100). VRF import/export lists still store those
+// names on the VRF row; this table is the catalog.
+type IpamRouteTarget struct {
+	FactumModel
+	Name        string `json:"name" gorm:"type:varchar(255);not null"`
+	Tenant      string `json:"tenant" gorm:"type:varchar(255)"`
+	Description string `json:"description" gorm:"type:varchar(255)"`
+	Source      string `json:"source" gorm:"type:varchar(32)"`
+	NetboxID    uint   `json:"netbox_id"`
+}
+
+func (IpamRouteTarget) TableName() string { return "ipam_route_targets" }
+
+func (r *IpamRouteTarget) BeforeCreate(tx *gorm.DB) error {
+	if r.Source == "" {
+		if r.NetboxID != 0 {
+			r.Source = VRFSourceNetbox
+		} else {
+			r.Source = VRFSourceFactum
+		}
+	}
+	return nil
+}
+
 type IpamPrefixDTO struct {
 	ID             uint   `json:"id"`
 	NamespaceID    uint   `json:"namespace_id"`

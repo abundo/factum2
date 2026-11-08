@@ -7,6 +7,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 
 ### New
 
+- NetBox ASN ranges, ASNs, and route targets sync into IPAM. ASNs is one
+  page with tabs for ranges and numbers. Route targets is its own page.
+  `factum2-netbox check --update` adds `ipam.asnrange`, `ipam.asn`, and
+  `ipam.routetarget` to the webhook event rule. A change queues the same
+  delta sync as a prefix change.
 - Sign-in accepts an email address as well as a username.
 - OpenLDAP people and groups, including memberships, can be added and
   changed from Admin → Directory when write-back is configured. A person
@@ -59,6 +64,11 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
   Prometheus sync. An empty list keeps every interface.
 - Run `factum2-netbox check --update` so the webhook event rule includes
   `virtualization.virtualmachine` and `virtualization.vminterface`.
+- Install applies goose migration `00045`. It stores NetBox ASN ranges,
+  ASNs, and route targets. Run `factum2-web migrate` before the next
+  NetBox sync.
+- Run `factum2-netbox check --update` so the webhook event rule includes
+  `ipam.asnrange`, `ipam.asn`, and `ipam.routetarget`.
 
 ## v1.5.0
 

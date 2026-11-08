@@ -143,8 +143,10 @@ const groups = computed(() => {
       ...(authStore.ipamEnabled
         ? [
             section('IPAM', [
-              { label: 'Prefixes', icon: 'i-lucide-binary', to: '/ipam' },
+              { label: 'Prefixes', icon: 'i-lucide-binary', to: '/ipam', exact: true },
               { label: 'IP addresses', icon: 'i-lucide-network', to: '/ipam/addresses' },
+              { label: 'ASNs', icon: 'i-lucide-hash', to: '/ipam/asns' },
+              { label: 'Route targets', icon: 'i-lucide-route', to: '/ipam/route-targets' },
             ]),
           ]
         : []),

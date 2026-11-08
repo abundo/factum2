@@ -59,6 +59,18 @@ export function listVrfs() {
   return http.get('/ipam/vrfs').then((res) => res.data ?? [])
 }
 
+export function listASNRanges() {
+  return http.get('/ipam/asn-ranges').then((res) => res.data ?? [])
+}
+
+export function listASNs() {
+  return http.get('/ipam/asns').then((res) => res.data ?? [])
+}
+
+export function listRouteTargets() {
+  return http.get('/ipam/route-targets').then((res) => res.data ?? [])
+}
+
 export function getPrefixHosts(prefixId, page) {
   return http
     .get(`/ipam/prefixes/${prefixId}/hosts`, { params: { page: page || 0 } })

@@ -24,7 +24,7 @@ currently on GitHub.
 | Racks / Floor plans / Connections | Infrastructure | Room drawings, rack elevations, direct cables |
 | Network map / Configuration / Devices / Interfaces / Interface types / Oxidized | DCIM | Inventory, topology, live configuration, config backups |
 | Packet capture / Software | Tools | Port mirror and NOS images |
-| Prefixes / IP addresses | IPAM | Only if **IP address management** is enabled |
+| Prefixes / IP addresses / ASNs / Route targets | IPAM | Only if **IP address management** is enabled. ASNs has tabs for ranges and numbers |
 | DNS | Services | Zones, DNS templates, SOA templates, and DNSSEC policies, as tabs. Only if **DNS zone editor** is enabled |
 | Certificates | Services | Certificates, accounts, and challenges, as tabs. Only if **Certificates** is enabled (Destinations) |
 | Overview / scheduler | Jobs | Trigger and watch syncs. Overview, Status, and Workers are tabs |

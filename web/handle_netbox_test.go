@@ -261,6 +261,28 @@ func TestApiNetboxWebhook_ContactIgnored(t *testing.T) {
 	}
 }
 
+func TestApiNetboxWebhook_QueuesASNAndRouteTarget(t *testing.T) {
+	db := newTestDB(t)
+	seedWebhookSecret(t, db, webhookTestSecret)
+	ctrl := &Controller{DB: db}
+	ctrl.netboxDeviceSyncDebounce.delay = time.Hour
+	t.Cleanup(ctrl.netboxDeviceSyncDebounce.stopAll)
+
+	for _, objectType := range []string{"ipam.asnrange", "ipam.asn", "ipam.routetarget"} {
+		c, rec := signedWebhookRequest(t, webhookTestSecret, map[string]any{
+			"event":       "updated",
+			"object_type": objectType,
+			"data":        map[string]any{"id": 4},
+		})
+		if err := ctrl.ApiNetboxWebhook(c); err != nil {
+			t.Fatalf("webhook %s: %v", objectType, err)
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook %s status = %d, want %d, body=%s", objectType, rec.Code, http.StatusAccepted, rec.Body.String())
+		}
+	}
+}
+
 func TestApiNetboxWebhook_InvalidSignature(t *testing.T) {
 	db := newTestDB(t)
 	seedWebhookSecret(t, db, webhookTestSecret)

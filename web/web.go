@@ -463,6 +463,9 @@ func GUI(p *GuiParams) error {
 	ipamg.GET("/tree", ctrl.ApiIpamForest, ctrl.RequireRead)
 	ipamg.GET("/vrfs", ctrl.ApiIpamVRFListAll, ctrl.RequireRead)
 	ipamg.GET("/prefixes/:prefixId/hosts", ctrl.ApiIpamPrefixHosts, ctrl.RequireRead)
+	ipamg.GET("/asn-ranges", ctrl.ApiIpamASNRangeList, ctrl.RequireRead)
+	ipamg.GET("/asns", ctrl.ApiIpamASNList, ctrl.RequireRead)
+	ipamg.GET("/route-targets", ctrl.ApiIpamRouteTargetList, ctrl.RequireRead)
 
 	cfg := api.Group("/config", ctrl.RequireAPIAuth)
 	cfg.GET("/scopes", ctrl.ApiConfigScopeList, ctrl.RequireRead)
