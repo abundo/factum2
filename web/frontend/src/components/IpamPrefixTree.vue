@@ -2,6 +2,7 @@
 import { useToast } from '@nuxt/ui/composables'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Wunderbaum } from 'wunderbaum'
+import { getAddresses } from '@/api/dcim'
 import { getForest, updateNamespace, updatePrefix, updateVrf } from '@/api/ipam'
 import IpamPrefixForm from '@/components/IpamPrefixForm.vue'
 import PageFormBar from '@/components/PageFormBar.vue'
@@ -41,6 +42,9 @@ const selected = ref(null)
 const form = ref({})
 const pageForm = usePageForm(form)
 const saving = ref(false)
+const addresses = ref([])
+const addressesLoading = ref(false)
+const addressesError = ref('')
 const treeWidth = ref(loadTreeWidth())
 const treeResizing = ref(false)
 let tree
@@ -48,6 +52,7 @@ let onContextMenu
 let resizeMove
 let resizeUp
 let persistColsTimer
+let addressesReq = 0
 
 const selectedKind = computed(() => selected.value?.kind || selected.value?.type || '')
 const isAllocated = computed(() => selectedKind.value === 'allocated')
@@ -230,6 +235,56 @@ function fillForm(node) {
   pageForm.mark()
 }
 
+function clearAddresses() {
+  addressesReq++
+  addresses.value = []
+  addressesError.value = ''
+  addressesLoading.value = false
+}
+
+function compareAddresses(a, b) {
+  const ap = parseCidr(a.address)
+  const bp = parseCidr(b.address)
+  if (ap && bp) {
+    if (ap.family !== bp.family) return ap.family - bp.family
+    if (ap.value < bp.value) return -1
+    if (ap.value > bp.value) return 1
+  }
+  return (a.address || '').localeCompare(b.address || '')
+}
+
+function loadAddresses(prefixId) {
+  if (!prefixId) {
+    clearAddresses()
+    return
+  }
+  const req = ++addressesReq
+  addressesLoading.value = true
+  addressesError.value = ''
+  getAddresses({ prefix_id: prefixId, limit: 500, sort: 'address' })
+    .then((data) => {
+      if (req !== addressesReq) return
+      addresses.value = (data?.items ?? []).slice().sort(compareAddresses)
+    })
+    .catch((err) => {
+      if (req !== addressesReq) return
+      addresses.value = []
+      addressesError.value = errMsg(err, 'Failed to load IP addresses.')
+    })
+    .finally(() => {
+      if (req === addressesReq) addressesLoading.value = false
+    })
+}
+
+function showAddressesFor(node) {
+  const kind = node?.kind || node?.type
+  if (kind !== 'allocated') {
+    clearAddresses()
+    return
+  }
+  loadAddresses(node.prefix_id || node.id)
+}
+
 async function onActivate(node) {
   const payload = selectedPayload(node)
   // setActive back to the current row fires this again. Leave the form as it is.
@@ -242,6 +297,7 @@ async function onActivate(node) {
   }
   selected.value = payload
   fillForm(payload)
+  showAddressesFor(payload)
   emit('select', payload)
 }
 
@@ -519,6 +575,7 @@ function load(revealKeys) {
       }
       selected.value = null
       fillForm(null)
+      clearAddresses()
     })
     .catch(() => {
       if (!tree) buildTree([])
@@ -632,7 +689,7 @@ defineExpose({
     <div
       class="mt-4 flex min-h-80 min-w-0 flex-1 flex-col overflow-hidden lg:mt-0 lg:min-h-0 lg:pl-3"
     >
-      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto max-w-lg">
+      <div class="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3 overflow-auto">
         <div v-if="!selected" class="text-muted-color text-sm">Select a row to see details.</div>
         <template v-else>
           <PageFormBar>
@@ -704,6 +761,30 @@ defineExpose({
               variant="ghost"
               @click="emit('delete')"
             />
+          </div>
+          <div v-if="isAllocated" class="flex min-w-0 max-w-full flex-col gap-2 border-t border-default pt-3">
+            <div class="text-sm font-bold">IP addresses</div>
+            <div v-if="addressesLoading" class="text-sm text-muted-color">Loading…</div>
+            <div v-else-if="addressesError" class="text-sm text-error">{{ addressesError }}</div>
+            <div v-else-if="!addresses.length" class="text-sm text-muted-color">
+              No IP addresses in this prefix.
+            </div>
+            <table v-else class="w-full text-sm text-left">
+              <thead class="text-muted-color border-b border-default">
+                <tr>
+                  <th class="py-1 pr-3 font-medium">Address</th>
+                  <th class="py-1 pr-3 font-medium">Device</th>
+                  <th class="py-1 font-medium">Interface</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in addresses" :key="row.id" class="border-b border-default">
+                  <td class="py-1 pr-3 font-mono">{{ row.address }}</td>
+                  <td class="py-1 pr-3">{{ row.device_name || '—' }}</td>
+                  <td class="py-1">{{ row.interface_name || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </template>
       </div>

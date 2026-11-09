@@ -1083,6 +1083,20 @@ func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
 		Joins("JOIN devices ON devices.id = interfaces.device_id").
 		Joins("LEFT JOIN ipam_prefixes ON ipam_prefixes.id = addresses.prefix_id").
 		Joins("LEFT JOIN ipam_vrfs ON ipam_vrfs.id = ipam_prefixes.vrf_id")
+	if raw := strings.TrimSpace(c.QueryParam("prefix_id")); raw != "" {
+		n, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || n == 0 {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid prefix id"})
+		}
+		ids, err := prefixScopeIDs(ctrl.DB, uint(n))
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.JSON(http.StatusNotFound, map[string]any{"error": "prefix not found"})
+			}
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		}
+		dbq = dbq.Where("addresses.prefix_id IN ?", ids)
+	}
 	if q != "" {
 		pat := likeContains(q)
 		dbq = dbq.Where(
@@ -1229,6 +1243,42 @@ func (ctrl *Controller) ApiGetDCIMAddresses(c *echo.Context) error {
 		out.Items = append(out.Items, dto)
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// prefixScopeIDs is the prefix itself plus more-specific prefixes in the
+// same VRF. Addresses are stored on the most specific prefix, so a parent
+// list includes the addresses of the children inside it.
+func prefixScopeIDs(db *gorm.DB, prefixID uint) ([]uint, error) {
+	var row models.IpamPrefix
+	if err := db.First(&row, prefixID).Error; err != nil {
+		return nil, err
+	}
+	parent, err := ipam.ParsePrefix(row.Prefix)
+	if err != nil {
+		return []uint{row.ID}, nil
+	}
+	var rows []models.IpamPrefix
+	if err := db.Where("vrf_id = ?", row.VRFID).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(rows))
+	for _, child := range rows {
+		if child.ID == row.ID {
+			ids = append(ids, child.ID)
+			continue
+		}
+		cp, err := ipam.ParsePrefix(child.Prefix)
+		if err != nil {
+			continue
+		}
+		if parent.Bits() < cp.Bits() && parent.Contains(cp.Addr()) && parent.Overlaps(cp) {
+			ids = append(ids, child.ID)
+		}
+	}
+	if len(ids) == 0 {
+		ids = []uint{row.ID}
+	}
+	return ids, nil
 }
 
 func applyAddressWrite(db *gorm.DB, addr *models.Address, dto models.AddressCreateDTO, creating bool) error {

@@ -333,7 +333,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
       in the global table and in a VRF, and in more than one VRF. Unique IP Space still keeps one
       exact prefix inside that VRF. Editing a VRF or prefix there updates NetBox, including the
       route distinguisher and import and export targets. Delete still happens in NetBox. Click a
-      row to see details. Click [+] / [−] to expand or collapse.
+      row to see details. A prefix lists its IP addresses under the form, with the device
+      and interface when the address is connected. Click [+] / [−] to expand or collapse.
     </p>
     <IpamPrefixTree
       ref="treeRef"

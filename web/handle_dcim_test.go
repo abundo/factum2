@@ -1014,6 +1014,20 @@ func TestApiDCIMAddressesCRUD(t *testing.T) {
 		t.Fatalf("list = %+v", listed)
 	}
 
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/addresses?prefix_id="+strconv.FormatUint(uint64(pfx.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiGetDCIMAddresses(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("prefix filter status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 0 {
+		t.Fatalf("unassigned prefix listed %d addresses", listed.Total)
+	}
+
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
 		InterfaceID: iface.ID, Address: "10.0.0.1/24", DNSName: "lo.pe-1.example", VRF: "MGMT",
 	}, nil, nil)
@@ -1032,6 +1046,64 @@ func TestApiDCIMAddressesCRUD(t *testing.T) {
 	}
 	if created.PrefixID == nil || *created.PrefixID != pfx.ID {
 		t.Fatalf("created prefix_id = %v want %d", created.PrefixID, pfx.ID)
+	}
+
+	child := models.IpamPrefix{NamespaceID: ns.ID, VRFID: vrf.ID, Prefix: "10.0.0.0/28", Family: 4}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	childID := child.ID
+	if err := db.Create(&models.Address{
+		InterfaceID: iface.ID, Address: "10.0.0.9/28", PrefixID: &childID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := models.IpamPrefix{NamespaceID: ns.ID, VRFID: vrf.ID, Prefix: "10.1.0.0/24", Family: 4}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/addresses?prefix_id="+strconv.FormatUint(uint64(pfx.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiGetDCIMAddresses(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 2 {
+		t.Fatalf("parent prefix addresses = %+v", listed)
+	}
+	got := map[string]DCIMAddressDTO{}
+	for _, item := range listed.Items {
+		got[item.Address] = item
+	}
+	if row := got["10.0.0.1/24"]; row.DeviceName != "pe-1" || row.InterfaceName != "Ethernet1" {
+		t.Fatalf("10.0.0.1/24 = %+v", row)
+	}
+	if row := got["10.0.0.9/28"]; row.DeviceName != "pe-1" || row.InterfaceName != "Ethernet1" {
+		t.Fatalf("child address = %+v", row)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/addresses?prefix_id="+strconv.FormatUint(uint64(child.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiGetDCIMAddresses(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 1 || listed.Items[0].Address != "10.0.0.9/28" {
+		t.Fatalf("child prefix addresses = %+v", listed)
+	}
+
+	c, rec = jsonRequest(t, http.MethodGet, "/api/dcim/addresses?prefix_id="+strconv.FormatUint(uint64(other.ID), 10), nil, nil, nil)
+	if err := ctrl.ApiGetDCIMAddresses(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 0 {
+		t.Fatalf("other prefix listed %+v", listed)
 	}
 
 	c, rec = jsonRequest(t, http.MethodPost, "/api/dcim/addresses", models.AddressCreateDTO{
