@@ -74,8 +74,9 @@ here (`dev/release-notes.sh`); the full list is `git log <previous tag>..<tag>`.
 - SQL slower than 200 ms is logged at debug, so it stays out of the GUI
   log.
 - The example Prometheus device dashboard shows the identity in one
-  panel, and address, site, hardware, OS, and sysDescr. Each interface
-  is listed once.
+  panel, as a Markdown table of address, site, hardware, OS, and
+  sysDescr. Each interface is listed once. Line breaks inside sysDescr
+  are collapsed to spaces, so the version stays on one line.
 
 ### Fixed
 
