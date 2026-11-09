@@ -290,7 +290,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sysUpTime{job=\"snmp\",vm!=\"true\"} / 100",
+          "expr": "(snmpEngineTime{job=\"snmp\", vm!=\"true\"} > (sysUpTime{job=\"snmp\", vm!=\"true\"} / 100)) or (sysUpTime{job=\"snmp\", vm!=\"true\"} / 100) or snmpEngineTime{job=\"snmp\", vm!=\"true\"}",
           "format": "table",
           "instant": true,
           "refId": "B"
@@ -422,7 +422,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sysUpTime{job=\"snmp\",vm=\"true\"} / 100",
+          "expr": "(snmpEngineTime{job=\"snmp\", vm=\"true\"} > (sysUpTime{job=\"snmp\", vm=\"true\"} / 100)) or (sysUpTime{job=\"snmp\", vm=\"true\"} / 100) or snmpEngineTime{job=\"snmp\", vm=\"true\"}",
           "format": "table",
           "instant": true,
           "refId": "B"

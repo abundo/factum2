@@ -29,7 +29,7 @@ scrape_configs:
   #
   # Modules are pinned here. The module label factum writes is a single
   # name (if_mib by default). Relabeling it onto __param_module would drop
-  # system, hrDevice, and hrStorage. Auth is relabeled so the name in the
+  # system, hrDevice, hrStorage, and snmp_engine. Auth is relabeled so the name in the
   # target file selects the community.
   - job_name: snmp
     scrape_interval: 60s
@@ -38,7 +38,7 @@ scrape_configs:
     honor_labels: true
     params:
       auth: [public_v2]
-      module: [if_mib, system, hrDevice, hrStorage]
+      module: [if_mib, system, hrDevice, hrStorage, snmp_engine]
     file_sd_configs:
       - files:
           - /etc/prometheus/file_sd/*.json

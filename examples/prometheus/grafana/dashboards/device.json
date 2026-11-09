@@ -200,13 +200,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max(sysUpTime{job=\"snmp\", device=\"$device\"}) / 100",
+          "expr": "(max(snmpEngineTime{job=\"snmp\", device=\"$device\"}) > (max(sysUpTime{job=\"snmp\", device=\"$device\"}) / 100)) or (max(sysUpTime{job=\"snmp\", device=\"$device\"}) / 100) or max(snmpEngineTime{job=\"snmp\", device=\"$device\"})",
           "instant": true,
           "legendFormat": "uptime",
           "range": false,
           "refId": "A"
         }
       ],
+      "description": "snmpEngineTime (seconds) when it is larger than sysUpTime. sysUpTime is 32-bit TimeTicks and wraps every 497 days.",
       "title": "Uptime",
       "type": "stat"
     },

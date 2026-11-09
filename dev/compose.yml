@@ -435,8 +435,8 @@ services:
 
   # Prometheus file_sd + factum2-worker (prometheus command only).
   # Grafana, Alertmanager, and snmp-exporter sit next to it: snmp_exporter
-  # walks if_mib+system, Prometheus alerts into Alertmanager, Grafana shows
-  # a LibreNMS-style device/VM dashboard.
+  # walks if_mib+system+snmp_engine, Prometheus alerts into Alertmanager,
+  # Grafana shows a LibreNMS-style device/VM dashboard.
   prometheus:
     <<: *lab-restart
     image: factum-dev-prometheus:local
@@ -478,6 +478,11 @@ services:
     <<: *lab-restart
     image: docker.io/prom/snmp-exporter:v0.30.1
     hostname: snmp-exporter
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+      - --config.file=/etc/snmp_exporter/engine.yml
+    volumes:
+      - ./prometheus/engine.yml:/etc/snmp_exporter/engine.yml:z,ro
     ports:
       - "19116:9116"
     environment:

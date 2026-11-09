@@ -31,7 +31,8 @@ scrape_configs:
   # (snmp_exporter dials it; DNS is not required). The device label is the
   # FQDN display name. Relabel copies that IP into instance and sends the
   # scrape through snmp-exporter. if_mib is interfaces/traffic; system is
-  # sysName/sysUpTime/sysLocation like a LibreNMS device page.
+  # sysName/sysUpTime/sysLocation like a LibreNMS device page. snmp_engine
+  # is snmpEngineTime (seconds). sysUpTime wraps every 497 days.
   - job_name: snmp
     metrics_path: /snmp
     scrape_timeout: 25s
@@ -40,6 +41,7 @@ scrape_configs:
       module:
         - if_mib
         - system
+        - snmp_engine
     file_sd_configs:
       - files:
           - /etc/prometheus/targets.json

@@ -59,7 +59,7 @@ In Factum, Admin → Settings → Prometheus:
   the duplicate key.
 - snmp_exporter module: leave blank. Blank means `if_mib`. That name is
   stored as a label. The scrape modules are fixed in `prometheus/prometheus.yml`
-  (`if_mib`, `system`, `hrDevice`, `hrStorage`). Do not relabel the module
+  (`if_mib`, `system`, `hrDevice`, `hrStorage`, `snmp_engine`). Do not relabel the module
   label onto `__param_module`, or the extra modules are dropped.
 - Reload URL: optional. `http://127.0.0.1:9090/-/reload` when Prometheus is
   on the same host. The stack runs with `--web.enable-lifecycle`. Leave the
@@ -80,7 +80,7 @@ The device scrape still walks the interface table.
 Check a scrape before waiting for Grafana:
 
 ```sh
-curl -fsS 'http://127.0.0.1:9116/snmp?target=192.0.2.10&module=if_mib&module=system&auth=public_v2' | head
+curl -fsS 'http://127.0.0.1:9116/snmp?target=192.0.2.10&module=if_mib&module=system&module=snmp_engine&auth=public_v2' | head
 ```
 
 `up{job="snmp"}` in Prometheus is 1 when the walk succeeded. Grafana's
@@ -125,8 +125,14 @@ Do not replace `/etc/snmp_exporter/snmp.yml`. The image file is generated.
 A generator-style file (`walk: [sysUpTime, interfaces]`, `lookups:`,
 `overrides:`) is rejected and produces no `ifOperStatus` or `ifHCInOctets`.
 
-`system` supplies `sysUpTime` (hundredths of a second; dashboards divide by
-100) and `sysDescr`. `if_mib` supplies interface status and traffic.
+`system` supplies `sysUpTime` (hundredths of a second) and `sysDescr`.
+`sysUpTime` is a 32-bit TimeTicks counter and wraps every 497 days, so a
+long-up device shows only the remainder (151 weeks looks like 9.5 weeks).
+`snmp/engine.yml` adds `snmp_engine`, which GETs `snmpEngineTime` in
+seconds (about 68 years before it wraps). Dashboards use that value when
+it is larger than `sysUpTime / 100`. It starts when snmpd starts, so it
+can be a few minutes behind `show version`. `if_mib` supplies interface
+status and traffic.
 `hrDevice` and `hrStorage` supply CPU and memory on hosts and appliances
 that implement HOST-RESOURCES-MIB. A panel stays empty when the device does
 not have that MIB.

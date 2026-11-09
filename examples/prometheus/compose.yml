@@ -64,8 +64,10 @@ services:
     command:
       - --config.file=/etc/snmp_exporter/snmp.yml
       - --config.file=/etc/snmp_exporter/auths.yml
+      - --config.file=/etc/snmp_exporter/engine.yml
     volumes:
       - ./snmp/auths.yml:/etc/snmp_exporter/auths.yml:ro
+      - ./snmp/engine.yml:/etc/snmp_exporter/engine.yml:ro
     ports:
       - "9116:9116"
 
